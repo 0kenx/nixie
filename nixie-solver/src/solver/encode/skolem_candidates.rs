@@ -235,10 +235,17 @@ impl Solver {
                     stack.push(*b);
                     stack.push(*a);
                 }
+                // Finite bags: ordinary traversal, no candidates of their own.
+                TermKind::BagMake(a, b) | TermKind::BagUnionMax(a, b) | TermKind::BagUnionDisjoint(a, b) | TermKind::BagInterMin(a, b) | TermKind::BagDifferenceSubtract(a, b) | TermKind::BagDifferenceRemove(a, b) | TermKind::BagMember(a, b) | TermKind::BagSubbag(a, b) | TermKind::BagCount(a, b) => {
+                    stack.push(*b);
+                    stack.push(*a);
+                }
                 TermKind::SetSingleton(a)
                 | TermKind::SetCard(a)
                 | TermKind::SetComplement(a)
                 | TermKind::SetChoose(a)
+                | TermKind::BagCard(a)
+                | TermKind::BagSetof(a)
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
                 TermKind::SetUniv(_) => {}
@@ -255,6 +262,7 @@ impl Solver {
                 }
                 // No children: the payload is a sort.
                 TermKind::SetEmpty(_) => {}
+                TermKind::BagEmpty(_) => {}
                 // Arrays.
                 TermKind::Select(a, i) => {
                     stack.push(*i);

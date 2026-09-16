@@ -10,6 +10,13 @@ This crate provides modular theory solver implementations for CDCL(T):
 - **Arithmetic** - Linear Real/Integer Arithmetic (Simplex)
 - **BitVector** - Fixed-size bit-vector operations
 
+## User-defined CP constraints
+
+`cp::CpModel` supplies `alldifferent`, `table`, `regular`, `circuit`, and
+`cumulative` through explained user propagation. Install it with
+`nixie_solver::Solver::register_cp`; see [the CP guide](../docs/CP.md) for
+semantics, examples, and lifecycle rules.
+
 ## Theory Trait
 
 All theory solvers implement the `Theory` trait:

@@ -149,6 +149,13 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd {
     let scanned_code = (!false_lit).index();
+    // Hoisted per-scan invariants (process-wide `OnceLock`s): the per-visit
+    // calls below cost two Acquire loads + branches per watcher visit —
+    // measurable in line-level profiles (mut_trace.rs / option.rs entries).
+    #[cfg(feature = "std")]
+    let cwrite_probe = crate::mut_trace::cwrite_target();
+    #[cfg(not(feature = "std"))]
+    let cwrite_probe: Option<usize> = None;
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
@@ -207,9 +214,9 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         };
         let searched = live.searched();
         #[cfg(feature = "std")]
-        let cid_visit = crate::mut_trace::cwrite_target().map(|_| live.reason());
+        let cid_visit = cwrite_probe.map(|_| live.reason());
         #[cfg(feature = "std")]
-        if let Some(want) = crate::mut_trace::cwrite_target()
+        if let Some(want) = cwrite_probe
             && cid_visit.is_some_and(|c| c.index() == want)
         {
             use std::fmt::Write as _;
@@ -232,7 +239,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         let first;
         {
             #[cfg(feature = "std")]
-            let cid_watch = crate::mut_trace::cwrite_target().map(|_| live.reason());
+            let cid_watch = cwrite_probe.map(|_| live.reason());
             #[cfg(not(feature = "std"))]
             let cid_watch: Option<ClauseId> = None;
             let lits = live.lits();
@@ -277,7 +284,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                                 found = Some(Some(literal));
                             } else {
                                 #[cfg(feature = "std")]
-                                if let Some(want) = crate::mut_trace::cwrite_target()
+                                if let Some(want) = cwrite_probe
                                     && cid_watch.is_some_and(|c| c.index() == want)
                                 {
                                     eprintln!(

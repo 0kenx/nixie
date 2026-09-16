@@ -149,6 +149,7 @@ fn universe_of(sort: SortId, manager: &TermManager) -> Universe {
         | nixie_core::SortKind::Real
         | nixie_core::SortKind::String
         | nixie_core::SortKind::Set(_)
+        | nixie_core::SortKind::Bag(_)
         | nixie_core::SortKind::Array { .. }
         | nixie_core::SortKind::Uninterpreted(_) => Universe::Infinite,
         // A non-recursive datatype has a computable finite size; a recursive

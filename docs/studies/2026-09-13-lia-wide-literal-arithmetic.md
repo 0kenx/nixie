@@ -1412,3 +1412,106 @@ fmt for `simplex_opt.rs`, which had drifted on main); Z3 parity 176/177,
 0 disagreements (z3 4.16.0); wide 3×300 + mixed 3×400 fresh seeds
 (20260952–20260957): 0 verdict disagreements, 0 refuted models;
 debug-panic sweep over the parity corpus: 0 panics.
+
+## Continuation 25 (2026-09-17): the provenance question answered — and the strengthened definitional invariant that paid for it immediately (item 60)
+
+60. **The provenance question, answered by construction.**  The worry
+    (from the item-53/54 chase): rows built by substitution carry no
+    defining-reason provenance, so a conflict explained through a
+    substituted row could export an incomplete core.  Worked through to
+    the bottom, the architecture is already safe: **rows are
+    DEFINITIONS** (`slack := form`, true by introduction, constraining
+    nothing alone), while **constraints live only in bounds**, each
+    carrying its full reason set (asserted atoms; cut antecedents via
+    `add_le_with_reasons`; propagation antecedents via `aux_reasons`;
+    branch case-splits via the scoped `BRANCH_REASON` sentinel).
+    Substitution through a basic consumes only the DEFINITIONAL equation
+    — never the bound — so every row the pivot machinery produces is
+    again definitional, and a conflict explained through it cites the
+    columns' BOUNDS with their reasons.  Item 54's single-atom core was
+    NOT a provenance failure: the core was complete over a FABRICATED
+    constraint (the false-integrality cut); the provenance layer was
+    innocent.  A provenance-carrying redesign is therefore unnecessary —
+    what IS necessary are the three properties the argument rests on,
+    each now mechanically enforced:
+    1. *Row contents are equation-preserving across every mutation* —
+       pivot algebra, the wide migration, the rescale, intern
+       substitution.  The strengthened invariant below checks the
+       shape (rows reference only nonbasics) and the values
+       (entry == row eval; exact eval for wide basics).
+    2. *Integrality marks are truthful* — item 54's `RowInternMode`.
+    3. *Every stored bound carries its full justification* — the reason
+       resolution assert, the slice-6 full-reason planting, the corner
+       auditor.
+    * **The strengthened `debug_verify_invariant`** now checks: every
+      row (narrow and wide) references only NONBASIC variables (the
+      definitional shape — a basic in a row's terms would make the
+      one-level substitutions unsound); every basic's value sits inside
+      its bound window (the stored entry for narrow rows, the EXACT
+      evaluation for wide basics — an unrepresentable wide entry is
+      stale-by-design under `wide_pending` and is not a witness); and
+      every narrow entry equals its row's evaluation (checked — the old
+      inline `+=`/`*` aborted debug builds on wide trajectories).  It is
+      wired as a `debug_assert` at `check`'s true convergence point
+      (after the wide classification/repair, not before — an earlier
+      placement misfires on states the classification itself repairs).
+    * **What it found immediately**: `pop` could leave a NONBASIC
+      outside its restored window.  The old contract ("pops only relax
+      bounds, and a nonbasic only ever moves by a snap into the
+      then-current window") misses the crossed-probe shape: a scoped
+      probe may tighten a bound PAST the opposite one (the probe's
+      infeasibility signal — the NLA interval probes build exactly
+      this, `reason u32::MAX-1`), the snap parks the nonbasic at a
+      point only the tightened side justified, and restoring that side
+      widens the window away from the point.  The out-of-window
+      nonbasic is invisible to `find_violating` (basics only) — a
+      latent wrong-verdict site (delta propagation and Farkas
+      explanations assume nonbasics at their windows).  **Fix**: `pop`
+      re-snaps every nonbasic the undo left outside its window and
+      flags the assignment stale for its dependents' re-derivation (no
+      flag when nothing moved — the common relax-only pop keeps the
+      incremental maintenance).  Regression:
+      `pop_resnaps_a_nonbasic_left_outside_its_restored_window`
+      (fails pre-fix).
+    * A ten-seed differential soak (5×400 mixed + 5×300 wide, seeds
+      20260958–20260967) over the landed main before any change: clean —
+      the pop hole had no demonstrated verdict impact on the generated
+      surface; the fix is prophylactic hardening, the invariant is the
+      tripwire that keeps it closed.
+
+Verification for the landing: workspace suite (11 832 tests) green
+except the standing non-arc set (the TLA sets cardinality test — the
+sets front's; the recfun 180 s-cap timeout — documented) with the
+invariant live in every debug test; clippy/fmt/rustdoc clean; Z3 parity
+176/177, 0 disagreements (z3 4.16.0); wide 3×300 + mixed 3×400 fresh
+seeds (20260970–20260975): 0 verdict disagreements, 0 refuted models;
+debug-panic sweep over the parity corpus: 0 panics.
+
+## Continuation 26 (2026-09-17): pinned direction-2 default-ON, scoped to wide states (item 61)
+
+61. **The `NIXIE_S6_PINNED` gate is on by default — scoped.**  The
+    gate's trade map is now clean end to end: every previously-documented
+    cost was a downstream symptom of the two closed defects — the chain-sat
+    twin's wall deflection (item 59's repair step) and the trivial mixed
+    twin's crossed-probe pop hole (item 60's re-snap — the auditor-silent
+    "pinned completeness loss" was never a pinned-derivation defect at
+    all).  `NIXIE_S6_NDIR2` (the general form) stays default-off: its
+    deflection cost persists, now as a 180 s timeout on the fi1
+    regression instead of the pre-repair-step `unknown`.
+    * **The screening that shaped the scoping**: flipping the gate on
+      UNCONDITIONALLY failed the enablement rule's screening condition —
+      an MBQI-heavy `scope_rebase` test (no wide row in sight) went
+      36 s → cap-timeout: the per-final-check derivation cost lands on
+      every instance while only wide-row states can benefit.  The landed
+      default is `pinned_dir2 = !wide_rows.is_empty() && env-not-0` —
+      wide-free instances are bit-identical to the gate-off binary
+      (perf-gate conflict/decision ratios 1.000 on all 10 corpus
+      instances), and the gate's win cases (mixed-magnitude LRA unsat
+      twin, chain-sat twin, f1) are wide-row states by construction.
+    * Screening at the new default: wide 3×300 + mixed 4×400 fresh seeds
+      (20260977–20260983): 0 verdict disagreements, 0 refuted models;
+      parity 176/177, 0 disagreements (z3 4.16.0); the wide-regression
+      file 31/31 at the new default; the workspace suite green except
+      the standing non-arc set; perf gate PASS (counters ≤ 1.05);
+      panic sweep clean.  `NIXIE_S6_PINNED=0` remains the escape hatch,
+      and the revert is the one-line flip the enablement rule prescribes.

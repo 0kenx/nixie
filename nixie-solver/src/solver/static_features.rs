@@ -585,7 +585,7 @@ impl StaticFeatures {
             }
             SortKind::BitVec(_) => self.has_bv = true,
             SortKind::Array { .. } => self.has_array = true,
-            SortKind::Set(_) => self.has_set = true,
+            SortKind::Set(_) | SortKind::Bag(_) => self.has_set = true,
             SortKind::String => self.has_string = true,
             SortKind::FloatingPoint { .. } => self.has_fp = true,
             SortKind::RoundingMode => self.has_fp = true,
@@ -688,7 +688,7 @@ fn sort_class(manager: &TermManager, sort: SortId) -> SortClass {
         SortKind::Int | SortKind::Real => SortClass::Arith,
         SortKind::BitVec(_) => SortClass::Bv,
         SortKind::Array { .. } => SortClass::Array,
-        SortKind::Set(_) => SortClass::Set,
+        SortKind::Set(_) | SortKind::Bag(_) => SortClass::Set,
         SortKind::String => SortClass::String,
         SortKind::FloatingPoint { .. } => SortClass::Fp,
         // The rounding modes belong to the FP family for feature routing.

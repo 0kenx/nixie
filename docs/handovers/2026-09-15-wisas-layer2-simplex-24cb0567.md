@@ -77,3 +77,37 @@ see the trap above): `precompile/cd544511/benchmark/wisas_verdict_sweep.txt`.
 **445 s (release)** — it and `recfun_e2e::symbolic_argument_solves_for_the_variable`
 are slow-but-correct tests exceeding nextest's 180 s cap (verified at load ~9,
 not a hang). They need a slow-profile annotation or cap bump, not a fix.
+
+## Second casualty found (2026-09-16, same commit): the recfun refinement loop diverges
+
+`24cb0567` has a **second, still-live victim** that never recovered
+(unlike `wisas_xs_8_13`, which the CSR-mirror fix incidentally restored):
+
+```scheme
+(define-fun-rec sum ((n Int)) Int (ite (<= n 0) 0 (+ n (sum (- n 1)))))
+(declare-const k Int)
+(assert (and (>= k 0) (= (sum k) 6)))
+(check-sat)(get-value (k))
+```
+
+Expected: `sat` with `k = 3` (the recfun_e2e test
+`symbolic_argument_solves_for_the_variable` — its doc: "the certifier
+computes `sum` at the rejected model's `k`, and those concrete instances
+rule that `k` out").  Measured via cached binaries, 30 s cap:
+
+| commit | verdict |
+|---|---|
+| `82c3c926` (09-14 09:49) | `sat` in **0.94 s** |
+| `d49c8936`, `0d3d2378`, `5bf4d1a1` | `sat` |
+| **`24cb0567` → current `main`** (including `80a0cee8` pinned-D2 default-ON and the wide-driven repair) | **timeout** |
+
+The in-suite test hangs **30+ minutes standalone** (killed at the 180 s
+nextest cap) — this corrects the earlier note in this file that grouped
+it with `odd_width_identity_pairs_hold` as "slow-but-correct": only
+odd_width is; recfun is this regression.  Same handoff question as
+wisas: what does the wide-row propagation feed the refinement/certifier
+path — here likely the model-rejection loop (concrete `sum` evaluations
+that should rule out each rejected `k`) never converges.
+
+Reproducer: `/tmp/recfun.smt2` body above; any cached binary pair
+(`82c3c926` vs current) demonstrates it in under 30 s.

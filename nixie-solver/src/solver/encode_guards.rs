@@ -474,6 +474,8 @@ impl Solver {
             | TermKind::SetChoose(a)
             | TermKind::SetRelTranspose(a)
             | TermKind::SetRelIden(a)
+            | TermKind::BagCard(a)
+            | TermKind::BagSetof(a)
             | TermKind::BvNot(a) => push(*a),
             TermKind::SetUnion(a, b)
             | TermKind::SetInter(a, b)
@@ -485,8 +487,20 @@ impl Solver {
                 push(*a);
                 push(*b);
             }
+            TermKind::BagMake(a, b)
+            | TermKind::BagUnionMax(a, b)
+            | TermKind::BagUnionDisjoint(a, b)
+            | TermKind::BagInterMin(a, b)
+            | TermKind::BagDifferenceSubtract(a, b)
+            | TermKind::BagDifferenceRemove(a, b)
+            | TermKind::BagMember(a, b)
+            | TermKind::BagSubbag(a, b)
+            | TermKind::BagCount(a, b) => {
+                push(*a);
+                push(*b);
+            }
             // No children: the payload is a sort.
-            TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
+            TermKind::SetEmpty(_) | TermKind::SetUniv(_) | TermKind::BagEmpty(_) => {}
             TermKind::And(args)
             | TermKind::Or(args)
             | TermKind::Add(args)

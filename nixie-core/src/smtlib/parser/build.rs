@@ -45,7 +45,10 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "set.is_singleton" | "set.singleton"
             // Relations (CVC5's `rel.*` surface): transpose takes a
             // relation, `rel.iden` takes the plain set it diagonalizes.
-            | "rel.transpose" | "rel.iden" => Plan::Fixed(1),
+            | "rel.transpose" | "rel.iden"
+            // Bags (CVC5's `bag.*` surface, slice 1): `bag.card` and
+            // `bag.setof` take one bag.
+            | "bag.card" | "bag.setof" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -62,7 +65,18 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "set.minus" | "set.member" | "set.subset"
             // Relations: `rel.join` composes two relations whose boundary
             // sorts agree; `rel.product` is the cartesian product.
-            | "rel.join" | "rel.product" => Plan::Fixed(2),
+            | "rel.join" | "rel.product"
+            // Bags: the binary operators are all fixed-arity 2; `(bag e n)`
+            // is the make constructor.
+            | "bag.union_max"
+            | "bag.union_disjoint"
+            | "bag.inter_min"
+            | "bag.difference_subtract"
+            | "bag.difference_remove"
+            | "bag.subbag"
+            | "bag.count"
+            | "bag.member"
+            | "bag" => Plan::Fixed(2),
 
             // ======== three operands ========
             "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
@@ -193,6 +207,18 @@ impl Parser<'_> {
         Ok(())
     }
 
+    /// SMT-LIB sort check: a single operand must be `Int`.
+    fn check_int_operand(&self, op: &str, x: TermId) -> Result<()> {
+        let int = self.manager.sorts.int_sort;
+        if self.manager.get(x).is_some_and(|n| n.sort != int) {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("operand of {op} must have sort Int"),
+            });
+        }
+        Ok(())
+    }
+
     /// The element sort of a term if it is set-sorted, else `None`.
     /// The field sorts of a set-of-tuples operand's element sort, when the
     /// element sort is a tuple datatype (or degenerally any sort, which
@@ -208,6 +234,54 @@ impl Parser<'_> {
             Some(SortKind::Set(elem)) => Some(*elem),
             _ => None,
         }
+    }
+
+    /// The element sort of a `(Bag X)`-sorted term.
+    fn bag_element_sort(&self, t: TermId) -> Option<crate::sort::SortId> {
+        let node = self.manager.get(t)?;
+        match self.manager.sorts.get(node.sort).map(|s| &s.kind) {
+            Some(SortKind::Bag(elem)) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// SMT-LIB sort check: a unary bag operator's operand must be a bag.
+    fn check_bag_operand(&self, op: &str, x: TermId) -> Result<()> {
+        if self.bag_element_sort(x).is_none() {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("operand of {op} must have a (Bag X) sort"),
+            });
+        }
+        Ok(())
+    }
+
+    /// SMT-LIB sort check: a binary bag operator's operands must be bags of
+    /// the *same* element sort.
+    fn check_bag_binary(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
+        let Some(ex) = self.bag_element_sort(x) else {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("first operand of {op} must have a (Bag X) sort"),
+            });
+        };
+        let Some(ey) = self.bag_element_sort(y) else {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("second operand of {op} must have a (Bag X) sort"),
+            });
+        };
+        if ex != ey {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "{op}: bag element sorts disagree ({} vs {})",
+                    self.sort_display(Some(ex)),
+                    self.sort_display(Some(ey))
+                ),
+            });
+        }
+        Ok(())
     }
 
     /// SMT-LIB sort check: a unary set operator's operand must be a set.
@@ -614,6 +688,30 @@ impl Parser<'_> {
                 let one = self.manager.mk_int(1);
                 self.manager.mk_eq(card, one)
             }
+            // ======== Finite bags ========
+            // Type-checked like the set arms: a non-bag operand is a sort
+            // error the surface mandates reporting.
+            "bag.card" => {
+                self.check_bag_operand(op, x)?;
+                self.manager.mk_bag_card(x)
+            }
+            "bag.setof" => {
+                self.check_bag_operand(op, x)?;
+                self.manager.mk_bag_setof(x)
+            }
+            // `bag.choose`/`bag.map`/`bag.filter`/`bag.all`/`bag.some`/
+            // `bag.fold`/`bag.partition` are honest parse-level
+            // rejections in this slice: the theory arc lands them with
+            // their own reduction rules.
+            "bag.choose" | "bag.map" | "bag.filter" | "bag.all" | "bag.some" | "bag.fold"
+            | "bag.partition" => {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "{op} is not supported yet (the bag theory slice landed without it)"
+                    ),
+                });
+            }
             // `(str.is_digit s)` holds iff `s` is a single-character string
             // whose character is a decimal digit. That is exactly the language
             // of `(re.range "0" "9")`, so it lowers to a membership constraint
@@ -720,6 +818,56 @@ impl Parser<'_> {
             "set.subset" => {
                 self.check_set_binary(op, x, y)?;
                 self.manager.mk_set_subset(x, y)
+            }
+            // ======== Finite bags ========
+            "bag.union_max" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_union_max(x, y)
+            }
+            "bag.union_disjoint" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_union_disjoint(x, y)
+            }
+            "bag.inter_min" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_inter_min(x, y)
+            }
+            "bag.difference_subtract" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_difference_subtract(x, y)
+            }
+            "bag.difference_remove" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_difference_remove(x, y)
+            }
+            "bag.subbag" => {
+                self.check_bag_binary(op, x, y)?;
+                self.manager.mk_bag_subbag(x, y)
+            }
+            // `(bag e n)`: the element may be of any sort, the
+            // multiplicity an `Int` — and a negative literal is rejected
+            // outright (the SMT-LIB bags draft requires multiplicities
+            // nonnegative; a negative one has no semantics).
+            "bag" => {
+                self.check_int_operand(op, y)?;
+                if let Some(TermKind::IntConst(v)) = self.manager.get(y).map(|d| d.kind.clone())
+                    && v.sign() == num_bigint::Sign::Minus
+                {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("negative multiplicity in {op}"),
+                    });
+                }
+                self.manager.mk_bag_make(x, y)
+            }
+            // `bag.count e b`: `e` of the bag's element sort, `b` a bag.
+            "bag.count" => {
+                self.check_bag_operand(op, y)?;
+                self.manager.mk_bag_count(x, y)
+            }
+            "bag.member" => {
+                self.check_bag_operand(op, y)?;
+                self.manager.mk_bag_member(x, y)
             }
             "bvand" => self.manager.mk_bv_and(x, y),
             "bvor" => self.manager.mk_bv_or(x, y),

@@ -1202,10 +1202,18 @@ impl Solver {
                 // a `Sat` resting on it degrades to `Unknown`.
                 self.set_terms_unconstrained = true;
             }
-            if !reduction.axioms.is_empty() {
-                let mut parts = Vec::with_capacity(reduction.axioms.len() + 1);
-                parts.push(term);
-                parts.extend(reduction.axioms);
+            let mut parts = Vec::with_capacity(reduction.axioms.len() + 1);
+            parts.push(term);
+            parts.extend(reduction.axioms);
+            // Bags reduce in the same eager pass: every constraint becomes
+            // arithmetic over `bag.count` terms, conjoined onto this
+            // assertion under the same honesty contract.
+            let bag_reduction = super::bag_theory::reduce(&roots, manager);
+            if bag_reduction.incomplete {
+                self.set_terms_unconstrained = true;
+            }
+            parts.extend(bag_reduction.axioms);
+            if parts.len() > 1 {
                 term = manager.mk_and(parts);
             }
         }
@@ -3348,6 +3356,13 @@ impl Solver {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
+            // `bag.member` and `bag.subbag` are opaque Booleans to the SAT
+            // layer, with their defining axioms conjoined by
+            // `bag_theory::reduce` — the same contract as the set atoms.
+            TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _) => {
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
             // A relation compound in atom position: the reduction defines
             // its memberships, but if it reached here *before* that (or a
             // construct the reduction declines), the honesty gate keeps the
@@ -3357,6 +3372,24 @@ impl Solver {
             | TermKind::SetRelProduct(_, _)
             | TermKind::SetRelTranspose(_)
             | TermKind::SetRelIden(_) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
+            // A bag compound in atom position: `bag_theory::reduce` conjoins
+            // its defining axioms onto the assertion; one that reached here
+            // anyway (or a construct the reduction declines) keeps the
+            // honesty gate up — the same rule as the relation compounds.
+            TermKind::BagEmpty(_)
+            | TermKind::BagMake(_, _)
+            | TermKind::BagUnionMax(_, _)
+            | TermKind::BagUnionDisjoint(_, _)
+            | TermKind::BagInterMin(_, _)
+            | TermKind::BagDifferenceSubtract(_, _)
+            | TermKind::BagDifferenceRemove(_, _)
+            | TermKind::BagCount(_, _)
+            | TermKind::BagCard(_)
+            | TermKind::BagSetof(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

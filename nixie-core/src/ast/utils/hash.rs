@@ -136,7 +136,9 @@ fn hash_visit(
         TermKind::StringLit(s) => s.hash(hasher),
         // The sort *is* the payload: two empty sets (or two universe sets)
         // differ only by it.
-        TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => sort.0.hash(hasher),
+        TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) | TermKind::BagEmpty(sort) => {
+            sort.0.hash(hasher)
+        }
         TermKind::Var(spur) => spur.hash(hasher),
 
         TermKind::Not(a)
@@ -153,6 +155,8 @@ fn hash_visit(
         | TermKind::SetChoose(a)
         | TermKind::SetRelTranspose(a)
         | TermKind::SetRelIden(a)
+        | TermKind::BagCard(a)
+        | TermKind::BagSetof(a)
         | TermKind::StrFromCode(a) => stack.push(HashTask::Visit(*a)),
 
         TermKind::BvExtract { high, low, arg } => {
@@ -186,6 +190,15 @@ fn hash_visit(
         | TermKind::Gt(a, b)
         | TermKind::Ge(a, b)
         | TermKind::SetUnion(a, b)
+        | TermKind::BagMake(a, b)
+        | TermKind::BagUnionMax(a, b)
+        | TermKind::BagUnionDisjoint(a, b)
+        | TermKind::BagInterMin(a, b)
+        | TermKind::BagDifferenceSubtract(a, b)
+        | TermKind::BagDifferenceRemove(a, b)
+        | TermKind::BagMember(a, b)
+        | TermKind::BagSubbag(a, b)
+        | TermKind::BagCount(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
         | TermKind::SetMember(a, b)

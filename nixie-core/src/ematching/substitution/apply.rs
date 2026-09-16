@@ -670,6 +670,53 @@ fn rebuild(
 
         // ======== Arrays ========
         TermKind::SetEmpty(sort) => manager.mk_set_empty_at(sort),
+        // Bags rebuild through the builder, exactly as the set arms do.
+        TermKind::BagEmpty(sort) => manager.mk_bag_empty_at(sort),
+        TermKind::BagMake(e, n) => {
+            let e = sub(e);
+            let n = sub(n);
+            manager.mk_bag_make(e, n)
+        }
+        TermKind::BagUnionMax(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_union_max(a, b)
+        }
+        TermKind::BagUnionDisjoint(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_union_disjoint(a, b)
+        }
+        TermKind::BagInterMin(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_inter_min(a, b)
+        }
+        TermKind::BagDifferenceSubtract(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_difference_subtract(a, b)
+        }
+        TermKind::BagDifferenceRemove(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_difference_remove(a, b)
+        }
+        TermKind::BagMember(x, s) => {
+            let (x, s) = (sub(x), sub(s));
+            manager.mk_bag_member(x, s)
+        }
+        TermKind::BagSubbag(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_bag_subbag(a, b)
+        }
+        TermKind::BagCount(x, s) => {
+            let (x, s) = (sub(x), sub(s));
+            manager.mk_bag_count(x, s)
+        }
+        TermKind::BagCard(s) => {
+            let s = sub(s);
+            manager.mk_bag_card(s)
+        }
+        TermKind::BagSetof(s) => {
+            let s = sub(s);
+            manager.mk_bag_setof(s)
+        }
         TermKind::SetUniv(sort) => manager.mk_set_univ_at(sort),
         TermKind::SetComplement(s) => {
             let s = sub(s);

@@ -563,6 +563,60 @@ pub enum TermKind {
     /// `RELATION_IDEN`): `(a, b) ∈ iden(s)  ⇔  a = b ∧ a ∈ s`. Note the
     /// operand is a plain set, not a relation.
     SetRelIden(TermId),
+    /// The empty bag at a given element sort: `(as bag.empty (Bag T))`
+    /// (CVC5 `BAG_EMPTY`).
+    ///
+    /// Carries its **bag** sort, because the empty bag is not
+    /// sort-inferable from its (absent) elements — exactly like
+    /// [`TermKind::SetEmpty`].
+    BagEmpty(SortId),
+    /// `(bag e n)` — the bag containing `n` copies of `e` (CVC5
+    /// `BAG_MAKE`): `bag.count e (bag e n) = n`, zero for anything else.
+    ///
+    /// The bag theory's "singleton": every value is a finite union of
+    /// these, exactly as every set value is a union of
+    /// [`TermKind::SetSingleton`]s.
+    BagMake(TermId, TermId),
+    /// `(bag.union_max a b)` — bag union by maximum multiplicity (CVC5
+    /// `BAG_UNION_MAX`): `count(x, a ∪ b) = max(count(x,a), count(x,b))`.
+    BagUnionMax(TermId, TermId),
+    /// `(bag.union_disjoint a b)` — bag union by sum (CVC5
+    /// `BAG_UNION_DISJOINT`): `count(x, a ⊎ b) = count(x,a) + count(x,b)`.
+    BagUnionDisjoint(TermId, TermId),
+    /// `(bag.inter_min a b)` — bag intersection by minimum multiplicity
+    /// (CVC5 `BAG_INTER_MIN`): `count(x, a ∩ b) = min(count(x,a),
+    /// count(x,b))`.
+    BagInterMin(TermId, TermId),
+    /// `(bag.difference_subtract a b)` — bag difference by subtraction
+    /// (CVC5 `BAG_DIFFERENCE_SUBTRACT`):
+    /// `count(x, a \ b) = max(count(x,a) − count(x,b), 0)`.
+    BagDifferenceSubtract(TermId, TermId),
+    /// `(bag.difference_remove a b)` — bag difference by removal (CVC5
+    /// `BAG_DIFFERENCE_REMOVE`): removes `x` entirely when `b` contains
+    /// it at all — `count(x, a \\ b) = ite(count(x,b) > 0, 0,
+    /// count(x,a))`.
+    BagDifferenceRemove(TermId, TermId),
+    /// `(bag.member x b)` — a `Bool` (CVC5 `BAG_MEMBER`):
+    /// `x ∈ b ⇔ count(x, b) ≥ 1`.
+    BagMember(TermId, TermId),
+    /// `(bag.subbag a b)` — a `Bool` (CVC5 `BAG_SUBBAG`): bag inclusion,
+    /// pointwise `count(x,a) ≤ count(x,b)`.
+    BagSubbag(TermId, TermId),
+    /// `(bag.count x b)` — an `Int` (CVC5 `BAG_COUNT`): the multiplicity
+    /// of `x` in `b`.
+    ///
+    /// Kept as its own kind: it is the bag theory's analogue of
+    /// [`TermKind::SetMember`] *and* of [`TermKind::SetCard`] at once —
+    /// the reduction grounds every bag constraint into arithmetic over
+    /// count terms, which is what makes the fragment decidable without
+    /// enumerating multiplicities.
+    BagCount(TermId, TermId),
+    /// `(bag.card b)` — an `Int` (CVC5 `BAG_CARD`): the sum of the
+    /// multiplicities.
+    BagCard(TermId),
+    /// `(bag.setof b)` — duplicate removal (CVC5 `BAG_SETOF`, the delta
+    /// operator): `count(x, setof b) = ite(count(x,b) > 0, 1, 0)`.
+    BagSetof(TermId),
 }
 
 /// A case in a match expression.
