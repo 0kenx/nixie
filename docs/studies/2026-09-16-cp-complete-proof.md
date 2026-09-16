@@ -114,8 +114,61 @@ every admitted leaf in the exported envelope. The regression passes with a
 checked complete proof. A separate test reconstructs a refutation with no main
 search leaves and rejects a forged conflict for a satisfiable CP problem.
 
-The pre-input-validation revision passed build, clippy, formatting, documentation,
-and 114 doctests (29 ignored). Its full-suite run was deliberately interrupted
-during compilation after the input-boundary review; it supplies no full-suite
-result. Final-source repository verification is in progress and will be recorded
-before landing.
+### Repository gates and provenance
+
+Revision `a517b28be2bd1ee46e9bf182067a7c8782ad63ba` passed the all-feature
+build, strict all-target Clippy, formatting, warning-denying documentation,
+114 doctests (29 ignored), and the full workspace suite: **11,918 passed,
+14 configured skips**. The separately enabled ignored
+`pete_cxs_bp_is_unsat_on_every_trajectory` canary passed. No recursive-function
+timeout exception was required.
+
+Z3 **4.16.0** parity returned 176 decisive agreements, zero wrong verdicts,
+and one inconclusive comparison (`array_unique.smt2`: Nixie UNSAT, Z3 Unknown).
+Unknown was not counted as agreement. The performance gate against the
+previous pinned `ac8279e5` binary passed all twelve available corpus cases:
+ten nontrivial counter comparisons, two trivial cases, no verdict difference,
+conflict and decision geomeans **1.000**. Observational wall ratio was 0.97;
+this is not an improvement claim or a CP throughput measurement.
+
+Raw logs, command/status records, the exact nextest configuration, parity JSON,
+and the release binary are retained under
+`precompile/a517b28be2bd1ee46e9bf182067a7c8782ad63ba/`.
+The branch includes concurrent model-blocking classification, finite-field,
+and SAT restart fixes. A subsequent clean merge adds main's simplex dead-leaf
+fix. Combined source revision `12b660d57fcb91c71ffea1d9aa8dd961c2b92e2a`
+again passed build, strict Clippy, formatting, warning-denying documentation,
+114 doctests (29 ignored), and the full workspace suite: **11,919 passed,
+14 configured skips**, including the newly merged arithmetic regression.
+The separately enabled soundness canary also passed. Final Z3 4.16.0 parity
+again gave **176 decisive agreements, zero wrong verdicts, one inconclusive**
+comparison. The final performance gate against the current pinned `c868c54e`
+binary passed: twelve matching verdicts, ten nontrivial comparisons, two
+trivial cases, conflict and decision geomeans **1.000** (observational wall
+ratio 0.93). No verification exception was needed.
+Its raw records and release binary are retained under
+`precompile/12b660d57fcb91c71ffea1d9aa8dd961c2b92e2a/`.
+The final documentation commit changes only this study.
+
+### Runner details and earlier incomplete runs
+
+The isolated worktree links the existing gitignored benchmark corpora read-only
+by convention. An earlier full run stopped because the `si2_b03m_is_not_unsat`
+regression could not find its 30 MB corpus file; it had not reached solving.
+After linking the available corpora, that exact regression passed. Missing
+corpora were not skipped. Other earlier runs were interrupted to harden input
+validation, merge concurrent changes, or move this task's build artifacts off
+the nearly full shared temporary volume. None is reported as a full-suite pass.
+
+Verification uses offline Cargo, disabled incremental compilation, debug info
+level zero, and bounded build/test concurrency. The temporary nextest config
+only raises outer 60-second termination counts to at least ten to accommodate
+the loaded host; test assertions, solver budgets, seeds, and ignored tests are
+unchanged. The committed nextest configuration is unchanged. The full run above
+used two test workers; the combined-revision run uses four.
+
+`cargo doc --no-deps --all-features` enforces `-D warnings` through the existing
+workspace rustdoc configuration; this Cargo rejects the guide's CLI passthrough
+spelling. Existing Cargo notices about the `nixie-tla` output-name collision and
+unsupported wasm cdylib doctests are present, with successful command exits;
+these are not rustdoc warnings introduced by this patch.
