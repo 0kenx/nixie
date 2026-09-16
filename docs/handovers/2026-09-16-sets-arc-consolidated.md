@@ -135,12 +135,22 @@ each has a regression:
 
 ## Roadmap (value order)
 
-1. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
-   carries over with region *multiplicities*. Surface names: cvc5
-   `smt2_state.cpp` (`bag.union_max`, `bag.difference_subtract`, …).
-   AST needs `SortKind::Bag(SortId)` plus ~10 TermKinds — the compiler
-   finds every exhaustive match, as it did for relations (~15 sites in
-   core, ~10 in solver).
+1. **Bags** — **slice one landed** (`bedae910`): the SMT-LIB surface
+   (`(Bag T)`, `(bag e n)`, `bag.union_max`/`union_disjoint`/`inter_min`/
+   `difference_subtract`/`difference_remove`/`member`/`subbag`/`count`/
+   `card`/`setof`, `(as bag.empty …)`), the twelve TermKinds, and the
+   count reduction (every constraint → arithmetic over `bag.count`;
+   extensional equality with `@bag_ext_*` witnesses; cardinality with a
+   slack for *opaque* bags only — closed compounds get the exact sum, a
+   differential-testing false-`sat` closed in flight). Verified against
+   CVC5 1.3.4 on a 45-case battery (43 exact, 2 cvc5-timeouts refuted
+   by one line of arithmetic). **Next slices**: bag-value model
+   synthesis (a variable prints the `(as bag.empty …)` default today;
+   assemble `bag.union_disjoint` of `(bag e n)` from the counts' values
+   — the sets arc's model arc, step for step), `bag.count` query
+   readback (the count terms are arith leaves the extractor doesn't
+   read), then `bag.choose`/`bag.map`/`bag.filter`/`bag.fold`/… (honest
+   parse-level rejections today).
 2. **Synthesis reach**: intersection shapes beyond binary unions of
    opaque classes; uninterpreted element sorts (no mintable witness);
    complements over large finite sorts (> 1024, `MAX_UNIVERSE_ENUM`);
