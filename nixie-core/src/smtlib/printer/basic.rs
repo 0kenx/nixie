@@ -297,7 +297,14 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, ")");
             }
             TermKind::Div(lhs, rhs) => {
-                let _ = write!(w, "(div ");
+                // One term kind, two operators: `Div` at `Real` sort is
+                // SMT-LIB `/` (exact rational division — the parser's
+                // `mk_rdiv`), at `Int` sort it is Euclidean `div`.  Printing
+                // the operator by SORT keeps the round trip honest: a model
+                // entry `(/ -27670116110564327424 13)` re-parses to the same
+                // rational, while `(div ...)` re-parses to its floor.
+                let is_real = term.sort == self.manager.sorts.real_sort;
+                let _ = write!(w, "({} ", if is_real { "/" } else { "div" });
                 self.write_term(w, *lhs);
                 let _ = write!(w, " ");
                 self.write_term(w, *rhs);

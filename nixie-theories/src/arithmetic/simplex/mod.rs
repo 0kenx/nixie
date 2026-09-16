@@ -1399,6 +1399,18 @@ impl Simplex {
         }
         Some(self.delta_value(var))
     }
+
+    /// The EXACT value (`BigRational`) of a wide basic's defining row — the
+    /// standard (real) part of `eval_big_raw`, which the wide pass already
+    /// recomputes on every re-derivation.  `None` only on a stale reference
+    /// (no row, or an unassigned column).  This is the wide-value
+    /// PUBLICATION channel: a value that does not fit `Rational64` is still
+    /// exactly known here, and a model that needs it is honest to print.
+    pub fn wide_basic_value_exact(&self, var: VarId) -> Option<num_rational::BigRational> {
+        let wexpr = self.wide_rows.get(&var)?;
+        let (real, _delta) = self.eval_big_raw(wexpr)?;
+        Some(real)
+    }
     /// Branch bounds `(floor, ceil)` for a WIDE-basic variable, derived
     /// from its exact UN-NARROWED value: intermediates beyond `i64` still
     /// have small integer floors/ceils (`−9 − 41/2⁶³` branches at

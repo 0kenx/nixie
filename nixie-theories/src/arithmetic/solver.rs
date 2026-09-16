@@ -1515,6 +1515,31 @@ impl ArithSolver {
         }
     }
 
+    /// The EXACT (`BigRational`) value of a term's variable — the
+    /// publication channel for wide values.
+    ///
+    /// A wide basic whose exact value does not fit `Rational64` (and
+    /// therefore `value`'s honest `None`) still has it exactly, from the
+    /// wide store's own re-derivation.  Int-sorted terms publish only
+    /// INTEGRAL exact values (a fractional one means the branch-and-bound
+    /// has not resolved them — publishing would fabricate integrality).
+    pub fn value_exact(&self, term: TermId) -> Option<num_rational::BigRational> {
+        let &var = self.term_to_var.get(&term)?;
+        if self.simplex.is_wide_basic(var) {
+            let v = self.simplex.wide_basic_value_exact(var)?;
+            if self.int_vars.contains(&var) && v.denom() != &num_bigint::BigInt::from(1) {
+                return None;
+            }
+            return Some(v);
+        }
+        self.value(term).map(|v| {
+            num_rational::BigRational::new(
+                num_bigint::BigInt::from(*v.numer()),
+                num_bigint::BigInt::from(*v.denom()),
+            )
+        })
+    }
+
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
     /// current feasible region, by minimizing then maximizing the term with the
     /// primal simplex (`optimize_linexpr`).  Returns `None` if `term` is not a
@@ -3084,8 +3109,14 @@ impl ArithSolver {
         for (var, wexpr) in self.simplex.wide_rows_iter() {
             any_wide = true;
             let _ = wexpr;
-            // Derivable (narrowing) values do not block.
-            if self.simplex.delta_value_exact(var).is_some() {
+            // Derivable values do not block: a NARROWING value publishes
+            // through `value`, and an unrepresentable one still publishes
+            // EXACTLY through the wide channel (`value_exact` synthesizes
+            // the rational term on the model side).  Only a value not even
+            // exactly derivable (stale reference) is a genuine block.
+            if self.simplex.delta_value_exact(var).is_some()
+                || self.simplex.wide_basic_value_exact(var).is_some()
+            {
                 continue;
             }
             if self.term_to_var.values().any(|&v| v == var) {

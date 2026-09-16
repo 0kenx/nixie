@@ -154,3 +154,48 @@ assignments, 37,810 callback states, 171,301 emitted consequences/conflicts,
 and 6,100 public solver verdict/model checks. The independent oracle checks
 explanations against all satisfying base assignments and exercises nested
 rollback. These are bounded tests; they do not supply formal proof certificates.
+
+## Checkable table lemmas
+
+Built-in `table` reductions and conflicts now carry a
+`Consequence::table_certificate`. Retain `CpModel::table_statements()` before
+consuming the model to check emitted steps independently:
+
+```rust,ignore
+let originals = cp.table_statements();
+let (assertions, watches, propagator) = cp.into_propagator();
+// Install watches and callbacks in a UserPropagatorManager as usual.
+// A solver integration must install assertions too (register_cp does this).
+// For each consequence obtained from manager.get_consequences():
+if let Some(certificate) = &consequence.table_certificate {
+    let original = originals.iter()
+        .find(|statement| certificate.is_for(statement))
+        .ok_or("unregistered table")?;
+    certificate.check(original, consequence.term, &consequence.justification)?;
+}
+```
+
+A certificate covers every original allowed row. Each row identifies an
+out-of-domain value, incompatible aliased columns, a blocking premise, or a
+value incompatible with the negated conclusion. The checker uses only the
+immutable original table, its finite-domain indicator meanings, and the exact
+premises/conclusion. It does not call propagation, inspect current assignments,
+or rerun search. Integer comparisons remain exact. Unused premises weaken the
+lemma; the solver separately requires **all** stated premises to be currently
+true.
+
+`Solver::register_cp` retains the original statement identities. The adapter
+rejects substituted statements or invalid witnesses with `Unknown`, including
+on the direct final-conflict path and independent model replay. Certificates
+and their immutable statements survive callback queue snapshots; popping a
+scope restores the pending queue rather than replaying a stale branch.
+
+This is a certificate for a **conditional table lemma relative to the original
+CP domains and constraint**. Domain-only reductions/conflicts and the other
+globals do not yet have certificates. Arbitrary callbacks without certificates
+retain their documented trusted-client contract. There is no SAT-proof-chain
+export for these witnesses yet: proof-producing/certified CP checks still
+return `Unknown`. This does not enable certified UNSAT.
+
+See the [table-certificate study](studies/2026-09-16-cp-table-certificates.md)
+for the soundness argument, adversarial checks, and verification record.

@@ -11,6 +11,7 @@ pub(super) struct UserState {
     manager: UserPropagatorManager,
     literals: FxHashMap<TermId, Lit>,
     watches: Vec<(TermId, Lit)>,
+    tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     pub(super) closed: bool,
 }
 impl core::fmt::Debug for UserState {
@@ -24,6 +25,20 @@ impl core::fmt::Debug for UserState {
 impl UserState {
     pub(super) fn active(&self) -> bool {
         self.manager.num_propagators() != 0
+    }
+
+    fn certificate_valid(&self, consequence: &Consequence) -> bool {
+        consequence
+            .table_certificate
+            .as_ref()
+            .is_none_or(|certificate| {
+                self.tables.iter().any(|original| {
+                    certificate.is_for(original)
+                        && certificate
+                            .check(original, consequence.term, &consequence.justification)
+                            .is_ok()
+                })
+            })
     }
 }
 
@@ -79,8 +94,10 @@ impl Solver {
         model: nixie_theories::cp::CpModel,
         tm: &mut TermManager,
     ) -> Result<(), nixie_theories::cp::CpError> {
+        let tables = model.table_statements();
         let (assertions, watches, propagator) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)?;
+        self.user_state.tables.extend(tables);
         for assertion in assertions {
             self.assert(assertion, tm);
         }
@@ -114,17 +131,18 @@ impl Solver {
         self.user_state.manager.pop(1);
         result == PropagatorResult::Sat
             && consequences.iter().all(|c| {
-                core::iter::once(&c.term)
-                    .chain(&c.justification)
-                    .all(|&term| {
-                        (term == tm.mk_bool(true)
-                            || term == tm.mk_bool(false)
-                            || self.user_state.literals.contains_key(&term))
-                            && matches!(
-                                self.eval_in_model_outcome(term, model, tm, 0),
-                                model_eval::EvalOutcome::Value(EvalVal::Bool(true))
-                            )
-                    })
+                self.user_state.certificate_valid(c)
+                    && core::iter::once(&c.term)
+                        .chain(&c.justification)
+                        .all(|&term| {
+                            (term == tm.mk_bool(true)
+                                || term == tm.mk_bool(false)
+                                || self.user_state.literals.contains_key(&term))
+                                && matches!(
+                                    self.eval_in_model_outcome(term, model, tm, 0),
+                                    model_eval::EvalOutcome::Value(EvalVal::Bool(true))
+                                )
+                        })
             })
     }
 }
@@ -164,7 +182,15 @@ impl<'a, T: TheoryCallback> UserCallback<'a, T> {
 
     fn consequences(&mut self) -> TheoryCheckResult {
         let mut props = Vec::new();
-        for consequence in self.state.manager.get_consequences() {
+        let consequences = self.state.manager.get_consequences();
+        if consequences
+            .iter()
+            .any(|c| !self.state.certificate_valid(c))
+        {
+            self.invalid = true;
+            return TheoryCheckResult::Sat;
+        }
+        for consequence in consequences {
             let mut reasons: SmallVec<[Lit; 8]> = SmallVec::new();
             for term in consequence.justification {
                 if term == self.true_term {
@@ -256,6 +282,12 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
             return TheoryCheckResult::Sat;
         }
         let result = self.state.manager.final_check();
+        // Validate queued table witnesses even when final_check returns a
+        // conflict directly. Otherwise this early return bypasses the checker.
+        let propagated = self.consequences();
+        if self.invalid {
+            return TheoryCheckResult::Sat;
+        }
         if let PropagatorResult::Unsat(reasons) = &result {
             // Use exactly the same vocabulary/truth validation as reductions.
             let conflict = Consequence::new(self.false_term, reasons.clone());
@@ -276,7 +308,6 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
             }
             return TheoryCheckResult::Conflict(clause);
         }
-        let propagated = self.consequences();
         if matches!(propagated, TheoryCheckResult::Sat) && result == PropagatorResult::Unknown {
             self.invalid = true;
         }
@@ -322,6 +353,35 @@ mod tests {
                     &[],
                     &mut tm
                 )
+                .is_ok()
+        );
+        solver.model = Some(Model::new());
+        assert!(!solver.validate_user_model(&tm));
+    }
+
+    struct UnregisteredCertificate(Consequence);
+    impl UserPropagator for UnregisteredCertificate {
+        fn final_check(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
+            ctx.propagate(self.0.clone());
+            PropagatorResult::Sat
+        }
+    }
+
+    #[test]
+    fn model_gate_checks_certificates_independently_of_search() {
+        use nixie_theories::cp::{CpModel, table_proof::TableCertificate};
+        let mut tm = TermManager::new();
+        let mut fake = CpModel::new(&tm);
+        assert!(fake.table(vec![], vec![]).is_ok());
+        let Some(statement) = fake.table_statements().pop() else {
+            panic!("missing original table");
+        };
+        let mut step = Consequence::new(tm.mk_bool(true), vec![]);
+        step.table_certificate = Some(TableCertificate::new(statement, vec![]));
+        let mut solver = Solver::new();
+        assert!(
+            solver
+                .register_user_propagator(Box::new(UnregisteredCertificate(step)), &[], &mut tm)
                 .is_ok()
         );
         solver.model = Some(Model::new());

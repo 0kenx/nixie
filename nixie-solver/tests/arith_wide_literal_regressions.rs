@@ -867,3 +867,42 @@ fn i64_min_bound_rows_decline_instead_of_wrapping() {
         "the declined side blocks the refutation: honest `unknown`, never a guess"
     );
 }
+
+/// Wide-value publication (2026-09-17): a QF_LRA goal whose unique solution
+/// is the exact rational `xr = -27670116110564327424/13` — the numerator
+/// alone exceeds `i64`, so no `Rational64` assignment can hold it.  The LP
+/// converges (the wide store knows the value exactly all along); the OLD
+/// `wide_underivable_blocks_sat` gate declined the verdict because the
+/// value did not NARROW — honest `unknown` for a decidable `sat`.  The
+/// publication channel (`value_exact` + the `(/ n d)` term synthesis on
+/// the model side) publishes the exact value, the certifier evaluates it
+/// exactly, and the goal decides `sat`.  (The synthesis must build REAL
+/// division: the first cut used `mk_div` — Euclidean — and get-value
+/// printed the FLOOR, a published witness violating its own assertion;
+/// caught by validating the model against z3.)
+#[test]
+fn wide_model_value_publishes_exactly_and_decides_sat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)\n\
+             (declare-const xr Real)\n\
+             (assert (and (= (* 1 xr) (+ (+ (* 3 xr) (+ 9223372036854775807 0))\
+                             (+ (- (* -2 xr) 3) (/ (* 10 xr) 3)\
+                                (+ 2 (* 1 xr) 2))))))\n\
+             (check-sat)\n\
+             (get-value (xr))\n",
+        )
+        .expect("script executes");
+    let verdict = out.first().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        verdict, "sat",
+        "the LP converges and the exact value publishes (z3: sat); `unknown` is a lost verdict"
+    );
+    let value = out.last().map(String::as_str).unwrap_or("");
+    assert!(
+        value.contains("27670116110564327424"),
+        "the published model value must be the EXACT rational (numerator          -27670116110564327424 over 13), not a default or a floor: {value:?}"
+    );
+}

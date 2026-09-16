@@ -33,6 +33,452 @@ use super::poly::{MPoly, cmp_monomials, monomial_div, monomial_lcm};
 use crate::polynomial::{Monomial, MonomialOrder, Var};
 use num_bigint::BigUint;
 
+// Matrix echelonization indexes its columns explicitly (column-major
+// pivot order over row-major sparse rows) — the same rationale as the
+// rational F4 module's module-level allow.
+#[allow(clippy::needless_range_loop)]
+/// Faugère's F4 over 𝔽_p (the Phase-7 lever; see
+/// `docs/studies/2026-09-18-ff-f4.md` for the pre-registration, the
+/// engine bug the validation surfaced, and the prototype's bug log).
+/// Computes the same object as [`grobner_basis`] — a degrevlex Gröbner
+/// basis of `⟨inputs⟩` — by replacing the per-pair S-polynomial loop
+/// with degree-batched matrices: all selected pairs' rows plus their
+/// reducer closure are placed in one sparse matrix over the monomial
+/// columns, echelonized by one linear-algebra kernel, and the rows
+/// with NEW leading monomials become basis elements.
+///
+/// **Soundness**: every matrix row is an explicit 𝔽_p combination
+/// `Σ cₖ·(mₖ·gₖ)` of monomial multiples of current basis elements, so
+/// every row — hence every extracted element — lies in the ideal the
+/// basis generates, inductively the input ideal. A constant row is
+/// the whole-ring witness (unchanged detection). v1 is UNTRACED: no
+/// certificate is minted from an F4 basis.
+///
+/// **Determinism**: columns sorted by degrevlex descending; rows in
+/// construction order; pivot = the first eligible unused row in index
+/// order; selection = all pairs of minimal lcm degree (ties by pair
+/// index). The sparse row layout (`Vec<(col, coeff)>`, sorted) is the
+/// flat structure any later SIMD vectorization of the kernel wants —
+/// exact modular arithmetic is order-independent, so vectorizing the
+/// axpy kernel could not change results even in principle.
+pub fn f4_basis(
+    f: &FieldCtx,
+    inputs: &[MPoly],
+    budget: &mut GrobnerBudget,
+) -> Result<GrobnerBasis, GrobnerError> {
+    /// A sparse matrix row: (column, coefficient) pairs, column-sorted.
+    type Row = Vec<(usize, Limbs)>;
+
+    const MAX_COLUMNS: usize = 1 << 16;
+    const MAX_ROWS: usize = 1 << 16;
+
+    // Deterministic input order (mirrors `grobner_basis_inner`).
+    let mut order: Vec<usize> = (0..inputs.len()).collect();
+    order.sort_by_key(|&i| {
+        (
+            inputs[i].lm(DEGREVLEX).map(|m| m.total_degree()),
+            inputs[i].n_terms(),
+            i,
+        )
+    });
+    let mut basis: Vec<MPoly> = order
+        .iter()
+        .map(|&i| inputs[i].monic(f, DEGREVLEX))
+        .collect();
+    basis.retain(|p| !p.is_zero());
+
+    // Seed leading-term deduplication (the GM discard — and F4's own
+    // pair discard — is unsound over duplicate-lm seeds; see the
+    // Buchberger engine's init for the measured story).
+    {
+        let mut i = 0;
+        while i < basis.len() {
+            let others: Vec<MPoly> = basis
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .map(|(_, g)| g.clone())
+                .collect();
+            let others_lms = lm_cache_mp(&others);
+            let mut cur = basis[i].clone();
+            // Reduce the leading term against the others (leading-term
+            // chain, like reduce_traced's loop).
+            loop {
+                let Some(lt) = cur.lm(DEGREVLEX) else { break };
+                let red = others
+                    .iter()
+                    .enumerate()
+                    .find(|(_, g)| g.lm(DEGREVLEX).is_some_and(|lmg| lt.div(&lmg).is_some()));
+                let Some((gi, _)) = red else { break };
+                let lmg = others_lms[gi].clone();
+                let Some(q) = lt.div(&lmg) else { break };
+                let lc_cur = cur.lc(DEGREVLEX).cloned().unwrap_or_else(|| f.one());
+                let lc_g = others[gi].lc(DEGREVLEX).cloned().unwrap_or_else(|| f.one());
+                let Some(inv_g) = f.inv(&lc_g) else { break };
+                let factor = f.mul(&lc_cur, &inv_g);
+                let scaled = mul_by_monomial(f, &others[gi].clone().monic(f, DEGREVLEX), &q)
+                    .scale(f, &factor);
+                budget.charge(
+                    u64::try_from(scaled.n_terms() + cur.n_terms()).unwrap_or(u64::MAX / 2),
+                )?;
+                cur = cur.sub(f, &scaled);
+                if cur.is_zero() {
+                    break;
+                }
+            }
+            if cur.is_zero() {
+                basis.swap_remove(i);
+                continue;
+            }
+            basis[i] = cur.monic(f, DEGREVLEX);
+            i += 1;
+        }
+    }
+    let inputs_len = inputs.len();
+
+    // Stable-index bookkeeping: dead-marking (no compaction), so pair
+    // endpoints stay valid. Pairs are maintained INCREMENTALLY and a
+    // processed pair never resurrects.
+    let mut lms: Vec<Monomial> = basis
+        .iter()
+        .map(|p| p.lm(DEGREVLEX).unwrap_or_else(Monomial::unit))
+        .collect();
+    let mut dead = vec![false; basis.len()];
+    fn live(dead: &[bool]) -> impl Iterator<Item = usize> + '_ {
+        (0..dead.len()).filter(|&i| !dead[i])
+    }
+
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    {
+        let live_idx: Vec<usize> = live(&dead).collect();
+        for &i in &live_idx {
+            for &j in &live_idx {
+                if i < j && !criterion_applies_lms(&lms, i, j) {
+                    pairs.push((i, j));
+                }
+            }
+        }
+    }
+
+    loop {
+        if live(&dead).count() > 8 * inputs_len + 64 {
+            return Err(GrobnerError::Budget);
+        }
+        if pairs.is_empty() {
+            break;
+        }
+        // Selection: ALL pairs of minimal lcm degree.
+        let sel_deg = pairs
+            .iter()
+            .map(|&(i, j)| monomial_lcm(&lms[i], &lms[j]).total_degree())
+            .min()
+            .unwrap_or(0);
+        let selected: Vec<(usize, usize)> = pairs
+            .iter()
+            .copied()
+            .filter(|&(i, j)| monomial_lcm(&lms[i], &lms[j]).total_degree() == sel_deg)
+            .collect();
+        for _ in &selected {
+            budget.charge(1)?;
+        }
+        let sel_set: std::collections::BTreeSet<(usize, usize)> =
+            selected.iter().copied().collect();
+        pairs.retain(|p| !sel_set.contains(p));
+
+        // --- Symbolic preprocessing ---
+        let mut rows: Vec<(Monomial, usize)> = Vec::new();
+        let mut queued: rustc_hash::FxHashSet<Monomial> = rustc_hash::FxHashSet::default();
+        let mut queue: Vec<Monomial> = Vec::new();
+        for &(i, j) in &selected {
+            let lcm = monomial_lcm(&lms[i], &lms[j]);
+            let (Some(qi), Some(qj)) = (monomial_div(&lcm, &lms[i]), monomial_div(&lcm, &lms[j]))
+            else {
+                continue;
+            };
+            let left = mul_by_monomial(f, &basis[i], &qi);
+            let right = mul_by_monomial(f, &basis[j], &qj);
+            rows.push((qi, i));
+            rows.push((qj, j));
+            for (m, _) in left.terms_iter().chain(right.terms_iter()) {
+                if queued.insert(m.clone()) {
+                    queue.push(m.clone());
+                }
+            }
+        }
+        let mut row_of_mono: rustc_hash::FxHashMap<Monomial, (Monomial, usize)> =
+            rustc_hash::FxHashMap::default();
+        while let Some(m) = queue.pop() {
+            budget.charge(1)?;
+            let red = live(&dead).find(|&g| {
+                basis[g]
+                    .lm(DEGREVLEX)
+                    .is_some_and(|lmg| m.div(&lmg).is_some())
+            });
+            let Some(gi) = red else {
+                continue;
+            };
+            let lmg = basis[gi].lm(DEGREVLEX).unwrap_or_else(Monomial::unit);
+            let Some(q) = m.div(&lmg) else {
+                continue;
+            };
+            let scaled = mul_by_monomial(f, &basis[gi], &q);
+            row_of_mono.insert(m.clone(), (q, gi));
+            for (mm, _) in scaled.terms_iter() {
+                if queued.insert(mm.clone()) {
+                    queue.push(mm.clone());
+                }
+            }
+        }
+        rows.extend(row_of_mono.into_values());
+        let mut columns: Vec<Monomial> = queued.into_iter().collect();
+        if columns.len() > MAX_COLUMNS || rows.len() > MAX_ROWS {
+            return Err(GrobnerError::Budget);
+        }
+        columns.sort_by(|a, b| cmp_monomials(DEGREVLEX, b, a));
+        let col_index: rustc_hash::FxHashMap<&Monomial, usize> =
+            columns.iter().enumerate().map(|(c, m)| (m, c)).collect();
+
+        // --- Matrix construction ---
+        let mut matrix: Vec<Row> = Vec::with_capacity(rows.len());
+        for (q, gi) in &rows {
+            let scaled = mul_by_monomial(f, &basis[*gi], q);
+            let mut row: Row = Vec::with_capacity(scaled.n_terms());
+            for (m, c) in scaled.terms_iter() {
+                if let Some(&col) = col_index.get(m) {
+                    row.push((col, c.clone()));
+                    budget.charge(1)?;
+                }
+            }
+            row.sort_by_key(|(col, _)| *col);
+            matrix.push(row);
+        }
+
+        // --- Echelonization ---
+        // Column-ascending; the first live UNUSED row with a nonzero
+        // entry pivots (a row pivots exactly once, at its first nonzero
+        // column), is normalized, and the column is eliminated from
+        // every other unused row.
+        let ncols = columns.len();
+        let mut pivots: Vec<Option<usize>> = vec![None; ncols];
+        let mut alive: Vec<bool> = matrix.iter().map(|r| !r.is_empty()).collect();
+        let mut used: Vec<bool> = vec![false; matrix.len()];
+        for c in 0..ncols {
+            let pr =
+                (0..matrix.len()).find(|&r| alive[r] && !used[r] && entry(&matrix[r], c).is_some());
+            let Some(pr) = pr else {
+                continue;
+            };
+            let lead = entry(&matrix[pr], c).cloned().unwrap_or_else(|| f.one());
+            let inv = f.inv(&lead).unwrap_or_else(|| f.one());
+            for (cc, v) in matrix[pr].iter_mut() {
+                if *cc == c {
+                    *v = f.one();
+                } else {
+                    *v = f.mul(v, &inv);
+                }
+            }
+            pivots[c] = Some(pr);
+            used[pr] = true;
+            let pivot_row = matrix[pr].clone();
+            for r in 0..matrix.len() {
+                if used[r] || !alive[r] {
+                    continue;
+                }
+                let Some(fc) = entry(&matrix[r], c).cloned() else {
+                    continue;
+                };
+                budget.charge(
+                    u64::try_from(pivot_row.len() + matrix[r].len()).unwrap_or(u64::MAX / 2),
+                )?;
+                let neg = f.neg(&fc);
+                let merged = axpy(f, &matrix[r], &neg, &pivot_row);
+                if merged.is_empty() {
+                    alive[r] = false;
+                }
+                matrix[r] = merged;
+            }
+        }
+
+        // --- Extraction ---
+        // Every pivot row whose column monomial is not a live leading
+        // monomial is a CANDIDATE. THE FIX (the prototype's fourth bug):
+        // the candidate is REDUCED against the live basis before the
+        // admission decision — the first version SKIPPED candidates
+        // whose lm was divisible by an existing lm, silently dropping
+        // elements whose reduction would have surfaced a new leading
+        // monomial (the measured incompleteness vs Buchberger). After
+        // the reduction: zero ⇒ skip; else admit the reduced form (its
+        // lm is now irreducible — the minimal-GB property for free) and
+        // kill superseded elements.
+        for (c, pr_slot) in pivots.iter().enumerate() {
+            let Some(pr) = pr_slot.as_ref().copied() else {
+                continue;
+            };
+            if !alive[pr] {
+                continue;
+            }
+            let Some(lm_new) = columns.get(c) else {
+                continue;
+            };
+            if live(&dead).any(|i| &lms[i] == lm_new) {
+                continue;
+            }
+            let mut p = MPoly::zero();
+            if let Some(row) = matrix.get(pr) {
+                for (cc, v) in row {
+                    if let Some(m) = columns.get(*cc) {
+                        p.add_term(f, m.clone(), v);
+                    }
+                }
+            }
+            if p.is_zero() {
+                continue;
+            }
+            // Full reduction against the live basis (leading-term
+            // chain + tail sweep), charged like every reduction.
+            let p = {
+                let live_basis: Vec<MPoly> =
+                    live(&dead).filter_map(|i| basis.get(i).cloned()).collect();
+                let live_lms = lm_cache_mp(&live_basis);
+                let mut cur = p;
+                'reduce: loop {
+                    let Some(lt) = cur.lm(DEGREVLEX) else {
+                        break 'reduce;
+                    };
+                    let red = live_basis
+                        .iter()
+                        .enumerate()
+                        .find(|(_, g)| g.lm(DEGREVLEX).is_some_and(|lmg| lt.div(&lmg).is_some()));
+                    let Some((gi, _)) = red else {
+                        break 'reduce;
+                    };
+                    let lmg = live_lms[gi].clone();
+                    let Some(q) = lt.div(&lmg) else {
+                        break 'reduce;
+                    };
+                    let lc_cur = cur.lc(DEGREVLEX).cloned().unwrap_or_else(|| f.one());
+                    let lc_g = live_basis[gi]
+                        .lc(DEGREVLEX)
+                        .cloned()
+                        .unwrap_or_else(|| f.one());
+                    let Some(inv_g) = f.inv(&lc_g) else {
+                        break 'reduce;
+                    };
+                    let factor = f.mul(&lc_cur, &inv_g);
+                    let scaled =
+                        mul_by_monomial(f, &live_basis[gi].clone().monic(f, DEGREVLEX), &q)
+                            .scale(f, &factor);
+                    budget.charge(
+                        u64::try_from(scaled.n_terms() + cur.n_terms()).unwrap_or(u64::MAX / 2),
+                    )?;
+                    cur = cur.sub(f, &scaled);
+                    if cur.is_zero() {
+                        break 'reduce;
+                    }
+                }
+                cur
+            };
+            if p.is_zero() {
+                continue;
+            }
+            let p = p.monic(f, DEGREVLEX);
+            let lm_final = p.lm(DEGREVLEX).unwrap_or_else(Monomial::unit);
+            if live(&dead).any(|i| lms[i] == lm_final || lm_final.div(&lms[i]).is_some()) {
+                // After a FULL reduction this should be impossible (the
+                // lm is irreducible); the guard stays as a fail-safe.
+                continue;
+            }
+            for i in 0..lms.len() {
+                if !dead[i] && lms[i].div(&lm_final).is_some() {
+                    dead[i] = true;
+                }
+            }
+            pairs.retain(|&(i, j)| !dead[i] && !dead[j]);
+            let n = basis.len();
+            lms.push(lm_final);
+            basis.push(p);
+            dead.push(false);
+            for k in 0..n {
+                if !dead[k] && !criterion_applies_lms(&lms, k, n) {
+                    pairs.push((k, n));
+                }
+            }
+        }
+    }
+
+    // Final inter-reduction through the engine's own reducer.
+    let mut traced: Vec<TracedPoly> = live(&dead)
+        .filter_map(|i| basis.get(i).cloned())
+        .map(|p| TracedPoly {
+            poly: p,
+            cofactors: Vec::new(),
+        })
+        .collect();
+    reduce_all(f, &mut traced, budget)?;
+    Ok(GrobnerBasis {
+        basis: traced,
+        inputs: inputs.to_vec(),
+    })
+}
+
+/// The entry of a sorted sparse row at column `c`, if nonzero.
+fn entry(row: &[(usize, Limbs)], c: usize) -> Option<&Limbs> {
+    row.binary_search_by(|(cc, _)| cc.cmp(&c))
+        .ok()
+        .map(|i| &row[i].1)
+}
+
+/// `dst + c·src` over sorted sparse rows (the axpy kernel; flat layout
+/// by design — see f4_basis's doc comment on later vectorization).
+fn axpy(
+    f: &FieldCtx,
+    dst: &[(usize, Limbs)],
+    c: &Limbs,
+    src: &[(usize, Limbs)],
+) -> Vec<(usize, Limbs)> {
+    let mut out = Vec::with_capacity(dst.len() + src.len());
+    let (mut i, mut j) = (0, 0);
+    while i < dst.len() && j < src.len() {
+        match dst[i].0.cmp(&src[j].0) {
+            std::cmp::Ordering::Less => {
+                out.push(dst[i].clone());
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                let v = f.mul(&src[j].1, c);
+                out.push((src[j].0, v));
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                let v = f.add(&dst[i].1, &f.mul(&src[j].1, c));
+                if !f.is_zero(&v) {
+                    out.push((dst[i].0, v));
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    while i < dst.len() {
+        out.push(dst[i].clone());
+        i += 1;
+    }
+    while j < src.len() {
+        let v = f.mul(&src[j].1, c);
+        out.push((src[j].0, v));
+        j += 1;
+    }
+    out
+}
+
+/// The leading monomials of an MPoly slice.
+fn lm_cache_mp(basis: &[MPoly]) -> Vec<Monomial> {
+    basis
+        .iter()
+        .map(|p| p.lm(DEGREVLEX).unwrap_or_else(Monomial::unit))
+        .collect()
+}
+
 /// The degrevlex order used for the (UNSAT-oriented) basis computations —
 /// the cheapest order for the `1 ∈ I` test.
 pub const DEGREVLEX: MonomialOrder = MonomialOrder::GRevLex;
