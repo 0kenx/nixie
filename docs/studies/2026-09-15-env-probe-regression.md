@@ -133,3 +133,30 @@ that class.  `run_gate.sh` now also gates on interleaved-paired wall
 geomean (one-sided: improvements never fail; >1.5× at identical counters
 = FAIL, 1.25–1.5× = WARN).  This fix calibrates it: conflicts 1.000,
 wall geomean **0.58×**.
+
+## Addendum (2026-09-16, closing the perf campaign): where the remaining gap lives
+
+Post-fix state, measured on the perf-gate corpus (release/perf builds,
+pinned, quiet-ish machine):
+
+* **Constant-factor work is done.**  vs 36 h ago: conflicts bit-identical,
+  wall geomean ~1.0 (some instances faster — x9 2.17 s vs old-arm 5.3 s).
+  vs **kissat 4.0.4** head-to-head: nixie wins 3/9 outright (Carry_Bits
+  0.04 s vs 1.15, frb35 13.4 vs 14.8, WS_500 21.3 vs 22.2), close on 3
+  (SCPC 8.0 vs 5.2, circuit 8.1 vs 6.2, s38584 2.2 vs 1.3), behind on 3
+  (b21 25.2 vs 4.8, 6s299 0.92 vs 0.07, Iter22 3.2 vs 1.2).
+* **Machine-level health**: IPC 2.27, branch-miss 3.3 %, cache-miss
+  0.3 % — compute-bound, no structural pathology; hot paths are mature
+  (cadical-parity subsumption with amortized scratch, tuned BCP driver).
+* **The remaining gap is search quality, not cost.**  On the three laggards
+  (kissat vs nixie): x9-07092 **13× fewer conflicts** (3 093 vs 40 822 —
+  kissat's preprocessing cracks it), 6s299 2.3× (1 801 vs 4 169), b21
+  1.7× conflicts (194 567 vs 330 571) **and 3.2× propagations per
+  conflict (300 vs 971)** — weaker learned clauses driving far more
+  search per conflict.  b21's 5.2× wall is fully accounted for by work
+  volume (1.7 × 3.2 ≈ 5.5×); its profile shows no hotspot.
+* **Handoff**: improving that is heuristic territory (lemma quality,
+  preprocessing strength — the standing-gap study's named families) and
+  requires the full docs/BENCHMARKING.md discipline: matched nulls,
+  `NIXIE_SAT_SEED` replication (≥10 seeds), the perf gate, and parity.
+  No casual knob-twiddling.
