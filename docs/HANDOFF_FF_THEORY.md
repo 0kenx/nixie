@@ -145,9 +145,15 @@ FF, these replace it):
   `NIXIE_FF_STATS=1` (deterministic step counts, never wall-clock as
   policy).
 
-Worktrees: `git worktree add outputs/wt-<name> <sha>`; symlink
-`ln -s /media/data/proj/nixie/smt-lib smt-lib` inside (corpus tests
-need it); delete when done. Never `git stash`/`restore` in the primary.
+Worktrees: `git worktree add outputs/wt-<name> <sha>`; symlink ALL
+the out-of-band corpora inside — `smt-lib`, `satcomp2024`,
+`satcomp2025`, `satlib` (each is gitignored data fetched into the
+primary only, and `nixie-testcorpus` PANICS — loudly, by design — on
+a missing file, which reads as a test FAILURE in nextest's summary
+line: a full-suite run in a bare worktree shows ~20 phantom corpus
+failures, including soundness pins like `si2_b03m_is_not_unsat`; all
+pass once the symlinks exist). Delete worktrees when done. Never
+`git stash`/`restore` in the primary.
 
 ## 4. Traps (each one burned us — do not rediscover)
 
@@ -250,17 +256,19 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 
 ## 5. Open work, in recommended order
 
-1. **F4 (the big pre-registered Phase-7 lever)**: the window arc closed
-   the chain family through 1024×1536 (worklist exchange + union
-   cascade; see the 2026-09-17 study addendum), so the next capacity
-   lever is F4's batched linear-algebra reduction — orthogonal to and
-   composable with the per-window cascades, and the matrix kernel is
-   where SIMD first pays (exact modular arithmetic is order-independent,
-   so vectorization is deterministic by construction). NTT for
-   Goldilocks-class primes is the other named lever. Both deterministic
-   front-end items — step counts, no matched null needed. The corpus
-   generator (`bench/ff/gen_chain.py`) can produce the next frontier
-   files when F4 needs them.
+1. **F4: correct and landed, UNWIRED (the optimization is the lever)**:
+   `f4_basis` (`nixie-math/src/ff/grobner.rs`) is property-pinned —
+   mutual ideal membership + lm agreement with Buchberger, determinism,
+   whole-ring detection — but costs ~8× Buchberger's monomial ops at
+   9×10 (measured; row-construction clones, O(basis) reducer scans,
+   admission reductions). No solver path calls it. The lever: optimize
+   to the cost crossover (the flat sparse-row layout is the SIMD-ready
+   kernel — exact modular arithmetic is order-independent, so
+   vectorization is deterministic by construction), then wire it into
+   the window path where the batches are small. NTT for Goldilocks-class
+   primes is the other named lever. Both deterministic front-end items —
+   step counts, no matched null needed. The corpus generator
+   (`bench/ff/gen_chain.py`) produces frontier files when needed.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
