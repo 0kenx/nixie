@@ -2029,37 +2029,113 @@ impl Simplex {
         // Otherwise (some variable free to move) no pivot can repair a
         // wide row — the honest `resource_limit` decline.
         if verdict.is_ok() && (self.wide_pending || !self.wide_rows.is_empty()) {
-            for (var, wexpr) in &self.wide_rows {
-                let idx = *var as usize;
-                let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
-                    || self.upper.get(idx).is_some_and(|b| b.is_some());
-                if !bounded {
-                    continue;
-                }
-                match self.wide_row_violated(wexpr, idx) {
-                    Some(true) => {
-                        // Interval refutation: the row's achievable value
-                        // range under the variables' bounds, computed
-                        // exactly (delta-aware), versus the basic's bounds
-                        // — disjoint means no assignment of the bounded
-                        // variables can satisfy the row: a genuine Farkas
-                        // conflict explained through the determining
-                        // bounds' reasons. A violation with a overlapping
-                        // range is repairable in principle but no pivot
-                        // can reach it — the honest `resource_limit`.
-                        if let Some(conflict) = self.wide_row_refuted_by_bounds(wexpr, idx) {
-                            return Err(conflict);
+            // Convergence classification with the WIDE-DRIVEN REPAIR STEP:
+            // a violated wide row whose achievable range OVERLAPS its bound
+            // window is repairable in principle — the old behavior declined
+            // the whole check (`resource_limit`, honest `unknown`) because
+            // no pivot could reach it (wide rows were unpivable).  The
+            // pivot's wide-leaving branch now solves the wide row exactly
+            // for an eligible entering column (the DdM repair step, exact
+            // arithmetic), so the overlap case attempts a bounded sequence
+            // of repairs before any decline.  Each repair re-feasibilizes
+            // the narrow rows the substitution touched and re-classifies;
+            // the budget bounds the loop, and an undecidable row or a
+            // repair with no eligible column still declines honestly.
+            const MAX_WIDE_REPAIRS: usize = 32;
+            let mut repairs: usize = 0;
+            loop {
+                let mut declined = false;
+                let mut repaired = false;
+                for (var, wexpr) in self.wide_rows.clone() {
+                    let idx = var as usize;
+                    let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
+                        || self.upper.get(idx).is_some_and(|b| b.is_some());
+                    if !bounded {
+                        continue;
+                    }
+                    match self.wide_row_violated(&wexpr, idx) {
+                        Some(true) => {
+                            // Interval refutation: the row's achievable
+                            // value range under the variables' bounds,
+                            // computed exactly (delta-aware), versus the
+                            // basic's bounds — disjoint means no assignment
+                            // of the bounded variables can satisfy the row:
+                            // a genuine Farkas conflict explained through
+                            // the determining bounds' reasons.
+                            if let Some(conflict) = self.wide_row_refuted_by_bounds(&wexpr, idx) {
+                                return Err(conflict);
+                            }
+                            // Overlapping range: repairable.  Attempt one
+                            // wide pivot (snapping the leaving basic to
+                            // the bound it violates), then re-feasibilize
+                            // and re-classify.
+                            if repairs >= MAX_WIDE_REPAIRS {
+                                declined = true;
+                                break;
+                            }
+                            let bound_kind = if let (Some(val), Some(hi)) = (
+                                self.assignment.get(idx),
+                                self.upper.get(idx).and_then(|o| o.as_ref()),
+                            ) && val > &hi.value
+                            {
+                                BoundType::Upper
+                            } else {
+                                BoundType::Lower
+                            };
+                            let Some(entering) = self.find_wide_pivot_col(
+                                &wexpr,
+                                &Bound {
+                                    kind: bound_kind,
+                                    value: DeltaRational::zero(),
+                                    reason: 0,
+                                    aux_reasons: smallvec::SmallVec::new(),
+                                },
+                            ) else {
+                                // No eligible entering column: every
+                                // repair direction is blocked at its
+                                // bound — not a state this classification
+                                // can repair; decline honestly.
+                                declined = true;
+                                break;
+                            };
+                            repairs += 1;
+                            if !self.pivot(var, entering, SnapBound::from_violated(bound_kind)) {
+                                return verdict;
+                            }
+                            repaired = true;
+                            break;
                         }
+                        Some(false) => {}
+                        None => {
+                            // Undecidable (stale reference): nothing here
+                            // can certify the row, so no verdict may rest
+                            // on it.
+                            declined = true;
+                            break;
+                        }
+                    }
+                }
+                if declined || !repaired {
+                    if declined {
                         self.resource_limit = true;
+                    }
+                    break;
+                }
+                // The substitution touched narrow rows: re-feasibilize
+                // before the next classification round.
+                if !self.assignment_current {
+                    self.crash_basis();
+                    if self.resource_limit {
                         break;
                     }
-                    Some(false) => {}
-                    None => {
-                        // Undecidable (stale reference): nothing here can
-                        // certify the row, so no verdict may rest on it.
-                        self.resource_limit = true;
-                        break;
+                }
+                match self.make_feasible() {
+                    Ok(()) => {
+                        if self.resource_limit {
+                            break;
+                        }
                     }
+                    Err(conflict) => return Err(conflict),
                 }
             }
         }
@@ -2822,19 +2898,6 @@ impl Simplex {
 
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
-        let Some(expr) = self.tableau.get(&basic_var) else {
-            self.resource_limit = true;
-            return false;
-        };
-        let Some(coef) = expr
-            .terms
-            .iter()
-            .find(|(v, _)| *v == nonbasic_var)
-            .map(|(_, c)| *c)
-        else {
-            self.resource_limit = true;
-            return false;
-        };
         // The entering variable's defining row: checked fixed-width first
         // (the fast path), exact `BigRational` retry on any intermediate
         // overflow (intermediates of `-c/coef` legitimately overflow while
@@ -2845,19 +2908,58 @@ impl Simplex {
         // the entering variable's row then lives in the wide store with
         // every substitution through it exact. Only a division by zero
         // declines through `resource_limit`.
-        let (new_expr, entering_wide) =
-            match Self::build_pivot_expr(expr, coef, basic_var, nonbasic_var)
-                .or_else(|| Self::build_pivot_expr_exact(expr, coef, basic_var, nonbasic_var))
+        //
+        // A WIDE leaving basic takes the same route one level up: its
+        // defining row lives in the wide store, so the solve runs exactly
+        // over `BigRational` from the start (the wide-driven repair step —
+        // without it, a violated wide row whose achievable range overlaps
+        // its window could never be repaired).
+        let (new_expr, entering_wide) = if let Some(expr) = self.tableau.get(&basic_var).cloned() {
+            let Some(coef) = expr
+                .terms
+                .iter()
+                .find(|(v, _)| *v == nonbasic_var)
+                .map(|(_, c)| *c)
+            else {
+                self.resource_limit = true;
+                return false;
+            };
+            match Self::build_pivot_expr(&expr, coef, basic_var, nonbasic_var)
+                .or_else(|| Self::build_pivot_expr_exact(&expr, coef, basic_var, nonbasic_var))
             {
                 Some(e) => (Some(e), None),
-                None => match Self::build_pivot_expr_big(expr, coef, basic_var, nonbasic_var) {
+                None => match Self::build_pivot_expr_big(&expr, coef, basic_var, nonbasic_var) {
                     Some(w) => (None, Some(w)),
                     None => {
                         self.resource_limit = true;
                         return false;
                     }
                 },
+            }
+        } else if let Some(wexpr) = self.wide_rows.get(&basic_var).cloned() {
+            let Some(coef_b) = wexpr
+                .terms
+                .iter()
+                .find(|(v, _)| *v == nonbasic_var)
+                .map(|(_, c)| c.clone())
+            else {
+                self.resource_limit = true;
+                return false;
             };
+            if coef_b.is_zero() {
+                self.resource_limit = true;
+                return false;
+            }
+            let entering_big =
+                Self::build_pivot_expr_big_wide(&wexpr, &coef_b, basic_var, nonbasic_var);
+            match Self::narrow_big_lin(&entering_big) {
+                Some(narrow) => (Some(narrow), None),
+                None => (None, Some(entering_big)),
+            }
+        } else {
+            self.resource_limit = true;
+            return false;
+        };
         // The exact entering row in wide form (whatever path built it):
         // the exact substitutions below run against this, so a wide
         // entering row needs no separate code path per site.
@@ -3078,7 +3180,16 @@ impl Simplex {
                 self.column_drop_known(v, basic_var);
             }
         }
+        // A WIDE leaving basic's row leaves the wide store the same way a
+        // narrow leaving row leaves the tableau (its terms' columns drop it
+        // as row owner).
+        if let Some(old_wide) = self.wide_rows.get(&basic_var).cloned() {
+            for (v, _) in &old_wide.terms {
+                self.column_drop_known(*v, basic_var);
+            }
+        }
         self.tableau.remove(&basic_var);
+        self.wide_rows.remove(&basic_var);
         match (new_expr, entering_wide) {
             (Some(new_expr), _) => {
                 let entering_terms: SmallVec<[VarId; 4]> =
@@ -3329,6 +3440,71 @@ impl Simplex {
     /// form's quotients — `1/2^63` — irreducibly past `i64`); the entering
     /// variable's row then lives in the wide store, and every substitution
     /// through it runs exactly. Division by zero still declines.
+    /// The WIDE-leaving pivot's entering row: solve the exact wide row
+    /// `x_B = wexpr(x_N)` for `nonbasic_var` (its wide coefficient
+    /// `coef_b`, nonzero) —
+    /// `x_entering = (x_B - Σ_{k≠entering} a_k·x_k - c) / a_entering` —
+    /// exactly, in `BigRational`.  This is the pivot-analogue through wide
+    /// rows: the leaving variable exits the (wide) basis snapped to the
+    /// bound its driver chose, the entering variable becomes the row's new
+    /// basic (narrow when the solved form fits, wide otherwise), and every
+    /// row referencing the entering column is substituted through the exact
+    /// result by the ordinary pivot machinery.  Without it, a violated wide
+    /// row whose achievable range OVERLAPS its bound window could never be
+    /// repaired — the convergence wall that turned such states into honest
+    /// `unknown` (the wide-LP endgame's named residual).
+    fn build_pivot_expr_big_wide(
+        wexpr: &BigLinExpr,
+        coef_b: &num_rational::BigRational,
+        basic_var: VarId,
+        nonbasic_var: VarId,
+    ) -> BigLinExpr {
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
+        terms.push((basic_var, coef_b.recip()));
+        let constant = -wexpr.constant.clone() / coef_b;
+        for (var, c) in &wexpr.terms {
+            if *var != nonbasic_var {
+                let val = -c / coef_b;
+                match terms.iter_mut().find(|(tv, _)| tv == var) {
+                    Some(slot) => slot.1 += val,
+                    None => {
+                        if !val.is_zero() {
+                            terms.push((*var, val));
+                        }
+                    }
+                }
+            }
+        }
+        terms.retain(|(_, c): &(VarId, num_rational::BigRational)| !c.is_zero());
+        BigLinExpr { terms, constant }
+    }
+
+    /// Enting-column eligibility for a WIDE violated basic: mirror of
+    /// [`Self::find_pivot_col`]'s direction test over the exact wide row's
+    /// coefficients (sign logic is width-independent).  Smallest eligible
+    /// index wins (Bland-style, termination-friendly); `None` means every
+    /// repair direction is blocked at its bound — the caller declines.
+    fn find_wide_pivot_col(&self, wexpr: &BigLinExpr, bound: &Bound) -> Option<VarId> {
+        let mut best: Option<VarId> = None;
+        for (var, coef) in &wexpr.terms {
+            let eligible = match bound.kind {
+                BoundType::Lower => {
+                    (coef.is_positive() && self.can_increase(*var))
+                        || (coef.is_negative() && self.can_decrease(*var))
+                }
+                BoundType::Upper => {
+                    (coef.is_negative() && self.can_increase(*var))
+                        || (coef.is_positive() && self.can_decrease(*var))
+                }
+                _ => false,
+            };
+            if eligible && best.is_none_or(|cur| *var < cur) {
+                best = Some(*var);
+            }
+        }
+        best
+    }
+
     fn build_pivot_expr_big(
         expr: &LinExpr,
         coef: Rational64,
