@@ -1,0 +1,4 @@
+# Optional big-signal instances (gitignored corpora; skipped when absent).
+/media/data/proj/nixie/satcomp2025/main_2025/7cf696bae2c50af38414b61b8d92581a-GP_105_308_40.cnf
+/media/data/proj/nixie/satcomp2025/main_2025/54d496c14fd2461642ef6be5341b297b-hwmcc17miters-xits-iso-6s163.sanitized.cnf
+/media/data/proj/nixie/satcomp2025/main_2025/873786afab7757a9f216da0724d91ecd-hwmcc17miters-xits-iso-6s299b685.sanitized.cnf

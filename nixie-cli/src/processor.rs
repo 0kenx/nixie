@@ -768,6 +768,14 @@ fn process_single_file(
                 },
             };
             let mut sat = nixie_sat::Solver::with_config(sat_config);
+            // `NIXIE_SAT_SEED=<u64>`: seed replication for benchmarking
+            // (docs/BENCHMARKING.md - a single trajectory is one sample of
+            // a chaotic system).  Read once per solve, not per decision.
+            if let Ok(seed) = std::env::var("NIXIE_SAT_SEED")
+                && let Ok(seed) = seed.trim().parse::<u64>()
+            {
+                sat.set_rng_seed(seed);
+            }
             for _ in 0..cnf.num_vars {
                 sat.new_var();
             }
@@ -814,11 +822,17 @@ fn process_single_file(
                     .collect();
                 sat.add_clause(lits);
             }
-            match sat.solve() {
-                nixie_sat::SolverResult::Sat => "sat".to_string(),
-                nixie_sat::SolverResult::Unsat => "unsat".to_string(),
-                nixie_sat::SolverResult::Unknown => "unknown".to_string(),
-            }
+            let verdict = match sat.solve() {
+                nixie_sat::SolverResult::Sat => "sat",
+                nixie_sat::SolverResult::Unsat => "unsat",
+                nixie_sat::SolverResult::Unknown => "unknown",
+            };
+            // Report the work that actually happened: `--stats` (and the
+            // perf landing gate, `bench/perf_gate/run_gate.sh`) read the
+            // context's counters, which were zero for DIMACS fast-path
+            // files before this absorption.
+            ctx.absorb_sat_stats(sat.stats());
+            verdict.to_string()
         } else {
             let script = cnf.to_smtlib2();
             execute_and_format(ctx, &script, args)

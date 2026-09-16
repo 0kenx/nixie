@@ -1208,3 +1208,79 @@ fn dimacs_preset_cadical_summle_x4044_stays_sat() {
         "summle_X4044 is SAT; `unsat` under --preset cadical is a false-UNSAT regression: {stdout}"
     );
 }
+
+#[test]
+fn sat_seed_env_changes_trajectory_not_verdict() {
+    // `NIXIE_SAT_SEED` is the seed-replication knob (docs/BENCHMARKING.md):
+    // it must leave the verdict untouched on an instance both seeds decide,
+    // and the deterministic counters must differ across seeds (a knob that
+    // moves nothing cannot support replication) while repeating exactly
+    // within a seed.
+    // Deterministic 3-CNF at ratio 4.0, 160 vars: real conflict work
+    // (~0.4 k conflicts, ~0.1 s per solve) and seed-sensitive (387/395/766
+    // conflicts on seeds 1/2/3) without the phase-transition blow-up.
+    let temp_file = create_temp_cnf("");
+    let mut text = String::from("p cnf 160 640\n");
+    let mut x: u64 = 0xC0FFEE;
+    let mut next = |r: u64| {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (x >> 33) % r
+    };
+    for _ in 0..640 {
+        let lits: Vec<i64> = (0..3)
+            .map(|_| {
+                let v = next(160) as i64 + 1;
+                if next(2) == 0 { v } else { -v }
+            })
+            .collect();
+        text.push_str(&format!("{} {} {} 0\n", lits[0], lits[1], lits[2]));
+    }
+    std::fs::write(temp_file.path(), &text).expect("write cnf");
+
+    let counters = |seed: &str| -> (String, String) {
+        let output = Command::new(nixie_bin())
+            .env("NIXIE_SAT_SEED", seed)
+            .arg("--stats")
+            .arg("--dimacs")
+            .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+            .output()
+            .expect("Failed to execute nixie");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let verdict = stdout
+            .lines()
+            .rev()
+            .find(|l| matches!(l.trim(), "sat" | "unsat" | "unknown"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "verdict line missing (rc={:?}) stdout={:?} stderr={:?}",
+                    output.status.code(),
+                    stdout,
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            })
+            .trim()
+            .to_string();
+        let conf = stdout
+            .lines()
+            .find(|l| l.trim_start().starts_with("Conflicts:"))
+            .expect("conflicts stat")
+            .trim()
+            .to_string();
+        (verdict, conf)
+    };
+
+    let (v1, c1a) = counters("1");
+    let (_v1b, c1b) = counters("1");
+    let (v2, c2) = counters("2");
+    assert_eq!(
+        v1, v2,
+        "seed must not change the verdict on a decidable instance"
+    );
+    assert_eq!(c1a, c1b, "same seed must reproduce identical counters");
+    assert_ne!(c1a, c2, "different seeds must move the counters");
+    // And the stats are real (non-zero) — the fast-path absorption works.
+    assert!(
+        !c1a.ends_with("Conflicts: 0"),
+        "fast path must report non-zero counters: {c1a}"
+    );
+}

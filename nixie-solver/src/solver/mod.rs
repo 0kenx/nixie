@@ -5205,6 +5205,16 @@ impl Solver {
     pub fn stats(&self) -> &nixie_sat::SolverStats {
         self.sat.stats()
     }
+
+    /// Absorb final counters from an out-of-band `nixie_sat::Solver` run.
+    ///
+    /// The CLI's DIMACS fast path solves a dedicated SAT core without this
+    /// CDCL(T) solver; this forwards the counters so `--stats` (and the
+    /// perf landing gate, `bench/perf_gate/run_gate.sh`) see the work that
+    /// actually happened instead of zeros.
+    pub fn absorb_sat_stats(&mut self, s: &nixie_sat::SolverStats) {
+        self.sat.absorb_stats(s);
+    }
 }
 
 /// Whether freeze-set collapse is enabled: **default on** under the relaxed

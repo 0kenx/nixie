@@ -1718,6 +1718,17 @@ impl Context {
     pub fn stats(&self) -> &nixie_sat::SolverStats {
         self.solver.stats()
     }
+
+    /// Absorb final counters from an out-of-band SAT solve.
+    ///
+    /// The CLI's DIMACS fast path solves a dedicated `nixie_sat::Solver`
+    /// without driving this context; without absorption its per-file
+    /// statistics stay zero, which silently starved every cost gate that
+    /// reads `--stats` (the perf landing gate; see
+    /// `bench/perf_gate/run_gate.sh`).
+    pub fn absorb_sat_stats(&mut self, s: &nixie_sat::SolverStats) {
+        self.solver.absorb_sat_stats(s);
+    }
 }
 
 /// Decide what `(get-consequences ...)` reports, and what verdict the context

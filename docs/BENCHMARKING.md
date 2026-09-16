@@ -38,6 +38,41 @@ A 2× improvement and a 2× coincidence are indistinguishable without a control.
 
 ---
 
+## The landing gate — run before landing solving-path changes
+
+Heuristic-comparison discipline (§2) governs *experiments*.  The **landing
+gate** governs *landings*: every commit that touches solving (nixie-sat,
+theories, solver combination, preprocessing) must, in addition to the
+soundness gates, run:
+
+```bash
+bench/perf_gate/run_gate.sh          # baseline pinned in bench/perf_gate/BASELINE
+```
+
+It compares the candidate against a pinned precompile binary on a fixed
+9-instance in-repo corpus (plus optional big external instances when the
+gitignored corpora are present) using **deterministic solver counters**
+(conflicts, falling back to decisions/propagations for
+propagation-decided instances — verified bit-identical across repeated
+runs; never wall-clock).  Thresholds mirror the neutrality band:
+
+* verdict mismatch vs baseline → **FAIL** (soundness canary),
+* solved-count drop or a lost-sample budget overrun → **FAIL**,
+* conflicts geomean ≤ 1.05 → **PASS**; 1.05–1.15 → **WARN** (record the
+  delta in the landing message); > 1.15 → **FAIL** (measure, justify, or
+  fix before landing).
+
+Why this exists: the 36 h window ending 2026-09-15 landed ~15 commits each
+carrying soundness-only verification while aggregate solving cost regressed
+3× (uncached env probes) and a further ~1.4× content-level — chaos cancels
+in the geomean, a shifted geomean is a process signal, and nothing measured
+cost.  See `docs/studies/2026-09-15-env-probe-regression.md`.
+
+Re-pinning the baseline is a deliberate act: land, cache the binary under
+`precompile/<sha>/`, update `bench/perf_gate/BASELINE`, and say so in the
+commit.  Seed replication (§4, ≥10 seeds) is available via
+`NIXIE_SAT_SEED=<u64>` for effects too small for the single-seed gate.
+
 ## 2. The rule: every heuristic comparison ships with a matched null
 
 A **null** is a placebo — a change that perturbs the search but contains no useful information.

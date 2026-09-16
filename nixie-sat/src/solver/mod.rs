@@ -4858,6 +4858,20 @@ impl Solver {
         &self.stats
     }
 
+    /// Add another solver's final counters into this one's statistics.
+    ///
+    /// For out-of-band solves: the CLI's DIMACS fast path runs a dedicated
+    /// `Solver` and folds its counters into the owning context's solver,
+    /// so `--stats` reports the work that actually happened (the perf
+    /// landing gate reads these; they were all zero before this).
+    pub fn absorb_stats(&mut self, s: &SolverStats) {
+        self.stats.decisions += s.decisions;
+        self.stats.propagations += s.propagations;
+        self.stats.conflicts += s.conflicts;
+        self.stats.restarts += s.restarts;
+        self.stats.learned_clauses += s.learned_clauses;
+    }
+
     /// Number of model-reconstruction obligations on the extension stack
     /// (clauses retired at eliminations plus ELS equivalence implications).
     /// Diagnostic accessor for the reconstruction regression: a run that
@@ -5288,6 +5302,20 @@ impl Solver {
     /// into the decision heaps (VSIDS, CHB, LRB).
     pub fn backtrack_to_root(&mut self) {
         self.backtrack_with_phase_saving(0);
+    }
+
+    /// Set the PRNG seed for the decision/polarity/rephase random stream.
+    ///
+    /// Resets `rng_state` to the new seed so it takes effect immediately
+    /// (not just after the next `reset()`); `reset()` then keeps
+    /// restoring *this* seed, so per-seed trajectories stay reproducible
+    /// across repeated solves.  This is the knob the benchmarking
+    /// discipline (docs/BENCHMARKING.md §power) needs for seed
+    /// replication: without it, every CLI measurement is a single
+    /// trajectory sample.
+    pub fn set_rng_seed(&mut self, seed: u64) {
+        self.rng_seed = seed;
+        self.rng_state = seed;
     }
 
     /// Reset the solver
