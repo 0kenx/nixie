@@ -12,6 +12,7 @@ pub(super) struct UserState {
     literals: FxHashMap<TermId, Lit>,
     watches: Vec<(TermId, Lit)>,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
+    domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
     pub(super) closed: bool,
 }
 impl core::fmt::Debug for UserState {
@@ -39,6 +40,17 @@ impl UserState {
                             .is_ok()
                 })
             })
+            && consequence
+                .domain_certificate
+                .as_ref()
+                .is_none_or(|certificate| {
+                    self.domains.iter().any(|original| {
+                        certificate.is_for(original)
+                            && certificate
+                                .check(original, consequence.term, &consequence.justification)
+                                .is_ok()
+                    })
+                })
     }
 }
 
@@ -95,9 +107,11 @@ impl Solver {
         tm: &mut TermManager,
     ) -> Result<(), nixie_theories::cp::CpError> {
         let tables = model.table_statements();
+        let domains = model.domain_statements();
         let (assertions, watches, propagator) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)?;
         self.user_state.tables.extend(tables);
+        self.user_state.domains.extend(domains);
         for assertion in assertions {
             self.assert(assertion, tm);
         }
@@ -378,6 +392,32 @@ mod tests {
         };
         let mut step = Consequence::new(tm.mk_bool(true), vec![]);
         step.table_certificate = Some(TableCertificate::new(statement, vec![]));
+        let mut solver = Solver::new();
+        assert!(
+            solver
+                .register_user_propagator(Box::new(UnregisteredCertificate(step)), &[], &mut tm)
+                .is_ok()
+        );
+        solver.model = Some(Model::new());
+        assert!(!solver.validate_user_model(&tm));
+    }
+    #[test]
+    fn model_gate_checks_domain_certificates_independently_of_search() {
+        use nixie_theories::cp::{
+            CpModel,
+            domain_proof::{DomainCertificate, DomainRule},
+        };
+        let mut tm = TermManager::new();
+        let mut fake = CpModel::new(&tm);
+        assert!(fake.variable(vec![], &mut tm).is_ok());
+        let Some(statement) = fake.domain_statements().pop() else {
+            panic!("missing original domain");
+        };
+        let mut step = Consequence::new(tm.mk_true(), vec![]);
+        step.domain_certificate = Some(DomainCertificate::new(
+            statement,
+            DomainRule::Exhausted(vec![]),
+        ));
         let mut solver = Solver::new();
         assert!(
             solver

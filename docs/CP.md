@@ -191,11 +191,46 @@ and their immutable statements survive callback queue snapshots; popping a
 scope restores the pending queue rather than replaying a stale branch.
 
 This is a certificate for a **conditional table lemma relative to the original
-CP domains and constraint**. Domain-only reductions/conflicts and the other
-globals do not yet have certificates. Arbitrary callbacks without certificates
+CP domains and constraint**. Domain-only reductions/conflicts have the separate
+certificates described below; other globals do not yet have certificates. Arbitrary callbacks without certificates
 retain their documented trusted-client contract. There is no SAT-proof-chain
 export for these witnesses yet: proof-producing/certified CP checks still
 return `Unknown`. This does not enable certified UNSAT.
 
 See the [table-certificate study](studies/2026-09-16-cp-table-certificates.md)
 for the soundness argument, adversarial checks, and verification record.
+
+
+## Checkable domain lemmas
+
+`CpModel::domain_statements()` retains immutable original exactly-one domains.
+Built-in domain-only reductions and conflicts carry
+`Consequence::domain_certificate`. A `DomainCertificate` proves one of three
+rules against the retained domain:
+
+- Two distinct positive indicators imply false (`DistinctFixed`).
+- A positive indicator excludes a different value (`Exclusion`).
+- A negative premise for every original value implies false (`Exhausted`).
+
+An empty original domain has an empty exhaustion cover. A repeated premise
+cannot stand in for two different selected values or two different exclusions.
+Every indexed premise must have the exact required polarity. Unsupported
+conclusions, omitted coverage, and invalid indexes are rejected. The checker
+uses only the statement and implication, independently of the callback's
+current-domain computation. It checks indexes and uses exact original indicator
+meanings; it neither searches nor converts integer values to machine integers.
+
+The checking interface parallels table certificates: retain the originals,
+authenticate with `is_for`, then call
+`certificate.check(original, consequence.term, &consequence.justification)`.
+`register_cp` installs domain identities only after successful registration;
+reset revokes them. The solver checks **every** attached certificate, including
+when a consequence carries both kinds, and independently checks current premise
+truth. The same checks run on direct final conflicts and model replay.
+
+These rules establish conditional lemmas relative to the declared exactly-one
+semantics. At least one value is also asserted to the SAT solver; at-most-one
+reasoning is lazy. The certificates do not yet export these axioms and lemmas
+into a complete SAT proof chain. Proof-producing/certified CP solving therefore
+still returns `Unknown`. See the [domain-certificate study](studies/2026-09-16-cp-domain-certificates.md)
+for the trust boundary and verification evidence.

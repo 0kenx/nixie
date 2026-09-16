@@ -62,6 +62,9 @@ pub struct Consequence {
     /// must be authenticated by the consumer; attaching a certificate alone
     /// does not make an arbitrary user propagator trusted or proof-producing.
     pub table_certificate: Option<crate::cp::table_proof::TableCertificate>,
+    /// Optional exactly-one domain witness. Consumers must authenticate
+    /// its original statement and check the exact implication before use.
+    pub domain_certificate: Option<crate::cp::domain_proof::DomainCertificate>,
 }
 
 impl Consequence {
@@ -71,6 +74,7 @@ impl Consequence {
             term,
             justification,
             table_certificate: None,
+            domain_certificate: None,
         }
     }
 }
