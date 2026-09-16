@@ -813,6 +813,12 @@ impl Context {
                     | TermKind::SetEmpty(_)
                     | TermKind::SetSingleton(_)
                     | TermKind::SetUnion(_, _)
+                    // A synthesized bag value: a canonical
+                    // `bag.union_disjoint`-of-`(bag e n)` term (or
+                    // `bag.empty`), likewise rendered as itself.
+                    | TermKind::BagEmpty(_)
+                    | TermKind::BagMake(_, _)
+                    | TermKind::BagUnionDisjoint(_, _)
                     // A field element: the printer renders the exact
                     // `#f<v>m<p>` literal.
                     | TermKind::FfConst { .. },
@@ -1147,6 +1153,29 @@ impl Context {
             self.solver
                 .complete_rel_values(&survey, &mut model, &mut self.terms);
         }
+        // Bag queries over an installed bag value: `bag.card`, `bag.count`
+        // and `bag.member` are *functions of the value* (which the model
+        // pass verified), so folding them is evaluation, not a guess. A
+        // query-only `(bag.card b)` — one whose assertion stack never
+        // constrained any cardinality — is exactly the case with no
+        // readback entry to print otherwise.
+        let bag_folds: Vec<(TermId, i64)> = terms
+            .iter()
+            .flat_map(|&t| self.complete_bag_query(t, &model))
+            .collect();
+        for (t, n) in bag_folds {
+            let v = match self.terms.get(t).map(|d| &d.kind) {
+                Some(TermKind::BagMember(_, _)) => {
+                    if n > 0 {
+                        self.terms.true_id
+                    } else {
+                        self.terms.false_id
+                    }
+                }
+                _ => self.terms.mk_int(BigInt::from(n)),
+            };
+            model.set(t, v);
+        }
 
         let mut values = Vec::with_capacity(terms.len());
         for &term in terms {
@@ -1344,6 +1373,118 @@ impl Context {
                 lines.join("\n")
             }
         }
+    }
+}
+
+impl Context {
+    /// Fold one bag query term against the model's installed bag values,
+    /// installing entries for `bag.card`/`bag.count`/`bag.member` terms
+    /// whose operands have values. A term already entered (the assertion
+    /// readback) keeps its entry; anything unresolvable is left alone
+    /// (the honest echo).
+    fn complete_bag_query(&self, term: TermId, model: &crate::solver::Model) -> Vec<(TermId, i64)> {
+        // Explicit stack over the query: nesting is user-shaped. The
+        // returned pairs are (term, value-as-integer); `bag.member` is
+        // encoded as 1/0 and materialized by the caller.
+        let mut out: Vec<(TermId, i64)> = Vec::new();
+        let mut stack = vec![term];
+        let mut seen = crate::prelude::FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Some(kind) = self.terms.get(t).map(|d| d.kind.clone()) else {
+                continue;
+            };
+            use nixie_core::ast::TermKind;
+            match kind {
+                TermKind::BagCard(b) => {
+                    if model.get(t).is_none()
+                        && let Some(cells) = self.installed_bag_cells(b, model)
+                    {
+                        let total: i64 = cells.iter().map(|&(_, n)| n).sum();
+                        out.push((t, total));
+                    }
+                }
+                TermKind::BagCount(e, b) => {
+                    if model.get(t).is_none()
+                        && let Some(cells) = self.installed_bag_cells(b, model)
+                    {
+                        let n = self.cell_of(e, &cells);
+                        out.push((t, n));
+                    }
+                }
+                TermKind::BagMember(e, b) => {
+                    if model.get(t).is_none()
+                        && let Some(cells) = self.installed_bag_cells(b, model)
+                    {
+                        let n = self.cell_of(e, &cells);
+                        out.push((t, if n > 0 { 1 } else { 0 }));
+                    }
+                }
+                _ => {
+                    stack.extend(nixie_core::ast::traversal::get_children(&kind));
+                }
+            }
+        }
+        out
+    }
+
+    /// The `(element, multiplicity)` cells of a bag's installed value, or
+    /// `None` when the bag has no (parseable) value entry.
+    fn installed_bag_cells(
+        &self,
+        bag: TermId,
+        model: &crate::solver::Model,
+    ) -> Option<Vec<(TermId, i64)>> {
+        let value = model.get(bag)?;
+        let mut cells: Vec<(TermId, i64)> = Vec::new();
+        let mut cur = value;
+        loop {
+            match self.terms.get(cur).map(|d| d.kind.clone()) {
+                Some(nixie_core::ast::TermKind::BagEmpty(_)) => break,
+                Some(nixie_core::ast::TermKind::BagUnionDisjoint(a, b)) => {
+                    let Some(nixie_core::ast::TermKind::BagMake(e, n)) =
+                        self.terms.get(b).map(|d| d.kind.clone())
+                    else {
+                        return None;
+                    };
+                    let n = self.int_of(n)?;
+                    cells.push((e, n));
+                    cur = a;
+                }
+                Some(nixie_core::ast::TermKind::BagMake(e, n)) => {
+                    let n = self.int_of(n)?;
+                    cells.push((e, n));
+                    break;
+                }
+                _ => return None,
+            }
+        }
+        Some(cells)
+    }
+
+    /// An `IntConst` term's value.
+    fn int_of(&self, t: TermId) -> Option<i64> {
+        match self.terms.get(t).map(|d| &d.kind) {
+            Some(nixie_core::ast::TermKind::IntConst(n)) => num_traits::ToPrimitive::to_i64(n),
+            _ => None,
+        }
+    }
+
+    /// The multiplicity of `e` among the cells: by term identity first,
+    /// then by equal `IntConst` value (two spellings of one number are
+    /// one cell).
+    fn cell_of(&self, e: TermId, cells: &[(TermId, i64)]) -> i64 {
+        if let Some(&(_, n)) = cells.iter().find(|&&(c, _)| c == e) {
+            return n;
+        }
+        if let Some(n) = self.int_of(e)
+            && let Some(&(_, m)) = cells.iter().find(|&&(c, _)| self.int_of(c) == Some(n))
+        {
+            return m;
+        }
+        0
     }
 }
 

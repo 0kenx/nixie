@@ -503,6 +503,11 @@ impl Solver {
         // itself before publishing (see `set_model`).
         self.extract_set_model(&mut model, manager);
 
+        // Finite bags, after the set pass: the values are fully
+        // determined by the arithmetic counts, and installing them is
+        // also what makes `bag.count` queries answer with numbers.
+        self.extract_bag_model(&mut model, manager);
+
         self.model = Some(model);
     }
 

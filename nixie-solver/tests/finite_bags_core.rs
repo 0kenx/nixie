@@ -514,27 +514,134 @@ fn nested_compounds_compose() {
 // ===== the surface =====
 
 #[test]
-fn negative_multiplicity_is_rejected() {
-    let mut context = nixie_solver::Context::new();
-    let out = context.execute_script(
-        "(set-logic ALL)\n\
-         (assert (= (bag 1 (- 0 1)) (bag 1 0)))\n\
-         (check-sat)\n",
+fn negative_multiplicities_clamp_to_zero() {
+    // CVC5 accepts negative literal multiplicities and clamps them:
+    // `count(x, (bag y n)) = ite(x = y ∧ n ≥ 1, n, 0)` (differential-
+    // tested: the count of `(bag 1 -5)` is 0, `(bag 1 -5)` = `(bag 1 -1)`,
+    // and a count of -1 is unsatisfiable).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (assert (= (bag.count 1 (bag 1 -5)) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
     );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (assert (= (bag.count 1 (bag 1 -1)) -1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (assert (= (bag 1 -5) (bag 1 -1)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // A symbolic multiplicity clamps too: n = -1 forces the count 0, not
+    // -1 (differential-tested against CVC5).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const n Int)\n\
+             (assert (= n -1))\n\
+             (assert (= (bag.count 1 (bag 1 n)) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const n Int)\n\
+             (assert (= n -1))\n\
+             (assert (= (bag.count 1 (bag 1 n)) -1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+#[test]
+fn opaque_counts_are_nonnegative() {
+    // A multiplicity is nonnegative; without the axiom a free count
+    // column could go negative and `count(1,b) = -3` answered `sat`
+    // (CVC5: `unsat`; found by differential testing).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 1 b) -3))\n\
+             (assert (= (bag.card b) -3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+// ===== the model: count-driven values and the readback =====
+
+/// A bag variable's value assembles from the counts the arithmetic
+/// solver valued, and prints as the canonical disjoint union — so the
+/// printed model re-reads as itself. The `@bag_ext_*` witnesses merge by
+/// *value* into the element cells (they are ordinary elements the
+/// tableau values, usually equal to a real one; their consistency axioms
+/// force exactly that).
+#[test]
+fn bag_variable_value_prints() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 1 2) (bag 2 5))))\n\
+             (assert (= (bag.count 1 b) 2))\n\
+             (check-sat)\n\
+             (get-model)\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
     assert!(
-        out.is_err(),
-        "a negative literal multiplicity must not parse"
+        joined.contains("(define-fun b () (Bag Int) (bag.union_disjoint (bag 1 2) (bag 2 5)))"),
+        "the bag value must assemble from the counts: {joined}"
     );
-    // A symbolic multiplicity parses (the count identity treats it as the
-    // plain integer it is).
+}
+
+/// `bag.count`, `bag.card` and `bag.member` queries answer with numbers
+/// and Booleans — including *query-only* cards, whose assertion stack
+/// never constrained one (folded from the installed value, which is
+/// evaluation of a verified object, not a guess).
+#[test]
+fn bag_queries_answer() {
     let mut context = nixie_solver::Context::new();
-    let out = context.execute_script(
-        "(set-logic ALL)\n\
-         (declare-const n Int)\n\
-         (assert (= (bag.count 1 (bag 1 n)) n))\n\
-         (check-sat)\n",
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 1 2) (bag 2 5))))\n\
+             (assert (= (bag.count 1 b) 2))\n\
+             (check-sat)\n\
+             (get-value ((bag.count 1 b) (bag.count 2 b) (bag.card b)\n\
+                         (bag.member 1 b) (bag.member 3 b) b))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(joined.contains("((bag.count 1 b) 2)"), "{joined}");
+    assert!(joined.contains("((bag.count 2 b) 5)"), "{joined}");
+    assert!(joined.contains("((bag.card b) 7)"), "{joined}");
+    assert!(joined.contains("((bag.member 1 b) true)"), "{joined}");
+    assert!(joined.contains("((bag.member 3 b) false)"), "{joined}");
+    assert!(
+        joined.contains("(b (bag.union_disjoint (bag 1 2) (bag 2 5)))"),
+        "{joined}"
     );
-    assert!(out.is_ok_and(|l| l.first().is_some_and(|s| s == "sat")));
 }
 
 #[test]

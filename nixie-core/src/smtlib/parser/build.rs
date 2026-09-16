@@ -845,19 +845,14 @@ impl Parser<'_> {
                 self.manager.mk_bag_subbag(x, y)
             }
             // `(bag e n)`: the element may be of any sort, the
-            // multiplicity an `Int` — and a negative literal is rejected
-            // outright (the SMT-LIB bags draft requires multiplicities
-            // nonnegative; a negative one has no semantics).
+            // multiplicity an `Int`. A negative literal is *accepted*, and
+            // CVC5's semantics clamp it: `count(x, (bag y n)) =
+            // ite(x = y ∧ n ≥ 1, n, 0)` — so `(bag 1 -5)` is the empty
+            // bag (differential-tested: count of `(bag 1 -5)` is 0, not
+            // −5, and `(bag 1 -5)` = `(bag 1 -1)`). The builder folds a
+            // nonpositive literal to `bag.empty`.
             "bag" => {
                 self.check_int_operand(op, y)?;
-                if let Some(TermKind::IntConst(v)) = self.manager.get(y).map(|d| d.kind.clone())
-                    && v.sign() == num_bigint::Sign::Minus
-                {
-                    return Err(NixieError::ParseError {
-                        position: self.lexer.position(),
-                        message: format!("negative multiplicity in {op}"),
-                    });
-                }
                 self.manager.mk_bag_make(x, y)
             }
             // `bag.count e b`: `e` of the bag's element sort, `b` a bag.

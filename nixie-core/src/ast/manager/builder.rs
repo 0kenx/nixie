@@ -1038,8 +1038,10 @@ impl TermManager {
     /// alone — the count identities stay consistent either way, and the
     /// reduction treats `count` as the plain integer it is.
     pub fn mk_bag_make(&mut self, element: TermId, n: TermId) -> TermId {
+        // A nonpositive literal multiplicity clamps to zero copies (CVC5
+        // semantics, differential-tested): the bag is empty.
         if let Some(TermKind::IntConst(v)) = self.get(n).map(|d| d.kind.clone())
-            && v.is_zero()
+            && v.sign() != num_bigint::Sign::Plus
         {
             let elem_sort = self.get(element).map_or(self.sorts.int_sort, |t| t.sort);
             let sort = self.sorts.bag(elem_sort);
@@ -1139,9 +1141,16 @@ impl TermManager {
             return self.mk_int(0);
         }
         if let Some(TermKind::BagMake(y, n)) = self.get(bag).map(|d| d.kind.clone()) {
+            // CVC5 clamps a negative multiplicity to zero:
+            // `count(x, (bag y n)) = ite(x = y ∧ n ≥ 1, n, 0)`. A literal
+            // `n ≤ 0` folds away entirely (the make itself folded to
+            // empty); a literal `n ≥ 1` folds the guard.
             let same = self.mk_eq(element, y);
+            let one = self.mk_int(1);
+            let positive = self.mk_ge(n, one);
+            let present = self.mk_and([same, positive]);
             let zero = self.mk_int(0);
-            return self.mk_ite(same, n, zero);
+            return self.mk_ite(present, n, zero);
         }
         let sort = self.sorts.int_sort;
         self.intern(TermKind::BagCount(element, bag), sort)
@@ -1181,7 +1190,12 @@ impl TermManager {
             return self.mk_int(0);
         }
         if let Some(TermKind::BagMake(_, n)) = self.get(bag).map(|d| d.kind.clone()) {
-            return n;
+            // Clamped like the count: `|(bag y n)| = max(n, 0)`. A literal
+            // folds; a symbolic `n` keeps the guard.
+            let one = self.mk_int(1);
+            let positive = self.mk_ge(n, one);
+            let zero = self.mk_int(0);
+            return self.mk_ite(positive, n, zero);
         }
         let sort = self.sorts.int_sort;
         self.intern(TermKind::BagCard(bag), sort)

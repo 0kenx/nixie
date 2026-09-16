@@ -195,8 +195,12 @@ fn count_definition(
     match manager.get(b).map(|d| d.kind.clone())? {
         TermKind::BagEmpty(_) => Some(zero),
         TermKind::BagMake(y, n) => {
+            // CVC5 clamps: `ite(e = y ∧ n ≥ 1, n, 0)`.
             let same = manager.mk_eq(e, y);
-            Some(manager.mk_ite(same, n, zero))
+            let one = manager.mk_int(1);
+            let positive = manager.mk_ge(n, one);
+            let present = manager.mk_and([same, positive]);
+            Some(manager.mk_ite(present, n, zero))
         }
         TermKind::BagUnionMax(a, c) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
@@ -338,14 +342,27 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             out.incomplete = true;
             continue;
         }
+        let mut opaque = false;
         for &e in elems {
-            let Some(def) = count_definition(e, b, zero, manager) else {
-                continue;
-            };
             let c = count_term(e, b, manager);
-            let eq = manager.mk_eq(c, def);
-            out.axioms.push(eq);
+            match count_definition(e, b, zero, manager) {
+                Some(def) => {
+                    let eq = manager.mk_eq(c, def);
+                    out.axioms.push(eq);
+                }
+                // An opaque bag's counts are free integers — and a
+                // multiplicity is nonnegative. Without this axiom a
+                // negative count satisfied `|b| = Σ + slack` and
+                // `count(1,b) = -3` answered `sat` (CVC5: `unsat`;
+                // found by differential testing on the model slice).
+                None => {
+                    opaque = true;
+                    let ge = manager.mk_ge(c, zero);
+                    out.axioms.push(ge);
+                }
+            }
         }
+        let _ = opaque;
     }
 
     // ---- membership ----
