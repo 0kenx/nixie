@@ -2074,6 +2074,23 @@ impl<'a> CompletionEval<'a> {
                     let Some(value) = values.pop() else {
                         return Err("quantifier expansion lost a value");
                     };
+                    // The expansion's *domain* is a completion choice:
+                    // which elements exist is the interpretation's own
+                    // decision (the frozen table domain), not a ground
+                    // fact.  A falsifier whose falsity needed the
+                    // expansion — `not subset => exists x. ...` with no
+                    // witness *among the chosen elements* — is not a
+                    // function of its recorded commitments alone: a model
+                    // agreeing on every pin but carrying the missing
+                    // element satisfies the quantifier.  The blocking
+                    // clause built from such a falsifier blocks an
+                    // arrangement that includes asserted facts
+                    // (`subset(b,a) = false`) and refutes satisfiable
+                    // goals (found live on set16: the pre-thaw falsifier
+                    // at `(b, a)`, fully pinned under the old flag).
+                    if self.recording {
+                        self.free_choice = true;
+                    }
                     let decided = if is_forall {
                         manager
                             .get(value)

@@ -76,6 +76,7 @@ pub mod bv;
 pub mod character;
 pub mod combination;
 pub mod config;
+pub mod cp;
 pub mod datatype;
 pub mod diff_logic;
 pub mod error;

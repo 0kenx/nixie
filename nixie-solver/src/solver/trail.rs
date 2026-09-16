@@ -188,13 +188,14 @@ impl super::Solver {
     /// directions – never fewer clauses than the live assertions require.
     pub(super) fn debug_assert_scope_restored(&self, state: &ContextState) {
         let super::Solver {
-            config: _,                  // INVARIANT: user configuration
-            sat: _,                     // SCOPED: SatSolver::push/pop
-            branch_priority: _,         // NOT trailed: empty queue is sound
-            euf: _,                     // SCOPED: reset by `rebase_theory_state`
-            arith: _,                   // SCOPED: reset by `rebase_theory_state`
-            bv: _,                      // SCOPED: reset by `rebase_theory_state`
-            debug_tag: _,               // debug only: never read on a semantic path
+            user_state: _,      // INVARIANT: registration at root; search scopes unwind per solve.
+            config: _,          // INVARIANT: user configuration
+            sat: _,             // SCOPED: SatSolver::push/pop
+            branch_priority: _, // NOT trailed: empty queue is sound
+            euf: _,             // SCOPED: reset by `rebase_theory_state`
+            arith: _,           // SCOPED: reset by `rebase_theory_state`
+            bv: _,              // SCOPED: reset by `rebase_theory_state`
+            debug_tag: _,       // debug only: never read on a semantic path
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.
