@@ -1668,3 +1668,48 @@ fn violated_wide_row_with_overlapping_range_is_repaired() {
         "the repaired entering variable stays inside its window: {va:?}"
     );
 }
+
+// Regression (2026-09-17, found by the strengthened definitional invariant
+// on the NLA interval probes): a scoped probe may tighten a bound PAST the
+// opposite one (a crossed window is the probe's infeasibility signal), and
+// the snap-into-window parks the nonbasic at a point only the TIGHTENED
+// side justified — restoring that side at `pop` then widens the window
+// away from the point, leaving the nonbasic OUTSIDE its restored window
+// (invisible to `find_violating`, which scans basics only).  The pop now
+// re-snaps every non-basic the undo left outside its window and flags the
+// assignment stale for its dependents' re-derivation.
+#[test]
+fn pop_resnaps_a_nonbasic_left_outside_its_restored_window() {
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    s.set_lower(x, Rational64::from_integer(6), 1);
+    s.set_upper(x, Rational64::from_integer(10), 2);
+    // Snap x into its window (nonbasic at the lower 6).
+    s.assignment_current = false;
+    assert!(s.check().is_ok());
+    assert_eq!(s.value(x), Rational64::from_integer(6));
+
+    // The crossed probe: upper tightened past the lower.
+    s.push();
+    s.set_upper(x, Rational64::zero(), 3);
+    // window [6, 0] is empty; the sequential clamp parks x at the upper 0
+    // (below the surviving lower) — the probe's infeasibility shape.
+    s.pop();
+
+    // After the pop the upper is restored to 10; the nonbasic must be back
+    // inside [6, 10] (pre-fix it stayed at 0 — below the lower, with no
+    // search mechanism able to see or repair it).
+    let viol = s.debug_verify_invariant();
+    assert!(
+        viol.is_none(),
+        "the popped state must be definitional again: {viol:?}"
+    );
+    assert!(
+        s.value(x) >= Rational64::from_integer(6)
+            && s.value(x) <= Rational64::from_integer(10),
+        "the nonbasic is re-snapped into its restored window: {:?}",
+        s.value(x)
+    );
+    // And the system still solves (no phantom violation from the stale 0).
+    assert!(s.check().is_ok());
+}
