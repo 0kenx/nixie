@@ -105,7 +105,8 @@ machine-checked proof of the Rust code.
 
 ## Verification conditions and first-run timing failures
 
-Verification uses Linux x86_64, based on `bd05775b`, with four compilation jobs
+The verification below applies to CP implementation commit `b5f0cd14`, based
+on `bd05775b`, on Linux x86_64, with four compilation jobs
 and dev/test debug information disabled. The initial full all-features nextest
 run used four test workers. It ran all 11,903 scheduled tests: 11,899 passed,
 two failed wall-time assertions, and two hit the runner's 180-second limit;
@@ -171,7 +172,53 @@ CARGO_BUILD_JOBS=4 CARGO_PROFILE_TEST_DEBUG=0 CARGO_PROFILE_DEV_DEBUG=0 \
   run --workspace --all-features --test-threads 2 --no-fail-fast
 ```
 
-The matching release binary is cached at `precompile/<this-commit>/nixie`.
+The matching release binary is cached at
+`precompile/b5f0cd1441fc8c40e8466d783aae91286e8e3dec/nixie`.
 Raw logs and statuses, the temporary runner configuration, Cargo lockfile,
 parity JSON, and an artifact manifest are retained under
-`precompile/<this-commit>/benchmark/cp-domain-certificate-verification/`.
+`precompile/b5f0cd1441fc8c40e8466d783aae91286e8e3dec/benchmark/cp-domain-certificate-verification/`.
+
+
+## Concurrent-main integration
+
+While landing, `main` advanced to `d883e613`, which changes the finite-field
+Buchberger chain criterion and its F4 agreement test. The CP implementation
+commit above was merged with that change without conflicts in `808f80cd`.
+No CP source or test was changed during integration. The full-workspace results
+above belong to `b5f0cd14`; they are not presented as a full-workspace run on the
+merged revision. Integration checks cover all math tests, finite-field and CP
+regressions, the callback/model-validation tests, fresh Z3 parity, and the
+performance gate. Their raw outputs are archived with the landing binary.
+
+On `808f80cd`, all **890** selected math/finite-field/callback tests passed,
+including traced/untraced basis identity and the updated F4 agreement test.
+Fresh Z3 **4.16.0** parity again yielded **176** decisive agreements, **zero**
+wrong answers and the same one inconclusive case. The complete performance-gate
+log reports **PASS**, conflicts/decisions ratios **1.000**, ten measured plus two
+trivial instances, unchanged verdicts, and secondary wall ratio **0.94**.
+Its status-file write failed during a shared-filesystem exhaustion incident;
+the complete gate output, not that empty status file, is the evidence.
+
+The filesystem incident also interrupted CP integration compilation and clippy
+before completion. Those interrupted attempts are retained separately and are
+not counted as successful checks. Only this task's obsolete incremental caches,
+test binaries, and generated documentation were removed. Its remaining build
+cache and recovery logs/temporary files were moved to the workspace volume,
+and incremental compilation was disabled for recovery. No source, solver input,
+assertion, or other worker's artifact was changed to address the disk problem.
+
+Recovery completed on `808f80cd`: **35** CP/callback tests passed, followed by
+workspace/all-feature/all-target clippy with warnings denied and formatting.
+The matching integration binary and evidence are archived at
+`precompile/808f80cdc39264d450219f1766328e1c0240c871/` (logs under
+`benchmark/cp-domain-integration/`).
+
+`main` subsequently advanced to `7ebf2ffe`, a bag-only fix. It was merged without
+CP-file edits in `9c573931`. Inspection found that the changed AST builders are
+bag difference constructors, and the solver changes concern bag reduction and
+bag model construction. The final integration uses
+`cargo check -p nixie-solver --all-features --all-targets`; no full-workspace test
+run or new release binary is claimed for that late bag merge. The runtime test
+and parity results above retain their explicitly named revisions.
+
+The final solver/all-feature/all-target check **passed** on `9c573931`.
