@@ -68,8 +68,13 @@ fn f4_and_buchberger_bases_agree() {
         (0x5EED_0042, 12, 12),
     ] {
         let inputs = system(&f, seed, nvars, ncons);
+        // F4's measured ~8x cost: 2^28 covers it at these shapes so the
+        // agreement is CHECKED rather than silently accepted by the
+        // (Err, Err) arm (which hid 8x8's both-budget-out until the
+        // sound chain criterion made Buchberger cheap enough to complete
+        // there).
         let mut b1 = GrobnerBudget::new(1 << 24);
-        let mut b2 = GrobnerBudget::new(1 << 24);
+        let mut b2 = GrobnerBudget::new(1 << 28);
         let buch = grobner_basis_untraced(&f, &inputs, &mut b1);
         let f4r = f4_basis(&f, &inputs, &mut b2);
         match (buch, f4r) {
