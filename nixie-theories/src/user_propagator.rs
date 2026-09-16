@@ -58,6 +58,10 @@ pub struct Consequence {
     pub term: TermId,
     /// Justification (antecedent literals)
     pub justification: Vec<TermId>,
+    /// Optional independently checkable table witness. Its original statement
+    /// must be authenticated by the consumer; attaching a certificate alone
+    /// does not make an arbitrary user propagator trusted or proof-producing.
+    pub table_certificate: Option<crate::cp::table_proof::TableCertificate>,
 }
 
 impl Consequence {
@@ -66,6 +70,7 @@ impl Consequence {
         Self {
             term,
             justification,
+            table_certificate: None,
         }
     }
 }

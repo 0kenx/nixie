@@ -132,3 +132,20 @@ Reproducer: the script body above; any cached binary pair
 (`82c3c926` vs current) demonstrates it in under 30 s.  Confirmed
 **non-termination**, not eventual-`unknown`: current HEAD killed at
 900 s with rc=124 (`timeout`), still `Processing`.
+
+## RESOLVED (2026-09-16 16:43): `05bc3654` — the boundary-escape probe
+
+The treadmill was decoded and fixed by the owner the same day this
+addendum was filed: the boundary application (`sum (k - d)`) is symbolic
+and follows `k`, so pinning the concrete refuted applications never
+constrains the chain — every round's model escaped to the unfolding's
+truncation edge (k = 7, 11, 8, 16, 32 — always the fuel boundary), the
+pin range lagged the edge forever, and the pre-`24cb0567` solver had
+merely been *lucky* to land on an interior `k` and certify.  The landed
+sound probe (one bounded search per pinned-range bound under
+assumptions) closes it.
+
+**Verified after `05bc3654`**: the reproducer solves in **0.33 s**
+(`sat`, `k = 3`), and the full `recfun_e2e` suite passes in 0.8 s.
+With this, `wisas` (CSR-mirror fix) and recfun (this) — both
+`24cb0567`-era casualties — are closed.
