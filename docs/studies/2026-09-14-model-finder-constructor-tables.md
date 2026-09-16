@@ -624,3 +624,42 @@ Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
 nixie-core 4779/4780 (the one timeout is the convergence pin under
 full-suite parallel load — it passes standalone at 139 s, the fastest
 of the whole arc); fmt/clippy clean on the touched files.
+
+
+## The expansion is a completion choice — the repair's last hole, closed (2026-09-16, eleventh follow-up)
+
+The residual falsifier, decoded end to end, exposed a genuine
+soundness hole in the stale-pin repair: the `(b, a)` falsifier (17
+commitments: the eight pre-escalation member pins plus the *asserted*
+`subset(b,a) = false`) was `fully_pinned` — yet its falsity rested on
+the **bounded-quantifier expansion's domain choice** (`not subset =>
+exists x. ...` with no witness *among the chosen elements*).  The
+expansion never set `free_choice`, so the transfer argument silently
+included the domain as a ground fact.  The blocking clause built from
+that falsifier blocks an arrangement containing an asserted fact —
+the false-`unsat` vector, resurfaced through the very mechanism built
+to be sound.  A model agreeing on every pin but carrying the missing
+element (the skf witness, minted one escalation later) satisfies the
+quantifier.
+
+**Fix**: the `Quant` frame sets `free_choice` in recording mode — the
+expansion's domain is the interpretation's own decision, so any
+falsifier whose falsity needed it is not a function of its
+commitments.  (The aux certification is unaffected: there the
+expansion is the legitimate restriction semantics; this flag governs
+only the mining/repair bookkeeping.)
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); 4782/4783 (the one
+timeout is the convergence pin under parallel load — 145 s standalone,
+fastest of the arc); fmt/clippy clean.
+
+**Family state**: the pre-thaw `(b,a)` repair clause no longer fires;
+the loop's remaining `Sat` verdicts are the post-normalization legs
+(the stale *constructor-table* ground pins — e.g. the ground solver's
+own `union(b,a) ↦ a` assignment harvested as a never-override pin
+whose row no longer matches post-escalation).  The revision loop for
+*those* — the falsifier path emitting the defining-axiom instance so
+the ground solver re-solves the pin — is the design the study has
+carried since the first landing; the probe recipes for it are all
+proven.
