@@ -227,8 +227,16 @@ pass once the symlinks exist). Delete worktrees when done. Never
   (seed lm-deduplication also landed); Buchberger's first criterion is
   unconditional and stays. Pinned by
   `nixie-math/tests/ff_gb_seed_dedup_regression.rs` — any re-enabling
-  (the proper G-M installation is the named performance follow-up,
-  worth ~1.2–1.5× on the chain corpus) must pass that battery.
+  must pass that battery. The SOUND form landed 2026-09-18: explicit
+  `zero_pairs` bookkeeping (processed-to-zero ∪ coprime ∪ verified
+  chains), a pair is skipped only when the classical precondition
+  actually holds — measured FASTER than the old unsound form at
+  128×192 (~1.0 s vs 2.6 s) and vs criterion-2-off (4.3 s). The
+  RATIONAL engines (`nixie-math/src/grobner/*`) still carry the
+  unsound simplified chain criterion (one with a "For now, simplified
+  check" confession) — UNWIRED today (only the dead NLSAT
+  preprocessor imports them); fix or loudly document before any
+  wiring.
 - **T11 — window routing cannot be forced at unit scale.** The
   monolithic cascade is the CHEAPEST strategy for small goals, so no
   small test routes through the windows (a budget that starves the

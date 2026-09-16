@@ -783,11 +783,22 @@ fn grobner_basis_inner(
     }
 
     // Pair list with Gebauer–Möller criteria. Pairs are (i, j), i < j.
+    //
+    // The chain criterion is carried as EXPLICIT BOOKKEEPING of
+    // provably-zero pairs — the sound form of Buchberger's second
+    // criterion: sp(i,j) reduces to zero if some k has lm_k |
+    // lcm(lm_i,lm_j) AND the pairs (i,k), (j,k) are THEMSELVES provably
+    // zero (processed-to-zero, coprime, or recursively chain-verified).
+    let mut zero_pairs: rustc_hash::FxHashSet<(usize, usize)> = rustc_hash::FxHashSet::default();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for i in 0..basis.len() {
         for j in (i + 1)..basis.len() {
             if !criterion_applies(&basis, i, j) {
                 pairs.push((i, j));
+            } else {
+                // Coprime lms: the first criterion is an unconditional
+                // theorem — a provably-zero pair.
+                zero_pairs.insert((i, j));
             }
         }
     }
@@ -845,12 +856,40 @@ fn grobner_basis_inner(
         let (i, j) = pairs[next_pair];
         next_pair += 1;
 
+        // The SOUND chain criterion, at selection time (the processed-
+        // zero information is maximally available there).
+        let mut chain_verified = false;
+        let lcm_ij = monomial_lcm(&lms[i], &lms[j]);
+        // Index both `lms` and `zero_pairs` by element index; the
+        // range loop is the clearest shape for the indexed scan.
+        #[allow(clippy::needless_range_loop)]
+        for k in 0..basis.len() {
+            if k == i || k == j {
+                continue;
+            }
+            budget.charge(1)?;
+            if lcm_ij.div(&lms[k]).is_none() {
+                continue;
+            }
+            let (a, b) = (k.min(i), k.max(i));
+            let (c, d) = (k.min(j), k.max(j));
+            if zero_pairs.contains(&(a, b)) && zero_pairs.contains(&(c, d)) {
+                chain_verified = true;
+                break;
+            }
+        }
+        if chain_verified {
+            zero_pairs.insert((i, j));
+            continue;
+        }
+
         let cost = u64::try_from(basis[i].poly.n_terms() + basis[j].poly.n_terms())
             .unwrap_or(u64::MAX / 2);
         budget.charge(cost.saturating_add(1))?;
         let spoly = s_polynomial(f, &basis[i], &basis[j]);
         let (reduced, _) = reduce_traced(f, &spoly, &basis, &lms, budget)?;
         if reduced.poly.is_zero() {
+            zero_pairs.insert((i, j));
             continue;
         }
         // Reduce the new element fully against the current basis before
@@ -888,6 +927,8 @@ fn grobner_basis_inner(
         for k in 0..n {
             if !criterion_applies_lms(&lms, k, n) {
                 pairs.push((k, n));
+            } else {
+                zero_pairs.insert((k, n));
             }
         }
         // No inter-reduction inside the loop: `reduce_all` *shrinks* the
