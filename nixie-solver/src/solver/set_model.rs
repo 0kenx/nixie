@@ -824,6 +824,85 @@ impl Solver {
         // resolved through a pin — and the collision repair must treat
         // them as fixed: re-minting one trades the membership it was
         // derived to satisfy for a fresh violation.
+        // **Pre-mint every unpinned join skolem first**, against a
+        // **component-level** used set.
+        //
+        // Two collisions this closes, both found on `(1,2) ∈ r`,
+        // `(2,3) ∈ s`, `(1,3) ∈ r ⨝ s` declining the whole sort's model:
+        //
+        // * `used` tracks whole *element* values (tuples), but the mint
+        //   produces *components* (ints). An int constant spelling inside
+        //   a resolved value is not itself in `used`, so a minted witness
+        //   could equal a genuine constant — a fresh collision the repair
+        //   below refuses. The component set is seeded with every leaf of
+        //   every resolved value (recursively: nested tuples contribute
+        //   their inner leaves).
+        // * Minting inside the sweep left every tuple resolved before the
+        //   re-mint holding a stale derived value that collided with a
+        //   constant's. Pre-minting fixes every skolem's value before any
+        //   tuple reads it; the shared `minted` set keeps one skolem one
+        //   value even when it spells inside tuples of several sorts, and
+        //   guards the sweep's own mint branch against overwriting a
+        //   pre-minted witness with a fresh collision (the old behavior:
+        //   re-minted against the tuple-level `used`, reinstating the
+        //   constant the pre-mint had just avoided).
+        let mut comp_used: FxHashSet<TermId> = FxHashSet::default();
+        let mut minted: FxHashSet<TermId> = FxHashSet::default();
+        for &e in elements {
+            let Some(Some(v)) = elem_values.get(&e).copied() else {
+                continue;
+            };
+            let mut stack = vec![v];
+            while let Some(t) = stack.pop() {
+                match manager.get(t).map(|d| d.kind.clone()) {
+                    Some(TermKind::DtConstructor { args, .. }) => {
+                        stack.extend(args.iter().copied());
+                    }
+                    _ => {
+                        comp_used.insert(t);
+                    }
+                }
+            }
+        }
+        for &e in elements {
+            if !matches!(
+                manager.get(e).map(|d| &d.kind),
+                Some(TermKind::DtConstructor { .. })
+            ) {
+                continue;
+            }
+            let mut stack = vec![e];
+            while let Some(t) = stack.pop() {
+                let Some(TermKind::DtConstructor { args, .. }) =
+                    manager.get(t).map(|d| d.kind.clone())
+                else {
+                    continue;
+                };
+                for &arg in &args {
+                    match manager.get(arg).map(|d| d.kind.clone()) {
+                        Some(TermKind::DtConstructor { .. }) => stack.push(arg),
+                        Some(TermKind::Var(n))
+                            if manager.resolve_str(n).starts_with("@set_join_")
+                                && minted.insert(arg)
+                                && self.skolem_pinned_to(arg).is_none() =>
+                        {
+                            match self.mint_component_value(
+                                manager.get(arg).map_or(manager.sorts.int_sort, |d| d.sort),
+                                &comp_used,
+                                manager,
+                            ) {
+                                Some(v) => {
+                                    comp_used.insert(v);
+                                    model.set(arg, v);
+                                }
+                                None => return,
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         let mut sweep_derived: FxHashSet<TermId> = FxHashSet::default();
         for _sweep in 0..4 {
             let mut changed = false;
@@ -886,11 +965,16 @@ impl Solver {
                     // refuses. A committed-true guard equality pins the
                     // skolem to its partner; anything else gets a fresh,
                     // distinct witness that overrides the default.
+                    // `minted` also guards this branch: a pre-minted
+                    // skolem keeps its witness (the sweep would otherwise
+                    // re-mint against the tuple-level `used` and overwrite
+                    // it with a colliding value).
                     let is_join_skolem = matches!(
                         manager.get(arg).map(|d| &d.kind),
                         Some(TermKind::Var(n))
                             if manager.resolve_str(*n).starts_with("@set_join_")
-                    ) && self.skolem_pinned_to(arg).is_none();
+                    ) && self.skolem_pinned_to(arg).is_none()
+                        && !minted.contains(&arg);
                     let value =
                         if is_join_skolem {
                             if let Some(old) = model.get(arg) {

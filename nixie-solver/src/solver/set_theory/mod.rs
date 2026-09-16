@@ -143,6 +143,23 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
 /// unconstrained set variable, which is the common shape in practice and one a
 /// coarser rule would decline.
 ///
+/// Budget on **derived** element growth per sort: the join's splits and
+/// the compose's glued tuples re-enter the next pass's survey as fresh
+/// elements, and each pass then derives more of them — unbounded
+/// feedback, measured at 12 → 39 → 91 → 148 elements across the asserts
+/// of a five-line script. CVC5 never re-derives: its
+/// `computeMembersForBinOpRel` composes lazily over equivalence-class
+/// member representatives, cached per representative. The eager
+/// reduction's honest analogue is a budget: crossing it skips further
+/// split derivation and raises the reduction's `incomplete` flag, so a
+/// `Sat` resting on an under-derived relation fragment degrades to
+/// `Unknown` (an `Unsat` stays — every emitted axiom is valid
+/// regardless). User-surveyed elements are never counted against it —
+/// the input's own size is not feedback. Aligned with the counting cap
+/// ([`cardinality`]'s `MAX_COUNT_ELEMENTS`): the same population drives
+/// both passes' pair products.
+const MAX_DERIVED_ELEMENTS: usize = 24;
+
 /// The returned list may contain duplicates and terms that are only
 /// *candidates* — membership still decides which are really in. That is what
 /// makes the de-duplication in [`cardinality_axiom`] necessary.
@@ -323,6 +340,48 @@ fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
 /// its equalities to other plausible terms still tie.
 /// Whether a term's spelling contains one of the join skolem variables
 /// (`@set_join_*`) — i.e. it is itself split-derived.
+/// Whether every leaf equality of an unfolded tuple-equality antecedent
+/// is *committable*: both sides of each leaf `Eq` sit in one group of the
+/// equality-adjacency closure. A pair whose leaves straddle groups has no
+/// Boolean anywhere that could commit its antecedent, so the congruence
+/// implication would be vacuous for every assignment. Explicit-stack: the
+/// conjunction can be arbitrarily wide.
+fn same_leaves_connected(
+    same: TermId,
+    connected: &FxHashMap<nixie_core::SortId, FxHashSet<TermId>>,
+    manager: &TermManager,
+) -> bool {
+    if same == manager.true_id {
+        return true; // identical components: the axiom forces agreement
+    }
+    let mut stack = vec![same];
+    while let Some(t) = stack.pop() {
+        let Some(data) = manager.get(t) else { continue };
+        match &data.kind {
+            TermKind::And(args) => stack.extend(args.iter().copied()),
+            TermKind::Eq(a, b) => {
+                let Some(sa) = manager.get(*a).map(|d| d.sort) else {
+                    return false;
+                };
+                let Some(sb) = manager.get(*b).map(|d| d.sort) else {
+                    return false;
+                };
+                if sa != sb {
+                    return false;
+                }
+                let Some(group) = connected.get(&sa) else {
+                    return false;
+                };
+                if !group.contains(a) || !group.contains(b) {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
 fn spells_join_skolem(t: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![t];
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
@@ -673,6 +732,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // [`cardinality::reduce`] — keeps the axiom emission in the definition
     // loop below (the terms are hash-consed, so the second build is the
     // same term).
+    let mut rel_incomplete = false;
     for &set in &s.sets {
         let Shape::Join(r1, r2) = shape_of(set, manager) else {
             continue;
@@ -700,7 +760,30 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 user_elems.push(e);
             }
         }
+        // The derived-element budget (see [`MAX_DERIVED_ELEMENTS`]): once
+        // a target list is full, further splits for this join are skipped
+        // and the honesty flag goes up. The `+ 2` leaves room for the
+        // (`u`, `v`) pair each iteration itself pushes, so a list never
+        // overshoots the cap and starves the compose pass that runs
+        // after (measured: 13 → 25 with a plain `>=` check, which then
+        // killed every compose pair).
+        let target_sorts: Vec<nixie_core::SortId> = [
+            element_sort(r1, manager),
+            element_sort(r2, manager),
+            Some(middle_sort),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         for e in user_elems {
+            if target_sorts.iter().any(|sort| {
+                elements
+                    .get(sort)
+                    .is_some_and(|l| l.len() + 2 > MAX_DERIVED_ELEMENTS)
+            }) {
+                rel_incomplete = true;
+                break;
+            }
             let total = tuple_arity(e, manager).unwrap_or(n1.max(1));
             let k = manager.mk_var(&format!("@set_join_{}_{}", set.0, e.0), middle_sort);
             let mut left: Vec<TermId> = (0..n1.saturating_sub(1))
@@ -769,8 +852,9 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         }
     }
     // Relation constructs the reduction cannot faithfully relate raise
-    // this (a malformed join, or a compose-pair budget overflow below).
-    let mut rel_incomplete = false;
+    // `rel_incomplete` (declared before the join pre-pass above): a
+    // malformed join, a compose-pair budget overflow below, or the
+    // derived-element budget crossing.
 
     // ---- derived elements: the relation operators' projections ----
     //
@@ -879,6 +963,11 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     definition_sets.extend(card.extra_sets.iter().copied());
 
     // Define every membership atom, for every element of the matching sort.
+    // `pre_defs_len` marks where the definitions (and everything after:
+    // witnesses, subsets, choose congruence) begin — the membership-
+    // congruence pass at the end re-scans exactly that range for the `Eq`
+    // terms those passes mint.
+    let pre_defs_len = axioms.len();
     for &set in &definition_sets {
         let Some(es) = element_sort(set, manager) else {
             continue;
@@ -1001,6 +1090,33 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                         rel_incomplete = true;
                         continue;
                     };
+                    // Only *user-reachable* elements get splits here too —
+                    // the pre-pass above derives exactly those, and a split
+                    // of a split-derived element only re-derives what the
+                    // original's split and the compose rule already force
+                    // (while feeding the cross-pass element feedback).
+                    // The derived-element budget applies for the same
+                    // reason as in the pre-pass, with the same `+ 2` room
+                    // for the pair this arm pushes.
+                    if spells_join_skolem(e, manager) {
+                        continue;
+                    }
+                    if [
+                        element_sort(r1, manager),
+                        element_sort(r2, manager),
+                        Some(middle_sort),
+                    ]
+                    .iter()
+                    .any(|sort| {
+                        sort.is_some_and(|sort| {
+                            elements
+                                .get(&sort)
+                                .is_some_and(|l| l.len() + 2 > MAX_DERIVED_ELEMENTS)
+                        })
+                    }) {
+                        rel_incomplete = true;
+                        continue;
+                    }
                     // The result tuple's columns are `e[0..n1-1] ++ (the
                     // middle) ++ e[n1-1..]`: the forward split recovers an
                     // `r1` member (e's front plus the witness) and an `r2`
@@ -1352,10 +1468,283 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         }
     }
 
+    // ---- membership congruence ----
+    //
+    // Runs **last**: the equalities it feeds on are minted by the passes
+    // above — the definitions loop's singleton unfoldings, the counting
+    // guards, the extensional witnesses below — and the adjacency must see
+    // them in the same pass, or a one-assert script's pairs are refused
+    // (measured: the singleton's `e ∈ {t} ↔ e = t` folds its own axiom to
+    // `true` in the builder — `mk_set_member(e, singleton)` *is* the
+    // equality — so the surviving `Eq` nodes live inside the witness
+    // axioms, minted only here at the end).
+    //
+    // Congruence is needed exactly where a set's membership is not
+    // per-element defined from congruent bases: **opaque sets** (no
+    // definition at all) and **joins** (their membership is defined
+    // forward — the split — plus a compose over ground spellings, so
+    // base congruence does not propagate to the compound). A formula
+    // whose sets are all literal leaves and iff-defined compounds
+    // (`set.singleton`, unions, …) needs none of this — every membership
+    // atom there is one Boolean with a fixed meaning.
+    let needs_congruence = s
+        .sets
+        .iter()
+        .any(|&set| matches!(shape_of(set, manager), Shape::Opaque | Shape::Join(..)));
+    let mut congruence_budget_exceeded = false;
+    if needs_congruence {
+        // Extend the equality list with the `Eq` terms the passes above
+        // minted — the same extension the post-cardinality re-survey does,
+        // over everything minted since the definitions loop began.
+        {
+            let mut seen: FxHashSet<(TermId, TermId)> = s
+                .element_equalities
+                .iter()
+                .map(|&(a, b)| if a.0 < b.0 { (a, b) } else { (b, a) })
+                .collect();
+            let mut stack: Vec<TermId> = axioms[pre_defs_len..].to_vec();
+            while let Some(t) = stack.pop() {
+                let Some(data) = manager.get(t) else { continue };
+                if let TermKind::Eq(a, b) = &data.kind {
+                    let (ea, eb) = (*a, *b);
+                    if element_plausible(ea, manager)
+                        && element_plausible(eb, manager)
+                        && manager.get(ea).map(|d| d.sort) == manager.get(eb).map(|d| d.sort)
+                        && seen.insert(if ea.0 < eb.0 { (ea, eb) } else { (eb, ea) })
+                    {
+                        s.element_equalities.push((ea, eb));
+                    }
+                }
+                stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+            }
+        }
+        // Which terms congruence is worth stating for: those **connected by
+        // equalities to something the formula actually tests for membership**.
+        //
+        // Not every equality, and not only the ones whose sides are already
+        // elements. Not every equality, because the axiom's own `set.member` makes
+        // its term an element, the definition loop above instantiates every set
+        // against every element, and `reduce` runs once per `assert` — stating it
+        // for `pc' = pc + 1` and its like turned a four-minute corpus into a
+        // quarter of an hour by that route. Not only the already-elements,
+        // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
+        // appears in no membership atom of its own and would break the chain.
+        //
+        // So: seed with the elements, then close over the equalities.
+        let mut connected: FxHashMap<nixie_core::SortId, FxHashSet<TermId>> = elements
+            .iter()
+            .map(|(k, v)| (*k, v.iter().copied().collect()))
+            .collect();
+        // The sides of the collected equalities seed their sorts' groups
+        // too: a component-level equality (`x = 3`, `k = 2`) relates two
+        // terms that are *leaves* of tuple elements rather than elements
+        // of their own — no membership atom ever mentions them directly,
+        // so the element seed alone leaves their sort's group empty and
+        // the constructor-pair filter below would refuse exactly the
+        // pairs an asserted component equality makes committable (a
+        // wrong-`sat` the pass exists to close).
+        for &(a, b) in &s.element_equalities {
+            if let (Some(sa), Some(sb)) = (
+                manager.get(a).map(|d| d.sort),
+                manager.get(b).map(|d| d.sort),
+            ) && sa == sb
+            {
+                let group = connected.entry(sa).or_default();
+                group.insert(a);
+                group.insert(b);
+            }
+        }
+        {
+            // A single walk out from the seeds, over an adjacency map built once.
+            //
+            // The obvious way to close this is to sweep the equalities until
+            // nothing changes, and it is **quadratic** in their number — which
+            // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
+            // every step, thousands of them, re-swept once per `assert`. That, and
+            // not the axioms it produces, is what made the corpus take twenty
+            // minutes.
+            let mut adjacent: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
+            for &(x, y) in &s.element_equalities {
+                // Only plausible-element edges are traversable; see
+                // [`element_plausible`]. Without this filter the reduction's
+                // own counting equations (`|s| = Σ + slack`) enter as element
+                // equalities and each pass seeds the next with fresh
+                // composites.
+                if !element_plausible(x, manager) || !element_plausible(y, manager) {
+                    continue;
+                }
+                adjacent.entry(x).or_default().push(y);
+                adjacent.entry(y).or_default().push(x);
+            }
+            for (es, group) in &mut connected {
+                let mut frontier: Vec<TermId> = group.iter().copied().collect();
+                while let Some(t) = frontier.pop() {
+                    let Some(nexts) = adjacent.get(&t) else {
+                        continue;
+                    };
+                    for &n in nexts {
+                        if manager.get(n).map(|d| d.sort) != Some(*es) {
+                            continue;
+                        }
+                        if group.insert(n) {
+                            frontier.push(n);
+                        }
+                    }
+                }
+            }
+        }
+        for &(x, y) in &s.element_equalities {
+            if !element_plausible(x, manager) || !element_plausible(y, manager) {
+                continue;
+            }
+            let Some(es) = manager.get(x).map(|d| d.sort) else {
+                continue;
+            };
+            let Some(group) = connected.get(&es) else {
+                continue;
+            };
+            if !group.contains(&x) || !group.contains(&y) {
+                continue;
+            }
+            for &set in &s.sets {
+                if element_sort(set, manager) != Some(es) {
+                    continue;
+                }
+                // **Opaque sets and joins.** A structured set's membership
+                // is *defined* from its bases by the loop above — `e ∈ (a
+                // ∪ b)` is `e ∈ a ∨ e ∈ b` — so congruence at the bases
+                // gives it at the union, and every chain of definitions
+                // bottoms out in opaque sets. A **join is the exception**:
+                // its definition is a forward split per element plus a
+                // compose over ground spellings, so congruence at the
+                // operands does not reach the compound's own membership
+                // atoms — `t = (1,x) ∧ x = 3 ∧ (1,3) ∈ r ⨝ s ∧ t ∉ r ⨝ s`
+                // answered `sat` before joins were listed here. Stating it
+                // at every set as well is redundant, and it is not cheap
+                // redundancy: it took the corpus from four minutes to
+                // twenty.
+                if !matches!(shape_of(set, manager), Shape::Opaque | Shape::Join(..)) {
+                    continue;
+                }
+                let same = manager.mk_eq(x, y);
+                let mx = manager.mk_set_member(x, set);
+                let my = manager.mk_set_member(y, set);
+                let agree = manager.mk_eq(mx, my);
+                axioms.push(manager.mk_implies(same, agree));
+            }
+        }
+
+        // **Tuple-constructor pairs.** `mk_eq` unfolds a constructor
+        // equality componentwise (datatype injectivity as a builder
+        // rewrite), so two ctor-spelled tuple elements never carry a
+        // syntactic `Eq` between them: their equality is decided at the
+        // *component* level — the join's skolem middle `k = 2` pinned by
+        // the counting guards or an extensional singleton, a user's
+        // `x = 3` by an assertion — and the syntactic loop above is
+        // blind to exactly those pairs. Membership is a function of the
+        // element's *value*: `C(xs) = C(ys) → (C(xs) ∈ S ↔ C(ys) ∈ S)`,
+        // and the antecedent `mk_eq(x, y)` *is* the componentwise
+        // conjunction after the unfold — this states the dual of the
+        // injectivity rewrite directly. Without it, `k = 2` committed
+        // beside `(k,3) ∈ s` and `(2,3) ∉ s` answered `sat` — an
+        // arrangement no set family realizes (the model side's collision
+        // repair caught the shape only as a declined display, never as a
+        // verdict).
+        //
+        // Three filters keep the pass's cost where the soundness risk is:
+        //
+        // * **Vacuous pairs** — a constantly unequal component (`1 = 2`)
+        //   folds the antecedent to `false` and the implication says
+        //   nothing; skipped.
+        // * **Unconnected pairs** — the antecedent's leaf equalities are
+        //   committable only if an `Eq` atom relating the two sides
+        //   *exists somewhere* (an assertion, a counting guard, an
+        //   extensional singleton's unfolding — collected into the
+        //   adjacency above, closed transitively). A pair whose leaves
+        //   sit in different groups of that closure cannot have its
+        //   antecedent committed by any Boolean the formula owns, so the
+        //   implication is vacuous for every assignment — skipped. This
+        //   is also what keeps the join's split/compose feedback
+        //   affordable: feedback elements (splits of glued tuples) carry
+        //   fresh skolem components no equality relates, so their pairs
+        //   drop out instead of weaving a quadratic implication web.
+        // * **Fully-constant spellings first** — every closed door pairs
+        //   a constant tuple against one carrying a variable or skolem
+        //   component (`(2,3)` vs `(k,3)`, `(1,3)` vs `(1,x)`), while the
+        //   feedback population is mostly constant glued tuples; sorting
+        //   the constants first lets the (free) const×const vacuous
+        //   pairs precede the const×nonconst pairs the doors need, so a
+        //   tight budget still covers them.
+        //
+        // The pair product carries a budget as the backstop: overflowing
+        // it raises the honesty gate (`incomplete`) — a skipped pair here
+        // is a wrong-`sat` shape, never a cost saving.
+        const MAX_CONGRUENCE_PAIRS: usize = 1024;
+        let mut congruence_pairs = 0usize;
+        'pairs: for (&es, list) in elements.iter() {
+            let fully_constant = |e: TermId| -> bool {
+                manager.get(e).is_some_and(|d| {
+                    matches!(&d.kind,
+                    TermKind::DtConstructor { args, .. }
+                        if args.iter().all(|&a| matches!(
+                            manager.get(a).map(|d| &d.kind),
+                            Some(TermKind::IntConst(_))
+                                | Some(TermKind::RealConst(_))
+                                | Some(TermKind::StringLit(_))
+                        )))
+                })
+            };
+            let mut ctors: Vec<TermId> = list
+                .iter()
+                .copied()
+                .filter(|&e| {
+                    manager.get(e).is_some_and(|d| {
+                        matches!(d.kind, TermKind::DtConstructor { .. })
+                            && manager.tuple_field_sorts_of(d.sort).is_some()
+                    })
+                })
+                .collect();
+            ctors.sort_by_key(|&e| !fully_constant(e));
+            for (i, &x) in ctors.iter().enumerate() {
+                for &y in ctors.iter().skip(i + 1) {
+                    let same = manager.mk_eq(x, y);
+                    if same == manager.false_id {
+                        continue; // a component pair is constantly unequal
+                    }
+                    // Every leaf equality of the unfolded antecedent must
+                    // be committable: both leaves in one group of the
+                    // equality closure. `mk_and` flattens, so the leaves
+                    // of the conjunction are exactly the component `Eq`s.
+                    if !same_leaves_connected(same, &connected, manager) {
+                        continue;
+                    }
+                    for &set in &s.sets {
+                        if element_sort(set, manager) != Some(es) {
+                            continue;
+                        }
+                        if !matches!(shape_of(set, manager), Shape::Opaque | Shape::Join(..)) {
+                            continue;
+                        }
+                        if congruence_pairs >= MAX_CONGRUENCE_PAIRS {
+                            congruence_budget_exceeded = true;
+                            break 'pairs;
+                        }
+                        congruence_pairs += 1;
+                        let mx = manager.mk_set_member(x, set);
+                        let my = manager.mk_set_member(y, set);
+                        let agree = manager.mk_eq(mx, my);
+                        axioms.push(manager.mk_implies(same, agree));
+                    }
+                }
+            }
+        }
+    }
+
     // `set.card`, exact where the members are confined to a known list and
     // *declined* otherwise: an under-constrained cardinality is a free
     // integer, and a model that picks one arbitrarily is not a model.
-    let incomplete = pair_budget_exceeded || rel_incomplete || card.incomplete;
+    let incomplete =
+        pair_budget_exceeded || rel_incomplete || congruence_budget_exceeded || card.incomplete;
 
     Reduction { axioms, incomplete }
 }

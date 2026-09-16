@@ -466,11 +466,14 @@ fn rel_card_target_keeps_the_operand_model() {
     );
 }
 
-/// A join's value honestly echoes until the split-collision repair learns
-/// to separate join skolems (the verdict is unaffected); this pins the
-/// current honest non-answer so the improvement flips it loudly.
+/// A join's value prints (it used to echo honestly): the split-collision
+/// repair's witness minting is pre-empted by pre-minting every unpinned
+/// join skolem against a component-level used set, so no fresh witness
+/// collides with a genuine constant, the collision repair no longer
+/// declines the sort, and the rel synthesis folds the join from its
+/// operands' values.
 #[test]
-fn join_value_declines_honestly_today() {
+fn join_value_prints() {
     let mut context = nixie_solver::Context::new();
     let out = context
         .execute_script(
@@ -490,8 +493,16 @@ fn join_value_declines_honestly_today() {
         "the verdict must stay sat: {joined}"
     );
     assert!(
-        joined.contains("((rel.join r s) (rel.join r s))"),
-        "the join value must echo (or, once fixed, print - update me): {joined}"
+        joined.contains("((rel.join r s) (set.union")
+            && joined.contains("(set.singleton (tuple 1 3))"),
+        "the join value must fold to its composed members: {joined}"
+    );
+    // The composed value is verified before it is published: the
+    // asserted member (1,3) is present (the connectable pair), and the
+    // echo must be gone.
+    assert!(
+        !joined.contains("((rel.join r s) (rel.join r s))"),
+        "the echo decline must be gone: {joined}"
     );
 }
 
@@ -615,5 +626,165 @@ fn unary_join_typing_follows_cvc5() {
         out.unwrap().first().map(String::as_str),
         Some("sat"),
         "the connectable pair witnesses the joined member"
+    );
+}
+
+// ===== membership congruence under element equality (a closed false-`sat`
+// class, four doors) =====
+//
+// `mk_eq` unfolds a tuple-constructor equality componentwise (datatype
+// injectivity as a builder rewrite), so two ctor-spelled tuple elements
+// never carry a syntactic `Eq` between them: their equality is decided at
+// the *component* level. Before the congruence pass stated the dual —
+// `C(xs) = C(ys) → (C(xs) ∈ S ↔ C(ys) ∈ S)`, with the component
+// conjunction as antecedent — SAT could commit the component equalities
+// beside disagreeing membership atoms, an arrangement no set family
+// realizes, and each of the four shapes below answered `sat` (CVC5
+// 1.3.4: `unsat` on every one).
+
+/// Door 1 — the join's own skolem middle: `r = {(1,2)}` exactly, so
+/// `(1,3) ∈ r ⨝ s` forces the witness `k = 2` through the extensional
+/// singleton, and `(k,3) ∈ s` is then `(2,3) ∈ s` — contradicting the
+/// asserted non-membership.
+#[test]
+fn join_split_skolem_pinned_by_singleton_is_congruent() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (= r (set.singleton (tuple 1 2))))\n\
+         (assert (not (set.member (tuple 2 3) s)))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Door 2 — a user's component equality: `x = 3` makes `(1,x)` and the
+/// compose-derived `(1,3)` the same element, so their memberships in the
+/// join must agree; the compose rule forces `(1,3) ∈ J`, the assertion
+/// negates `(1,x) ∈ J`.
+#[test]
+fn join_component_equality_is_congruent() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (= r (set.singleton (tuple 1 2))))\n\
+         (assert (= s (set.singleton (tuple 2 3))))\n\
+         (assert (= x 3))\n\
+         (assert (not (set.member (tuple 1 x) (rel.join r s))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Door 3 — a syntactic tuple-level equality (`t = (1,x)`) at the join:
+// congruence used to be stated at opaque sets only, and a join is the one
+// shape whose membership is not per-element defined from its bases.
+#[test]
+fn join_syntactic_tuple_equality_is_congruent() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-const t (Tuple Int Int))\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (= r (set.singleton (tuple 1 2))))\n\
+         (assert (= s (set.singleton (tuple 2 3))))\n\
+         (assert (= x 3))\n\
+         (assert (= t (tuple 1 x)))\n\
+         (assert (not (set.member t (rel.join r s))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Door 4 — no opaque set at all: the join of two literal singletons
+/// still needs congruence, and the `any_opaque` gate used to skip the
+/// whole pass for formulas whose sets are all literal leaves.
+#[test]
+fn join_of_literals_needs_congruence_too() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (assert (= x 3))\n\
+         (assert (not (set.member (tuple 1 x)\n\
+                       (rel.join (set.singleton (tuple 1 2))\n\
+                                 (set.singleton (tuple 2 3))))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The compose rule keeps its backward half for the syntactic glued
+/// spelling: pinning both operands and negating the join's own member
+/// (no congruence needed) was `unsat` before this arc and must stay so.
+#[test]
+fn join_compose_syntactic_glue_still_refutes() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (= r (set.singleton (tuple 1 2))))\n\
+         (assert (= s (set.singleton (tuple 2 3))))\n\
+         (assert (= x 3))\n\
+         (assert (not (set.member (tuple 1 3) (rel.join r s))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The mirror of door 2: without the negation the join is satisfiable —
+/// congruence must not overconstrain the ordinary connectable shape.
+/// The shape crosses the congruence pair budget (the compose feedback
+/// fills the element lists), so the honest verdict may degrade to
+/// `Unknown`; the one forbidden answer is `Unsat` — that would mean the
+/// congruence axioms overconstrained a satisfiable formula.
+#[test]
+fn join_component_equality_congruence_is_not_overconstrained() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (= r (set.singleton (tuple 1 2))))\n\
+         (assert (= s (set.singleton (tuple 2 3))))\n\
+         (assert (= x 3))\n\
+         (assert (set.member (tuple 1 x) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_ne!(got, SolverResult::Unsat);
+}
+
+/// The operand models print after the congruence fix: the skolem
+/// witnesses are pre-minted against a component-level used set, so no
+/// fresh value collides with a genuine constant and the collision repair
+/// no longer declines the whole sort (the join's own value may still
+/// echo honestly — see `join_value_declines_honestly_today`).
+#[test]
+fn join_operand_models_print_after_congruence() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const r (Relation Int Int))\n\
+             (declare-const s (Relation Int Int))\n\
+             (assert (set.member (tuple 1 2) r))\n\
+             (assert (set.member (tuple 2 3) s))\n\
+             (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+             (check-sat)\n\
+             (get-model)\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("(define-fun r ()")
+            && joined.contains("(set.singleton (tuple 1 2))")
+            && joined.contains("(set.singleton (tuple 2 3))"),
+        "the operands' committed members must print: {joined}"
     );
 }
