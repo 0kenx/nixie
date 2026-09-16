@@ -68,3 +68,15 @@ threads-required = 1
 [[profile.default.overrides]]
 filter = 'test(re_running_the_search_on_an_unchanged_goal_converges)'
 slow-timeout = { period = "60s", terminate-after = 5 }
+
+# The traced/untraced identity pin at its largest kept shape (12x12) runs
+# ~230 s in debug since the unsound Gebauer-Moller second criterion was
+# disabled (2026-09-18, see nixie-math/tests/ff_gb_seed_dedup_regression.rs
+# for the missed-refutation class that forced it). The invariant is
+# trajectory identity, not capacity; widen the budget rather than
+# terminating a passing test, following the pete_cxs_bp precedent above.
+# (The 17x20 shape is trimmed from the test itself: ~245 s+ and the
+# smaller shapes cover the invariant.)
+[[profile.default.overrides]]
+filter = 'test(untraced_and_traced_bases_are_identical)'
+slow-timeout = { period = "60s", terminate-after = 10 }

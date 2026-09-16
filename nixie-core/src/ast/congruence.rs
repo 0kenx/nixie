@@ -93,7 +93,9 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         // term, so there is nothing for congruence to relate.
         | TermKind::SetEmpty(_)
         // Same for two universe sets at the same element sort.
-        | TermKind::SetUniv(_) => return None,
+        | TermKind::SetUniv(_)
+        // And two empty bags at the same element sort.
+        | TermKind::BagEmpty(_) => return None,
 
         // Binders: congruence below a binder is not sound.
         TermKind::Forall { .. }
@@ -152,6 +154,17 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::SetRelProduct(_, _)
         | TermKind::SetRelTranspose(_)
         | TermKind::SetRelIden(_)
+        | TermKind::BagMake(_, _)
+        | TermKind::BagUnionMax(_, _)
+        | TermKind::BagUnionDisjoint(_, _)
+        | TermKind::BagInterMin(_, _)
+        | TermKind::BagDifferenceSubtract(_, _)
+        | TermKind::BagDifferenceRemove(_, _)
+        | TermKind::BagMember(_, _)
+        | TermKind::BagSubbag(_, _)
+        | TermKind::BagCount(_, _)
+        | TermKind::BagCard(_)
+        | TermKind::BagSetof(_)
         | TermKind::Select(_, _)
         | TermKind::Store(_, _, _)
         | TermKind::StrConcat(_, _)

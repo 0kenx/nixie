@@ -64,6 +64,15 @@ pub enum SortKind {
     /// what distinguishes it from an `Array(elem, Bool)`, which has no union,
     /// no intersection and no cardinality.
     Set(SortId),
+    /// Finite-bag (multiset) sort, parameterised by its element sort.
+    ///
+    /// The theory is the SMT-LIB bags draft as CVC5 implements it
+    /// (`src/theory/bags`): a bag is a finite map from elements to
+    /// multiplicities, decided by reducing every constraint to arithmetic
+    /// over `bag.count` terms — the same eager membership reduction the
+    /// finite-set theory uses, with `count` playing the role both of
+    /// membership and of cardinality.
+    Bag(SortId),
     /// Array sort with domain and range sorts
     Array {
         /// Domain sort
@@ -166,6 +175,21 @@ impl Sort {
     pub fn set_element(&self) -> Option<SortId> {
         match self.kind {
             SortKind::Set(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a finite-bag (multiset) sort.
+    #[must_use]
+    pub fn is_bag(&self) -> bool {
+        matches!(self.kind, SortKind::Bag(_))
+    }
+
+    /// The element sort of a finite-bag sort.
+    #[must_use]
+    pub fn bag_element(&self) -> Option<SortId> {
+        match self.kind {
+            SortKind::Bag(e) => Some(e),
             _ => None,
         }
     }
@@ -394,6 +418,11 @@ impl SortManager {
     /// Create a finite-set sort over `element`.
     pub fn set(&mut self, element: SortId) -> SortId {
         self.intern(SortKind::Set(element))
+    }
+
+    /// Create a finite-bag (multiset) sort over `element`.
+    pub fn bag(&mut self, element: SortId) -> SortId {
+        self.intern(SortKind::Bag(element))
     }
 
     /// Create an array sort with the given domain and range
@@ -780,6 +809,10 @@ impl SortManager {
                     let new_elem = replacements.get(&elem).copied().unwrap_or(elem);
                     if new_elem == elem { id } else { self.set(new_elem) }
                 }
+                SortKind::Bag(elem) => {
+                    let new_elem = replacements.get(&elem).copied().unwrap_or(elem);
+                    if new_elem == elem { id } else { self.bag(new_elem) }
+                }
                 SortKind::Array { domain, range } => {
                     let new_domain = replacements.get(&domain).copied().unwrap_or(domain);
                     let new_range = replacements.get(&range).copied().unwrap_or(range);
@@ -824,6 +857,7 @@ impl SortManager {
             SortKind::FloatingPoint { eb, sb } => Some(format!("FloatingPoint({}, {})", eb, sb)),
             SortKind::RoundingMode => Some("RoundingMode".to_string()),
             SortKind::Set(_) => Some("Set".to_string()),
+            SortKind::Bag(_) => Some("Bag".to_string()),
             SortKind::FiniteField(id) => self
                 .fields
                 .get(*id)

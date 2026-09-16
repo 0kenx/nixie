@@ -1000,6 +1000,202 @@ impl TermManager {
         self.intern(TermKind::SetSubset(a, b), sort)
     }
 
+    // ===================== finite bags (multisets) =====================
+    //
+    // Mirrors the finite-set builders above; CVC5's `bags_rewriter.cpp` is
+    // the reference for the normalizations. Multiplicities are `Int`s, and
+    // `bag.count` is the point of contact with arithmetic: the identities
+    // here are exactly the pointwise multiplicity semantics of the SMT-LIB
+    // bags draft.
+
+    /// The empty bag at a given element sort: `(as bag.empty (Bag T))`.
+    pub fn mk_bag_empty_at(&mut self, bag_sort: SortId) -> TermId {
+        self.intern(TermKind::BagEmpty(bag_sort), bag_sort)
+    }
+
+    fn is_bag_empty(&self, t: TermId) -> bool {
+        self.get(t)
+            .is_some_and(|d| matches!(d.kind, TermKind::BagEmpty(_)))
+    }
+
+    /// The bag sort of a bag-sorted operand (falling back to `Bag(Int)`
+    /// for a caller error, like [`Self::set_result_sort`]).
+    fn bag_result_sort(&mut self, a: TermId) -> SortId {
+        match self.get(a).map(|t| t.sort) {
+            Some(s) if self.sorts.get(s).is_some_and(crate::sort::Sort::is_bag) => s,
+            _ => {
+                let int = self.sorts.int_sort;
+                self.sorts.bag(int)
+            }
+        }
+    }
+
+    /// `(bag e n)` — `n` copies of `e` (CVC5 `BAG_MAKE`), normalized:
+    /// zero copies is the empty bag.
+    ///
+    /// A negative literal `n` is a parser error (the draft requires
+    /// multiplicities nonnegative); the builder leaves a nonliteral `n`
+    /// alone — the count identities stay consistent either way, and the
+    /// reduction treats `count` as the plain integer it is.
+    pub fn mk_bag_make(&mut self, element: TermId, n: TermId) -> TermId {
+        if let Some(TermKind::IntConst(v)) = self.get(n).map(|d| d.kind.clone())
+            && v.is_zero()
+        {
+            let elem_sort = self.get(element).map_or(self.sorts.int_sort, |t| t.sort);
+            let sort = self.sorts.bag(elem_sort);
+            return self.intern(TermKind::BagEmpty(sort), sort);
+        }
+        let elem_sort = self.get(element).map_or(self.sorts.int_sort, |t| t.sort);
+        let sort = self.sorts.bag(elem_sort);
+        self.intern(TermKind::BagMake(element, n), sort)
+    }
+
+    /// `(bag.union_max a b)`, normalized: `b ⊎∅ = b` (max(c, 0) = c) and
+    /// `b ⊎ b = b` (idempotent).
+    pub fn mk_bag_union_max(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            return a;
+        }
+        if self.is_bag_empty(a) {
+            return b;
+        }
+        if self.is_bag_empty(b) {
+            return a;
+        }
+        let sort = self.bag_result_sort(a);
+        self.intern(TermKind::BagUnionMax(a, b), sort)
+    }
+
+    /// `(bag.union_disjoint a b)`, normalized: `∅ ⊎ b = b` only — the sum
+    /// is **not** idempotent (`b ⊎ b` doubles every multiplicity), so no
+    /// `a = a` fold exists.
+    pub fn mk_bag_union_disjoint(&mut self, a: TermId, b: TermId) -> TermId {
+        if self.is_bag_empty(a) {
+            return b;
+        }
+        if self.is_bag_empty(b) {
+            return a;
+        }
+        let sort = self.bag_result_sort(a);
+        self.intern(TermKind::BagUnionDisjoint(a, b), sort)
+    }
+
+    /// `(bag.inter_min a b)`, normalized: `∅ ⊓ b = ∅` and `b ⊓ b = b`.
+    pub fn mk_bag_inter_min(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            return a;
+        }
+        if self.is_bag_empty(a) {
+            return a;
+        }
+        if self.is_bag_empty(b) {
+            return b;
+        }
+        let sort = self.bag_result_sort(a);
+        self.intern(TermKind::BagInterMin(a, b), sort)
+    }
+
+    /// `(bag.difference_subtract a b)`, normalized: `b \ b = ∅` (the
+    /// saturating difference cancels), `b \ ∅ = b`, `∅ \ b = ∅`.
+    pub fn mk_bag_difference_subtract(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            let sort = self.bag_result_sort(a);
+            return self.intern(TermKind::BagEmpty(sort), sort);
+        }
+        if self.is_bag_empty(a) {
+            return a;
+        }
+        if self.is_bag_empty(b) {
+            return a;
+        }
+        let sort = self.bag_result_sort(a);
+        self.intern(TermKind::BagDifferenceSubtract(a, b), sort)
+    }
+
+    /// `(bag.difference_remove a b)`, normalized: `b ⧵ b = ∅` (everything
+    /// with a positive count is removed), `b ⧵ ∅ = b`, `∅ ⧵ b = ∅`.
+    pub fn mk_bag_difference_remove(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            let sort = self.bag_result_sort(a);
+            return self.intern(TermKind::BagEmpty(sort), sort);
+        }
+        if self.is_bag_empty(a) {
+            return a;
+        }
+        if self.is_bag_empty(b) {
+            return a;
+        }
+        let sort = self.bag_result_sort(a);
+        self.intern(TermKind::BagDifferenceRemove(a, b), sort)
+    }
+
+    /// `(bag.count x b)` — an `Int`, folded over the constructors:
+    /// `count(x, ∅) = 0` and `count(x, (bag y n)) = ite(x = y, n, 0)`.
+    ///
+    /// This fold *is* the reduction's base identity, applied at build
+    /// time so the arithmetic solver sees the `ite` directly.
+    pub fn mk_bag_count(&mut self, element: TermId, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return self.mk_int(0);
+        }
+        if let Some(TermKind::BagMake(y, n)) = self.get(bag).map(|d| d.kind.clone()) {
+            let same = self.mk_eq(element, y);
+            let zero = self.mk_int(0);
+            return self.mk_ite(same, n, zero);
+        }
+        let sort = self.sorts.int_sort;
+        self.intern(TermKind::BagCount(element, bag), sort)
+    }
+
+    /// `(bag.member x b)` — a `Bool`, folded over the constructors:
+    /// nothing is in `∅`; `x ∈ (bag y n)` is `x = y ∧ n ≥ 1` (with a
+    /// literal `n` the comparison folds to a constant).
+    pub fn mk_bag_member(&mut self, element: TermId, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return self.false_id;
+        }
+        if let Some(TermKind::BagMake(y, n)) = self.get(bag).map(|d| d.kind.clone()) {
+            let same = self.mk_eq(element, y);
+            let one = self.mk_int(1);
+            let positive = self.mk_ge(n, one);
+            return self.mk_and([same, positive]);
+        }
+        let sort = self.sorts.bool_sort;
+        self.intern(TermKind::BagMember(element, bag), sort)
+    }
+
+    /// `(bag.subbag a b)`, folded over the constants: `∅ ⊑ b` and
+    /// `b ⊑ b` always.
+    pub fn mk_bag_subbag(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b || self.is_bag_empty(a) {
+            return self.true_id;
+        }
+        let sort = self.sorts.bool_sort;
+        self.intern(TermKind::BagSubbag(a, b), sort)
+    }
+
+    /// `(bag.card b)`, folded over the constructors: `|∅| = 0` and
+    /// `|(bag y n)| = n` for a literal `n`.
+    pub fn mk_bag_card(&mut self, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return self.mk_int(0);
+        }
+        if let Some(TermKind::BagMake(_, n)) = self.get(bag).map(|d| d.kind.clone()) {
+            return n;
+        }
+        let sort = self.sorts.int_sort;
+        self.intern(TermKind::BagCard(bag), sort)
+    }
+
+    /// `(bag.setof b)` — duplicate removal, normalized: `setof ∅ = ∅`.
+    pub fn mk_bag_setof(&mut self, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return bag;
+        }
+        let sort = self.bag_result_sort(bag);
+        self.intern(TermKind::BagSetof(bag), sort)
+    }
+
     /// `(set.card s)`.
     pub fn mk_set_card(&mut self, set: TermId) -> TermId {
         let sort = self.sorts.int_sort;
@@ -1292,6 +1488,11 @@ impl TermManager {
                             stack.push(Step::Text(")"));
                             stack.push(Step::Emit(*e));
                             out.push_str("Set(");
+                        }
+                        SortKind::Bag(e) => {
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Emit(*e));
+                            out.push_str("Bag(");
                         }
                         SortKind::Array { domain, range } => {
                             stack.push(Step::Text(")"));

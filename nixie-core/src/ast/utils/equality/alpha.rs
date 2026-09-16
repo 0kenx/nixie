@@ -209,6 +209,15 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                             return false;
                         }
                     }
+                    // The carried sort is the whole payload.
+                    TermKind::BagEmpty(a) => {
+                        let TermKind::BagEmpty(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::False => {
                         if !matches!(rt.kind, TermKind::False) {
                             return false;
@@ -296,6 +305,8 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::SetChoose(a)
                     | TermKind::SetRelTranspose(a)
                     | TermKind::SetRelIden(a)
+                    | TermKind::BagCard(a)
+                    | TermKind::BagSetof(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)
@@ -360,6 +371,15 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::Gt(a, b)
                     | TermKind::Ge(a, b)
                     | TermKind::SetUnion(a, b)
+                    | TermKind::BagMake(a, b)
+                    | TermKind::BagUnionMax(a, b)
+                    | TermKind::BagUnionDisjoint(a, b)
+                    | TermKind::BagInterMin(a, b)
+                    | TermKind::BagDifferenceSubtract(a, b)
+                    | TermKind::BagDifferenceRemove(a, b)
+                    | TermKind::BagMember(a, b)
+                    | TermKind::BagSubbag(a, b)
+                    | TermKind::BagCount(a, b)
                     | TermKind::SetInter(a, b)
                     | TermKind::SetMinus(a, b)
                     | TermKind::SetMember(a, b)

@@ -177,6 +177,11 @@ enum SortNameFrame {
         /// The set sort this frame will finish.
         sort: SortId,
     },
+    /// The element sort of a bag is being rendered; wrap it as `(Bag …)`.
+    BagAfter {
+        /// The bag sort this frame will finish.
+        sort: SortId,
+    },
     /// A parametric application `(name arg...)` collecting its arguments in
     /// order.
     Parametric {
@@ -563,6 +568,7 @@ impl Context {
                 // pre-pass (and lose its memoization).
                 match &node.kind {
                     SortKind::Set(elem) => scan.push(*elem),
+                    SortKind::Bag(elem) => scan.push(*elem),
                     SortKind::Array { domain, range } => {
                         scan.push(*domain);
                         scan.push(*range);
@@ -599,6 +605,11 @@ impl Context {
                 let leaf = match &s.kind {
                     SortKind::Set(elem) => {
                         pending.push(SortNameFrame::SetAfter { sort: current });
+                        current = *elem;
+                        continue;
+                    }
+                    SortKind::Bag(elem) => {
+                        pending.push(SortNameFrame::BagAfter { sort: current });
                         current = *elem;
                         continue;
                     }
@@ -702,6 +713,12 @@ impl Context {
                     }
                     Some(SortNameFrame::SetAfter { sort }) => {
                         text = format!("(Set {text})");
+                        if shared.contains(&sort) {
+                            memo.insert(sort, text.clone());
+                        }
+                    }
+                    Some(SortNameFrame::BagAfter { sort }) => {
+                        text = format!("(Bag {text})");
                         if shared.contains(&sort) {
                             memo.insert(sort, text.clone());
                         }
@@ -865,6 +882,9 @@ impl Context {
                     // The empty set is ground and exists at every element
                     // sort, so no witness has to be minted for it.
                     SortKind::Set(_) => break "(as set.empty (Set ?))".to_string(),
+                    // The empty bag is ground and exists at every element
+                    // sort, likewise.
+                    SortKind::Bag(_) => break "(as bag.empty (Bag ?))".to_string(),
                     // The empty string is the canonical ground `String`
                     // value; the old `?` fallback was not valid SMT-LIB
                     // output at all.

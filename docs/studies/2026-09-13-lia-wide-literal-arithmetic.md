@@ -1486,3 +1486,32 @@ invariant live in every debug test; clippy/fmt/rustdoc clean; Z3 parity
 176/177, 0 disagreements (z3 4.16.0); wide 3×300 + mixed 3×400 fresh
 seeds (20260970–20260975): 0 verdict disagreements, 0 refuted models;
 debug-panic sweep over the parity corpus: 0 panics.
+
+## Continuation 26 (2026-09-17): pinned direction-2 default-ON, scoped to wide states (item 61)
+
+61. **The `NIXIE_S6_PINNED` gate is on by default — scoped.**  The
+    gate's trade map is now clean end to end: every previously-documented
+    cost was a downstream symptom of the two closed defects — the chain-sat
+    twin's wall deflection (item 59's repair step) and the trivial mixed
+    twin's crossed-probe pop hole (item 60's re-snap — the auditor-silent
+    "pinned completeness loss" was never a pinned-derivation defect at
+    all).  `NIXIE_S6_NDIR2` (the general form) stays default-off: its
+    deflection cost persists, now as a 180 s timeout on the fi1
+    regression instead of the pre-repair-step `unknown`.
+    * **The screening that shaped the scoping**: flipping the gate on
+      UNCONDITIONALLY failed the enablement rule's screening condition —
+      an MBQI-heavy `scope_rebase` test (no wide row in sight) went
+      36 s → cap-timeout: the per-final-check derivation cost lands on
+      every instance while only wide-row states can benefit.  The landed
+      default is `pinned_dir2 = !wide_rows.is_empty() && env-not-0` —
+      wide-free instances are bit-identical to the gate-off binary
+      (perf-gate conflict/decision ratios 1.000 on all 10 corpus
+      instances), and the gate's win cases (mixed-magnitude LRA unsat
+      twin, chain-sat twin, f1) are wide-row states by construction.
+    * Screening at the new default: wide 3×300 + mixed 4×400 fresh seeds
+      (20260977–20260983): 0 verdict disagreements, 0 refuted models;
+      parity 176/177, 0 disagreements (z3 4.16.0); the wide-regression
+      file 31/31 at the new default; the workspace suite green except
+      the standing non-arc set; perf gate PASS (counters ≤ 1.05);
+      panic sweep clean.  `NIXIE_S6_PINNED=0` remains the escape hatch,
+      and the revert is the one-line flip the enablement rule prescribes.

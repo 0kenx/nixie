@@ -128,6 +128,7 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::FfConst { .. }
                 | TermKind::SetEmpty(_)
                 | TermKind::SetUniv(_)
+                | TermKind::BagEmpty(_)
                 | TermKind::Var(_) => {
                     if self.is_bv_sort(term.sort) {
                         return true;
@@ -141,6 +142,8 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::SetChoose(a)
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a)
+                | TermKind::BagCard(a)
+                | TermKind::BagSetof(a)
                 | TermKind::BvNot(a) => stack.push(*a),
                 TermKind::BvExtract { arg, .. } => stack.push(*arg),
                 TermKind::And(args)
@@ -176,6 +179,15 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::SetRelJoin(a, b)
                 | TermKind::SetRelProduct(a, b)
                 | TermKind::SetSubset(a, b)
+                | TermKind::BagMake(a, b)
+                | TermKind::BagUnionMax(a, b)
+                | TermKind::BagUnionDisjoint(a, b)
+                | TermKind::BagInterMin(a, b)
+                | TermKind::BagDifferenceSubtract(a, b)
+                | TermKind::BagDifferenceRemove(a, b)
+                | TermKind::BagMember(a, b)
+                | TermKind::BagSubbag(a, b)
+                | TermKind::BagCount(a, b)
                 | TermKind::Select(a, b)
                 | TermKind::StrConcat(a, b)
                 | TermKind::StrAt(a, b)

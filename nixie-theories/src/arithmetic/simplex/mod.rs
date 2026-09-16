@@ -4218,7 +4218,20 @@ impl Simplex {
                 _ => false,
             }
         };
-        let pinned_dir2 = std::env::var("NIXIE_S6_PINNED").as_deref() == Ok("1");
+        // Default ON since 2026-09-17, SCOPED to wide-row states (the
+        // enablement rule: sound by construction — exact derivations
+        // through fully-pinned rows, the corner-audited slice-6 machinery
+        // — screened by the wide + mixed differentials at the new default,
+        // 0 disagreements, and parity 176/177).  The scoping is the
+        // screening result: run unconditionally, the per-final-check
+        // derivation cost lands on every instance — an MBQI-heavy
+        // `scope_rebase` test went 36 s → cap-timeout with the gate on
+        // and no wide row in sight to benefit; scoped to wide states the
+        // same test is bit-identical to the gate-off binary.  The gate's
+        // wins (mixed-magnitude LRA unsat twin, chain-sat twin, f1) are
+        // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
+        let pinned_dir2 = !self.wide_rows.is_empty()
+            && std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0");
         let narrow_rows: Vec<(VarId, LinExpr)> = self
             .tableau
             .iter()

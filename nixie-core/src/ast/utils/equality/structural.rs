@@ -79,6 +79,15 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                             return false;
                         }
                     }
+                    // The carried sort is the whole payload.
+                    TermKind::BagEmpty(a) => {
+                        let TermKind::BagEmpty(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::IntConst(a) => {
                         let TermKind::IntConst(b) = &rt.kind else {
                             return false;
@@ -161,6 +170,8 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::SetChoose(a)
                     | TermKind::SetRelTranspose(a)
                     | TermKind::SetRelIden(a)
+                    | TermKind::BagCard(a)
+                    | TermKind::BagSetof(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)
@@ -226,6 +237,15 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::Gt(a, b)
                     | TermKind::Ge(a, b)
                     | TermKind::SetUnion(a, b)
+                    | TermKind::BagMake(a, b)
+                    | TermKind::BagUnionMax(a, b)
+                    | TermKind::BagUnionDisjoint(a, b)
+                    | TermKind::BagInterMin(a, b)
+                    | TermKind::BagDifferenceSubtract(a, b)
+                    | TermKind::BagDifferenceRemove(a, b)
+                    | TermKind::BagMember(a, b)
+                    | TermKind::BagSubbag(a, b)
+                    | TermKind::BagCount(a, b)
                     | TermKind::SetInter(a, b)
                     | TermKind::SetMinus(a, b)
                     | TermKind::SetMember(a, b)
