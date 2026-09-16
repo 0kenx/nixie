@@ -153,7 +153,27 @@ Builds used four Cargo jobs (three for parity), with debug information disabled
 for the build/test profiles; the first two full nextest runs used eight
 test threads and the last used four. The
 host was heavily loaded. Raw logs, exit statuses, the parity JSON, and the
-release binary are retained in the landing commit's ignored
-`precompile/<commit>/benchmark/cp-oracle-verification/` result directory, with
-the binary at `precompile/<commit>/nixie`. This is regression evidence,
-not a CP speedup measurement.
+release binary are retained under the fully verified test commit,
+`precompile/6a07d33784eb9c3f5d16cf3b7116e0cb0d7c1b72/`: logs are in
+`benchmark/cp-oracle-verification/`, and the binary is `nixie`. This is
+regression evidence, not a CP speedup measurement.
+
+## Final integration with concurrent work
+
+After committing the fully verified tests as `6a07d337`, current `main`
+(`aba21687`) was merged without conflicts, producing `81ace991`. The upstream
+changes since the full gate are a finite-field polynomial-engine fix, an MBQI
+auxiliary-model restriction fix, and documentation; they do not modify CP
+implementation files. Both CP integration suites were rebuilt and rerun on
+the merged tree:
+
+```bash
+cargo test -p nixie-solver --all-features \
+  --test cp_oracle --test cp_global_constraints -- --nocapture
+```
+
+All **14 tests passed** (11 existing integration tests and three oracle tests),
+with exactly the coverage counts reported above. The full-suite and performance
+records belong to `6a07d337`; these final integration checks belong to
+`81ace991`. The full repository gates were not repeated after this last merge.
+Their raw integration log is archived alongside the other verification logs.
