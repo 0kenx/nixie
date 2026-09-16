@@ -41,6 +41,7 @@ pub(super) mod theory_bv_encode;
 pub(super) mod theory_manager;
 pub(super) mod trail;
 pub(super) mod types;
+mod user_propagation;
 pub(super) mod verdict_cache;
 
 pub use types::{
@@ -152,6 +153,7 @@ use verdict_cache::GoalFingerprint;
 /// Main CDCL(T) SMT Solver
 #[derive(Debug)]
 pub struct Solver {
+    user_state: user_propagation::UserState,
     /// Configuration
     pub(super) config: SolverConfig,
     /// SAT solver core
@@ -1077,6 +1079,7 @@ impl Solver {
         // - Symmetry breaking (via SymmetryBreaker)
 
         Self {
+            user_state: user_propagation::UserState::default(),
             config,
             sat: {
                 let mut s = SatSolver::with_config(sat_config);
@@ -1347,6 +1350,7 @@ impl Solver {
 
     /// Check satisfiability of the asserted goal set.
     pub fn check(&mut self, manager: &mut TermManager) -> SolverResult {
+        self.user_state.closed = true;
         // Env-gated term sidecar for the CNF dump: NIXIE_DUMP_TERMS=<path>
         // writes term -> bits/atom-var mappings (see the NIXIE_DUMP_CNF
         // hook in nixie-sat; docs/handovers/2026-09-09-bv-false-sat.md).
@@ -1436,7 +1440,19 @@ impl Solver {
         }
 
         let mbqi_checkpoint = self.mbqi.search_checkpoint();
-        let raw_result = self.check_with_arith_refinement(manager);
+        let mut raw_result = self.check_with_arith_refinement(manager);
+        if self.user_state.active() {
+            // Existing proof formats do not certify arbitrary client axioms.
+            if (raw_result == SolverResult::Sat && !self.validate_user_model(manager))
+                || self.config.certification_mode == CertificationMode::Certified
+                || self.config.proof
+            {
+                self.model = None;
+                self.unsat_core = None;
+                self.proof = None;
+                raw_result = SolverResult::Unknown;
+            }
+        }
         self.mbqi.restore_search_state(&mbqi_checkpoint);
         let result = self.certify_result(raw_result, manager);
         self.remember_verdict(result);
@@ -2352,7 +2368,7 @@ impl Solver {
             return SolverResult::Unsat;
         }
 
-        if self.assertions.is_empty() {
+        if self.assertions.is_empty() && !self.user_state.active() {
             self.model = Some(Model::new());
             return SolverResult::Sat;
         }
@@ -2764,7 +2780,7 @@ impl Solver {
         // chain-conflict clauses that cause the exponential blowup). No-op for
         // any formula with functions, arithmetic, bit-vectors, arrays, strings,
         // or quantifiers.
-        if self.equality_transitivity_preprocess(manager) {
+        if !self.user_state.active() && self.equality_transitivity_preprocess(manager) {
             return self.solve_equality_via_sat(manager);
         }
 
@@ -2952,7 +2968,7 @@ impl Solver {
         // same SAT model/database the general path would. Blocking clauses
         // (a search restriction, not lemmas) keep `check_sat_only`'s
         // honesty caveat: an Unsat over a restricted database is Unknown.
-        if self.goal_is_pure_boolean(manager) {
+        if !self.user_state.active() && self.goal_is_pure_boolean(manager) {
             // Wall-clock budget parity: the general path enforces
             // `timeout_ms` from inside the theory callbacks; the plain
             // solver checks only `max_conflicts` and its interrupt flag,
@@ -3093,7 +3109,21 @@ impl Solver {
                 let vars: Vec<_> = self.var_to_constraint.keys().copied().collect();
                 self.sat.freeze_theory_vars(vars);
             }
-            let sat_result = self.sat.solve_with_theory(&mut theory_manager);
+            let sat_result = if self.user_state.active() {
+                let mut callback = user_propagation::UserCallback::new(
+                    &mut theory_manager,
+                    &mut self.user_state,
+                    manager,
+                );
+                let result = self.sat.solve_with_theory(&mut callback);
+                if callback.invalid {
+                    SatResult::Unknown
+                } else {
+                    result
+                }
+            } else {
+                self.sat.solve_with_theory(&mut theory_manager)
+            };
             // If a genuine theory conflict was suppressed because the conflict
             // limit was hit, the theory manager reported `Sat` to the SAT solver
             // to force it to stop searching.  That `Sat` is a resource-exhaustion
@@ -4481,6 +4511,10 @@ impl Solver {
     /// Check satisfiability (pure SAT, no theory integration)
     /// Useful for benchmarking or when theories are not needed
     pub fn check_sat_only(&mut self, manager: &mut TermManager) -> SolverResult {
+        if self.user_state.active() {
+            return self.check(manager);
+        }
+        self.user_state.closed = true;
         // Trivial verdicts first, mirroring `check_core`: an asserted `False`
         // never reaches the SAT core as a clause (`assert` records the flag
         // and returns), so solving the clause set alone would miss it and
@@ -4488,7 +4522,7 @@ impl Solver {
         if self.has_false_assertion {
             return self.certify_result(SolverResult::Unsat, manager);
         }
-        if self.assertions.is_empty() {
+        if self.assertions.is_empty() && !self.user_state.active() {
             self.model = Some(Model::new());
             return self.certify_result(SolverResult::Sat, manager);
         }
@@ -5103,6 +5137,7 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        self.user_state = user_propagation::UserState::default();
         self.sat.reset();
         // The database (and every blocking clause in it) is gone with the
         // `sat.reset()` above.
