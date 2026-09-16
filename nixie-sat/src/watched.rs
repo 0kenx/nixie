@@ -995,7 +995,20 @@ impl WatchLists {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
-            csr: Some(CsrWatchLists::default()),
+            // The CSR shadow is a diagnostic/experimental mirror, documented
+            // "Default off; the flag-off path is byte-identical" — but it was
+            // attached unconditionally, so every `add` paid `push_overflow`
+            // (a `positions` HashMap write per watcher!) and every scan paid
+            // `scan_remove` mirroring.  Measured on SCPC-500-13 (seed study,
+            // 2026-09-16): 65 % of runtime in mirror maintenance at
+            // bit-identical conflict counts — a 3-6x wall inflation on
+            // watch-dense instances with zero semantic effect.  Attach only
+            // when one of the CSR knobs actually asks for it.
+            csr: if csr_shadow_enabled() || csr_scan_enabled() || csr_read_enabled() {
+                Some(CsrWatchLists::default())
+            } else {
+                None
+            },
             csr_surgery_visits: 0,
             csr_surgery_nanos: 0,
         }
