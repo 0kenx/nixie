@@ -679,6 +679,24 @@ impl Classes {
 
 impl Solver {
     /// Synthesize set values into `model`; see the module doc.
+    /// Compose relation compounds a **query** mentions that the assertion
+    /// stack never did (`(get-value ((rel.join r s)))` with no asserted
+    /// membership in the join): the model-build survey walks only the
+    /// assertions, so such compounds have no synthesized entry. The
+    /// compound is a *function* of its operands, whose values the model
+    /// already verified — composing them is not a guess. Runs the same
+    /// cross-sort pass, against the same verification, on the caller's
+    /// model (the query path works on a clone); shapes the pass cannot
+    /// verify still decline honestly (the echo).
+    pub(crate) fn complete_rel_values(
+        &mut self,
+        survey: &ModelSurvey,
+        model: &mut Model,
+        manager: &mut TermManager,
+    ) {
+        self.synthesize_rel_values(survey, model, manager);
+    }
+
     pub(super) fn extract_set_model(&mut self, model: &mut Model, manager: &mut TermManager) {
         if self.set_terms_unconstrained {
             // The honesty gate will discard this model; nothing here can
@@ -776,7 +794,7 @@ impl Solver {
             // disequality defaulted equal is exactly the collision that
             // used to decline the whole sort.
             if elem_values.get(&e).is_some_and(Option::is_some)
-                && !(is_our_set_skolem(e, manager) && self.skolem_pinned_to(e).is_none())
+                && !(is_our_set_skolem(e, manager) && self.skolem_pinned_to(e, manager).is_none())
             {
                 continue;
             }
@@ -884,7 +902,7 @@ impl Solver {
                         Some(TermKind::Var(n))
                             if manager.resolve_str(n).starts_with("@set_join_")
                                 && minted.insert(arg)
-                                && self.skolem_pinned_to(arg).is_none() =>
+                                && self.skolem_pinned_to(arg, manager).is_none() =>
                         {
                             match self.mint_component_value(
                                 manager.get(arg).map_or(manager.sorts.int_sort, |d| d.sort),
@@ -973,7 +991,7 @@ impl Solver {
                         manager.get(arg).map(|d| &d.kind),
                         Some(TermKind::Var(n))
                             if manager.resolve_str(*n).starts_with("@set_join_")
-                    ) && self.skolem_pinned_to(arg).is_none()
+                    ) && self.skolem_pinned_to(arg, manager).is_none()
                         && !minted.contains(&arg);
                     let value =
                         if is_join_skolem {
@@ -1079,7 +1097,7 @@ impl Solver {
                 // member of the group conforms to it, not the reverse.
                 // Without a pinned member the first is the anchor and all
                 // dissenters (it excluded) re-mint.
-                group.sort_by_key(|&e| !self.element_value_is_pinned(e));
+                group.sort_by_key(|&e| !self.element_value_is_pinned(e, manager));
                 let anchor = group[0];
                 let reference = membership
                     .get(&anchor)
@@ -1101,7 +1119,7 @@ impl Solver {
                     if !disagrees {
                         continue;
                     }
-                    if self.element_value_is_pinned(e) || sweep_derived.contains(&e) {
+                    if self.element_value_is_pinned(e, manager) || sweep_derived.contains(&e) {
                         // Two pinned members (or a pinned and a
                         // sweep-derived one) disagreeing is a genuine
                         // contradiction the model cannot repair.
@@ -1678,8 +1696,16 @@ impl Solver {
                             }
                         }
                         Some(TermKind::SetRelJoin(r1, r2)) => {
+                            const MAX_JOIN_VALUE_PAIRS: usize = 4096;
                             match (view.elements(r1), view.elements(r2)) {
-                                (Some(us), Some(vs)) => {
+                                // Pair budget, mirroring the product arm's:
+                                // an on-demand query over big operand values
+                                // must decline, not blow up (`None` is the
+                                // honest echo).
+                                (Some(us), Some(vs))
+                                    if us.len().saturating_mul(vs.len())
+                                        <= MAX_JOIN_VALUE_PAIRS =>
+                                {
                                     let mut out = Vec::new();
                                     let mut ok = true;
                                     'join: for &u in &us {
@@ -1791,20 +1817,54 @@ impl Solver {
 
     /// The partner of a **committed-true** equality mentioning `e`, if
     /// one exists: the term whose value `e`'s value must equal.
-    fn skolem_pinned_to(&self, e: TermId) -> Option<TermId> {
+    fn skolem_pinned_to(&self, e: TermId, manager: &TermManager) -> Option<TermId> {
         for (&var, constraint) in &self.var_to_constraint {
             if let super::types::Constraint::Eq(l, r) = constraint
                 && self.sat.model_value(var) == nixie_sat::LBool::True
             {
                 if *l == e {
-                    return Some(*r);
+                    return self.genuine_pin_target(*r, e, manager);
                 }
                 if *r == e {
-                    return Some(*l);
+                    return self.genuine_pin_target(*l, e, manager);
                 }
             }
         }
         None
+    }
+
+    /// The partner of a committed-true equality, when it actually pins
+    /// `e`'s value. A partner that *contains* `e` pins nothing: the tuple
+    /// surjectivity axioms state `e = (sel₁ e, sel₂ e)` for every
+    /// tuple-sorted term, and treating that self-referential equality as
+    /// a pin made the collision repair refuse to re-mint skolems whose
+    /// stale default collided with a genuine element — the whole sort's
+    /// display then declined (found on a tuple-variable join: the
+    /// extensionality witness `@set_ext` sat "pinned" to its own
+    /// selector rebuild beside `t = (1,2)`). Explicit-stack walk: the
+    /// partner is small, but user input nests arbitrarily.
+    fn genuine_pin_target(
+        &self,
+        partner: TermId,
+        e: TermId,
+        manager: &TermManager,
+    ) -> Option<TermId> {
+        if partner == e {
+            return None;
+        }
+        let mut stack = vec![partner];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            if t == e {
+                return None;
+            }
+            let Some(data) = manager.get(t) else { continue };
+            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+        }
+        Some(partner)
     }
 
     /// Whether an element's *value* is genuinely pinned by a constraint:
@@ -1816,12 +1876,18 @@ impl Solver {
     ///   made the collision repair decline the whole sort);
     /// * any **order/disequality constraint** mentioning it — those bound
     ///   arithmetic values and only exist for numeric elements.
-    fn element_value_is_pinned(&self, e: TermId) -> bool {
+    fn element_value_is_pinned(&self, e: TermId, manager: &TermManager) -> bool {
         for (&var, constraint) in &self.var_to_constraint {
             match constraint {
                 super::types::Constraint::Eq(l, r) => {
                     if (*l == e || *r == e) && self.sat.model_value(var) == nixie_sat::LBool::True {
-                        return true;
+                        // A self-referential equality (`e = (sel₁ e, …)`,
+                        // the surjectivity axiom) pins nothing — see
+                        // [`Self::genuine_pin_target`].
+                        let partner = if *l == e { *r } else { *l };
+                        if self.genuine_pin_target(partner, e, manager).is_some() {
+                            return true;
+                        }
                     }
                 }
                 super::types::Constraint::Diseq(l, r)
