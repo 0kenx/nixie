@@ -1606,3 +1606,65 @@ fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
         "both variables inside their bounds: a={va:?} b={vb:?}"
     );
 }
+
+// Regression (2026-09-17, the wide-driven repair step): a violated wide
+// row whose achievable range OVERLAPS its bound window is repairable in
+// principle, but wide rows had no pivot — the convergence classification
+// declined the whole check (`resource_limit`, honest `unknown`; the
+// wide-LP endgame's named residual, the wall the `NIXIE_S6_PINNED`
+// trade analysis measured at site 1950).  The pivot's wide-leaving branch
+// now solves the wide row exactly for an eligible entering column and
+// snaps the leaving basic to the bound it violates, so the overlap case
+// converges instead of declining.
+//
+// Shape: `t` is wide-basic over `a` (`t = W·a − 5W + 1`, W = 2^62), with
+// `t ∈ [0,0]` and `a ∈ [0,10]`.  At `a = 0` the row value is `−5W + 1`
+// (violates the lower 0) while the achievable range `[−5W+1, 5W+1]`
+// straddles the window — the pre-fix classification hit exactly this arm
+// and declined; the repair pivots (entering `a`), snaps `t` to 0, and `a`
+// lands at `5 − 1/W` (inside its window, and the solved row narrows).
+#[test]
+fn violated_wide_row_with_overlapping_range_is_repaired() {
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+    let mut s = Simplex::new();
+    let t = s.new_var();
+    let a = s.new_var();
+    let w = BigRational::from_integer(BigInt::from(2).pow(62));
+    let c = -(&w * BigInt::from(5)) + BigRational::from_integer(BigInt::from(1));
+    s.wide_rows.insert(
+        t,
+        BigLinExpr {
+            terms: vec![(a, w)],
+            constant: c,
+        },
+    );
+    s.column_push_known(a, t);
+    let hi_var = t.max(a);
+    s.basic.resize(hi_var as usize + 1, false);
+    s.basic[t as usize] = true;
+    s.set_lower(t, Rational64::zero(), 1);
+    s.set_upper(t, Rational64::zero(), 2);
+    s.set_lower(a, Rational64::zero(), 3);
+    s.set_upper(a, Rational64::from_integer(10), 4);
+
+    // Derive the initial assignment (a snaps to its lower 0; t's wide
+    // value is re-derived exactly by the wide pass).
+    s.assignment_current = false;
+    let verdict = s.check();
+    assert!(
+        verdict.is_ok(),
+        "the system is feasible (a = 5 - 1/2^62, t = 0): {verdict:?}"
+    );
+    assert!(
+        !s.resource_limit_reached(),
+        "an overlapping-range violation must be repaired, not declined"
+    );
+    let vt = s.value(t);
+    assert_eq!(vt, Rational64::zero());
+    let va = s.value(a);
+    assert!(
+        va >= Rational64::zero() && va <= Rational64::from_integer(10),
+        "the repaired entering variable stays inside its window: {va:?}"
+    );
+}

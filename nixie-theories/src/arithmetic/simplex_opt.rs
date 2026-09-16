@@ -84,7 +84,11 @@ impl Simplex {
     ///                   + Σ over basic b of (obj_coef(b) · tableau_coef(b, v))
     /// CHECKED like [`Self::eval_linexpr`]: a wrapped reduced cost chooses
     /// phantom entering variables and mis-terminates the search.
-    pub(super) fn reduced_obj_coef(&self, obj: &LinExpr, nonbasic_var: VarId) -> Option<Rational64> {
+    pub(super) fn reduced_obj_coef(
+        &self,
+        obj: &LinExpr,
+        nonbasic_var: VarId,
+    ) -> Option<Rational64> {
         // Direct coefficient of this variable in obj.
         let direct = obj
             .terms
@@ -220,13 +224,11 @@ impl Simplex {
                 let eff = if decrease_it { -a } else { a };
 
                 let ratio = if eff > Rational64::zero() {
-                    self.upper_real_at(bv_idx).map(|hi| {
-                        ratio_gap(hi, bv_val, &eff, false)
-                    })
+                    self.upper_real_at(bv_idx)
+                        .map(|hi| ratio_gap(hi, bv_val, &eff, false))
                 } else if eff < Rational64::zero() {
-                    self.lower_real_at(bv_idx).map(|lo| {
-                        ratio_gap(bv_val, lo, &eff, true)
-                    })
+                    self.lower_real_at(bv_idx)
+                        .map(|lo| ratio_gap(bv_val, lo, &eff, true))
                 } else {
                     continue;
                 };
