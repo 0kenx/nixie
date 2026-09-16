@@ -158,6 +158,42 @@ each has a regression:
    `bag.choose`/`bag.map`/`bag.filter`/`bag.fold`/… (honest parse-level
    rejections today), and subbag over mixed closed/opaque shapes in
    `get-value` (fold from installed values like count/member).
+   **Slice three landed** (`7ebf2ffe`): a ~2300-case differential fuzz
+   campaign against CVC5 found five more wrong verdicts, all closed with
+   regressions — `bag.count` argument congruence (the purified encoding
+   gave each count its own column with no tie; the set theory's
+   membership-congruence pattern fixes it), `equality ⇒ equal
+   cardinality` and `subbag ⇒ bounded cardinality` (the per-element
+   equations alone cannot see through an opaque bag's slack),
+   de-duplication guards in the counting sum (the witnesses usually
+   equal a real element; summing every spelling counted one cell twice
+   and produced a fuzz-found false *unsat* once the card rules landed),
+   and CVC5's `bags_rewriter` lattice family (`a ⊓ (a ⊎ z) = a`,
+   `a \ (a ⊎ z) = ∅`, `(a ⊎max z) \ a = z \ a`) as builder rewrites.
+   The campaign's remaining two mismatches reduce to a **pre-existing
+   core bug outside this arc** — handed to its owner below.
+
+## A core bug for the parity owner (found by the bag fuzz campaign)
+
+`(assert (= (ite (= 3 x) 2 0) 2))` answers **unsat** (want `sat`) —
+reproduced on `4ade3b1e`, *before any bags work*, so it is not this
+arc's. The trigger is the ite branches being **both even**: `then ∈
+{2, 4}` with `else = 0` misfires; odd `then` (1, 3, 5, 7) and any
+`else ≠ 0` are fine. That signature points at the parity-lemma
+machinery (`derive_parity_lemmas` over the ite definitions — both-even
+branches make the ite variable's parity forced, and something there
+concludes the condition must be false). Three-line reproducer:
+
+```smt2
+(set-logic ALL)
+(declare-const x Int)
+(assert (= (ite (= 3 x) 2 0) 2))
+(check-sat)   ; cvc5/z3: sat (x = 3); nixie: unsat (wrong)
+```
+
+This also blocks deeper bag fuzzing: the count identities fold to
+`ite(e = y ∧ n ≥ 1, n, 0)`, and every even-multiplicity make over a
+variable element hits the shape.
 2. **Synthesis reach**: intersection shapes beyond binary unions of
    opaque classes; uninterpreted element sorts (no mintable witness);
    complements over large finite sorts (> 1024, `MAX_UNIVERSE_ENUM`);

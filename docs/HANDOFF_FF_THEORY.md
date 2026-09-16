@@ -264,19 +264,20 @@ pass once the symlinks exist). Delete worktrees when done. Never
 
 ## 5. Open work, in recommended order
 
-1. **F4: correct and landed, UNWIRED (the optimization is the lever)**:
-   `f4_basis` (`nixie-math/src/ff/grobner.rs`) is property-pinned —
-   mutual ideal membership + lm agreement with Buchberger, determinism,
-   whole-ring detection — but costs ~8× Buchberger's monomial ops at
-   9×10 (measured; row-construction clones, O(basis) reducer scans,
-   admission reductions). No solver path calls it. The lever: optimize
-   to the cost crossover (the flat sparse-row layout is the SIMD-ready
-   kernel — exact modular arithmetic is order-independent, so
-   vectorization is deterministic by construction), then wire it into
-   the window path where the batches are small. NTT for Goldilocks-class
-   primes is the other named lever. Both deterministic front-end items —
-   step counts, no matched null needed. The corpus generator
-   (`bench/ff/gen_chain.py`) produces frontier files when needed.
+1. **F4: correct, optimized, and measured UNWIRED (the no-go clause fired
+   — 2026-09-18 addendum 4)**: two validated optimizations (cached-lms
+   reducer scan, fused row construction) landed; the crossover was
+   measured honestly: small shapes ~8× Buchberger, the best-case wide
+   shape (the union cascade, 686 pre-reduced elements) gives TICK
+   PARITY — the batching never pays when inputs are pre-reduced. No
+   solver path calls it; revisit only with new structure (non-prereduced
+   batches, or a SIMD echelonization kernel an order cheaper — the
+   flat sparse-row layout is the SIMD-ready shape, exact modular
+   arithmetic is order-independent so vectorization is deterministic).
+   One bisected-not-root-caused defect on record: the per-round monic
+   admission cache missed a whole-ring at 3×4 (study addendum 4); the
+   per-candidate snapshot stays. NTT for Goldilocks-class primes is the
+   other named lever.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
