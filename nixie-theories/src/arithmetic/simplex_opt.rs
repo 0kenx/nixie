@@ -5,7 +5,8 @@
 
 use super::delta::DeltaRational;
 use super::simplex::{
-    LinExpr, Simplex, VarId, checked_add_r64, checked_div_r64, checked_mul_r64, checked_sub_r64,
+    LinExpr, Simplex, SnapBound, VarId, checked_add_r64, checked_div_r64, checked_mul_r64,
+    checked_sub_r64,
 };
 use num_rational::Rational64;
 use num_traits::Zero;
@@ -200,8 +201,10 @@ impl Simplex {
                 Some(v) => (v, enter_decrease),
             };
 
-            // Ratio test: find the leaving variable.
+            // Ratio test: find the leaving variable (and the bound it is
+            // driven to — the pivot's snap target).
             let mut leaving: Option<VarId> = None;
+            let mut leaving_snap = SnapBound::LowerPreferred;
             let mut best_ratio: Option<Rational64> = None;
 
             let basic_vars: Vec<VarId> = self.tableau_keys().collect();
@@ -245,6 +248,15 @@ impl Simplex {
                     if is_better {
                         best_ratio = Some(r);
                         leaving = Some(*basic_var);
+                        // The bound this basic is driven to by the entering
+                        // column's move (the pivot's snap target): `eff > 0`
+                        // rises into the upper gap, `eff < 0` falls to the
+                        // lower.
+                        leaving_snap = if eff > Rational64::zero() {
+                            SnapBound::Upper
+                        } else {
+                            SnapBound::Lower
+                        };
                     }
                 }
             }
@@ -298,8 +310,13 @@ impl Simplex {
                 Some(lv) => {
                     // A declined pivot (width, resource limit) leaves the
                     // state un-advanced: continuing would reason over a
-                    // stale assignment.  Abandon honestly.
-                    if !self.pivot(lv, enter) {
+                    // stale assignment.  Abandon honestly.  The snap stays
+                    // the historical lower-preferred rule (the optimizer's
+                    // trajectories are calibrated to it, like the SOI
+                    // driver's; only the DdM repair loops snap to the
+                    // violated bound).
+                    let _ = leaving_snap;
+                    if !self.pivot(lv, enter, SnapBound::LowerPreferred) {
                         result = SimplexOptStatus::Unknown;
                         break 'outer;
                     }

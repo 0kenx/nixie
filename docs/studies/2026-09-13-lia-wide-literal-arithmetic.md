@@ -1280,3 +1280,74 @@ binary (the `diskperf_…_1` false alarm) — rebuild before believing a
 surprise; disk hit 100% mid-verification (repoint the worktree's target
 symlink to a private dir on the root disk and `rm -rf
 target/debug/incremental`).
+
+## Continuation 23 (2026-09-17): the wisas layer-2 completeness regression closed — the repair pivot's snap overshoot (item 58)
+
+58. **`wisas_xs_8_13`'s `unknown`, end to end** (the regression the
+    wisas front attributed to `24cb0567` and left as an open soundness
+    question plus a completeness loss; see
+    `docs/handovers/2026-09-15-wisas-layer2-simplex-24cb0567.md`).
+    The termination chain, decoded by probes (verdict-site
+    instrumentation down through `resource_exhausted` →
+    `simplex.resource_limit` → the setting site): the search's
+    `make_feasible` burned its ENTIRE 100k-pivot budget in ONE final
+    check, `check` answered theory-`Unknown`, the manager's `Ok(_) =>
+    resource_exhausted` arm degraded the solve to `unknown`.
+    * The budget burn was a **frozen 2-cycle**: `v165 ↔ v176` swapped
+      basis positions for 75k+ consecutive pivots (identical leaver
+      counts, identical violating var, 7 distinct leavers total).  The
+      two rows are mirror images (`vX = K − vY` plus 13 shared columns);
+      with the propagation pinning all 13 shared columns two-sided, the
+      ONLY mobile columns were v165/v176 — each the other's reverse
+      repair.
+    * The arithmetic at the cycle point: `v176 = K − v165` with
+      `K = −1/2`; both bounds `[-1,0]`; the repair that moves `v165` to
+      `−1/2` lands `v176` EXACTLY on its violated upper `0` — a fully
+      successful repair existed at every step.  The pivot machinery
+      never took it: it snapped the leaving variable **lower-preferred**
+      (`−1`) instead of to *the bound it violated* (`0`), so the
+      overshoot (the entire bound interval) landed on the entering
+      variable through the row equation — manufacturing a fresh
+      violation of the same size on the other side, forever.  The
+      Dutertre–de Moura CAV'06 repair step snaps the leaving variable to
+      the bound it violates; that is precisely the property that makes
+      the violation measure decrease monotonically.
+    * Why the propagation landing exposed it: the derived bounds pin
+      columns two-sided, shrinking the eligible entering set until only
+      the mirrored pair remains — the old snap rule's overshoot then
+      livelocks where the pre-propagation search always had a third
+      column to escape through.  (The handover's search signature — ⅓
+      conflicts, 1/15 restarts, 3× slower — is the CDCL view of the
+      same starvation.)
+    * **The fix**: the snap target is now an explicit `SnapBound`
+      parameter of `pivot` — each driver passes its own semantics.  The
+      standard repair loop (`make_feasible`) and the dual loop
+      (`dual_simplex`) pass `SnapBound::from_violated(bound.kind)` (the
+      DdM rule).  The SOI driver and `optimize_linexpr` deliberately
+      KEEP the historical lower-preferred snap: their progress
+      invariants are calibrated to it (snapping the SOI driver's
+      blocking basic to its ratio bound spins `soi_differential` seed 5
+      into that driver's own budget — measured both ways before
+      choosing).  wisas now answers `unsat` (z3-certified),
+      deterministic across repeats, 1.4 s, and the search signature
+      returns to the healthy regime (3 624 conflicts / 492 restarts vs
+      the good parent's 2 866 / 455).  Regressions:
+      `repair_pivot_snaps_the_leaving_var_to_its_violated_bound` (the
+      simplex unit that FAILS pre-fix — two mirrored rows over pinned
+      bounds) and the now-green `wisas_xs_8_13_is_unsat` /
+      `..._verdict_is_stable_across_repeats` pair.
+    * The handover's open soundness question (the `[ceil(min),
+      floor(max)]` superset guarantee) was answered separately
+      (continuation 22, item 57): the wide store can only widen the
+      optimized range, and the optimizer's wrap class is closed.  The
+      completeness question is answered here.
+
+Verification for the landing: workspace suite green except the standing
+non-arc set (the TLA sets cardinality test — pre-existing on clean
+`28426243`, the sets front's; the recfun 180 s-cap timeout — documented
+slow-but-correct); clippy/fmt/rustdoc clean for the touched crates;
+Z3 parity 176/177, 0 disagreements (z3 4.16.0); wide 3×300 + mixed 4×400
+fresh seeds: 0 verdict disagreements, 0 refuted models; debug-panic
+sweep over the parity corpus (177) and a 235-file stratified
+`smt-lib/non-incremental` sample (seed 20260920): 0 panics; wisas
+`unsat` deterministic ×3.

@@ -584,7 +584,7 @@ mod tests_2 {
         row_c.constant = Rational64::zero();
         let c = simplex.intern_row(row_c);
 
-        let ok = simplex.pivot(a, b);
+        let ok = simplex.pivot(a, b, SnapBound::LowerPreferred);
         if ok {
             // The overflow was captured: row `c` left the narrow tableau
             // and lives exactly in the wide store (its `d`-coefficient is
@@ -1544,5 +1544,65 @@ fn intern_row_reports_rescaled_for_width_rescale() {
     assert!(
         r2.terms.iter().all(|(_, c)| *c.denom() == 1) && *r2.constant.denom() == 1,
         "an Exact intern of an integral form stays integral: {r2:?}"
+    );
+}
+
+// Regression (2026-09-17, the `wisas_xs_8_13` livelock): the standard
+// driver's repair pivot used to snap the leaving variable to its LOWER
+// bound regardless of which bound it violated — an upper violation at
+// `1/2` over `[-1,0]` snapped to `-1`, and the overshoot (the whole bound
+// interval) landed on the entering variable through the row equation,
+// manufacturing a mirrored violation of the same size.  With two-sided
+// pins everywhere (the propagation-enriched bound sets), two mirrored rows
+// then swapped basis positions forever: 100k pivots, budget exhausted, the
+// whole solve degraded to `unknown` on a z3-certified `unsat` instance.
+// The Dutertre–de Moura repair step snaps the leaving variable to the
+// bound it VIOLATED, which here fully repairs (both variables land
+// feasible).
+#[test]
+fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
+    let mut s = Simplex::new();
+    let a = s.new_var();
+    let b = s.new_var();
+    // a, b ∈ [-1, 0]; row(b): b = -1/2 - a  (a nonbasic).
+    for v in [a, b] {
+        s.set_lower(v, Rational64::from_integer(-1), 1);
+        s.set_upper(v, Rational64::zero(), 2);
+    }
+    s.tableau.insert(
+        b,
+        std::sync::Arc::new(LinExpr {
+            terms: smallvec::smallvec![(a, Rational64::from_integer(-1))],
+            constant: Rational64::new(-1, 2),
+        }),
+    );
+    s.basic.resize(b as usize + 1, false);
+    s.basic[b as usize] = true;
+    s.column_push_known(a, b);
+
+    // crash_basis snaps `a` to its lower (-1), so `b` derives 1/2 — above
+    // its upper 0.  The repair pivot on (leaving=b, entering=a) must snap
+    // b to the VIOLATED bound (0), landing a at -1/2: both feasible.
+    // (Pre-fix: b snapped to -1, a derived 1/2 — violated; the mirrored
+    // row re-derived the mirror image, and the pair cycled to the pivot
+    // budget.)
+    s.assignment_current = false;
+    let verdict = s.check();
+    assert!(
+        verdict.is_ok(),
+        "the system is feasible (a=-1/2, b=0): {verdict:?}"
+    );
+    assert!(
+        !s.resource_limit_reached(),
+        "no budget exhaustion on a 2-variable system"
+    );
+    let va = s.value(a);
+    let vb = s.value(b);
+    assert!(
+        va >= Rational64::from_integer(-1)
+            && va <= Rational64::zero()
+            && vb >= Rational64::from_integer(-1)
+            && vb <= Rational64::zero(),
+        "both variables inside their bounds: a={va:?} b={vb:?}"
     );
 }

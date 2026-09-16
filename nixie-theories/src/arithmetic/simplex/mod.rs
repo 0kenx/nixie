@@ -853,6 +853,44 @@ pub(crate) fn canonicalize_lin_form(
     *constant = new_constant;
     true
 }
+/// Which bound the LEAVING variable of a pivot is snapped to when it exits
+/// the basis.  The snap target is part of each driver's pivot SEMANTICS, not
+/// a free choice: the standard feasibility repair drives the violated basic
+/// back to the bound it violated (Dutertre–de Moura CAV'06) — snapping
+/// anywhere else overshoots the repair by the whole bound interval, and the
+/// overshoot lands on the entering variable through the row equation,
+/// manufacturing a fresh violation of the same size.  On bound sets with
+/// many two-sided pins (the propagation-enriched states), two mirrored rows
+/// then swap basis positions forever: the `wisas_xs_8_13` livelock, 100k
+/// pivots to a budget exhaustion that degraded a z3-certified `unsat` to
+/// `unknown`.  The SOI driver instead snaps the blocking basic to the bound
+/// its RATIO TEST identified (the rate's direction), which may differ from
+/// the violated one; the optimizer snaps per its own ratio test.  Drivers
+/// with no violation context (initialization-shaped pivots) keep the
+/// historical lower-preferred rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SnapBound {
+    /// Drive/snap the leaving variable to its lower bound.
+    Lower,
+    /// Drive/snap the leaving variable to its upper bound.
+    Upper,
+    /// No driver context: lower bound when one exists, else upper (the
+    /// historical rule).
+    LowerPreferred,
+}
+
+impl SnapBound {
+    /// The bound a violated `bound`'s repair drives its variable to.
+    #[must_use]
+    pub(crate) fn from_violated(kind: BoundType) -> Self {
+        match kind {
+            BoundType::Lower | BoundType::Equal => SnapBound::Lower,
+            BoundType::Upper => SnapBound::Upper,
+            BoundType::None => SnapBound::LowerPreferred,
+        }
+    }
+}
+
 /// Bound type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -2125,7 +2163,14 @@ impl Simplex {
                 Some(nonbasic_var) => {
                     #[cfg(feature = "std")]
                     diag::inc_pivot();
-                    if !self.pivot(basic_var, nonbasic_var) {
+                    // The repair drives the violated basic back to the
+                    // bound it violated (Dutertre–de Moura): the snap is
+                    // that bound, not a free lower-preferred choice.
+                    if !self.pivot(
+                        basic_var,
+                        nonbasic_var,
+                        SnapBound::from_violated(bound.kind),
+                    ) {
                         return Ok(());
                     }
                 }
@@ -2263,10 +2308,11 @@ impl Simplex {
     }
 
     /// Ratio test: how far `col` may move in `dir` before some basic row
-    /// variable hits a bound.  Returns the blocking distance and the row's
-    /// basic variable (`None` if no row blocks).
-    fn soi_ratio(&self, col: VarId, dir: i8) -> Option<Option<(DeltaRational, VarId)>> {
-        let mut best: Option<(DeltaRational, VarId)> = None;
+    /// variable hits a bound.  Returns the blocking distance, the row's
+    /// basic variable, and the bound that block drives it to (the pivot's
+    /// snap target) (`None` if no row blocks).
+    fn soi_ratio(&self, col: VarId, dir: i8) -> Option<Option<(DeltaRational, VarId, SnapBound)>> {
+        let mut best: Option<(DeltaRational, VarId, SnapBound)> = None;
         let rows = self.columns.get(&col)?.clone();
         for b in rows.iter() {
             let row = match self.tableau.get(b) {
@@ -2309,11 +2355,19 @@ impl Simplex {
             } else {
                 t
             };
+            // The blocking bound the rate drives this basic to (the
+            // pivot's snap target): rate > 0 means the basic rises into its
+            // upper, rate < 0 falls to its lower.
+            let to_bound = if rate > Rational64::zero() {
+                SnapBound::Upper
+            } else {
+                SnapBound::Lower
+            };
             let better = best
                 .as_ref()
-                .is_none_or(|(bt, bv)| t < *bt || (t == *bt && *b < *bv));
+                .is_none_or(|(bt, bv, _)| t < *bt || (t == *bt && *b < *bv));
             if better {
-                best = Some((t, *b));
+                best = Some((t, *b, to_bound));
             }
         }
         Some(best)
@@ -2436,7 +2490,7 @@ impl Simplex {
             // Pivot on the blocking row when it stops the column first;
             // otherwise flip the column to its own opposite bound.
             let row_blocks_first = match (&t_row, &t_self) {
-                (Some((t, _)), Some(ts)) => *t < *ts,
+                (Some((t, _, _)), Some(ts)) => *t < *ts,
                 (Some(_), None) => true,
                 (None, Some(_)) => false,
                 (None, None) => {
@@ -2447,12 +2501,21 @@ impl Simplex {
             };
             if row_blocks_first {
                 // t_row is Some here by the match above.
-                let Some((_, b)) = t_row else {
+                let Some((_, b, to_bound)) = t_row else {
                     return self.make_feasible();
                 };
                 #[cfg(feature = "std")]
                 diag::inc_pivot();
-                if !self.pivot(b, col) {
+                // The snap stays the HISTORICAL lower-preferred rule: this
+                // driver's progress invariant (the violation-sum decrease it
+                // measures per step) is calibrated to it — snapping to the
+                // ratio's blocking bound instead spins the driver into its
+                // budget on `soi_differential` seed 5.  The DdM repair-loop
+                // snap (`SnapBound::from_violated`) is the standard
+                // driver's semantics; this one keeps its own until the SOI
+                // long-step analysis is redone against it.
+                let _ = to_bound;
+                if !self.pivot(b, col, SnapBound::LowerPreferred) {
                     // Overflow mid-pivot: `pivot` set `resource_limit` and
                     // mutated nothing (transactional contract).  Clear the
                     // flag and hand the (unchanged) state to the standard
@@ -2528,7 +2591,11 @@ impl Simplex {
             let entering = self.find_dual_pivot_col(leaving_var, &bound);
             match entering {
                 Some(entering_var) => {
-                    if !self.pivot(leaving_var, entering_var) {
+                    if !self.pivot(
+                        leaving_var,
+                        entering_var,
+                        SnapBound::from_violated(bound.kind),
+                    ) {
                         return Ok(());
                     }
                 }
@@ -2726,7 +2793,7 @@ impl Simplex {
     /// loop currently ignores the outcome (pre-existing behavior, out of
     /// this module's scope to change) and relies on the subsequent
     /// pivot-budget/optimality bookkeeping to notice a stalled search.
-    pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) -> bool {
+    pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId, snap: SnapBound) -> bool {
         // The `assignment_current` flag is the "this vector needs a full
         // re-derivation before it may be consumed" mark, and `check` is not
         // the only consumer: rows can be *added* while the flag is down (a
@@ -2900,19 +2967,22 @@ impl Simplex {
         let leaving = basic_var as usize;
         let mut snap_delta: Option<DeltaRational> = None;
         if leaving < self.assignment.len() {
-            // Snap the now-nonbasic leaving var to a bound, matching
-            // `update_assignment`'s lower-preferred rule.
-            let snapped = self
-                .lower
-                .get(leaving)
-                .and_then(|o| o.as_ref())
-                .map(|b| b.value)
-                .or_else(|| {
-                    self.upper
-                        .get(leaving)
-                        .and_then(|o| o.as_ref())
-                        .map(|b| b.value)
-                });
+            // Snap the now-nonbasic leaving var to the bound its DRIVER
+            // chose (see `SnapBound` — the caller passes the semantics; the
+            // historical behavior snapped lower-preferred unconditionally,
+            // which overshoots every upper-bound repair and livelocked
+            // mirrored rows on the `wisas_xs_8_13` bound set).
+            let snapped = {
+                let lo = self.lower.get(leaving).and_then(|o| o.as_ref());
+                let hi = self.upper.get(leaving).and_then(|o| o.as_ref());
+                match snap {
+                    SnapBound::Lower => lo.map(|b| b.value).or_else(|| hi.map(|b| b.value)),
+                    SnapBound::Upper => hi.map(|b| b.value).or_else(|| lo.map(|b| b.value)),
+                    SnapBound::LowerPreferred => {
+                        lo.map(|b| b.value).or_else(|| hi.map(|b| b.value))
+                    }
+                }
+            };
             if let Some(v) = snapped {
                 let old = self.assignment[leaving];
                 if v != old {
