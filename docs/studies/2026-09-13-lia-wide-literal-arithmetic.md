@@ -1561,3 +1561,58 @@ clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3 4.16.0);
 wide 3×300 + mixed 3×400 fresh seeds (20260990–20260996) + the quant
 fuzz: 0 disagreements; perf gate PASS (counters bit-identical — no
 recursive definitions in its corpus).
+
+## Continuation 28 (2026-09-17): wide-value publication — the exact model channel (item 63)
+
+63. **The gap survey and its first slice.**  A 3×600-instance survey of
+    the mixed-fuzz unknown-gap (seeds 20260958-class; 210/1800 = 11.7%
+    unknown-where-z3-decides, 93% of them SAT-side) clustered the
+    residuals into: div/mod disjunctive search capacity (~60%), the
+    wide-value classes, and 17 pure-QF_LRA instances.  The smallest
+    LRA member minimized to a single equation whose unique solution
+    `xr = -27670116110564327424/13` has a NUMERATOR past `i64` — the
+    LP converges (the wide store knows the value exactly all along),
+    but `wide_underivable_blocks_sat` declined the whole verdict because
+    the value does not NARROW: honest `unknown` for a decidable `sat`.
+    * **The publication channel** (landed): `Simplex::wide_basic_value_exact`
+      (the exact `BigRational` a wide basic's row evaluates to — the
+      standard part of `eval_big_raw`), `ArithSolver::value_exact` (a
+      term's exact value; Int-sorted terms publish only INTEGRAL exacts),
+      the model builder's term synthesis (`(/ numer denom)` — via
+      `mk_rdiv`, REAL division), and the gate relax (block only when not
+      even exactly derivable).  The first cut used `mk_div` — EUCLIDEAN
+      division — and `get-value` printed the FLOOR: a published witness
+      violating its own assertion, caught by validating the model against
+      z3 before trusting the green test.  Fixed, plus the printer gap it
+      exposed (`Div` at `Real` sort printed `(div …)` — now `/`, keeping
+      the round trip honest).  Regression:
+      `wide_model_value_publishes_exactly_and_decides_sat` (verdict AND
+      exact-numerator pins — the verdict alone passes on the gate relax
+      alone, which would ship the default-value model).
+    * Measured: the survey's gap moved 210 → 198 on the same seeds; the
+      closed members are the publication-blocked class (the remaining 16
+      LRA members decline elsewhere — see below).
+    * **The second class, decoded and parked (the next item)**: the
+      remaining minimized LRA instance traces to `check_core`'s
+      `blocking_clauses_present()` downgrade — the search PROVES
+      `Unsat` over assertions+blocks, and the blanket rule (upstream
+      #40) answers `Unknown` because a block is "a restriction, not a
+      consequence".  The over-conservatism is fixable in principle:
+      blocks are added only for CONCRETELY refuted models, and the
+      projection onto term variables preserves the violation (an
+      assertion's truth depends only on term values), so every blocked
+      assignment violates the assertions and an `Unsat` over
+      assertions+blocks IS an `Unsat` of the assertions.  The open
+      soundness question is the `Undef`-omission case in the projection
+      (a don't-care variable the refutation's completion guessed): if
+      `model_refutes_assertions` can return true on a model whose
+      refutation depended on a completed — not asserted — value, the
+      argument breaks.  Recorded for the next session with the probe
+      map (verdict-site backtrace → `certify_result` → check_core's
+      downgrade arm).
+
+Verification for the landing: workspace 11 880 green except the env
+self-test; clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements
+(z3 4.16.0); wide 2×300 + mixed 2×400 fresh seeds (20261017–20261020):
+0 disagreements; perf gate PASS (counters bit-identical); the survey
+rerun on the same seeds.

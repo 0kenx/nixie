@@ -241,6 +241,30 @@ impl Solver {
                     manager.mk_real(value)
                 };
                 model.set(term, value_term);
+            } else if let Some(exact) = self.arith.value_exact(term) {
+                // Wide-value publication: the term's exact value is known
+                // but does not fit `Rational64` (a wide basic's own
+                // re-derived value — e.g. `xr = -3·(2^63+7)/13` over
+                // QF_LRA, whose numerator alone exceeds `i64`).  Publish
+                // it as a TERM the evaluator handles exactly: REAL
+                // division `(/ numer denom)` for Real sorts (an `rdiv`
+                // node evaluates exactly in the certifier — the INTEGER
+                // `div` constructor would evaluate to the FLOOR, a
+                // published witness violating its own assertion), and the
+                // plain numeral for Int sorts (an exact integral value —
+                // `value_exact` declines fractional ones).
+                let is_int_sort = manager
+                    .get(term)
+                    .map(|t| t.sort == manager.sorts.int_sort)
+                    .unwrap_or(true);
+                let value_term = if is_int_sort {
+                    manager.mk_int(exact.numer().clone())
+                } else {
+                    let numer = manager.mk_int(exact.numer().clone());
+                    let denom = manager.mk_int(exact.denom().clone());
+                    manager.mk_rdiv(numer, denom)
+                };
+                model.set(term, value_term);
             } else {
                 // If no value from ArithSolver (e.g., unconstrained variable), use default
                 // Get the sort to determine if it's Int or Real
