@@ -93,3 +93,43 @@ pre-change record.
 
 Result store: `precompile/<this-sha>/benchmark/reg36h/` (three-arm
 results.tsv, per-run logs, harness, env-shim source, sweep tables).
+
+## Addendum (2026-09-16): the "residual 1.43×" was the CSR mirror, not trajectory divergence — and the seed study that proved it
+
+The seed-replication caveat above is now resolved, and the "trajectory
+divergence on a subset" reading was **wrong**.  Paired 10-seed A/B
+(`82c3c926`+seed-knob vs `0e6f1afe`, three tail instances,
+`precompile/0e6f1afe/benchmark/seedstudy.tsv`):
+
+* **Conflict counts are bit-identical between the two binaries on every
+  one of the 30 seed-pairs** (SCPC 185 787 = 185 787, frb35 1 204 664 =
+  1 204 664, x9 67 067 = 67 067, …).  The landed content is
+  trajectory-inert on these instances.
+* **Wall at identical work is 2.5–6× worse** on the new arm (SCPC
+  5.2→26.3 s @ 185 787 conflicts; frb35: old finishes 10/10 seeds, new
+  times out on 4/10) — a pure per-op cost inflation.
+
+`perf` found it: 65 % of the new arm's runtime sat in
+`CsrWatchLists::push_overflow` (33.5 %, a `positions` HashMap write per
+watcher-add) + `CsrWatchLists::scan_remove` (31.8 %, in-scan mirroring),
+while the real BCP scan fell from 65 % to 17 %.  **`WatchLists::new`
+attached the CSR mirror unconditionally** (`csr: Some(…)`), contradicting
+the documented "Default off; the flag-off path is byte-identical" — the
+same defect the wisas-era canary hinted at ("mirror maintenance runs
+unconditionally in this build").  This also finally explains the
+`add`-loses-its-Vec-write accident's environment: everything about that
+window ran with the mirror live.
+
+**The fix** (`<this commit>`): attach the mirror only when one of the CSR
+knobs (`NIXIE_CSR_SHADOW` / `NIXIE_CSR_SCAN` / `NIXIE_CSR_READ`) asks for
+it.  After: SCPC 5.28 s @ **exactly** 185 787 conflicts (old-arm parity),
+x9 2.17 s @ 67 067 (faster than the 36 h-old arm), frb35 21.6 s @
+1 204 664 — and, unexpectedly, **the `wisas_xs_8_13` guards pass again**
+(the mirror was entangled in that regression's layer 2 as well).
+
+**Gate lesson**: both 36 h regressions (env probes, CSR mirror) were
+*semantics-inert constant-factor costs* — a counters-only gate is blind to
+that class.  `run_gate.sh` now also gates on interleaved-paired wall
+geomean (one-sided: improvements never fail; >1.5× at identical counters
+= FAIL, 1.25–1.5× = WARN).  This fix calibrates it: conflicts 1.000,
+wall geomean **0.58×**.
