@@ -316,6 +316,49 @@ fn set16_family_is_never_wrong() {
     );
 }
 
+/// The `set16` corpus goal, verbatim shape (uninterpreted `Elem`, not
+/// the Real variant above): after the ill-typed-diagonal repair, the
+/// artifact-default repair, and the fresh-row-element mint (see the
+/// study's thirteenth follow-up), the constructor tables close and the
+/// family answers `sat` — z3 agrees (`Set!val!0..1`, `a` the empty
+/// set).  This is the arc's convergence pin: a regression here means one
+/// of the three mechanisms regressed.
+#[test]
+fn set16_family_answers_sat() {
+    let output = run_bounded(
+        r#"
+        (set-logic UF)
+        (declare-sort Set 0)
+        (declare-sort Elem 0)
+        (declare-fun member (Elem Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (not (subset ?s1 ?s2)) (exists ((?x Elem)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (forall ((?x Elem)) (=> (member ?x ?s1) (member ?x ?s2))) (subset ?s1 ?s2))))
+        (declare-fun seteq (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (= ?s1 ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun union (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (union ?s1 ?s2)) (or (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun intersection (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (intersection ?s1 ?s2)) (and (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun difference (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (difference ?s1 ?s2)) (and (member ?x ?s1) (not (member ?x ?s2))))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (= a (intersection a b)))
+        (assert (not (subset b a)))
+        (check-sat)
+    "#,
+        30_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "sat",
+        "the constructor-table completion closes this family (z3: sat, 0.5 s); got {status}"
+    );
+}
+
 /// The universe-distinctness fold's groundness guard: the completed
 /// model's universes contain bound-variable artifact terms (entry args
 /// harvested by `collect_universes_from_model`), and folding

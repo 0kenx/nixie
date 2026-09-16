@@ -467,6 +467,7 @@ pub(crate) fn compute_constructor_tables(
     quantifiers: &[QuantifiedFormula],
     frozen: &mut FxHashMap<SortId, Vec<TermId>>,
     range_sorts: &mut FxHashSet<SortId>,
+    fresh_mints: &mut usize,
     manager: &mut TermManager,
 ) {
     let qms = extract_quasi_macros(quantifiers, manager);
@@ -561,7 +562,7 @@ pub(crate) fn compute_constructor_tables(
     // interpretation).
     for _ in 0..2 {
         for qm in &qms {
-            compute_one(model, qm, frozen, quantifiers, manager);
+            compute_one(model, qm, frozen, quantifiers, fresh_mints, manager);
         }
         for hm in &hints {
             compute_hint_one(model, hm, frozen, quantifiers, manager);
@@ -782,8 +783,9 @@ pub(crate) fn compute_constructor_tables(
 fn compute_one(
     model: &mut CompletedModel,
     qm: &QuasiMacro,
-    frozen: &FxHashMap<SortId, Vec<TermId>>,
+    frozen: &mut FxHashMap<SortId, Vec<TermId>>,
     quantifiers: &[QuantifiedFormula],
+    fresh_mints: &mut usize,
     manager: &mut TermManager,
 ) {
     let Some(q) = quantifiers.iter().find(|q| q.term == qm.quantifier) else {
@@ -810,7 +812,7 @@ fn compute_one(
     } else {
         model.ground_universe(qm.func_range, manager)
     };
-    let Some(universe) = universe else {
+    let Some(mut universe) = universe else {
         return;
     };
     if universe.is_empty() || universe.len() > MAX_CONSTRUCTOR_UNIVERSE {
@@ -915,7 +917,22 @@ fn compute_one(
             let app = observer_app(qm, point, z, manager);
             match eval_ground_bool(app, model, &else_table, manager) {
                 Some(b) => row.push(b),
-                None => return, // cannot evaluate: decline the table
+                None => {
+                    // cannot evaluate: decline the table
+                    if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+                        let printer = nixie_core::smtlib::Printer::new(manager);
+                        eprintln!(
+                            "[ct] fn {} DECLINED: row eval failed at z={} point={:?}",
+                            qm.func.into_inner().get(),
+                            printer.print_term(z),
+                            point
+                                .iter()
+                                .map(|&t| printer.print_term(t))
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    return;
+                }
             }
         }
         rows.push(row);
@@ -927,6 +944,7 @@ fn compute_one(
     let mut entries: Vec<FunctionEntry> = Vec::new();
     let mut odometer = vec![0usize; arity];
     let mut walked = 0usize;
+    let mut fresh_mints_local = 0usize;
     'tuples: loop {
         if walked >= MAX_TABLE_TUPLES {
             break;
@@ -954,7 +972,24 @@ fn compute_one(
                 let body = manager.substitute(qm.psi, &subst);
                 match eval_ground_bool(body, model, &else_table, manager) {
                     Some(b) => target.push(b),
-                    None => return,
+                    None => {
+                        if std::env::var_os("NIXIE_DEBUG_CT").is_some() {
+                            let printer = nixie_core::smtlib::Printer::new(manager);
+                            eprintln!(
+                                "[ct] fn {} DECLINED: psi eval failed at point={:?} tuple={:?}",
+                                qm.func.into_inner().get(),
+                                point
+                                    .iter()
+                                    .map(|&t| printer.print_term(t))
+                                    .collect::<Vec<_>>(),
+                                tuple
+                                    .iter()
+                                    .map(|&t| printer.print_term(t))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                        return;
+                    }
                 }
             }
             // First element whose row matches (deterministic, canonical) —
@@ -986,10 +1021,37 @@ fn compute_one(
                     result: *z,
                 });
             }
-            // No matching element: the ground model lacks a value with
-            // the target row — leave the tuple to the `else`; the nested
-            // check finds the falsifier there and the loop grows the
-            // model (the revise step).
+            // No existing element has the target row: GROW the completed
+            // structure with a fresh element that has it — z3's model
+            // finder semantics (`proto_model::get_fresh_value` /
+            // `mk_extra_fresh_value`: the model is the object being
+            // searched, and a user sort's universe grows when the
+            // interpretation needs a new distinguishable value).  The
+            // fresh element is row-canonical — named by its target row —
+            // so the same row mints the same element across rounds and
+            // the structure stays stable.  Leaving the tuple to the
+            // `else` instead (the old behaviour) strands the defining
+            // axiom at the tuple for good whenever the domain lacks the
+            // needed row: the set family's permanent `difference` miss
+            // (no element with the empty-set row) whose stale compounds
+            // then fed the walk-vs-aux divergence.
+            else if frozen.contains_key(&qm.func_range)
+                && fresh_mints_local < MAX_FRESH_PER_TABLE
+                && let Some(fresh) =
+                    mint_fresh_row_element(qm, &target, &row_points, model, frozen, manager)
+            {
+                *fresh_mints += 1;
+                fresh_mints_local += 1;
+                universe.push(fresh);
+                rows.push(target.clone());
+                entries.push(FunctionEntry {
+                    args: tuple,
+                    result: fresh,
+                });
+            }
+            // else (unfrozen range sort, or the mint cap): leave the
+            // tuple to the `else`; the nested check finds the falsifier
+            // there and the loop grows the model (the revise step).
         }
 
         if odometer.is_empty() {
@@ -1021,6 +1083,96 @@ fn compute_one(
             universe.len()
         );
     }
+}
+
+/// Cap on fresh row elements minted by one constructor's table per
+/// round: the row algebra closes long before this on real problems, and
+/// a pathological psi must not grow the structure unboundedly.
+const MAX_FRESH_PER_TABLE: usize = 16;
+
+/// Mint a fresh element of the constructor's range sort whose observer
+/// row is exactly `target`, and install it into the completed structure:
+/// the observer's entry table gains the target row's entries at the new
+/// element, and the frozen/table domains grow by it.  `None` when the
+/// domain is at the restriction cap (the aux Skolem restriction and
+/// every domain enumerator decline above it — a bigger structure would
+/// be unreadable, so the tuple falls back to the `else`).
+///
+/// The name is row-canonical (`tbl!<func-name>!<row bits>`): the element
+/// IS "the value with this row" in the completed structure's semantics,
+/// so re-minting across rounds (or from a second constructor needing the
+/// same row) yields the very same term and the structure stays stable.
+fn mint_fresh_row_element(
+    qm: &QuasiMacro,
+    target: &[bool],
+    row_points: &[Vec<TermId>],
+    model: &mut CompletedModel,
+    frozen: &mut FxHashMap<SortId, Vec<TermId>>,
+    manager: &mut TermManager,
+) -> Option<TermId> {
+    /// The aux Skolem restriction's universe cap (`model_checker`): a
+    /// domain past it is not restriction-readable, so growing further
+    /// would produce a structure the nested check cannot even encode.
+    const RESTRICTION_CAP: usize = 32;
+    let domain_len = frozen.get(&qm.func_range).map_or(0, |d| d.len());
+    if domain_len >= RESTRICTION_CAP {
+        return None;
+    }
+    let row_bits: String = target.iter().map(|&b| if b { '1' } else { '0' }).collect();
+    let fresh = manager.mk_var(
+        &format!("tbl!{}!{row_bits}", manager.resolve_str(qm.func)),
+        qm.func_range,
+    );
+    // The observer's entries at the fresh element: the target row, at
+    // every row point (the args mirror `observer_app`'s construction).
+    let interp = model
+        .function_interps
+        .entry(qm.observer)
+        .or_insert_with(|| {
+            FunctionInterpretation::new(qm.observer, SmallVec::new(), manager.sorts.bool_sort)
+        });
+    for (i, point) in row_points.iter().enumerate() {
+        let mut axis_iter = point.iter();
+        let mut args: Vec<TermId> = Vec::with_capacity(qm.observer_args.len());
+        for arg in &qm.observer_args {
+            match arg {
+                ObserverArg::Result => args.push(fresh),
+                ObserverArg::Axis(_) => {
+                    if let Some(&elem) = axis_iter.next() {
+                        args.push(elem);
+                    }
+                }
+            }
+        }
+        let result = if target[i] {
+            manager.mk_true()
+        } else {
+            manager.mk_false()
+        };
+        interp.entries.push(FunctionEntry { args, result });
+    }
+    // Grow the frozen and table domains: the completed structure's own
+    // domain now contains the new element (the aux restriction, the
+    // mining odometer and the enumerative engines all read it).
+    frozen.entry(qm.func_range).or_default().push(fresh);
+    match model.table_domains.entry(qm.func_range) {
+        std::collections::hash_map::Entry::Occupied(mut occ) => {
+            if !occ.get().contains(&fresh) {
+                occ.get_mut().push(fresh);
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(vac) => {
+            // The sort is frozen but the model's table-domain view was
+            // not yet installed: mirror the frozen view plus the fresh
+            // element so the consumers see one structure.
+            let mut domain = frozen.get(&qm.func_range).cloned().unwrap_or_default();
+            if !domain.contains(&fresh) {
+                domain.push(fresh);
+            }
+            vac.insert(domain);
+        }
+    }
+    Some(fresh)
 }
 
 /// Whether every use of the given bound variables in `term` reads them

@@ -487,23 +487,82 @@ impl MBQIIntegration {
             sets.push(universe);
         }
 
-        // Diagonals first (`(z,z)` pins are the forcing ones), then the
-        // remaining tuples in odometer order, under the product cap.
+        // Diagonals first (the `(z,z)` forcing pins), then the remaining
+        // tuples in odometer order, under the product cap.  A diagonal is
+        // per **sort class**: axes of the same sort take the same value.
+        // Repeating one element of `sets[0]` across *all* axes — the
+        // original construction — mints ill-typed tuples on every
+        // heterogeneous defining axiom: `forall ?x:Elem ?s1:Set ?s2:Set`
+        // pinned at `(u!3, u!3, u!3)` substitutes an Elem constant into
+        // the Set positions, asserting `member(u!3, union(u!3, u!3))`
+        // with ill-typed applications.  Those instances are harvested
+        // back as garbage table entries (`member(u!4, u!4) = false`),
+        // poison the instantiation sets (an Elem value bucketed under
+        // Set), and surface in the nested checks as free compound terms
+        // (`union(u!3, u!3)`) the walk can never reproduce — the exact
+        // walk-vs-aux divergence that stalled the set family (see
+        // `docs/studies/2026-09-14-model-finder-constructor-tables.md`).
         let mut tuples: Vec<SmallVec<[TermId; 4]>> = Vec::new();
         let n = sets.len();
-        let first = &sets[0];
-        for &z in first.iter() {
-            tuples.push(std::iter::repeat_n(z, n).collect());
+        // Axis -> sort class, class -> its axes.
+        let mut class_of: Vec<usize> = Vec::with_capacity(n);
+        let mut class_axes: Vec<Vec<usize>> = Vec::new();
+        for (i, &(_, sort)) in quantifier.bound_vars.iter().enumerate() {
+            let class = class_axes
+                .iter()
+                .position(|axes| quantifier.bound_vars[axes[0]].1 == sort);
+            match class {
+                Some(c) => {
+                    class_of.push(c);
+                    class_axes[c].push(i);
+                }
+                None => {
+                    class_of.push(class_axes.len());
+                    class_axes.push(vec![i]);
+                }
+            }
         }
-        let mut odometer = vec![0usize; n];
-        'outer: loop {
-            let mut is_diagonal = true;
-            for i in 1..n {
-                if odometer[i] != odometer[0] {
-                    is_diagonal = false;
+        // Per class, the domain of its first axis (same-sort axes read
+        // the same frozen/semantic domain; value equality below is what
+        // the odometer skip checks, so order differences are harmless).
+        let class_domains: Vec<&Vec<TermId>> =
+            class_axes.iter().map(|axes| &sets[axes[0]]).collect();
+        {
+            // Diagonal tuples: an odometer over classes, every axis of a
+            // class at its chosen value.
+            let mut cod = vec![0usize; class_domains.len()];
+            loop {
+                let mut tuple: SmallVec<[TermId; 4]> = SmallVec::new();
+                tuple.resize(n, class_domains[0][0]);
+                for (axis, &class) in class_of.iter().enumerate() {
+                    tuple[axis] = class_domains[class][cod[class]];
+                }
+                tuples.push(tuple);
+                let mut carried = false;
+                for (c, idx) in cod.iter_mut().enumerate() {
+                    *idx += 1;
+                    if *idx < class_domains[c].len() {
+                        carried = true;
+                        break;
+                    }
+                    *idx = 0;
+                }
+                if !carried || tuples.len() >= MAX_TUPLE_PRODUCT {
                     break;
                 }
             }
+        }
+        let mut odometer = vec![0usize; n];
+        'outer: loop {
+            // A tuple is a diagonal iff every class's axes agree on their
+            // *value* (not their odometer index: same-sort axes may read
+            // differently ordered domains).
+            let is_diagonal = class_of.iter().enumerate().all(|(axis, &class)| {
+                let value = sets[axis][odometer[axis]];
+                class_axes[class]
+                    .iter()
+                    .all(|&a2| sets[a2][odometer[a2]] == value)
+            });
             if !is_diagonal {
                 tuples.push(
                     sets.iter()
@@ -531,6 +590,18 @@ impl MBQIIntegration {
         for tuple in tuples {
             if emitted >= MAX_PINS {
                 break;
+            }
+            // Defense in depth: a tuple value whose sort does not match
+            // its axis's bound variable is malformed (a domain bug
+            // somewhere upstream) — substituting it would mint ill-typed
+            // terms.  Skip the tuple; the search stays sound, only this
+            // pin is lost.
+            if tuple.iter().enumerate().any(|(i, &v)| {
+                manager
+                    .get(v)
+                    .is_some_and(|node| node.sort != quantifier.bound_vars[i].1)
+            }) {
+                continue;
             }
             let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
             for (&(name, _), &value) in quantifier.bound_vars.iter().zip(tuple.iter()) {
@@ -634,7 +705,14 @@ impl MBQIIntegration {
         // are not, so this cannot loop.
         self.model_checker
             .set_table_mode(!self.active_table_quantifiers.is_empty());
-        if core::mem::take(&mut self.last_round_barren) {
+        // A round that minted fresh row elements is NOT barren: the
+        // completed structure grew (a certification-enabling row the
+        // domain lacked — see `mint_fresh_row_element`), and escalating
+        // the axis domains while the structure grows explodes the row
+        // space (set9: 17-wide rows, the 32-element cap, and every
+        // nested check past its conflict budget).
+        let minted_this_structure = self.model_completer.last_round_fresh_mints > 0;
+        if core::mem::take(&mut self.last_round_barren) && !minted_this_structure {
             self.model_checker.refund_on_barren_round();
             // The *targeted* cardinality escalation: two barren rounds
             // without a verdict mean the frozen structure cannot carry

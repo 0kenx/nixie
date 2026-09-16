@@ -537,10 +537,15 @@ impl CounterExampleGenerator {
                 candidates.extend_from_slice(universe);
             }
 
-            // Strategy 2: Use values from the model
+            // Strategy 2: Use values from the model.  The *value's own*
+            // sort must match — an assignments entry whose term and value
+            // carry different sorts (a harvested artifact) must not leak
+            // a foreign-sorted value into this sort's candidate list
+            // (the ill-typed-instantiation vector).
             for (&term, &value) in &model.assignments {
                 if let Some(t) = manager.get(term)
                     && t.sort == sort
+                    && manager.get(value).is_some_and(|v| v.sort == sort)
                     && !candidates.contains(&value)
                 {
                     candidates.push(value);
@@ -571,7 +576,9 @@ impl CounterExampleGenerator {
                 }
             }
             for (&term, &value) in &model.assignments {
-                if manager.get(term).is_some_and(|t| t.sort == sort) {
+                if manager.get(term).is_some_and(|t| t.sort == sort)
+                    && manager.get(value).is_some_and(|v| v.sort == sort)
+                {
                     push_req(value, &mut required);
                 }
                 if manager.get(value).is_some_and(|v| v.sort == sort) {

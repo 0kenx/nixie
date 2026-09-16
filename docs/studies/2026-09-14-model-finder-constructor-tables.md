@@ -699,3 +699,121 @@ Verification: quant_fuzz seeds {41..46} x 150 CLEAN (plus spot
 re-checks); parity 176 Correct / 1 Inconclusive / 0 wrong (z3 4.16.0);
 4796/4797 (the convergence pin 159 s standalone, in band); fmt/clippy
 clean.
+
+
+## The minimized goal, decoded: three defects, the family half-closed (2026-09-16, thirteenth follow-up)
+
+The handover's prescribed probe — dump every aux-`Sat` goal as
+standalone SMT-LIB and minimize — ran on set16 and decoded the
+walk-vs-aux divergence into **three independent defects**, each fixed
+at its layer with the layers above it guarded:
+
+1. **Ill-typed defining pins (the diagonal bug).**  The well-typedness
+   audit on the dumped goals showed `union(u!3, u!3)` and
+   `member(u!4, u!4)` — Elem-sorted seeds in Set positions.  A
+   `TermManager::intern` tripwire (same function symbol applied at two
+   argument-sort sequences → backtrace) pinned the minting site:
+   `emit_macro_defining_pins`' "diagonals first" pre-pass repeated one
+   element of `sets[0]` across **all** axes — for
+   `forall ?x:Elem ?s1:Set ?s2:Set` that substitutes an Elem constant
+   into the Set positions, asserting instances with ill-typed
+   applications.  The ground solver accepts them (EUF does not
+   sort-check), the harvest reads them back as garbage table entries
+   (`member(u!4, u!4) = false`), the instantiation-set harvest
+   re-buckets an Elem *value* under the Set position's sort, and the
+   compounds surface in the aux goals as free function applications
+   the walk can never reproduce — exactly the documented divergence.
+   **Fix**: a diagonal is per **sort class** (axes of one sort take
+   one value; the odometer skip checks value-equality within classes,
+   not index equality — same-sort behaviour is bit-identical), plus a
+   defense-in-depth guard that skips any tuple whose value sorts do
+   not match their axes, plus own-sort bucketing in
+   `build_instantiation_set` and the counterexample candidate lists
+   (an assignments value joins the sets of *its own* sort, never the
+   substituted term's).
+
+2. **The artifact default (the symbolic else).**  With the ill-typed
+   mint dead, `difference`'s completed else still read as the **free
+   variable `?s2`**: `collect_universes_from_model`'s harvest carried
+   the encoder's binder constants (the internalized axiom bodies'
+   `?s1`/`?s2` free constants) into the raw universe, and
+   `set_default_values` picked `universes[Set].first()` — the artifact
+   — as the sort default, which `complete_function_interpretations`
+   then installed as every entry-less function's `else_value`.  A
+   symbolic else means the completed body folds to a *term* mentioning
+   the Skolem, never to a constant: the aux legitimately falsifies
+   (its reading of the else is a free choice), the mining walk never
+   folds false ("no relevant falsifier"), and the loop stalls — the
+   exact residual q42/q20/q57 shape with no falsifier to mine.
+   **Fix**: every universe element must be a ground term of its own
+   sort (own-sort check + free-variable/artifact filter, the same
+   name-set test `freeze_ground_universes` uses), applied at the
+   harvest; the default and both candidate-list sites inherit it.
+
+3. **The missing row (the fresh-element mint).**  With (1)+(2) fixed,
+   q33/q38/q10/q28 certified but `difference`'s table computed **zero**
+   entries every round: its target rows — the empty row for the
+   diagonals, `rows(b)∖rows(a)` for `(b,a)` — exist in *no* element of
+   the frozen 2-point domain (z3's set16 model closes because its
+   search reaches `a = ∅`; nixie's ground solver had pinned
+   `u!0 ∈ a` and nothing ever retracts a free choice).  Leaving
+   missing-row tuples to the else strands the defining axiom at them
+   permanently.  **Fix** (`mint_fresh_row_element`): on a row miss,
+   GROW the completed structure with a fresh element that *has* the
+   target row — z3's own model-finder semantics
+   (`proto_model::get_fresh_value` / `mk_extra_fresh_value`: the model
+   is the object being searched; a user sort's universe grows when the
+   interpretation needs a new distinguishable value).  The fresh
+   element is **row-canonical** (named by its target row's bits, so
+   the same row mints the same element across rounds and from any
+   constructor), its observer entries are installed at every row
+   point, and the frozen/table domains grow with it (capped at the
+   aux-restriction universe bound; 16 mints per table per round).  A
+   mint round is model *movement*: it does not count as barren for the
+   axis-thaw escalation (thawing while the structure grows explodes
+   the row space — measured below).
+
+**Result**: set16 answers **`sat` in 0.1 s** (z3: `sat`, 0.5 s; its
+model has 2 `Set!val`s — nixie's completed structure is the 4-element
+row closure, equally a model, certified end to end).  set9/set19 still
+answer `unknown` honestly; the residual blocker is diagnosed precisely
+below.
+
+**set9's residual (the next cycle's target)**: the goal needs the
+*powerset closure* of the used rows (`not seteq(difference a b,
+(difference b a))` forces disjoint non-empty base rows; union/intersection
+then demand the full and empty rows — no 2-element structure carries
+them, so the mint fires, which is correct).  What does not converge is
+the **base rows**: the ground model's `member` rows for the base
+elements are free choices no asserted instance pins (defining
+instances are satisfied at the free compound terms — the ground solver
+never has to commit `difference(a,b)` to a domain element), so they
+churn between rounds and the mint chases them: 17-wide row points,
+the 32-element cap, and every nested check past its conflict budget
+("nested check undetermined").  The mechanism the study has carried —
+the revision loop that forces the ground solver to re-solve a pin —
+must therefore bind the *compounds* to the structure: the domain
+restriction `f(t...) ∈ {d1..dn}` told to the main solver.  That clause
+is **not** a logical consequence (a real model may use a third
+element), so it cannot be asserted unguarded (false-`unsat` vector);
+it needs either the guarded-lemma pattern (a fresh guard literal the
+`sat` path sets and the `unsat` path never depends on) or z3-fm
+semantics (cardinality assumption with escalation on the conditional
+refutation).  set9's freeze also caught a round whose Set universe was
+the *compounds* `difference(a,b)`/`difference(b,a)` (the ground model
+had merged `a ≈ difference(a,b)` — a legitimate model whose defining
+instances then force the base rows disjoint); a re-freeze design that
+recognises semantically-equal domains belongs to the same cycle.
+set19 (z3: timeout) needs the same machinery — its honest `unknown`
+at 10 s is parity-correct today.
+
+Verification: quant_fuzz seeds {41..46} x 150 **CLEAN**; parity
+**176 Correct / 1 Inconclusive / 0 wrong** (z3 4.16.0); workspace
+suite **11880/11880** (the one `nixie-sat` failure was environmental —
+a worktree without the `satcomp2024` corpus symlink; passes with the
+corpus present); clippy/fmt/doc clean; the perf gate **PASS**
+(conflicts geomean 1.000, no verdict changes — the three fixes are
+off the SAT hot path and the mint is completion-layer only); the
+twins canary and both set16 honesty pins pass;
+`set16_family_answers_sat` added as the convergence pin (it fails if
+any of the three mechanisms regresses).

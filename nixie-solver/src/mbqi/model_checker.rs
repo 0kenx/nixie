@@ -1170,11 +1170,20 @@ impl ModelChecker {
                     if mentions_bound(arg) {
                         continue;
                     }
+                    // Bucket by the value's OWN sort, never the argument
+                    // position's declared sort: the two coincide on a
+                    // well-typed entry, and an ill-typed one (a harvested
+                    // artifact) must not seed this sort's instantiation
+                    // set with a foreign-sorted value — that is the
+                    // ill-typed-instantiation vector (`?s1 := u!4` with
+                    // `u!4` an Elem term in a Set position).
                     let norm = model.assignments.get(&arg).copied().unwrap_or(arg);
-                    value_of(domain_sort, norm, arg, &mut sorts);
+                    let value_sort = manager.get(norm).map_or(domain_sort, |nd| nd.sort);
+                    value_of(value_sort, norm, arg, &mut sorts);
                 }
                 if !mentions_bound(entry.result) {
-                    value_of(interp.range, entry.result, entry.result, &mut sorts);
+                    let result_sort = manager.get(entry.result).map_or(interp.range, |nd| nd.sort);
+                    value_of(result_sort, entry.result, entry.result, &mut sorts);
                 }
             }
         }
@@ -1186,6 +1195,12 @@ impl ModelChecker {
                 continue;
             };
             if mentions_bound(term) || mentions_bound(value) {
+                continue;
+            }
+            // A cross-sorted assignment (a harvested artifact) is not a
+            // value of this sort — skip it rather than seed the
+            // instantiation set with a foreign-sorted term.
+            if manager.get(value).is_some_and(|v| v.sort != node.sort) {
                 continue;
             }
             assigned.push((node.sort, term, value));

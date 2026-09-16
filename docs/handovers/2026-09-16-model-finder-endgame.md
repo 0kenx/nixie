@@ -1,5 +1,19 @@
 # Handoff: the set-family model finder — one minimized goal from `sat`
 
+> **CLOSED 2026-09-16 (thirteenth follow-up, see the study).**  The
+> minimized-aux-goal probe decoded the divergence into three defects —
+> the ill-typed sort-class diagonal in `emit_macro_defining_pins`, the
+> encoder-artifact sort default (the symbolic `?s2` else), and the
+> missing-row tuples that need a fresh element (z3's `get_fresh_value`
+> semantics, landed as `mint_fresh_row_element`).  **set16 answers `sat`
+> (0.1 s, z3 agrees)**; `set16_family_answers_sat` is the convergence
+> pin.  set9/set19 remain honestly `unknown` — the precise residual
+> (base-row churn; the compounds must be bound to the structure via a
+> *guarded* domain restriction) is diagnosed at the end of the study.
+> The continuations below (matched-null for the constructor-tables
+> unit, the unsat-forcing fuzz generator, the hint measurement) remain
+> open.
+
 **Date:** 2026-09-16
 **Arc:** `docs/studies/2026-09-14-model-finder-constructor-tables.md` (701 lines, twelve follow-ups — read it first; this handoff is the map, the study is the territory).
 **Goal:** `smt-lib/non-incremental/UF/misc/set9.smt2`, `set16.smt2`, `set19.smt2` → `sat` (z3: `sat`/`sat`/timeout). All three are the same shape: uninterpreted `Set`/`Elem` sorts, `member`/`subset`/`seteq` observers, `union`/`intersection`/`difference` constructors, one ground assertion each.

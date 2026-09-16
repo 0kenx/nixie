@@ -466,29 +466,53 @@ impl CompletedModel {
             }
         }
 
-        // For each needed sort, build a universe from ground terms in the model
+        // For each needed sort, build a universe from ground terms in the
+        // model.  Every element must be a *ground term of its own sort*:
+        // the assignment harvest can carry encoder binder constants (the
+        // internalized axiom bodies' `?s1`/`?s2` constants — free
+        // variables, not domain elements) and cross-sorted values (a
+        // term of this sort whose value is of another).  Either leaking
+        // into the universe poisons every consumer: the sort default
+        // (every unpinned function's else), the candidate lists, the
+        // counterexample sampler — a symbolic `else` makes the completed
+        // model stop folding to constants entirely (the set-family
+        // "no relevant falsifier" stall: `difference`'s else read as the
+        // free variable `?s2`).
+        let bound_names: FxHashSet<Spur> = quantifiers
+            .iter()
+            .flat_map(|q| q.bound_vars.iter().map(|(n, _)| *n))
+            .collect();
+        let is_artifact = |t: TermId| {
+            nixie_core::ast::traversal::collect_free_vars_including_patterns(t, manager)
+                .iter()
+                .any(|&v| {
+                    manager.get(v).is_some_and(|n| match n.kind {
+                        TermKind::Var(name) => bound_names.contains(&name),
+                        _ => false,
+                    })
+                })
+        };
+        // An element of this sort's universe: its own sort matches, and
+        // it is a ground term (no encoder binder constant).  Defined per
+        // sort inside the loop below (it closes over the loop's sort).
         for sort in needed_sorts {
             // Skip if universe already exists
             if self.universes.contains_key(&sort) {
                 continue;
             }
+            let eligible = |t: TermId| {
+                manager
+                    .get(t)
+                    .is_some_and(|node| node.sort == sort && !is_artifact(t))
+            };
 
             let mut universe_values: Vec<TermId> = Vec::new();
             let mut seen: FxHashSet<TermId> = FxHashSet::default();
 
             // Scan all model assignments for values of this sort
-            for (&term, &value) in &self.assignments {
-                // Check if the term has the right sort
-                if let Some(t) = manager.get(term) {
-                    if t.sort == sort && seen.insert(value) {
-                        universe_values.push(value);
-                    }
-                }
-                // Also check if the value itself has the right sort
-                if let Some(v) = manager.get(value) {
-                    if v.sort == sort && seen.insert(value) {
-                        universe_values.push(value);
-                    }
+            for (&_term, &value) in &self.assignments {
+                if eligible(value) && seen.insert(value) {
+                    universe_values.push(value);
                 }
             }
 
@@ -496,13 +520,13 @@ impl CompletedModel {
             for interp in self.function_interps.values() {
                 for entry in &interp.entries {
                     // Check args
-                    for (i, &arg) in entry.args.iter().enumerate() {
-                        if i < interp.domain.len() && interp.domain[i] == sort && seen.insert(arg) {
+                    for &arg in &entry.args {
+                        if eligible(arg) && seen.insert(arg) {
                             universe_values.push(arg);
                         }
                     }
                     // Check result
-                    if interp.range == sort && seen.insert(entry.result) {
+                    if eligible(entry.result) && seen.insert(entry.result) {
                         universe_values.push(entry.result);
                     }
                 }
@@ -721,6 +745,13 @@ pub struct ModelCompleter {
     /// later rounds recompute the *tables* over the frozen domain, so the
     /// structure only moves when the ground pins inside it move.
     frozen_table_domains: FxHashMap<SortId, Vec<TermId>>,
+    /// Fresh row elements minted by the last round's constructor tables
+    /// (see `constructor_tables::mint_fresh_row_element`).  A mint round
+    /// is model *movement*: the completed structure grew, so the round
+    /// must not count as barren for the escalation triggers (thawing the
+    /// axis domains while the structure grows explodes the row space —
+    /// the set9 divergence: 17-wide rows, 32-element cap reached).
+    pub(crate) last_round_fresh_mints: usize,
     /// Statistics
     stats: CompletionStats,
     /// Cardinality escalations used (see `thaw_table_domains`): the
@@ -746,6 +777,7 @@ impl ModelCompleter {
             uninterp_handler: UninterpretedSortHandler::new(),
             cache: FxHashMap::default(),
             frozen_table_domains: FxHashMap::default(),
+            last_round_fresh_mints: 0,
             thaws_used: 0,
             frozen_range_sorts: FxHashSet::default(),
             stats: CompletionStats::default(),
@@ -920,14 +952,17 @@ impl ModelCompleter {
         // (the nested checker, the mining odometer, the enumerative
         // seeder, the defining pins) reads unchanged.
         let mut range_sorts = core::mem::take(&mut self.frozen_range_sorts);
+        let mut fresh_mints = 0usize;
         super::constructor_tables::compute_constructor_tables(
             &mut completed,
             quantifiers,
             &mut self.frozen_table_domains,
             &mut range_sorts,
+            &mut fresh_mints,
             manager,
         );
         self.frozen_range_sorts = range_sorts;
+        self.last_round_fresh_mints = fresh_mints;
 
         Ok(completed)
     }
