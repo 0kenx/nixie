@@ -144,13 +144,20 @@ each has a regression:
    slack for *opaque* bags only — closed compounds get the exact sum, a
    differential-testing false-`sat` closed in flight). Verified against
    CVC5 1.3.4 on a 45-case battery (43 exact, 2 cvc5-timeouts refuted
-   by one line of arithmetic). **Next slices**: bag-value model
-   synthesis (a variable prints the `(as bag.empty …)` default today;
-   assemble `bag.union_disjoint` of `(bag e n)` from the counts' values
-   — the sets arc's model arc, step for step), `bag.count` query
-   readback (the count terms are arith leaves the extractor doesn't
-   read), then `bag.choose`/`bag.map`/`bag.filter`/`bag.fold`/… (honest
-   parse-level rejections today).
+   by one line of arithmetic). **Slice two landed** (`25ac4e4c`): CVC5's
+   negative-multiplicity clamp (`count(x, (bag y n)) =
+   ite(x = y ∧ n ≥ 1, n, 0)`; literal folds to `bag.empty`), the
+   multiplicity-nonnegativity axiom for opaque bags (a differential-
+   testing false-`sat`: `count(1,b) = -3` answered `sat`), and the
+   count-driven model — values assemble as `bag.union_disjoint` of
+   `(bag e n)` cells grouped by **resolved element value** (the
+   `@bag_ext_*` witnesses merge into the cell they value), cardinality
+   verified before publishing, `bag.count`/`bag.card`/`bag.member`
+   queries answer (query-only ones fold from the installed value),
+   `get-model` prints the bag. 24/24 tests. **Next slices**:
+   `bag.choose`/`bag.map`/`bag.filter`/`bag.fold`/… (honest parse-level
+   rejections today), and subbag over mixed closed/opaque shapes in
+   `get-value` (fold from installed values like count/member).
 2. **Synthesis reach**: intersection shapes beyond binary unions of
    opaque classes; uninterpreted element sorts (no mintable witness);
    complements over large finite sorts (> 1024, `MAX_UNIVERSE_ENUM`);
