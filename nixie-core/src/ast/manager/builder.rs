@@ -1098,7 +1098,11 @@ impl TermManager {
     }
 
     /// `(bag.difference_subtract a b)`, normalized: `b \ b = ∅` (the
-    /// saturating difference cancels), `b \ ∅ = b`, `∅ \ b = ∅`.
+    /// saturating difference cancels), `b \ ∅ = b`, `∅ \ b = ∅`, the
+    /// lattice rules `a \ (a ⊎max z) = ∅` and `a \ (a ⊎ z) = ∅` (a
+    /// union already covers every copy `a` has; multiplicities are
+    /// nonnegative), and `(a ⊎max z) \ a = z \ a` (the `a`-copies
+    /// cancel out of the max).
     pub fn mk_bag_difference_subtract(&mut self, a: TermId, b: TermId) -> TermId {
         if a == b {
             let sort = self.bag_result_sort(a);
@@ -1110,12 +1114,31 @@ impl TermManager {
         if self.is_bag_empty(b) {
             return a;
         }
+        match self.get(b).map(|d| d.kind.clone()) {
+            Some(TermKind::BagUnionMax(x, y) | TermKind::BagUnionDisjoint(x, y))
+                if x == a || y == a =>
+            {
+                let sort = self.bag_result_sort(a);
+                return self.intern(TermKind::BagEmpty(sort), sort);
+            }
+            _ => {}
+        }
+        if let Some(TermKind::BagUnionMax(x, y)) = self.get(a).map(|d| d.kind.clone()) {
+            if x == b {
+                return self.mk_bag_difference_subtract(y, b);
+            }
+            if y == b {
+                return self.mk_bag_difference_subtract(x, b);
+            }
+        }
         let sort = self.bag_result_sort(a);
         self.intern(TermKind::BagDifferenceSubtract(a, b), sort)
     }
 
     /// `(bag.difference_remove a b)`, normalized: `b ⧵ b = ∅` (everything
-    /// with a positive count is removed), `b ⧵ ∅ = b`, `∅ ⧵ b = ∅`.
+    /// with a positive count is removed), `b ⧵ ∅ = b`, `∅ ⧵ b = ∅`, and
+    /// `a ⧵ (a ⊎ z) = ∅` / `a ⧵ (a ⊎max z) = ∅` (a union of `a` with
+    /// anything removes every element `a` has).
     pub fn mk_bag_difference_remove(&mut self, a: TermId, b: TermId) -> TermId {
         if a == b {
             let sort = self.bag_result_sort(a);
@@ -1126,6 +1149,15 @@ impl TermManager {
         }
         if self.is_bag_empty(b) {
             return a;
+        }
+        match self.get(b).map(|d| d.kind.clone()) {
+            Some(TermKind::BagUnionMax(x, y) | TermKind::BagUnionDisjoint(x, y))
+                if x == a || y == a =>
+            {
+                let sort = self.bag_result_sort(a);
+                return self.intern(TermKind::BagEmpty(sort), sort);
+            }
+            _ => {}
         }
         let sort = self.bag_result_sort(a);
         self.intern(TermKind::BagDifferenceRemove(a, b), sort)
