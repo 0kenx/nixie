@@ -153,6 +153,34 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         // `SetEmpty` and `SetUniv` carry their own set sort, because there are
         // no elements to infer it from.
         TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => Ok(*sort),
+        // Bags mirror the set arms: the empty bag carries its sort, the
+        // binary operators are homogeneous, member/subbag are `Bool`,
+        // count and card are `Int`.
+        TermKind::BagEmpty(sort) => Ok(*sort),
+        TermKind::BagUnionMax(a, _)
+        | TermKind::BagUnionDisjoint(a, _)
+        | TermKind::BagInterMin(a, _)
+        | TermKind::BagDifferenceSubtract(a, _)
+        | TermKind::BagDifferenceRemove(a, _)
+        | TermKind::BagSetof(a) => {
+            if let Some(t) = manager.get(*a) {
+                Ok(t.sort)
+            } else {
+                Err(NixieError::Internal("Bag operand not found".to_string()))
+            }
+        }
+        TermKind::BagMake(element, _) => {
+            if let Some(e) = manager.get(*element)
+                && let Some(id) = manager.sorts.find(&SortKind::Bag(e.sort))
+            {
+                return Ok(id);
+            }
+            Err(NixieError::Internal(
+                "Cannot infer sort for bag.make".to_string(),
+            ))
+        }
+        TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _) => Ok(manager.sorts.bool_sort),
+        TermKind::BagCount(_, _) | TermKind::BagCard(_) => Ok(manager.sorts.int_sort),
         TermKind::SetSingleton(element) => {
             // Looked up, never interned: inference must not create a sort as a
             // side effect. The builder interns `(Set T)` when it makes the
@@ -416,6 +444,12 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                     SortKind::Set(elem) => {
                         // "(Set " <element> ")"
                         out.push_str("(Set ");
+                        stack.push(FormatWork::Literal(")"));
+                        stack.push(FormatWork::Sort(*elem));
+                    }
+                    SortKind::Bag(elem) => {
+                        // "(Bag " <element> ")"
+                        out.push_str("(Bag ");
                         stack.push(FormatWork::Literal(")"));
                         stack.push(FormatWork::Sort(*elem));
                     }

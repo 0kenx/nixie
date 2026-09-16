@@ -3,6 +3,7 @@
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
 pub(super) mod array_theory;
+pub(super) mod bag_theory;
 pub(super) mod bv_unified;
 pub(super) mod candidates;
 pub(super) mod certification;

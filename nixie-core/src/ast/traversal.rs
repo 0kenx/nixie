@@ -104,6 +104,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         // the same holds for the universe set.
         | TermKind::SetEmpty(_)
         | TermKind::SetUniv(_)
+        // The empty bag's only payload is its sort, like the empty set's.
+        | TermKind::BagEmpty(_)
         | TermKind::Var(_) => {}
 
         // Unary
@@ -121,6 +123,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::SetChoose(a)
         | TermKind::SetRelTranspose(a)
         | TermKind::SetRelIden(a)
+        | TermKind::BagCard(a)
+        | TermKind::BagSetof(a)
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }
@@ -144,6 +148,15 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
         | TermKind::SetMember(a, b)
+        | TermKind::BagMake(a, b)
+        | TermKind::BagUnionMax(a, b)
+        | TermKind::BagUnionDisjoint(a, b)
+        | TermKind::BagInterMin(a, b)
+        | TermKind::BagDifferenceSubtract(a, b)
+        | TermKind::BagDifferenceRemove(a, b)
+        | TermKind::BagMember(a, b)
+        | TermKind::BagSubbag(a, b)
+        | TermKind::BagCount(a, b)
         | TermKind::SetRelJoin(a, b)        | TermKind::SetRelProduct(a, b)
         | TermKind::SetSubset(a, b)
         | TermKind::Select(a, b)

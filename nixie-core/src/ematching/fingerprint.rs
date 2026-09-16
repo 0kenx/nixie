@@ -233,6 +233,13 @@ impl FingerprintCache {
             // everything else fingerprints its children, exactly as the array
             // kinds do.
             TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => sort.0.hash(&mut hasher),
+            // Bags fingerprint exactly as sets do: the empty bag by its
+            // sort, everything else by its children.
+            TermKind::BagEmpty(sort) => sort.0.hash(&mut hasher),
+            TermKind::BagCard(a) | TermKind::BagSetof(a) => {
+                let fp = self.compute(*a, manager);
+                fp.0.hash(&mut hasher);
+            }
             TermKind::SetSingleton(a) | TermKind::SetCard(a) => {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
@@ -250,7 +257,16 @@ impl FingerprintCache {
             | TermKind::SetMember(a, b)
             | TermKind::SetRelJoin(a, b)
             | TermKind::SetRelProduct(a, b)
-            | TermKind::SetSubset(a, b) => {
+            | TermKind::SetSubset(a, b)
+            | TermKind::BagMake(a, b)
+            | TermKind::BagUnionMax(a, b)
+            | TermKind::BagUnionDisjoint(a, b)
+            | TermKind::BagInterMin(a, b)
+            | TermKind::BagDifferenceSubtract(a, b)
+            | TermKind::BagDifferenceRemove(a, b)
+            | TermKind::BagMember(a, b)
+            | TermKind::BagSubbag(a, b)
+            | TermKind::BagCount(a, b) => {
                 let a_fp = self.compute(*a, manager);
                 let b_fp = self.compute(*b, manager);
                 a_fp.0.hash(&mut hasher);

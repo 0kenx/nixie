@@ -1050,6 +1050,38 @@ impl ModelChecker {
         let goal = manager.mk_not(skolemized);
         aux.assert(goal, manager);
 
+        // The goal's Set-sorted ite chains are Tseitin-abstracted into
+        // fresh `__nixie_ite_*` variables by the encoder, and a *nested*
+        // chain's condition mentions them (`(= sk __nixie_ite_N)`) — a
+        // condition the Skolem restriction does not decide, so the aux
+        // could set the abstraction freely and falsify through the hole:
+        // every chain value IS a domain element (an entry result or the
+        // else — both drawn from the structure), so confining the ite
+        // variables to the same domain is exactly the chain's semantics,
+        // not an extra assumption.
+        {
+            let ite_vars: Vec<TermId> = aux.ite_result_terms.iter().copied().collect();
+            for v in ite_vars {
+                let Some(node) = manager.get(v) else { continue };
+                let uninterpreted = manager
+                    .sorts
+                    .get(node.sort)
+                    .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)));
+                if !uninterpreted {
+                    continue;
+                }
+                let Some(domain) = model.table_domain(node.sort, manager) else {
+                    continue;
+                };
+                if domain.is_empty() || domain.len() > MAX_UNIVERSE_FOR_RESTRICTION {
+                    continue;
+                }
+                let restriction: Vec<TermId> =
+                    domain.iter().map(|&u| manager.mk_eq(v, u)).collect();
+                aux.assert(manager.mk_or(restriction), manager);
+            }
+        }
+
         self.checks_performed += 1;
         let conflicts_before = aux.stats().conflicts;
         let limits = ResourceLimits::new()
@@ -1561,18 +1593,29 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
         | TermKind::SetComplement(a)
         | TermKind::SetChoose(a)
         | TermKind::SetRelTranspose(a)
-        | TermKind::SetRelIden(a) => out.push(*a),
+        | TermKind::SetRelIden(a)
+        | TermKind::BagCard(a)
+        | TermKind::BagSetof(a) => out.push(*a),
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
         | TermKind::SetMember(a, b)
         | TermKind::SetRelJoin(a, b)
         | TermKind::SetRelProduct(a, b)
-        | TermKind::SetSubset(a, b) => {
+        | TermKind::SetSubset(a, b)
+        | TermKind::BagMake(a, b)
+        | TermKind::BagUnionMax(a, b)
+        | TermKind::BagUnionDisjoint(a, b)
+        | TermKind::BagInterMin(a, b)
+        | TermKind::BagDifferenceSubtract(a, b)
+        | TermKind::BagDifferenceRemove(a, b)
+        | TermKind::BagMember(a, b)
+        | TermKind::BagSubbag(a, b)
+        | TermKind::BagCount(a, b) => {
             out.push(*a);
             out.push(*b);
         }
-        TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
+        TermKind::SetEmpty(_) | TermKind::SetUniv(_) | TermKind::BagEmpty(_) => {}
         TermKind::FfConst { .. } => {}
         TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
             out.extend(args.iter().copied());
@@ -2893,6 +2936,41 @@ fn rebuild_with(
         }
         TermKind::SetRelTranspose(..) => manager.mk_rel_transpose(one(0)?),
         TermKind::SetRelIden(..) => manager.mk_rel_iden(one(0)?),
+        // Finite bags rebuild structurally; the count/member/subbag truth
+        // needs the bag theory and is declined, exactly as the set
+        // predicates are.
+        TermKind::BagEmpty(sort) => manager.mk_bag_empty_at(*sort),
+        TermKind::BagMake(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_make(a, b)
+        }
+        TermKind::BagUnionMax(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_union_max(a, b)
+        }
+        TermKind::BagUnionDisjoint(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_union_disjoint(a, b)
+        }
+        TermKind::BagInterMin(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_inter_min(a, b)
+        }
+        TermKind::BagDifferenceSubtract(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_difference_subtract(a, b)
+        }
+        TermKind::BagDifferenceRemove(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_bag_difference_remove(a, b)
+        }
+        TermKind::BagMember(..)
+        | TermKind::BagSubbag(..)
+        | TermKind::BagCount(_, _)
+        | TermKind::BagCard(_) => {
+            return Err("bag predicate has no theory to evaluate it");
+        }
+        TermKind::BagSetof(..) => manager.mk_bag_setof(one(0)?),
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;
             manager.mk_str_concat(a, b)

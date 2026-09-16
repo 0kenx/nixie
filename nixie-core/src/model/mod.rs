@@ -76,6 +76,14 @@ pub enum Value {
     /// Held sorted and duplicate-free by the theory that produces it, which is
     /// what makes two equal sets compare equal.
     Set(Vec<Value>),
+    /// A finite bag (multiset), as (element, multiplicity) pairs.
+    ///
+    /// Distinct from `Set`: a bag value carries multiplicities, held sorted
+    /// by element with positive multiplicities only (a zero multiplicity is
+    /// absence, a negative one is ill-formed input the parser rejects).
+    /// Multiplicities are `i64` to match [`Value::Int`] — the arithmetic
+    /// solver's values are the source, and they are already checked to fit.
+    Bag(Vec<(Value, i64)>),
     /// Datatype constructor (constructor id, arguments)
     Datatype(u32, Vec<Value>),
     /// Floating-point value (sign, exponent, mantissa)
@@ -173,6 +181,7 @@ impl Value {
             Value::Array(_, _) => Value::Array(Box::new(Value::Undefined), Vec::new()),
             Value::Datatype(id, _) => Value::Datatype(*id, Vec::new()),
             Value::Set(_) => Value::Set(Vec::new()),
+            Value::Bag(_) => Value::Bag(Vec::new()),
             Value::Undefined => Value::Undefined,
         }
     }
@@ -210,6 +219,14 @@ enum CloneStep<'a> {
         /// Where this node's child clones start in the output stack.
         base: usize,
     },
+    /// Rebuild a [`Value::Bag`] from the element clones at `out[base..]`;
+    /// the (plain `Copy`) multiplicities ride along in the step.
+    FinishBag {
+        /// Where this node's element clones start in the output stack.
+        base: usize,
+        /// The multiplicities, in element order.
+        mults: Vec<i64>,
+    },
     /// Rebuild a [`Value::Datatype`] from the argument clones at `out[base..]`.
     FinishDatatype {
         /// The constructor id, carried across the walk.
@@ -246,6 +263,15 @@ impl Clone for Value {
                         steps.push(CloneStep::Visit(e));
                     }
                 }
+                CloneStep::Visit(Value::Bag(pairs)) => {
+                    steps.push(CloneStep::FinishBag {
+                        base: out.len(),
+                        mults: pairs.iter().map(|(_, n)| *n).collect(),
+                    });
+                    for (e, _) in pairs.iter().rev() {
+                        steps.push(CloneStep::Visit(e));
+                    }
+                }
                 CloneStep::Visit(Value::Datatype(id, args)) => {
                     steps.push(CloneStep::FinishDatatype {
                         id: *id,
@@ -270,6 +296,11 @@ impl Clone for Value {
                         // with the `Visit` that produces its default element.
                         None => out.push(Value::Array(Box::new(Value::Undefined), Vec::new())),
                     }
+                }
+                CloneStep::FinishBag { base, mults } => {
+                    let elems = out.split_off(base);
+                    let pairs: Vec<(Value, i64)> = elems.into_iter().zip(mults).collect();
+                    out.push(Value::Bag(pairs));
                 }
                 CloneStep::FinishSet { base } => {
                     let elements = out.split_off(base);
@@ -369,6 +400,9 @@ enum DebugStep<'a> {
     Node(&'a Value),
     /// Emit this literal.
     Text(&'static str),
+    /// Emit dynamic text (a bag multiplicity — the one payload that is
+    /// neither a `Value` nor a static literal).
+    Owned(String),
 }
 
 impl core::fmt::Debug for Value {
@@ -381,6 +415,7 @@ impl core::fmt::Debug for Value {
         while let Some(step) = steps.pop() {
             match step {
                 DebugStep::Text(text) => f.write_str(text)?,
+                DebugStep::Owned(text) => f.write_str(&text)?,
                 DebugStep::Node(Value::FiniteField { value, field }) => {
                     write!(f, "FiniteField({}, {})", value, field.raw())?;
                 }
@@ -412,6 +447,20 @@ impl core::fmt::Debug for Value {
                         if index > 0 {
                             steps.push(DebugStep::Text(", "));
                         }
+                    }
+                }
+                DebugStep::Node(Value::Bag(pairs)) => {
+                    f.write_str("Bag([")?;
+                    steps.push(DebugStep::Text("])"));
+                    for (index, (e, n)) in pairs.iter().enumerate().rev() {
+                        // Scheduled in reverse: `", "`, `")"`, element,
+                        // `"(n, "` — the multiplicity is dynamic text.
+                        if index > 0 {
+                            steps.push(DebugStep::Text(", "));
+                        }
+                        steps.push(DebugStep::Text(")"));
+                        steps.push(DebugStep::Node(e));
+                        steps.push(DebugStep::Owned(format!("({n}, ")));
                     }
                 }
                 DebugStep::Node(Value::Datatype(id, args)) => {
@@ -558,6 +607,8 @@ impl Value {
                 // The empty set is the canonical default, and unlike an
                 // opaque sort it needs no witness to be minted.
                 SortKind::Set(_) => break Value::Set(Vec::new()),
+                // The empty bag, likewise.
+                SortKind::Bag(_) => break Value::Bag(Vec::new()),
                 SortKind::Array { range, .. } => {
                     array_levels += 1;
                     current = range;
@@ -622,6 +673,24 @@ impl core::fmt::Display for Value {
                     write!(f, "(set.singleton {first})")?;
                     for e in rest {
                         write!(f, " (set.singleton {e}))")?;
+                    }
+                    Ok(())
+                }
+            },
+            // SMT-LIB spells a bag as nested disjoint unions of
+            // multiplicities (`(bag e n)`), the same re-readable normal
+            // form CVC5 prints (`bag.union_disjoint` of `bag.make`), so a
+            // printed model re-reads as itself. Loop-built like the set arm.
+            Value::Bag(pairs) => match pairs.split_first() {
+                None => write!(f, "(as bag.empty (Bag ?))"),
+                Some((first, rest)) => {
+                    for _ in rest {
+                        f.write_str("(bag.union_disjoint ")?;
+                    }
+                    let (fe, fn_) = first;
+                    write!(f, "(bag {fe} {fn_})")?;
+                    for (e, n) in rest {
+                        write!(f, " (bag {e} {n}))")?;
                     }
                     Ok(())
                 }

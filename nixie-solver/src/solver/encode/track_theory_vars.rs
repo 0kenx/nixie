@@ -299,13 +299,24 @@ impl Solver {
                     stack.push(*b);
                     stack.push(*a);
                 }
+                // Finite bags: walked like the set binaries — `bag.count`
+                // and `bag.card` produce `Int`s no theory constrains yet,
+                // and interning them would let the tableau treat them as
+                // ordinary free columns.
+                TermKind::BagMake(a, b) | TermKind::BagUnionMax(a, b) | TermKind::BagUnionDisjoint(a, b) | TermKind::BagInterMin(a, b) | TermKind::BagDifferenceSubtract(a, b) | TermKind::BagDifferenceRemove(a, b) | TermKind::BagMember(a, b) | TermKind::BagSubbag(a, b) | TermKind::BagCount(a, b) => {
+                    stack.push(*b);
+                    stack.push(*a);
+                }
                 TermKind::SetSingleton(a)
                 | TermKind::SetCard(a)
                 | TermKind::SetComplement(a)
                 | TermKind::SetChoose(a)
+                | TermKind::BagCard(a)
+                | TermKind::BagSetof(a)
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
                 TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
+                TermKind::BagEmpty(_) => {}
                 // Finite fields: children are walked so nested structure is
                 // seen, but nothing is interned — the FF procedure is an
                 // eager whole-problem dispatch (see `check_ff.rs`), and a

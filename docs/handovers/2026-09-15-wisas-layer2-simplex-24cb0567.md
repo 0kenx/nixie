@@ -127,3 +127,8 @@ luck.  Fixed driver-side (sound assumption-scoped probe inside the
 pinned range; a certified model there is a genuine `sat`): the
 reproducer answers `sat (k=3)`, and the suite timeout is gone.  The
 `24cb0567` casualty list is now empty.
+
+Reproducer: the script body above; any cached binary pair
+(`82c3c926` vs current) demonstrates it in under 30 s.  Confirmed
+**non-termination**, not eventual-`unknown`: current HEAD killed at
+900 s with rc=124 (`timeout`), still `Processing`.

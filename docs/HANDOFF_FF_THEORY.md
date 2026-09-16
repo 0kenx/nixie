@@ -210,6 +210,19 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
   the editing process: python `str.replace` silently no-ops on a
   non-matching block — the missing gate was an edit that "applied"
   without applying; assert replacement counts when patching this file.
+- **T12 — the simplified Gebauer–Möller second criterion is unsound
+  without the full installation discipline.** `lm_k | lcm(i,j)`
+  discards are valid only under the Becker–Weispfenning pair-lcm chain
+  conditions on the incremental update order; the engine's simplified
+  form silently MISSED whole-ring refutations (`is_gb = true` non-bases
+  over ideals with verified `1 = Σ cᵢ·fᵢ` witnesses — twice, through
+  two different code paths, including the INITIAL pair set's sibling
+  `criterion_applies`). The criterion is DISABLED in both functions
+  (seed lm-deduplication also landed); Buchberger's first criterion is
+  unconditional and stays. Pinned by
+  `nixie-math/tests/ff_gb_seed_dedup_regression.rs` — any re-enabling
+  (the proper G-M installation is the named performance follow-up,
+  worth ~1.2–1.5× on the chain corpus) must pass that battery.
 - **T11 — window routing cannot be forced at unit scale.** The
   monolithic cascade is the CHEAPEST strategy for small goals, so no
   small test routes through the windows (a budget that starves the

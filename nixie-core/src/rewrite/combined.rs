@@ -287,7 +287,7 @@ impl CombinedRewriter {
 
             // Array
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => RewriterKind::Array,
-            // No set rewriter yet: `None` means "left alone", which is always
+            // No set or bag rewriter yet: `None` means "left alone", which is always
             // sound — a missing simplification costs time, never soundness.
             TermKind::SetEmpty(_)
             | TermKind::SetUniv(_)
@@ -304,6 +304,18 @@ impl CombinedRewriter {
             | TermKind::SetRelProduct(_, _)
             | TermKind::SetRelTranspose(_)
             | TermKind::SetRelIden(_)
+            | TermKind::BagEmpty(_)
+            | TermKind::BagMake(_, _)
+            | TermKind::BagUnionMax(_, _)
+            | TermKind::BagUnionDisjoint(_, _)
+            | TermKind::BagInterMin(_, _)
+            | TermKind::BagDifferenceSubtract(_, _)
+            | TermKind::BagDifferenceRemove(_, _)
+            | TermKind::BagMember(_, _)
+            | TermKind::BagSubbag(_, _)
+            | TermKind::BagCount(_, _)
+            | TermKind::BagCard(_)
+            | TermKind::BagSetof(_)
             // Finite-field terms are already in normal form at construction
             // (`mk_ff_*` folds), so no rewriter pass applies. Sound for the
             // same reason as the sets arm: a missing simplification costs

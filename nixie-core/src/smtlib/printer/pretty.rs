@@ -347,6 +347,85 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *a, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            // SMT-LIB bags syntax, matching CVC5's spelling.
+            TermKind::BagEmpty(sort) => {
+                let _ = write!(w, "(as bag.empty ");
+                self.write_sort(w, *sort);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagMake(e, n) => {
+                let _ = write!(w, "(bag ");
+                self.write_term(w, *e, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *n, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagUnionMax(a, b) => {
+                let _ = write!(w, "(bag.union_max ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagUnionDisjoint(a, b) => {
+                let _ = write!(w, "(bag.union_disjoint ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagInterMin(a, b) => {
+                let _ = write!(w, "(bag.inter_min ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagDifferenceSubtract(a, b) => {
+                let _ = write!(w, "(bag.difference_subtract ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagDifferenceRemove(a, b) => {
+                let _ = write!(w, "(bag.difference_remove ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagMember(x, b) => {
+                let _ = write!(w, "(bag.member ");
+                self.write_term(w, *x, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagSubbag(a, b) => {
+                let _ = write!(w, "(bag.subbag ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagCount(x, b) => {
+                let _ = write!(w, "(bag.count ");
+                self.write_term(w, *x, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagCard(b) => {
+                let _ = write!(w, "(bag.card ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagSetof(b) => {
+                let _ = write!(w, "(bag.setof ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }

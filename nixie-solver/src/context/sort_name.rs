@@ -38,6 +38,8 @@ enum SortPending {
     },
     /// The element expression of a `(Set elem)` is being resolved.
     ElemOf,
+    /// The element expression of a `(Bag elem)` is being resolved.
+    BagElemOf,
 }
 
 /// The classification of a single sort-expression string: either a sort
@@ -56,6 +58,11 @@ enum SortExprStep {
     },
     /// A `(Set elem)` compound; its one child remains to be resolved.
     Set {
+        /// The element sub-expression.
+        elem_expr: String,
+    },
+    /// A `(Bag elem)` compound; its one child remains to be resolved.
+    Bag {
         /// The element sub-expression.
         elem_expr: String,
     },
@@ -159,6 +166,10 @@ impl Context {
                         pending.push(SortPending::ElemOf);
                         current = elem_expr;
                     }
+                    SortExprStep::Bag { elem_expr } => {
+                        pending.push(SortPending::BagElemOf);
+                        current = elem_expr;
+                    }
                 }
             };
             // Feed the resolved sort upward through the pending frames:
@@ -178,6 +189,9 @@ impl Context {
                     }
                     Some(SortPending::ElemOf) => {
                         resolved = self.terms.sorts.set(resolved);
+                    }
+                    Some(SortPending::BagElemOf) => {
+                        resolved = self.terms.sorts.bag(resolved);
                     }
                 }
             }
@@ -251,6 +265,9 @@ impl Context {
                 }),
                 // `(Set elem)`, the finite-sets theory's sort constructor.
                 [head, elem] if head.as_str() == "Set" => Ok(SortExprStep::Set {
+                    elem_expr: std::mem::take(elem),
+                }),
+                [head, elem] if head.as_str() == "Bag" => Ok(SortExprStep::Bag {
                     elem_expr: std::mem::take(elem),
                 }),
                 // A compound form the sort printer never emits.  This used

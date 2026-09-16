@@ -147,3 +147,10 @@ reasons directly, without relying on a preceding search callback.
 
 Verification details and the pre-existing tuple reconstruction defect found
 by the full suite are recorded in the [implementation study](studies/2026-09-16-cp-and-tuple-reconstruction.md).
+
+A broader [generated-oracle study](studies/2026-09-16-cp-generated-oracle.md)
+checks 244 varied instances, including conjunctions of globals: 6,704 complete
+assignments, 37,810 callback states, 171,301 emitted consequences/conflicts,
+and 6,100 public solver verdict/model checks. The independent oracle checks
+explanations against all satisfying base assignments and exercises nested
+rollback. These are bounded tests; they do not supply formal proof certificates.

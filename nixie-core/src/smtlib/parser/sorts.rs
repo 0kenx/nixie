@@ -329,6 +329,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 SortKind::Set(elem) => work.push(*elem),
+                SortKind::Bag(elem) => work.push(*elem),
                 SortKind::Array { domain, range } => {
                     work.push(*domain);
                     work.push(*range);
@@ -586,6 +587,17 @@ impl<'a> Parser<'a> {
                                 )?;
                                 Ok(self.manager.sorts.set(element))
                             }
+                            // `(Bag X)` — the SMT-LIB bags draft's sort
+                            // constructor (CVC5 `mkBagSort`).
+                            "Bag" => {
+                                let element = self.parse_sort()?;
+                                self.expect_rparen()?;
+                                self.reject_unsupported_rounding_mode_position(
+                                    element,
+                                    "a bag element sort",
+                                )?;
+                                Ok(self.manager.sorts.bag(element))
+                            }
                             // `(Tuple A B)`: CVC5's non-strict parametric
                             // spelling of `(_ Tuple A B)`.
                             "Tuple" => {
@@ -727,6 +739,11 @@ impl<'a> Parser<'a> {
                         }
                         SortKind::Set(elem) => {
                             out.push_str("(Set ");
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Sort(*elem));
+                        }
+                        SortKind::Bag(elem) => {
+                            out.push_str("(Bag ");
                             stack.push(Step::Text(")"));
                             stack.push(Step::Sort(*elem));
                         }
