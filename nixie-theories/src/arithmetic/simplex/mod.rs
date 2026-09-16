@@ -2139,6 +2139,26 @@ impl Simplex {
                 }
             }
         }
+        // Full-state definitional invariant (debug builds): at the true
+        // convergence point — feasible narrow search done, wide rows
+        // classified (repaired or certified) — every row must reference
+        // only nonbasic variables, and every basic's value (stored entry
+        // for narrow rows, exact evaluation for wide ones) must sit inside
+        // its bound window.  These properties are what the
+        // core-completeness argument rests on (rows are definitions;
+        // constraints live only in bounds with reasons — see the
+        // provenance analysis in the study), so a violation here is a
+        // latent wrong-verdict site, named loudly.
+        #[cfg(debug_assertions)]
+        if verdict.is_ok()
+            && !self.resource_limit
+            && let Some(viol) = self.debug_verify_invariant()
+        {
+            debug_assert!(
+                false,
+                "definitional invariant broken at convergence: {viol}"
+            );
+        }
         verdict
     }
     /// Crash basis initialization for faster convergence
@@ -5048,32 +5068,72 @@ impl Simplex {
         // docs/studies/2026-09-10-per-final-check-resync.md).  The
         // incremental-vs-replay differential fuzzers guard the contract.
         if let Some(limit) = self.trail_limits.pop() {
+            let mut restored: SmallVec<[VarId; 4]> = SmallVec::new();
             while self.trail.len() > limit {
                 if let Some(undo) = self.trail.pop() {
-                    match undo {
+                    let var = match undo {
                         BoundUndo::LowerWasNone(var) => {
                             self.lower[var as usize] = None;
+                            var
                         }
                         BoundUndo::LowerWasSome(var, old) => {
                             self.lower[var as usize] = Some(old);
+                            var
                         }
                         BoundUndo::UpperWasNone(var) => {
                             self.upper[var as usize] = None;
+                            var
                         }
                         BoundUndo::UpperWasSome(var, old) => {
                             self.upper[var as usize] = Some(old);
+                            var
                         }
+                    };
+                    if restored.last() != Some(&var) {
+                        restored.push(var);
                     }
                 }
             }
-            // Note on the assignment vector: NO restore.  Non-basic values
-            // provably stay inside their restored (wider) windows — a
-            // non-basic only ever moves by a snap INTO the then-current
-            // window, and the leaving variable of a pivot is snapped to a
-            // bound of its then-window — while basic values are re-derived
-            // by the next `check`/`crash_basis`.  A consumer that reads
-            // values without a fresh feasibility pass must call
-            // [`Self::state_feasible`] first (the B&B leaf/dive paths do).
+            // Note on the assignment vector: no wholesale restore — but a
+            // NON-BASIC can be left outside its restored window.  The old
+            // argument ("a non-basic only ever moves by a snap into the
+            // then-current window, and pops only relax") misses one shape:
+            // a scoped probe may tighten a bound PAST the opposite one (a
+            // crossed window is the probe's infeasibility signal), and the
+            // snap-into-window then parks the variable at a point only the
+            // TIGHTENED side justified; restoring that side widens the
+            // window away from the point (the NLA interval probes build
+            // exactly this shape — found by the strengthened definitional
+            // invariant).  Re-snap every non-basic the undo left outside
+            // its window (an empty window parks at the lower — `check`'s
+            // crossing scan reports it); each snap moves a non-basic, so
+            // its dependents go stale with it (one flag for the full
+            // re-derivation — no flag when nothing moved, keeping the
+            // incremental maintenance for the common relax-only pop).
+            let mut moved = false;
+            for &var in &restored {
+                let idx = var as usize;
+                if idx >= self.assignment.len() || self.is_basic(idx) {
+                    continue;
+                }
+                let val = self.assignment[idx];
+                let lo = self.lower[idx].as_ref().map(|b| b.value);
+                let hi = self.upper[idx].as_ref().map(|b| b.value);
+                let snapped = if lo.is_some_and(|b| val < b) {
+                    lo
+                } else if hi.is_some_and(|b| val > b) {
+                    hi
+                } else {
+                    continue;
+                };
+                if let Some(v) = snapped {
+                    self.assignment[idx] = v;
+                    moved = true;
+                }
+            }
+            if moved {
+                self.assignment_current = false;
+            }
             self.infeasible = None;
         }
     }
@@ -5085,14 +5145,26 @@ impl Simplex {
     #[cfg(feature = "std")]
     pub fn debug_verify_invariant(&self) -> Option<String> {
         for i in 0..self.assignment.len() {
+            // WIDE basics are certified against their EXACT row evaluation
+            // in the wide loop below: an unrepresentable exact value leaves
+            // the stored entry stale BY DESIGN (`wide_pending`'s contract —
+            // the convergence classification certifies the exact value), so
+            // the entry is not a sound witness here.
+            if self.wide_rows.contains_key(&(i as VarId)) {
+                continue;
+            }
             let lb = self.lower.get(i).and_then(|b| b.as_ref().map(|x| x.value));
             let ub = self.upper.get(i).and_then(|b| b.as_ref().map(|x| x.value));
             let val = self.assignment[i];
             if let Some(lo) = lb
                 && val < lo
             {
+                let (reason, aux) = match &self.lower[i] {
+                    Some(b) => (b.reason, b.aux_reasons.clone()),
+                    None => (0, smallvec::SmallVec::new()),
+                };
                 return Some(format!(
-                    "var {i} (basic={}) = {val:?} below lower {lo:?}",
+                    "var {i} (basic={}) = {val:?} below lower {lo:?} (reason {reason}, aux {aux:?})",
                     i < self.basic.len() && self.basic[i]
                 ));
             }
@@ -5107,20 +5179,81 @@ impl Simplex {
             }
         }
         for (b, row) in self.tableau.iter() {
-            let mut eval = DeltaRational::from_rational(row.constant);
-            for (t, c) in &row.terms {
+            // CHECKED evaluation: the invariant runs on wide trajectories
+            // whose row products legitimately leave `i64` width — an
+            // overflowing row is unverifiable cheaply here, not a panic
+            // (the pre-existing inline `+=`/`*` aborted the debug build).
+            let eval = self.eval_expr(row);
+            for (t, _) in &row.terms {
                 let ti = *t as usize;
                 if ti >= self.assignment.len() {
                     return Some(format!("row of {b:?} references unassigned var {t:?}"));
                 }
-                eval += self.assignment[ti] * *c;
+                // The definitional-equation invariant: every row references
+                // only NONBASIC variables.  A basic in a row's terms would
+                // make the one-level substitutions (`intern_row`'s exact
+                // path, the pivot machinery's "rows reference only
+                // nonbasics" contract) unsound — the property the whole
+                // core-completeness argument rests on.
+                if self.tableau.contains_key(t) || self.wide_rows.contains_key(t) {
+                    return Some(format!(
+                        "row of {b:?} references BASIC var {t:?} (definitional invariant broken)"
+                    ));
+                }
             }
             let bi = *b as usize;
-            if bi < self.assignment.len() && self.assignment[bi] != eval {
+            if bi < self.assignment.len()
+                && let Some(eval) = eval
+                && self.assignment[bi] != eval
+            {
                 return Some(format!(
                     "basic {b:?}: assignment {:?} != row eval {eval:?}",
                     self.assignment[bi]
                 ));
+            }
+        }
+        for (b, wexpr) in self.wide_rows.iter() {
+            for (t, _) in &wexpr.terms {
+                if self.tableau.contains_key(t) || self.wide_rows.contains_key(t) {
+                    return Some(format!(
+                        "wide row of {b:?} references BASIC var {t:?} (definitional invariant broken)"
+                    ));
+                }
+            }
+            let bi = *b as usize;
+            if bi >= self.assignment.len() {
+                continue;
+            }
+            if let Some(eval) = self.eval_big_expr(wexpr)
+                && self.assignment[bi] != eval
+            {
+                return Some(format!(
+                    "wide basic {b:?}: assignment {:?} != exact row eval {eval:?}",
+                    self.assignment[bi]
+                ));
+            }
+            // Bounds checks for a WIDE basic read the EXACT row evaluation.
+            if let Some((real, delta)) = self.eval_big_raw(wexpr) {
+                let lex = |bnd: &DeltaRational| match real.cmp(&big_r64(&bnd.real)) {
+                    core::cmp::Ordering::Equal => delta.cmp(&big_r64(&bnd.delta)),
+                    ord => ord,
+                };
+                if let Some(lo) = self.lower.get(bi).and_then(|o| o.as_ref())
+                    && lex(&lo.value) == core::cmp::Ordering::Less
+                {
+                    return Some(format!(
+                        "wide basic {b:?}: exact value ({real:?}, {delta:?}) below lower {:?}",
+                        lo.value
+                    ));
+                }
+                if let Some(hi) = self.upper.get(bi).and_then(|o| o.as_ref())
+                    && lex(&hi.value) == core::cmp::Ordering::Greater
+                {
+                    return Some(format!(
+                        "wide basic {b:?}: exact value ({real:?}, {delta:?}) above upper {:?}",
+                        hi.value
+                    ));
+                }
             }
         }
         None
