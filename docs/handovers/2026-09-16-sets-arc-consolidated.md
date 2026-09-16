@@ -107,7 +107,13 @@ each has a regression:
 ## Open chores (none blocking)
 
 1. ~~**The join's own `get-value` display still declines honestly**~~ —
-   **CLOSED by `e27ec315`**: the operand models print *and the join's own
+   **CLOSED by `e27ec315`** (and the two residual layers closed by
+   `518a3373`: the self-referential-pin fix and query-side composition —
+   a query-only `(rel.join r s)` the assertions never mention now folds
+   under `get-value` from the operands' verified values, as do
+   transpose/product/iden; regressions
+   `query_only_join_value_folds`, `query_only_transpose_and_product_fold`,
+   `tuple_variable_member_model_prints`): the operand models print *and the join's own
    value folds* (`join_value_declines_honestly_today` was replaced by
    `join_value_prints`). The mechanism was model-side, not the datatype
    reconstruction the previous update suspected: the sweep's in-loop
