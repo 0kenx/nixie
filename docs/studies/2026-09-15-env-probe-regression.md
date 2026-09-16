@@ -160,3 +160,39 @@ pinned, quiet-ish machine):
   requires the full docs/BENCHMARKING.md discipline: matched nulls,
   `NIXIE_SAT_SEED` replication (≥10 seeds), the perf gate, and parity.
   No casual knob-twiddling.
+
+## Addendum (2026-09-16): `restart_strategy` was inert config — now wired; the cadical-fold question answered by decomposition
+
+**Discovery** (via the new `NIXIE_SAT_*` decomposition knobs): under
+`enable_stabilize: true` — which **every** preset and the default sets —
+the restart firing predicate never consulted `config.restart_strategy`;
+the whole knob (Luby/Geometric/Glucose/LocalLbd, set differently by five
+presets) was facade.  The glucose/minisat/cadical presets' restart
+identities were no-ops.
+
+**The wiring**: focused-mode rule is now selected by the strategy —
+Glucose/LocalLbd keep the EMA rule bit-for-bit, Luby/Geometric fall back
+to the legacy conflict-threshold cadence (whose per-strategy bookkeeping
+in `decide.rs` was already maintained).  `SolverConfig::default()` flips
+Luby→Glucose so **every existing default/preset trajectory is preserved
+bit-identically** (verified: s38584 default 31 515 = 31 515, cadical
+preset 16 138 = 16 138; gate conflicts 1.000) while the knob becomes
+real (Luby: 35 251 ≠ 31 515).  Regression test pins the liveness.
+
+**The fold question** ("fold cadical preset as default"): decomposition
+over 9 instances × 3 seeds says **not justified** —
+
+| arm | conflict geomean vs default | solved |
+|---|---|---|
+| BVE alone | **1.335× worse** (x9 3.6×, frb35 3.1× worse) | 26/27 |
+| glucose restarts | (was inert — n/a) | — |
+| full cadical preset | 0.947× (n=5 seeds) vs 1.135× (n=3 seeds) — sign flips with the seed set | 26/27 |
+
+No single component carries the preset's modest aggregate; per-seed
+spread on the tail instances (x9: 6.5 k–41 k conflicts) is 5–10×, so
+n=3–5 geomeans are noise-dominated (the power table's warning).  A real
+fold decision needs the powered experiment: ≥20 seeds × the full
+30-instance corpus × both arms (~4–6 h machine time), scored on BOTH
+geomean conflicts and solved-at-cap.  Data:
+`precompile/f21d0def/benchmark/config-ab/` (cfg_ab.tsv, decomp.tsv,
+decomp.py).
