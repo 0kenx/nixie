@@ -3,6 +3,8 @@
 **Date:** 2026-09-16
 **Landed by:** the sets arc, sessions of 2026-09-15/16 (commits `bced380b`,
 `d4b72e2c`, `d832b82e`, `2540544a`, `1d46dfef`, `6ee0a8d8`, `4ade3b1e`,
+`e27ec315` (the membership-congruence arc: four false-`sat` doors
+closed, the join's value prints),
 plus their doc commits)
 **Predecessors:** `docs/handovers/2026-09-15-sets-cardinality-landed.md`
 (the cardinality arc; its open chores are all closed), and
@@ -47,6 +49,36 @@ The finite-set theory now covers **verdicts, models and relations**:
 Each of these answered `sat` (or printed a wrong model) before its fix;
 each has a regression:
 
+0. **Membership congruence was never stated for component-decided
+   element equality** (`e27ec315`): `mk_eq` unfolds tuple-constructor
+   equality componentwise (injectivity as a builder rewrite), so two
+   ctor-spelled tuples never carry a syntactic `Eq` — their equality is
+   decided at the *component* level — and SAT could commit the component
+   equalities beside disagreeing membership atoms. Four doors, all
+   answered `sat` (cvc5 1.3.4: `unsat` on every one): the join skolem
+   middle pinned by an exact singleton; a user's `x = 3` at the join; a
+   syntactic `t = (1,x)` at the join (congruence was opaque-sets-only,
+   and a join's membership is forward-defined so base congruence does
+   not propagate); and a join of two literal singletons (the
+   `any_opaque` gate skipped the whole congruence block). Closed by the
+   constructor-pair congruence pass in `set_theory::reduce` (antecedent
+   = the componentwise conjunction, i.e. the dual of the injectivity
+   rewrite), stated at opaque sets **and joins**, gated on needing
+   either, filtered to pairs whose leaf equalities are committable
+   (both sides in one group of the equality-adjacency closure — the
+   closure is extended at the END of `reduce` because the singleton's
+   `e ∈ {t} ↔ e = t` folds its own axiom to `true` in the builder: the
+   surviving `Eq` nodes live inside the witness axioms), vacuous pairs
+   skipped, fully-constant spellings first, budget 1024 with overflow
+   raising `incomplete`. Regressions:
+   `join_split_skolem_pinned_by_singleton_is_congruent`,
+   `join_component_equality_is_congruent`,
+   `join_syntactic_tuple_equality_is_congruent`,
+   `join_of_literals_needs_congruence_too`, plus the mirrors
+   `join_compose_syntactic_glue_still_refutes` (baseline behavior) and
+   `join_component_equality_congruence_is_not_overconstrained`
+   (asserts *not* `Unsat`; the shape honestly answers `Unknown` — the
+   compose feedback crosses the pair budget).
 1. **Equality never bound cardinality or choose** (`bced380b`): six
    false-sat classes (`S = T ∧ |S| = 5 ∧ |T| = 3`, `S = ∅ ∧ |S| ≥ 1`,
    EUF-derived `x = y` across `f x`/`f y`, asserted compound equality,
@@ -74,17 +106,25 @@ each has a regression:
 
 ## Open chores (none blocking)
 
-1. **The join's own `get-value` display still declines honestly**
-   (pinned by `join_value_declines_honestly_today`, which flips loudly
-   when fixed). The named next layer: the datatype reconstruction
-   defaults tuple-sorted variables with constructors of the **wrong
-   arity** (`(tuple 7)` inside a binary relation). The sort-sanity gates
-   in `set_model.rs` contain it — nothing wrong is ever printed — but
-   the display declines instead of synthesizing. Start in
-   `model_builder.rs`'s datatype reconstruction (`ground_default_term`
-   resolves the constructor correctly; the wrong-arity value comes from
-   a different defaulting path — the debug trail in the 2026-09-16
-   update of the predecessor handover has the exact terms).
+1. ~~**The join's own `get-value` display still declines honestly**~~ —
+   **CLOSED by `e27ec315`**: the operand models print *and the join's own
+   value folds* (`join_value_declines_honestly_today` was replaced by
+   `join_value_prints`). The mechanism was model-side, not the datatype
+   reconstruction the previous update suspected: the sweep's in-loop
+   skolem mint freed the stale arithmetic default from the tuple-level
+   `used` set — but that default can coincide with a genuine constant
+   (`k = 2` where `(2,3)` is an element`), so the mint returned exactly
+   that value back and the collision repair declined the whole sort.
+   Every unpinned join skolem is now pre-minted against a
+   **component-level** used set (seeded with every leaf of every resolved
+   value) before the tuple sweep; a shared `minted` set guards the
+   sweep's own branch against overwriting a pre-minted witness. The
+   residual honest decline: SAT may commit disagreeing memberships for
+   two *value-equal spellings* the compose rule never paired (a glued
+   selector-spelling vs the folded constant tuple) — the rel synthesis
+   rolls the join's entry back and `get-value` echoes; nothing wrong is
+   ever printed. Closing that needs value-level closure in the compose
+   pairing (pair by resolved value, not by term) — roadmap item 3.
 2. **Known honest declines**, all documented in the roadmap below.
 
 ## Roadmap (value order)
@@ -101,19 +141,38 @@ each has a regression:
    pure product cardinality (a linear `|a×b|` via pairwise guards, or
    Z3-style unique values — currently the nonlinear rule gates to
    honest `unknown`).
-3. **Remaining rel surface**: `rel.tclosure` (fixpoint or bounded
+3. **Value-level closure for the compose pairing** (the residual join
+   display decline, see open chores): pair compose operands by resolved
+   *value*, not by term, so two spellings of one tuple compose once and
+   the committed atoms cannot disagree across them. The same machinery
+   (a value-indexed operand map) would shrink the split/compose
+   feedback population that `MAX_DERIVED_ELEMENTS = 24` currently caps
+   — the cap degrades cross-pass growth honestly (`Unknown`) but the
+   CVC5-shaped fix is lazy composition over member representatives
+   (`computeMembersForBinOpRel`), not a budget.
+4. **Remaining rel surface**: `rel.tclosure` (fixpoint or bounded
    unrolling), `rel.join_image`, `rel.group`, `rel.project`,
    `rel.table_join` — honest parse-level rejections today.
-4. **Caps re-measurement** (`MAX_CONE_SETS=40`, `MAX_COUNT_ELEMENTS=24`,
-   `MAX_JOIN_PAIRS=512`): the join splits add elements to the counting
-   lists, so the 24 cap gates more join problems than before — measure
-   against the TLA+ corpus once it runs green end-to-end (currently
-   blocked on the wisas/recfun work, see other agents' handovers).
+5. **Caps re-measurement** (`MAX_CONE_SETS=40`, `MAX_COUNT_ELEMENTS=24`,
+   `MAX_JOIN_PAIRS=512`, `MAX_CONGRUENCE_PAIRS=1024`,
+   `MAX_DERIVED_ELEMENTS=24`): the congruence web is now load-bearing —
+   adversarial sat shapes with cardinality+join cost ~2.5× more search
+   (10.2s → 25.1s on `join_witnesses_freely`'s second script; the
+   satisfiable singleton+join mirror answers honest `Unknown` in ~6.5s
+   where the pre-congruence build said `Sat` in ~5s). Measure against
+   the TLA+ corpus once it runs green end-to-end (currently blocked on
+   the wisas/recfun work, see other agents' handovers).
 
 ## Environment notes
 
 - `precompile/` entries for this arc: `bced380b`, `d4b72e2c`,
-  `d832b82e`, `2540544a`, `1d46dfef`, `6ee0a8d8`, `4ade3b1e`.
+  `d832b82e`, `2540544a`, `1d46dfef`, `6ee0a8d8`, `4ade3b1e`,
+  `e27ec315`.
+- Build with `CARGO_INCREMENTAL=0` (the handover's standing advice — a
+  forgotten run left 5.5 GiB of incremental cache inside a 40 GiB
+  debuginfo target) and keep big `CARGO_TARGET_DIR`s on `/media/data`,
+  not `/tmp` (a full `--all-features` workspace test build measured
+  132 GiB; `/` hit 100% and the linker died with SIGBUS mid-gate).
 - Parallel agents are active (wisas/simplex, mbqi/constructor-tables,
   arithmetic arc). Before committing: `git reset -q`, stage only your
   files, `git status` twice; never stash.
