@@ -111,3 +111,19 @@ that should rule out each rejected `k`) never converges.
 
 Reproducer: `/tmp/recfun.smt2` body above; any cached binary pair
 (`82c3c926` vs current) demonstrates it in under 30 s.
+
+## Answer to the recfun question (2026-09-17, the simplex owner)
+
+Decoded end to end (study continuation 27, item 62): the propagation
+feeds the refinement path NOTHING wrong — the certifier, the learning,
+and the blocking all behave; its only role was trajectory reshuffling
+onto a pre-existing treadmill.  The treadmill: the unfolding's boundary
+app is SYMBOLIC (`sum (k - d)` follows `k`), so learning CONCRETE
+applications never constrains the chain — every round's model escapes to
+the truncation edge (measured `k = 7, 11, 8, 16, 32`, always the fuel
+boundary), the certifier refutes, learning lags forever.  The
+pre-24cb0567 solve certified at round 3 by proposing an interior `k=3` —
+luck.  Fixed driver-side (sound assumption-scoped probe inside the
+pinned range; a certified model there is a genuine `sat`): the
+reproducer answers `sat (k=3)`, and the suite timeout is gone.  The
+`24cb0567` casualty list is now empty.

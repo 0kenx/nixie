@@ -133,6 +133,9 @@ pub(super) struct RecFunState {
     /// Whether a scratch solver scope opened by the driver is still open and
     /// owes a `solver.pop()`.
     pending_pop: bool,
+    /// Pinned-range caps already probed by the boundary-escape probe (each
+    /// cap probed at most once per driver run; `Default`-derived).
+    probe_caps: crate::prelude::HashSet<i64>,
 }
 
 impl RecFunState {
@@ -375,10 +378,30 @@ impl Context {
                     }
                     let cert = self.certify_recfun_sat(&root_apps);
                     if dbg {
-                        eprintln!(
-                            "[recfun] cert={:?}",
-                            matches!(cert, Certification::Certified)
-                        );
+                        let desc = match &cert {
+                            Certification::Certified => "Certified".to_string(),
+                            Certification::Refuted { applications } => {
+                                let pr = nixie_core::smtlib::Printer::new(&self.terms);
+                                let apps: Vec<String> =
+                                    applications.iter().map(|a| pr.print_term(*a)).collect();
+                                format!("Refuted[{}]", apps.join(", "))
+                            }
+                            Certification::Inconclusive => "Inconclusive".to_string(),
+                        };
+                        eprintln!("[recfun] cert={desc}");
+                        if let Some(m) = self.solver.model() {
+                            let pr = nixie_core::smtlib::Printer::new(&self.terms);
+                            let entries: Vec<String> = self
+                                .declared_consts
+                                .iter()
+                                .filter_map(|d| {
+                                    m.get(d.term).map(|v| {
+                                        format!("{}={}", pr.print_term(d.term), pr.print_term(v))
+                                    })
+                                })
+                                .collect();
+                            eprintln!("[recfun] model: {}", entries.join(", "));
+                        }
                     }
                     match cert {
                         Certification::Certified => return SolverResult::Sat,
@@ -395,6 +418,32 @@ impl Context {
                             }
                             if !progress {
                                 fuel_index = fuel_index.saturating_add(1);
+                            }
+                            // Boundary-escape probe (the 24cb0567 regression's
+                            // root, decoded 2026-09-17): the symbolic
+                            // boundary app (`sum (k - d)`) follows `k`, so
+                            // pinning the CONCRETE applications never
+                            // constrains the chain — every round's model
+                            // escapes to the unfolding's truncation edge
+                            // (measured: k = 7, 11, 8, 16, 32 — always the
+                            // fuel boundary), the certifier refutes, and the
+                            // pin range lags the edge forever: the
+                            // non-terminating treadmill (the pre-24cb0567
+                            // trajectory happened to land on an interior k
+                            // and certified by luck).  SOUND probe: search
+                            // ONCE per pinned-range bound C, under
+                            // ASSUMPTIONS `arg <= C` for every symbolic
+                            // argument of the root applications (never
+                            // asserted); a model found and CONCRETELY
+                            // CERTIFIED inside the pinned range satisfies
+                            // the original assertions outright, and a failed
+                            // probe leaves the treadmill exactly as it was.
+                            if progress
+                                && let Some(cap) = self.max_learned_concrete_arg(&learned)
+                                && self.recfun.probe_caps.insert(cap)
+                                && let Some(result) = self.probe_recfun_range(&root_apps, cap)
+                            {
+                                return result;
                             }
                         }
                         // Nothing was learned: only a deeper unfolding can help.
@@ -614,6 +663,67 @@ impl Context {
 
     /// Every application of an in-scope recursive definition occurring in
     /// `roots`, deduplicated.
+    /// The largest CONCRETE integer argument among `apps` (the pinned
+    /// range's bound, when those applications' values are asserted).
+    fn max_learned_concrete_arg(&self, apps: &[TermId]) -> Option<i64> {
+        let mut max: Option<i64> = None;
+        for &app in apps {
+            let Some((_, args)) = self.recfun_app_parts(app) else {
+                continue;
+            };
+            for arg in args {
+                if let Some(nixie_core::ast::TermKind::IntConst(v)) =
+                    self.terms.get(arg).map(|t| &t.kind)
+                    && let Ok(n) = v.clone().try_into()
+                    && max.is_none_or(|m| n > m)
+                {
+                    max = Some(n);
+                }
+            }
+        }
+        max
+    }
+
+    /// The boundary-escape probe: one assumption-guarded solve with every
+    /// SYMBOLIC argument of the root applications held inside the pinned
+    /// range (`arg <= cap`).  Returns `Some(Sat)` only when the found model
+    /// concretely certifies against the original applications — a certified
+    /// model of the assertions, assumptions or not.  Any other outcome is
+    /// `None`: the caller's treadmill continues unchanged.
+    fn probe_recfun_range(&mut self, root_apps: &[TermId], cap: i64) -> Option<SolverResult> {
+        let mut assumptions: Vec<TermId> = Vec::new();
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        for &app in root_apps {
+            let Some((_, args)) = self.recfun_app_parts(app) else {
+                continue;
+            };
+            for arg in args {
+                // Only SYMBOLIC arguments (anything but a concrete numeral)
+                // can escape; a numeral is already pinned by construction.
+                if matches!(
+                    self.terms.get(arg).map(|t| &t.kind),
+                    Some(nixie_core::ast::TermKind::IntConst(_))
+                ) || !seen.insert(arg)
+                {
+                    continue;
+                }
+                let cap_term = self.terms.mk_int(cap);
+                let le = self.terms.mk_le(arg, cap_term);
+                assumptions.push(le);
+            }
+        }
+        if assumptions.is_empty() {
+            return None;
+        }
+        let result = self.check_round(&assumptions);
+        if result == SolverResult::Sat
+            && matches!(self.certify_recfun_sat(root_apps), Certification::Certified)
+        {
+            return Some(SolverResult::Sat);
+        }
+        None
+    }
+
     fn collect_recfun_apps(&self, roots: &[TermId]) -> Vec<TermId> {
         let mut found = Vec::new();
         let mut seen: FxHashSet<TermId> = FxHashSet::default();

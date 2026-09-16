@@ -1515,3 +1515,49 @@ debug-panic sweep over the parity corpus: 0 panics.
       the standing non-arc set; perf gate PASS (counters ≤ 1.05);
       panic sweep clean.  `NIXIE_S6_PINNED=0` remains the escape hatch,
       and the revert is the one-line flip the enablement rule prescribes.
+
+## Continuation 27 (2026-09-17): the recfun non-termination decoded and closed — the boundary-escape treadmill (item 62)
+
+62. **The second `24cb0567` casualty, answered** (the recfun front's
+    handover asked the simplex owner what the propagation feeds the
+    refinement path; the answer: nothing wrong — the propagation only
+    moved the trajectory onto a pre-existing treadmill).  The decode
+    (recfun-round traces, cert-variant prints, per-round model dumps,
+    perf sampling):
+    * `check_sat_recfun_with` unfolds the definition to a FUEL-scheduled
+      depth with a SYMBOLIC boundary app (`sum (k − d)` — the boundary
+      FOLLOWS `k`), solves, and certifies concretely.  On rejection it
+      learns the touched applications — but learning pins only CONCRETE
+      apps (`(sum 7)`, `(sum 11)`, …), and the symbolic boundary is
+      untouched: every round's model escapes to the unfolding's
+      truncation edge (measured: `k = 7, 11, 7, 8, 16, 16, 32` — always
+      the fuel boundary, where the boundary app's free value satisfies
+      `sum(k) = 6` for ANY `k`).  The certifier refutes, learning lags
+      the ever-deeper edge by construction, and the rounds' growing
+      instance sets make each solve slower: the non-termination
+      (900 s+, rc=124 — confirmed by the recfun front).
+    * The pre-`24cb0567` trajectory happened to propose an INTERIOR
+      `k = 3` at round 3 and certified in 0.94 s — luck, not mechanism:
+      the propagation's derived bounds reshuffled the search onto the
+      edge-preferring trajectory (CDCL chaos, the BENCHMARKING §1
+      lesson), and the treadmill became visible.
+    * **The fix (driver-side, sound)**: the boundary-escape probe — on a
+      rejected round with fresh learning, ONE assumption-guarded solve
+      per pinned-range cap `C` (the max concrete learned argument) with
+      every SYMBOLIC root-application argument held `≤ C`.  A model
+      found there and CONCRETELY CERTIFIED satisfies the original
+      assertions outright (the assumptions only guided the search);
+      a failed probe leaves the treadmill exactly as it was.  The
+      reproducer now answers `sat` with `k = 3`; the standing suite
+      timeout (`recfun_e2e::symbolic_argument_solves_for_the_variable`)
+      is gone — the workspace suite is fully green modulo the env
+      self-test.
+    * Cross-front note recorded in the wisas/recfun handover: the fix
+      lives in the recfun driver (the treadmill is structural there);
+      the propagation's role was trajectory-only.
+
+Verification: workspace 11 850 tests green except the env self-test;
+clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3 4.16.0);
+wide 3×300 + mixed 3×400 fresh seeds (20260990–20260996) + the quant
+fuzz: 0 disagreements; perf gate PASS (counters bit-identical — no
+recursive definitions in its corpus).
