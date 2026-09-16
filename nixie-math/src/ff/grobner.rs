@@ -195,13 +195,14 @@ pub fn f4_basis(
             else {
                 continue;
             };
-            let left = mul_by_monomial(f, &basis[i], &qi);
-            let right = mul_by_monomial(f, &basis[j], &qj);
-            rows.push((qi, i));
-            rows.push((qj, j));
-            for (m, _) in left.terms_iter().chain(right.terms_iter()) {
-                if queued.insert(m.clone()) {
-                    queue.push(m.clone());
+            rows.push((qi.clone(), i));
+            rows.push((qj.clone(), j));
+            for (which, q) in [(i, &qi), (j, &qj)] {
+                for (m, _) in basis[which].terms_iter() {
+                    let shifted = m.mul(q);
+                    if queued.insert(shifted.clone()) {
+                        queue.push(shifted);
+                    }
                 }
             }
         }
@@ -209,23 +210,23 @@ pub fn f4_basis(
             rustc_hash::FxHashMap::default();
         while let Some(m) = queue.pop() {
             budget.charge(1)?;
-            let red = live(&dead).find(|&g| {
-                basis[g]
-                    .lm(DEGREVLEX)
-                    .is_some_and(|lmg| m.div(&lmg).is_some())
-            });
+            // Reducer scan over the CACHED leading monomials — an `lm()`
+            // call is a full terms-map scan, and calling it per candidate
+            // per monomial was the prototype's dominant cost (the same
+            // trap the budget-honesty study documented for the selection
+            // scan; `lms` sits right there).
+            let red = live(&dead).find(|&g| m.div(&lms[g]).is_some());
             let Some(gi) = red else {
                 continue;
             };
-            let lmg = basis[gi].lm(DEGREVLEX).unwrap_or_else(Monomial::unit);
-            let Some(q) = m.div(&lmg) else {
+            let Some(q) = m.div(&lms[gi]) else {
                 continue;
             };
-            let scaled = mul_by_monomial(f, &basis[gi], &q);
-            row_of_mono.insert(m.clone(), (q, gi));
-            for (mm, _) in scaled.terms_iter() {
-                if queued.insert(mm.clone()) {
-                    queue.push(mm.clone());
+            row_of_mono.insert(m.clone(), (q.clone(), gi));
+            for (mm, _) in basis[gi].terms_iter() {
+                let shifted = mm.mul(&q);
+                if queued.insert(shifted.clone()) {
+                    queue.push(shifted);
                 }
             }
         }
@@ -239,12 +240,16 @@ pub fn f4_basis(
             columns.iter().enumerate().map(|(c, m)| (m, c)).collect();
 
         // --- Matrix construction ---
+        // FUSED: iterate the basis element's terms directly and look up
+        // `q·term` in the column index — no intermediate scaled MPoly
+        // (each `mul_by_monomial` rebuilt a whole terms hash map per
+        // row, only for it to be iterated once and dropped).
         let mut matrix: Vec<Row> = Vec::with_capacity(rows.len());
         for (q, gi) in &rows {
-            let scaled = mul_by_monomial(f, &basis[*gi], q);
-            let mut row: Row = Vec::with_capacity(scaled.n_terms());
-            for (m, c) in scaled.terms_iter() {
-                if let Some(&col) = col_index.get(m) {
+            let src = &basis[*gi];
+            let mut row: Row = Vec::with_capacity(src.n_terms());
+            for (m, c) in src.terms_iter() {
+                if let Some(&col) = col_index.get(&m.mul(q)) {
                     row.push((col, c.clone()));
                     budget.charge(1)?;
                 }
@@ -335,8 +340,9 @@ pub fn f4_basis(
                 continue;
             }
             // Full reduction against the live basis (leading-term
-            // chain + tail sweep), charged like every reduction.
-            let p = {
+            // chain), charged like every reduction. Bisect form: the
+            // per-candidate snapshot (the round cache is the suspect).
+            {
                 let live_basis: Vec<MPoly> =
                     live(&dead).filter_map(|i| basis.get(i).cloned()).collect();
                 let live_lms = lm_cache_mp(&live_basis);
@@ -376,8 +382,8 @@ pub fn f4_basis(
                         break 'reduce;
                     }
                 }
-                cur
-            };
+                p = cur;
+            }
             if p.is_zero() {
                 continue;
             }
