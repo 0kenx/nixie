@@ -678,6 +678,51 @@ pub(crate) fn compute_constructor_tables(
         }
     }
 
+    // Normalize the ground entry tables through the fresh tables: a
+    // compound-keyed entry (`member(u!0, union(a,a)) -> v`, minted during
+    // the search era) denotes the same domain point as its semantic value
+    // — the completed structure identifies them — so the entry is
+    // rewritten onto the representative's key and duplicates at the same
+    // normalized point are collapsed (first wins).  Without this, the
+    // chains hold two branches for one point with values that can
+    // disagree (the stale minting-era pin vs the domain-keyed one), and
+    // the nested check — which may legitimately merge the Skolem with
+    // the compound — routes through the stale branch and falsifies
+    // axioms the completed model satisfies (the set family's residual
+    // q20/q57/q42 `Sat` verdicts: the aux's own falsifying assignment
+    // showed it merging `a` with `union(a,a)` and reading the compound-
+    // keyed entries).
+    {
+        let funcs: Vec<Spur> = model.function_interps.keys().copied().collect();
+        for func in funcs {
+            let raw = model
+                .function_interps
+                .get(&func)
+                .map(|i| i.entries.clone())
+                .unwrap_or_default();
+            if raw.is_empty() {
+                continue;
+            }
+            let mut normalized: Vec<(Vec<TermId>, TermId)> = Vec::new();
+            for e in raw {
+                let mut args = e.args;
+                for a in args.iter_mut() {
+                    *a = model.semantic_value_of(*a, manager);
+                }
+                normalized.push((args, e.result));
+            }
+            let mut seen: FxHashSet<Vec<TermId>> = FxHashSet::default();
+            let entries: Vec<FunctionEntry> = normalized
+                .into_iter()
+                .filter(|(args, _)| seen.insert(args.clone()))
+                .map(|(args, result)| FunctionEntry { args, result })
+                .collect();
+            if let Some(interp) = model.function_interps.get_mut(&func) {
+                interp.entries = entries;
+            }
+        }
+    }
+
     // Freeze the semantic domains for the constructor argument axes: the
     // raw ground universe with compounds collapsed through the tables
     // (see `CompletedModel::semantic_value_of`).

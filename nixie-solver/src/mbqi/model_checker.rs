@@ -2574,11 +2574,22 @@ impl<'a> CompletionEval<'a> {
                     .get(&entry_arg)
                     .copied()
                     .unwrap_or(entry_arg);
-                // The normalization is a ground-model consult the chain's
-                // syntax bakes in: record it so a blocking clause over this
-                // evaluation's commitments is not stronger than what the
-                // evaluation actually leaned on (see the concrete path's
-                // twin note).
+                // Semantic normalization: a compound entry argument (a
+                // minted `union(a,a)`-keyed pin from the search era)
+                // denotes the same domain point as its semantic value —
+                // the completed structure identifies them — so the chain
+                // must compare the Skolem against the *representative*,
+                // not the compound.  Without this, the nested check —
+                // which may legitimately merge the Skolem with the
+                // compound — routes the chain through the stale
+                // compound-keyed entries that disagree with the
+                // domain-keyed ones.
+                let entry_norm = self.model.semantic_value_of(entry_norm, manager);
+                // The normalization chain is a ground-model consult the
+                // syntax bakes in: record it so a blocking clause over
+                // this evaluation's commitments is not stronger than what
+                // the evaluation actually leaned on (see the concrete
+                // path's twin note).
                 if self.recording && entry_norm != entry_arg {
                     let truth = manager.mk_true();
                     let eq_atom = manager.mk_eq(entry_arg, entry_norm);

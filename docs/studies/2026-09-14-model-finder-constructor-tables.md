@@ -588,3 +588,39 @@ the concurrent arcs' worktrees (`/tmp/sets-arc` 132 G, shared `target`
 106 G, `outputs/` 70 G) plus this arc's builds.  This arc's artifacts
 are cleaned (only its precompile entries remain, ~100 M); the next
 agent should budget builds carefully and re-run `git worktree prune`.
+
+
+## Entry-table semantic normalization (2026-09-16, tenth follow-up)
+
+The aux's falsifying assignment, fully decoded, showed the exploit's
+exact shape: the Skolems sit at `(a, b)`, and the aux **merges `a`
+with `union(a,a)`** — legitimate in the completed structure (same
+row, the table identifies them) — then routes the ite-chains through
+the **compound-keyed entries** (`subset(union(a,a), ·)`,
+`member(u!0, union(a,a))` — stale pins from the search era) whose
+values disagree with the domain-keyed ones.  Two normalizations close
+the identity gap:
+
+1. **Chain conditions**: `fold_apply`'s symbolic path normalizes each
+   entry argument through `semantic_value_of` before building the
+   `(= sk entry_arg)` condition — the chain compares the Skolem
+   against the *representative*, not the compound.
+2. **The entry tables themselves** (`compute_constructor_tables`,
+   after the compute passes): every ground entry's arguments are
+   rewritten through `semantic_value_of` and duplicates at the same
+   normalized point collapse (first wins).  The completed structure
+   identifies those points; the tables must agree with their own
+   quotient — a table holding two values for one point was never a
+   coherent interpretation.
+
+The family's verdicts are unchanged by these alone (the residual
+q20/q57/q42 `Sat` route survives through another leg — the next dump
+target is the *post-normalization* aux assignment), but both changes
+are semantically required, not optional: the completed model's own
+quotient semantics demands them.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
+nixie-core 4779/4780 (the one timeout is the convergence pin under
+full-suite parallel load — it passes standalone at 139 s, the fastest
+of the whole arc); fmt/clippy clean on the touched files.
