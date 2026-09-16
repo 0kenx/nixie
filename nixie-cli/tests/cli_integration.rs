@@ -1223,7 +1223,9 @@ fn sat_seed_env_changes_trajectory_not_verdict() {
     let mut text = String::from("p cnf 160 640\n");
     let mut x: u64 = 0xC0FFEE;
     let mut next = |r: u64| {
-        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (x >> 33) % r
     };
     for _ in 0..640 {

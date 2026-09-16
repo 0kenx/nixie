@@ -788,3 +788,95 @@ fn join_operand_models_print_after_congruence() {
         "the operands' committed members must print: {joined}"
     );
 }
+
+// ===== query-side composition and the self-referential-pin fix =====
+
+/// A join the assertions never mention still folds under `get-value`:
+/// the compound is a function of its operands, whose values the model
+/// already verified — `r = {(1,2)}` and `s = {(2,3)}` compose to
+/// `{(1,3)}`. Before the on-demand pass this echoed (the model-build
+/// survey walks only the assertions, so a query-only compound had no
+/// entry to print).
+#[test]
+fn query_only_join_value_folds() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const t (Tuple Int Int))\n\
+             (declare-const r (Relation Int Int))\n\
+             (declare-const s (Relation Int Int))\n\
+             (assert (= t (tuple 1 2)))\n\
+             (assert (set.member t r))\n\
+             (assert (set.member (tuple 2 3) s))\n\
+             (check-sat)\n\
+             (get-value ((rel.join r s)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("((rel.join r s) (set.singleton (tuple 1 3)))"),
+        "the query-only join must compose from the operands' values: {joined}"
+    );
+}
+
+/// The same on-demand fold for the other rel operators: a query-only
+/// transpose and product of unasserted compounds print their values.
+#[test]
+fn query_only_transpose_and_product_fold() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const a (Set Int))\n\
+             (declare-const b (Set Int))\n\
+             (assert (set.member 1 a))\n\
+             (assert (set.member 2 b))\n\
+             (check-sat)\n\
+             (get-value ((rel.transpose (rel.product a b))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("(tuple 2 1)"),
+        "the transposed product of {{1}}×{{2}} is {{(2,1)}}: {joined}"
+    );
+    assert!(
+        !joined.contains("(rel.transpose (rel.transpose"),
+        "the query must not echo: {joined}"
+    );
+}
+
+/// A tuple-typed *variable* member no longer declines the whole sort's
+/// display: the extensionality witness used to sit "pinned" by the tuple
+/// surjectivity axiom (`e = (sel₁ e, sel₂ e)` — a self-referential,
+/// vacuous pin) beside `t = (1,2)`, its stale default colliding with the
+/// variable's value while their membership atoms disagreed; the repair
+/// refused and every set of the sort printed empty.
+#[test]
+fn tuple_variable_member_model_prints() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const t (Tuple Int Int))\n\
+             (declare-const r (Relation Int Int))\n\
+             (declare-const s (Relation Int Int))\n\
+             (assert (= t (tuple 1 2)))\n\
+             (assert (set.member t r))\n\
+             (assert (set.member (tuple 2 3) s))\n\
+             (check-sat)\n\
+             (get-model)\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("(define-fun r ()")
+            && joined.contains("(set.singleton (tuple 1 2))")
+            && joined.contains("(set.singleton (tuple 2 3))"),
+        "the operands' committed members must print: {joined}"
+    );
+}
