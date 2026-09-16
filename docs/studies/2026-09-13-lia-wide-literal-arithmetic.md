@@ -1616,3 +1616,41 @@ self-test; clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements
 (z3 4.16.0); wide 2×300 + mixed 2×400 fresh seeds (20261017–20261020):
 0 disagreements; perf gate PASS (counters bit-identical); the survey
 rerun on the same seeds.
+
+## Continuation 29 (2026-09-17): the blocking downgrade scoped to its unsound half (item 64)
+
+64. **`Unsat`-after-blocking, classified.**  Upstream #40's blanket
+    rule downgraded EVERY `Unsat` over a search that used model
+    blocking — including refutations over blocks added for GENUINE
+    violations.  The classification (`model_refutation_kind`):
+    a *Genuine* refutation is a concrete `false` from ASSIGNED model
+    values (the settled-atom arm reads committed polarities, the value
+    arm fails open on `Undetermined`), so the blocked projection covers
+    every variable the refutation read — every assignment the block
+    excludes provably violates the assertions, and an `Unsat` over
+    assertions+blocks IS an `Unsat` of the assertions.  An
+    `Unrepresentable` outcome (the evaluator's own width limit) is NOT
+    a genuine refutation — the block is exploratory and keeps the
+    downgrade.  `model_blocks_nongenuine` tracks the latter (snapshot
+    in `ContextState`, retracted in lockstep with the clauses); the
+    downgrade now fires only while it is nonzero.  Measured on the
+    survey generator: no verdict movement either way (the generator's
+    sat-side blocks are width-limit ones — the minimized LRA instance
+    correctly stays `unknown`); the change removes a
+    completeness-overreach that discards proven refutations, at zero
+    soundness cost (the projection argument) and zero differential
+    movement.
+    * **The unsat-side gap's site breakdown** (the 15 members, probed):
+      5 at the wide-classification honest decline, 3 at the B&B integral
+      dive's `state_feasible` probe (an "integral" leaf whose fresh
+      probe finds a violation the dive should have branched on — e.g.
+      the minimized `11·xi = 7` shape reaching an integral-looking
+      leaf), 2 at the LP pivot budget, 5 at outer declines.  These are
+      the B&B capacity campaign's precise targets (the parked item,
+      now with a site map).
+
+Verification for the landing: workspace 11 893 green except the env
+self-test (the timeouts were load artifacts — load 77–106 through the
+runs); gates clean; parity 176/177, 0 disagreements (z3 4.16.0); wide
+2×300 + mixed 3×400 fresh seeds (20261030–20261034) clean; perf gate
+PASS (bit-identical counters).
