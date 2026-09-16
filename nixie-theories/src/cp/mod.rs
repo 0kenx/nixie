@@ -12,6 +12,9 @@ use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
 mod feasibility;
+mod table_explanation;
+pub mod table_proof;
+use table_proof::{TableData, TableStatement};
 
 /// A finite-domain variable, local to one [`CpModel`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -50,6 +53,7 @@ impl core::fmt::Display for CpError {
 }
 impl core::error::Error for CpError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Domain {
     values: Vec<BigInt>,
     atoms: Vec<TermId>,
@@ -59,7 +63,7 @@ struct Domain {
 #[derive(Clone)]
 enum Constraint {
     AllDifferent(Vec<CpVar>),
-    Table(Vec<CpVar>, Vec<Vec<BigInt>>),
+    Table(TableStatement),
     Regular(Vec<CpVar>, usize, Vec<usize>, Vec<Transition>),
     Circuit(Vec<CpVar>),
     Cumulative(Vec<Task>, BigInt),
@@ -67,9 +71,8 @@ enum Constraint {
 impl Constraint {
     fn variables(&self) -> Vec<CpVar> {
         match self {
-            Self::AllDifferent(v) | Self::Table(v, _) | Self::Regular(v, ..) | Self::Circuit(v) => {
-                v.clone()
-            }
+            Self::AllDifferent(v) | Self::Regular(v, ..) | Self::Circuit(v) => v.clone(),
+            Self::Table(statement) => statement.variables().to_vec(),
             Self::Cumulative(tasks, _) => tasks.iter().map(|t| t.start).collect(),
         }
     }
@@ -80,7 +83,7 @@ impl Constraint {
 /// Construct the model before registering it with `Solver::register_cp`.
 /// Variable identifiers belong to this model; keep models' identifiers separate.
 pub struct CpModel {
-    domains: Vec<Domain>,
+    domains: Vec<Arc<Domain>>,
     constraints: Vec<Constraint>,
     assertions: Vec<TermId>,
     true_term: TermId,
@@ -130,11 +133,11 @@ impl CpModel {
         self.assertions.push(tm.mk_or(atoms.iter().copied()));
         let negations = atoms.iter().map(|&a| tm.mk_not(a)).collect();
         let var = CpVar(self.domains.len());
-        self.domains.push(Domain {
+        self.domains.push(Arc::new(Domain {
             values,
             atoms,
             negations,
-        });
+        }));
         Ok(var)
     }
 
@@ -182,8 +185,34 @@ impl CpModel {
         if tuples.iter().any(|t| t.len() != vars.len()) {
             return Err(CpError("table tuple arity mismatch"));
         }
-        self.constraints.push(Constraint::Table(vars, tuples));
+        let domains = vars
+            .iter()
+            .map(|&v| (v, self.domains[v.0].clone()))
+            .collect();
+        self.constraints
+            .push(Constraint::Table(TableStatement(Arc::new(TableData {
+                variables: vars,
+                rows: tuples,
+                domains,
+                false_term: self.false_term,
+            }))));
         Ok(())
+    }
+
+    /// Retain immutable original tables for independent certificate checking.
+    /// Returned statements share identity with the installed propagator; later
+    /// additions to the model do not alter an existing statement.
+    pub fn table_statements(&self) -> Vec<TableStatement> {
+        self.constraints
+            .iter()
+            .filter_map(|c| match c {
+                Constraint::Table(statement) => Some(statement.clone()),
+                Constraint::AllDifferent(_)
+                | Constraint::Regular(..)
+                | Constraint::Circuit(_)
+                | Constraint::Cumulative(..) => None,
+            })
+            .collect()
     }
 
     /// Require an accepting automaton path. Nondeterministic transitions are
@@ -286,15 +315,25 @@ impl CpModel {
             }) {
                 return PropagatorResult::Unknown;
             }
+            ctx.propagate(Consequence::new(self.false_term, reasons.clone()));
             return PropagatorResult::Unsat(reasons);
         }
         if domains.iter().any(Vec::is_empty) {
+            ctx.propagate(Consequence::new(self.false_term, reasons.clone()));
             return PropagatorResult::Unsat(reasons);
         }
         for constraint in &self.constraints {
             match self.feasible(constraint, &domains) {
                 Some(true) => {}
-                Some(false) => return PropagatorResult::Unsat(reasons),
+                Some(false) => {
+                    let Some(consequence) =
+                        self.explain(Some(constraint), self.false_term, &reasons)
+                    else {
+                        return PropagatorResult::Unknown;
+                    };
+                    ctx.propagate(consequence);
+                    return PropagatorResult::Unsat(reasons);
+                }
                 None => return PropagatorResult::Unknown,
             }
         }
@@ -308,6 +347,7 @@ impl CpModel {
                 let mut candidate = domains.clone();
                 candidate[i] = vec![d.values[j].clone()];
                 let mut excluded = !domains[i].contains(&d.values[j]);
+                let mut witness_constraint = None;
                 for constraint in self
                     .constraints
                     .iter()
@@ -317,13 +357,19 @@ impl CpModel {
                         Some(true) => {}
                         Some(false) => {
                             excluded = true;
+                            witness_constraint = Some(constraint);
                             break;
                         }
                         None => return PropagatorResult::Unknown,
                     }
                 }
                 if excluded {
-                    ctx.propagate(Consequence::new(d.negations[j], reasons.clone()));
+                    let Some(consequence) =
+                        self.explain(witness_constraint, d.negations[j], &reasons)
+                    else {
+                        return PropagatorResult::Unknown;
+                    };
+                    ctx.propagate(consequence);
                 }
             }
         }
@@ -333,13 +379,24 @@ impl CpModel {
             PropagatorResult::Unknown
         }
     }
+
+    fn explain(
+        &self,
+        constraint: Option<&Constraint>,
+        term: TermId,
+        reasons: &[TermId],
+    ) -> Option<Consequence> {
+        let mut consequence = Consequence::new(term, reasons.to_vec());
+        if let Some(Constraint::Table(statement)) = constraint {
+            consequence.table_certificate = Some(statement.explain(term, reasons)?);
+        }
+        Some(consequence)
+    }
 }
 
 impl UserPropagator for CpModel {
     fn on_fixed(&mut self, _term: TermId, _value: TermId, ctx: &mut PropagatorContext) {
-        if let PropagatorResult::Unsat(reasons) = self.run(ctx) {
-            ctx.propagate(Consequence::new(self.false_term, reasons));
-        }
+        self.run(ctx);
     }
     fn final_check(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
         self.run(ctx)
