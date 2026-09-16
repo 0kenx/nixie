@@ -827,6 +827,17 @@ impl Parser<'_> {
                 {
                     return Ok(self.manager.mk_set_univ_at(sort));
                 }
+                // `(as bag.empty (Bag X))`: the nullary bag constant, whose
+                // sort can only be written as a qualification.
+                if args.is_empty()
+                    && matches!(name.as_str(), "bag.empty")
+                    && matches!(
+                        self.manager.sorts.get(sort).map(|s| &s.kind),
+                        Some(crate::sort::SortKind::Bag(_))
+                    )
+                {
+                    return Ok(self.manager.mk_bag_empty_at(sort));
+                }
                 // For known forms like `(as const (Array D R))` we represent the
                 // qualified application as an `Apply` node whose function name
                 // records the qualifier and whose sort is the annotated one.
@@ -1328,12 +1339,20 @@ impl Parser<'_> {
             {
                 return Ok(Opened::Value(self.manager.mk_set_univ_at(sort)));
             }
+            if matches!(name.as_str(), "bag.empty")
+                && matches!(
+                    self.manager.sorts.get(sort).map(|s| &s.kind),
+                    Some(crate::sort::SortKind::Bag(_))
+                )
+            {
+                return Ok(Opened::Value(self.manager.mk_bag_empty_at(sort)));
+            }
             return Err(NixieError::ParseError {
                 position: self.lexer.position(),
                 message: format!(
                     "(as {name} ...) as a standalone term is supported only for \
                      finite-field numerals (as ff<value> (_ FiniteField <order>)) and the \
-                     finite-set constants (as set.empty (Set X)) / (as set.universe (Set X))"
+                     finite-set constants (as set.empty (Set X)) / (as set.universe (Set X)),                      and the bag constant (as bag.empty (Bag X))"
                 ),
             });
         }

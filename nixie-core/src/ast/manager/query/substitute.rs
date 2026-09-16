@@ -844,6 +844,57 @@ impl TermManager {
                 let a = sub(a);
                 self.mk_rel_iden(a)
             }
+            // Bags: the empty bag substitutes to itself; everything
+            // else rebuilds through the builder (interned and sorted as
+            // if freshly constructed).
+            TermKind::BagEmpty(sort) => self.intern(TermKind::BagEmpty(sort), sort),
+            TermKind::BagMake(e, n) => {
+                let e = sub(e);
+                let n = sub(n);
+                self.mk_bag_make(e, n)
+            }
+            TermKind::BagUnionMax(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_union_max(a, b)
+            }
+            TermKind::BagUnionDisjoint(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_union_disjoint(a, b)
+            }
+            TermKind::BagInterMin(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_inter_min(a, b)
+            }
+            TermKind::BagDifferenceSubtract(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_difference_subtract(a, b)
+            }
+            TermKind::BagDifferenceRemove(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_difference_remove(a, b)
+            }
+            TermKind::BagMember(e, b) => {
+                let e = sub(e);
+                let b = sub(b);
+                self.mk_bag_member(e, b)
+            }
+            TermKind::BagSubbag(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_bag_subbag(a, b)
+            }
+            TermKind::BagCount(e, b) => {
+                let e = sub(e);
+                let b = sub(b);
+                self.mk_bag_count(e, b)
+            }
+            TermKind::BagCard(b) => {
+                let b = sub(b);
+                self.mk_bag_card(b)
+            }
+            TermKind::BagSetof(b) => {
+                let b = sub(b);
+                self.mk_bag_setof(b)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);

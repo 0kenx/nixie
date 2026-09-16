@@ -241,6 +241,7 @@ fn combine_complexity(
             | TermKind::StringLit(_)
             | TermKind::SetEmpty(_)
             | TermKind::SetUniv(_)
+            | TermKind::BagEmpty(_)
             | TermKind::Var(_),
         ) => 1,
 
@@ -258,6 +259,8 @@ fn combine_complexity(
             | TermKind::SetChoose(a)
             | TermKind::SetRelTranspose(a)
             | TermKind::SetRelIden(a)
+            | TermKind::BagCard(a)
+            | TermKind::BagSetof(a)
             | TermKind::StrFromCode(a)
             | TermKind::FfNeg(a),
         ) => 2 + get(*a),
@@ -293,6 +296,15 @@ fn combine_complexity(
             | TermKind::SetRelJoin(a, b)
             | TermKind::SetRelProduct(a, b)
             | TermKind::SetSubset(a, b)
+            | TermKind::BagMake(a, b)
+            | TermKind::BagUnionMax(a, b)
+            | TermKind::BagUnionDisjoint(a, b)
+            | TermKind::BagInterMin(a, b)
+            | TermKind::BagDifferenceSubtract(a, b)
+            | TermKind::BagDifferenceRemove(a, b)
+            | TermKind::BagMember(a, b)
+            | TermKind::BagSubbag(a, b)
+            | TermKind::BagCount(a, b)
             | TermKind::Select(a, b)
             | TermKind::BvConcat(a, b)
             | TermKind::BvAnd(a, b)

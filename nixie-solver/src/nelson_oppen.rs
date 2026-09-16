@@ -288,7 +288,19 @@ impl NelsonOppenCombiner {
             | TermKind::SetRelJoin(_, _)
             | TermKind::SetRelProduct(_, _)
             | TermKind::SetRelTranspose(_)
-            | TermKind::SetRelIden(_) => TermTheory::Set,
+            | TermKind::SetRelIden(_)
+            | TermKind::BagEmpty(_)
+            | TermKind::BagMake(_, _)
+            | TermKind::BagUnionMax(_, _)
+            | TermKind::BagUnionDisjoint(_, _)
+            | TermKind::BagInterMin(_, _)
+            | TermKind::BagDifferenceSubtract(_, _)
+            | TermKind::BagDifferenceRemove(_, _)
+            | TermKind::BagMember(_, _)
+            | TermKind::BagSubbag(_, _)
+            | TermKind::BagCount(_, _)
+            | TermKind::BagCard(_)
+            | TermKind::BagSetof(_) => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)
