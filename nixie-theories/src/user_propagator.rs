@@ -45,7 +45,7 @@ use nixie_core::ast::TermId;
 pub enum PropagatorResult {
     /// Satisfiable - no conflicts found
     Sat,
-    /// Unsatisfiable with conflict clause
+    /// Inconsistent: the conjunction of these true antecedent literals is impossible.
     Unsat(Vec<TermId>),
     /// Unknown - incomplete check
     Unknown,
@@ -155,7 +155,7 @@ pub trait UserPropagator: Send + Sync {
     ///
     /// The propagator should perform a complete satisfiability check.
     fn final_check(&mut self, _ctx: &mut PropagatorContext) -> PropagatorResult {
-        PropagatorResult::Sat
+        PropagatorResult::Unknown
     }
 
     /// Called before making a branching decision
@@ -222,7 +222,17 @@ pub struct UserPropagatorManager {
     /// Statistics
     stats: UserPropagatorStats,
     /// Context stack for push/pop
-    context_stack: Vec<usize>,
+    context_stack: Vec<PropagatorScope>,
+}
+
+// Snapshot all observable callback state, including overwritten values and pending
+// consequences. Hash-map length is not an undo journal.
+struct PropagatorScope {
+    fixed_terms: HashMap<TermId, TermId>,
+    equalities: HashSet<(TermId, TermId)>,
+    consequences: VecDeque<Consequence>,
+    watched_terms: HashSet<TermId>,
+    propagators: usize,
 }
 
 impl UserPropagatorManager {
@@ -356,7 +366,13 @@ impl UserPropagatorManager {
 
     /// Push a new context level
     pub fn push(&mut self) {
-        self.context_stack.push(self.fixed_terms.len());
+        self.context_stack.push(PropagatorScope {
+            fixed_terms: self.fixed_terms.clone(),
+            equalities: self.equalities.clone(),
+            consequences: self.consequences.clone(),
+            watched_terms: self.watched_terms.clone(),
+            propagators: self.propagators.len(),
+        });
         for prop in &mut self.propagators {
             prop.push();
         }
@@ -369,20 +385,23 @@ impl UserPropagatorManager {
         }
 
         for _ in 0..levels {
-            if let Some(size) = self.context_stack.pop() {
-                // Restore fixed terms
-                while self.fixed_terms.len() > size {
-                    if let Some((term, _)) = self.fixed_terms.iter().next() {
-                        let term = *term;
-                        self.fixed_terms.remove(&term);
-                    }
-                }
+            let Some(scope) = self.context_stack.pop() else {
+                break;
+            };
+            self.propagators.truncate(scope.propagators);
+            for prop in &mut self.propagators {
+                prop.pop(1);
             }
+            self.fixed_terms = scope.fixed_terms;
+            self.equalities = scope.equalities;
+            self.consequences = scope.consequences;
+            self.watched_terms = scope.watched_terms;
         }
+    }
 
-        for prop in &mut self.propagators {
-            prop.pop(levels);
-        }
+    /// Current fixed value, scoped with the corresponding notification.
+    pub fn get_fixed_value(&self, term: TermId) -> Option<TermId> {
+        self.fixed_terms.get(&term).copied()
     }
 
     /// Reset the manager
@@ -524,7 +543,8 @@ mod tests {
         assert_eq!(manager.get_fixed_value(term), Some(value));
 
         manager.pop(1);
-        // Note: watched_terms don't get cleared on pop in this simple impl
+        assert_eq!(manager.get_fixed_value(term), None);
+        assert!(!manager.watched_terms.contains(&term));
     }
 
     #[test]
@@ -549,9 +569,35 @@ mod tests {
         assert_eq!(consequences.len(), 1);
     }
 
-    impl UserPropagatorManager {
-        fn get_fixed_value(&self, term: TermId) -> Option<TermId> {
-            self.fixed_terms.get(&term).copied()
-        }
+    #[test]
+    fn restores_overwrites_equalities_watches_and_pending_consequences() {
+        let mut manager = UserPropagatorManager::new();
+        let a = TermId::new(10);
+        let b = TermId::new(11);
+        let c = TermId::new(12);
+        manager.watch_term(a);
+        manager.notify_fixed(a, b);
+        manager.notify_equality(a, b);
+        manager.consequences.push_back(Consequence::new(a, vec![]));
+        manager.push();
+        manager.notify_fixed(a, c);
+        manager.notify_equality(a, c);
+        manager.watch_term(c);
+        manager.notify_fixed(c, b);
+        manager.get_consequences();
+        manager.consequences.push_back(Consequence::new(c, vec![a]));
+        manager.push();
+        manager.notify_fixed(a, a);
+        manager.pop(1);
+        assert_eq!(manager.get_fixed_value(a), Some(c));
+        manager.pop(1);
+        assert_eq!(manager.get_fixed_value(a), Some(b));
+        assert_eq!(manager.get_fixed_value(c), None);
+        assert_eq!(manager.equalities.len(), 1);
+        assert!(manager.equalities.contains(&(a, b)));
+        assert!(!manager.watched_terms.contains(&c));
+        let consequences = manager.get_consequences();
+        assert_eq!(consequences.len(), 1);
+        assert_eq!(consequences[0].term, a);
     }
 }

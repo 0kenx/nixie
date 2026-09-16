@@ -1705,8 +1705,7 @@ fn pop_resnaps_a_nonbasic_left_outside_its_restored_window() {
         "the popped state must be definitional again: {viol:?}"
     );
     assert!(
-        s.value(x) >= Rational64::from_integer(6)
-            && s.value(x) <= Rational64::from_integer(10),
+        s.value(x) >= Rational64::from_integer(6) && s.value(x) <= Rational64::from_integer(10),
         "the nonbasic is re-snapped into its restored window: {:?}",
         s.value(x)
     );

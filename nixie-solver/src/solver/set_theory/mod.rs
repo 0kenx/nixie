@@ -946,11 +946,26 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             let Some(fields) = fields else {
                 continue;
             };
+            // Shape does not identify a datatype: a TLA tuple or a user
+            // datatype with @t1.. selectors can have the same fields as the
+            // canonical @tuple sort while remaining a distinct sort. Rebuild
+            // with this declaration's constructor, as in CVC5's typed tuple
+            // construction, never with mk_tuple's canonical constructor.
+            let constructor = manager
+                .sorts
+                .datatype_name(sort)
+                .and_then(|name| manager.sorts.get_datatype(name))
+                .and_then(|def| def.constructors.first())
+                .map(|ctor| manager.resolve_str(ctor.name).to_string());
+            let Some(constructor) = constructor else {
+                rel_incomplete = true;
+                continue;
+            };
             for &e in list {
                 let parts: Vec<TermId> = (0..fields.len())
                     .map(|i| manager.mk_tuple_select(i, e))
                     .collect();
-                let rebuild = manager.mk_tuple(&parts);
+                let rebuild = manager.mk_dt_constructor(&constructor, parts, sort);
                 surjectivity.push((e, rebuild));
             }
         }
@@ -1864,5 +1879,47 @@ pub(crate) fn survey_for_model(roots: &[TermId], manager: &TermManager) -> Model
         subsets: s.subsets.clone(),
         eq_pairs,
         chooses: s.chooses.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tuple_reconstruction_tests {
+    use super::*;
+
+    #[test]
+    fn reconstruction_axioms_never_equate_distinct_tuple_sorts() {
+        let mut tm = TermManager::new();
+        let int = tm.sorts.int_sort;
+        let custom = tm.sorts.mk_datatype_sort("CustomPair");
+        let ctor = nixie_core::sort::DataTypeConstructor {
+            name: tm.intern_str("custom_pair"),
+            selectors: vec![(tm.intern_str("@t1"), int), (tm.intern_str("@t2"), int)].into(),
+        };
+        tm.sorts.declare_datatype("CustomPair", vec![ctor]);
+        let canonical = tm.tuple_sort(&[int, int]);
+        assert_ne!(custom, canonical);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let pair = tm.mk_dt_constructor("custom_pair", [one, two], custom);
+        let singleton = tm.mk_set_singleton(pair);
+        let set_sort = tm.sorts.set(custom);
+        let set = tm.mk_var("set", set_sort);
+        let root = tm.mk_eq(set, singleton);
+        let before = tm.len();
+        let reduction = reduce(&[root], &mut tm);
+        assert!(!reduction.axioms.is_empty());
+        for index in before..tm.len() {
+            let Some(node) = u32::try_from(index)
+                .ok()
+                .and_then(|i| tm.get(TermId::new(i)))
+            else {
+                panic!("every allocated term must exist");
+            };
+            if let TermKind::Eq(lhs, rhs) = node.kind {
+                let left = tm.get(lhs).map(|t| t.sort);
+                let right = tm.get(rhs).map(|t| t.sort);
+                assert_eq!(left, right, "cross-sort axiom: {:?}", node.kind);
+            }
+        }
     }
 }
