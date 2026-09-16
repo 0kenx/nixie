@@ -66,15 +66,22 @@ fn f4_and_buchberger_bases_agree() {
         (0xBEEF_0001, 5, 6),
         (0xC0FF_EE00, 8, 8),
         (0x5EED_0042, 12, 12),
+        // Hardened 2026-09-18: the original four seeds passed WITH the
+        // unsound kills (trajectory luck — the kill circles never fired
+        // on them). These shapes exercise more admission orders.
+        (0x1111_0001, 4, 5),
+        (0x2222_0002, 5, 7),
+        (0x3333_0003, 6, 6),
+        (0x4444_0004, 7, 7),
     ] {
         let inputs = system(&f, seed, nvars, ncons);
-        // F4's measured ~8x cost: 2^28 covers it at these shapes so the
+        // F4's budget: with VERIFIED supersession (the unsound bare
+        // kill removed 2026-09-18 — it cost less but lost whole-ring
+        // refutations), 2^30 covers the completing shapes so the
         // agreement is CHECKED rather than silently accepted by the
-        // (Err, Err) arm (which hid 8x8's both-budget-out until the
-        // sound chain criterion made Buchberger cheap enough to complete
-        // there).
+        // (Err, Err) arm.
         let mut b1 = GrobnerBudget::new(1 << 24);
-        let mut b2 = GrobnerBudget::new(1 << 28);
+        let mut b2 = GrobnerBudget::new(1 << 30);
         let buch = grobner_basis_untraced(&f, &inputs, &mut b1);
         let f4r = f4_basis(&f, &inputs, &mut b2);
         match (buch, f4r) {
@@ -129,12 +136,12 @@ fn f4_and_buchberger_bases_agree() {
 #[test]
 fn f4_is_deterministic() {
     let f = FieldCtx::new(BigUint::from(2u64.pow(31) - 1)).unwrap();
-    let inputs = system(&f, 0xD1CE_BEEF, 9, 10);
-    // Measured (2026-09-18): this 9x10 shape costs F4 ~2^27 monomial
-    // ops — about 8x Buchberger's. The prototype is CORRECT (see the
-    // agreement test) but unoptimized (row construction clones, O(basis)
-    // reducer scans per monomial); it is not wired into any solver path.
-    // Optimization is the study's named follow-up.
+    // 5x6 under verified supersession (2026-09-18): the old 9x10 shape
+    // needs >2^30 now — the supersession-verification reductions are
+    // real work the unsound bare kill skipped. Determinism is a
+    // structural property; any completing shape pins it, and the
+    // agreement test covers 8x8 at full budget.
+    let inputs = system(&f, 0xD1CE_BEEF, 5, 6);
     let mut b1 = GrobnerBudget::new(1 << 28);
     let mut b2 = GrobnerBudget::new(1 << 28);
     let r1 = f4_basis(&f, &inputs, &mut b1).expect("completes");

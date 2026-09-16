@@ -394,12 +394,69 @@ pub fn f4_basis(
                 // lm is irreducible); the guard stays as a fail-safe.
                 continue;
             }
-            for i in 0..lms.len() {
-                if !dead[i] && lms[i].div(&lm_final).is_some() {
-                    dead[i] = true;
+            // VERIFIED SUPERSESSION. The kill this block performed
+            // (dead-mark any element whose lm the admission's lm
+            // divides) was root-caused UNSOUND on 2026-09-18: the
+            // replacement argument assumes each killed g lies in
+            // <survivors ∪ admissions>, but a multi-kill round can only
+            // discharge that CIRCULARLY (g1 ∈ <new, g2>, g2 ∈ <new, g1>
+            // proves neither). Measured on the 3x4 whole-ring
+            // reproducer: dead elements — including seeds — carried
+            // nonzero remainders modulo the final live basis
+            // (information loss; the constant refutation was among the
+            // losses). The sound form VERIFIES each supersession: g is
+            // fully reduced against the live basis (excluding itself,
+            // including the just-admitted element); zero ⇒ kill
+            // (witnessed), nonzero ⇒ g is REPLACED by its reductum
+            // (g ≡ reductum, strictly smaller lm — the antichain and
+            // Noetherian termination both hold).
+            {
+                let mut superseded: Vec<usize> = Vec::new();
+                for i in 0..lms.len() {
+                    if !dead[i] && lms[i].div(&lm_final).is_some() {
+                        superseded.push(i);
+                    }
                 }
+                for i in superseded {
+                    let others: Vec<MPoly> = live(&dead)
+                        .filter(|&j| j != i)
+                        .filter_map(|j| basis.get(j).cloned())
+                        .collect();
+                    let others_lms = lm_cache_mp(&others);
+                    let mut cur = basis[i].clone();
+                    loop {
+                        let Some(lt) = cur.lm(DEGREVLEX) else { break };
+                        let red = others.iter().enumerate().find(|(_, g)| {
+                            g.lm(DEGREVLEX).is_some_and(|lmg| lt.div(&lmg).is_some())
+                        });
+                        let Some((gi, _)) = red else { break };
+                        let lmg = others_lms[gi].clone();
+                        let Some(q) = lt.div(&lmg) else { break };
+                        let lc_cur = cur.lc(DEGREVLEX).cloned().unwrap_or_else(|| f.one());
+                        let lc_g = others[gi].lc(DEGREVLEX).cloned().unwrap_or_else(|| f.one());
+                        let Some(inv_g) = f.inv(&lc_g) else { break };
+                        let factor = f.mul(&lc_cur, &inv_g);
+                        let scaled =
+                            mul_by_monomial(f, &others[gi].clone().monic(f, DEGREVLEX), &q)
+                                .scale(f, &factor);
+                        budget.charge(
+                            u64::try_from(scaled.n_terms() + cur.n_terms()).unwrap_or(u64::MAX / 2),
+                        )?;
+                        cur = cur.sub(f, &scaled);
+                        if cur.is_zero() {
+                            break;
+                        }
+                    }
+                    if cur.is_zero() {
+                        dead[i] = true;
+                    } else {
+                        let red = cur.monic(f, DEGREVLEX);
+                        lms[i] = red.lm(DEGREVLEX).unwrap_or_else(Monomial::unit);
+                        basis[i] = red;
+                    }
+                }
+                pairs.retain(|&(i, j)| !dead[i] && !dead[j]);
             }
-            pairs.retain(|&(i, j)| !dead[i] && !dead[j]);
             let n = basis.len();
             lms.push(lm_final);
             basis.push(p);

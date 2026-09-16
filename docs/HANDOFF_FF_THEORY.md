@@ -274,10 +274,15 @@ pass once the symlinks exist). Delete worktrees when done. Never
    batches, or a SIMD echelonization kernel an order cheaper — the
    flat sparse-row layout is the SIMD-ready shape, exact modular
    arithmetic is order-independent so vectorization is deterministic).
-   One bisected-not-root-caused defect on record: the per-round monic
-   admission cache missed a whole-ring at 3×4 (study addendum 4); the
-   per-candidate snapshot stays. NTT for Goldilocks-class primes is the
-   other named lever.
+   The once-bisected cache defect is ROOT-CAUSED and closed (addendum
+   5): the bare supersession KILL was unsound (multi-kill circles lost
+   whole-ring refutations — five dead elements with nonzero remainders
+   measured on the reproducer, seeds among them; the landed battery
+   passed by trajectory luck and is now hardened). Fixed with VERIFIED
+   SUPERSESSION (reduce each candidate: zero ⇒ witnessed kill, nonzero
+   ⇒ replace by reductum); the round cache itself was innocent and
+   remains available. NTT for Goldilocks-class primes is the other
+   named lever.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
