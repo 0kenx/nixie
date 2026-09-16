@@ -711,3 +711,149 @@ fn refuted_across_push_pop() {
         SolverResult::Sat
     );
 }
+
+// ===== the fuzz campaign's finds (each was a wrong verdict) =====
+
+/// `b = ∅ ∧ |b| = 1` must refute: equal bags have equal sizes, and `|∅|`
+/// folds to 0 — the aggregate the per-element equations cannot see
+/// through the slack. Without the rule this answered `sat` (fuzz-found;
+/// CVC5: `unsat`; the set theory has always had the analogue).
+#[test]
+fn equality_forces_equal_cardinality() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (as bag.empty (Bag Int))))\n\
+             (assert (= (bag.card b) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Through a squashing compound, same story.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (as bag.empty (Bag Int))))\n\
+             (assert (= (bag.card (bag.setof b)) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// The counting sum de-duplicates: a bag pinned to `(2:3)` keeps
+/// `|(2:3)| = 3` even though the extensionality witnesses usually equal
+/// the real elements — summing every spelling counted one cell twice,
+/// forced the slack to absorb the duplicate, and pinned the witnesses
+/// away from the values the disequality directions needed. This exact
+/// shape answered `unsat` before the guards (CVC5: `sat`).
+#[test]
+fn counting_dedups_equal_valued_elements() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag 2 3)))\n\
+             (assert (not (= (bag.setof b) (bag.inter_min (bag 1 3) (bag 2 2)))))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+/// The lattice rewrites: a max-union with `a` on either side already
+/// covers every copy `a` has, so the subtract-difference is empty and
+/// the remove-difference is empty — the pointwise identities close
+/// shapes the element-list reduction cannot (fuzz-found false-`sat`;
+/// CVC5: `unsat`).
+#[test]
+fn lattice_rewrites_close_difference_shapes() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (declare-const c (Bag Int))\n\
+             (assert (= (bag.card (bag.setof c)) 2))\n\
+             (assert (= (bag.card (bag.difference_subtract c\n\
+                        (bag.union_max c (bag x 1)))) 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Absorption: `a ⊓ (a ⊎ z) = a`, both operand orders.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const a (Bag Int))\n\
+             (declare-const z (Bag Int))\n\
+             (assert (not (= (bag.inter_min a (bag.union_max a z)) a)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const a (Bag Int))\n\
+             (declare-const z (Bag Int))\n\
+             (assert (not (= (bag.inter_min (bag.union_disjoint a z) a) a)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `bag.count` is a function of the element: `¬((1:3) ⊑ b)` beside
+/// `count(1,b) ≥ 5` must refute — the witness element (valued 1) needs
+/// `count(witness, b) < 3`, and the witness's count equals `count(1,b)`
+/// by congruence. The purified arithmetic encoding gave each count term
+/// its own column with no congruence tie (an `apply` would get it from
+/// the theory combination layer); this answered `sat` (fuzz-found;
+/// CVC5: `unsat`).
+#[test]
+fn count_is_congruent_in_its_element() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (not (bag.subbag (bag 1 3) b)))\n\
+             (assert (> (bag.count 1 b) 4))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `a ⊑ b → |a| ≤ |b|`: a subbag against a closed bag forces the whole
+/// (unknown-support) size down, not just the known elements —
+/// `b ⊑ ((1:-1) ⧵ (x:0))` is `b ⊑ ∅`, which empties `b`, contradicting
+/// `|b| = 2`. Answered `sat` before the rule (fuzz-found; CVC5:
+/// `unsat`).
+#[test]
+fn subbag_bounds_the_cardinality() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (bag.subbag b (bag.difference_remove (bag 1 -1) (bag x 0))))\n\
+             (assert (= (bag.card b) 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (declare-const c (Bag Int))\n\
+             (assert (bag.subbag b c))\n\
+             (assert (= (bag.card b) 3))\n\
+             (assert (= (bag.card c) 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}

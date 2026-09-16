@@ -365,6 +365,46 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let _ = opaque;
     }
 
+    // ---- count congruence ----
+    // `bag.count` is a function of the element: two elements the formula
+    // (or the arithmetic model) makes equal have equal counts. The
+    // purified arithmetic encoding gives each `bag.count` term its own
+    // integer column with no congruence tie — an UF application would
+    // get this from the theory combination layer (verified: the same
+    // shape through `declare-fun` refutes fine), the count term does
+    // not, and `¬((1:3) ⊑ b)` beside `count(1,b) ≥ 5` answered `sat`
+    // (CVC5: `unsat`; fuzz-found). The fix is the set theory's
+    // membership-congruence pattern: one implication per element pair per
+    // bag. Constant pairs fold their equality to `false` in the builder
+    // and cost nothing.
+    for &(b, es) in &s.bags {
+        let Some(elems) = by_sort.get(&es) else {
+            continue;
+        };
+        for (i, &e1) in elems.iter().enumerate() {
+            for &e2 in elems.iter().skip(i + 1) {
+                let same = manager.mk_eq(e1, e2);
+                let (c1, c2) = (count_term(e1, b, manager), count_term(e2, b, manager));
+                let agree = manager.mk_eq(c1, c2);
+                out.axioms.push(manager.mk_implies(same, agree));
+            }
+        }
+    }
+
+    // ---- subbag cardinality propagation ----
+    // `a ⊑ b → |a| ≤ |b|` (pointwise counts order, nonnegative sums).
+    // Without it a subbag against a *closed* bag constrained only the
+    // known elements, the unknown support kept its slack, and
+    // `b ⊑ (1:-1) ⧵ (x:0)` — which is `b ⊑ ∅`, forcing `b = ∅` — sat
+    // beside `|b| = 2` (fuzz-found false-`sat`; CVC5: `unsat`). The set
+    // theory has always had this rule (`atom → |a| ≤ |b|`).
+    for &(atom, a, b) in &s.subbags {
+        let ca = manager.mk_bag_card(a);
+        let cb = manager.mk_bag_card(b);
+        let le = manager.mk_le(ca, cb);
+        out.axioms.push(manager.mk_implies(atom, le));
+    }
+
     // ---- membership ----
     for &(atom, e, b) in &s.members {
         let c = count_term(e, b, manager);
@@ -440,9 +480,41 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let Some(elems) = by_sort.get(&es) else {
             continue;
         };
-        let counts: Vec<TermId> = elems.iter().map(|&e| count_term(e, b, manager)).collect();
+        // The counting sum runs over the element list, which may hold
+        // two spellings of one value — the extensionality witnesses are
+        // variables that usually *equal* a real element (their consistency
+        // axioms force exactly that). Summing every spelling counts one
+        // cell twice, and a bag pinned to a closed value then forced its
+        // slack to absorb the duplicate — pinning the witnesses away from
+        // the elements the disequality directions needed (a fuzz-found
+        // false-`unsat`). The fix is the set theory's de-duplication
+        // guard: a list entry contributes its count only when no *earlier*
+        // entry of the same value already contributed. Distinct entries
+        // all pass; equal-valued ones collapse to their first
+        // representative, which is one cell counted once.
+        let deduped: Vec<TermId> = elems
+            .iter()
+            .enumerate()
+            .map(|(i, &e)| {
+                let mut guard_parts: Vec<TermId> = Vec::new();
+                for &earlier in &elems[..i] {
+                    let same = manager.mk_eq(e, earlier);
+                    let ce = count_term(earlier, b, manager);
+                    let earlier_present = manager.mk_gt(ce, zero);
+                    let clash = manager.mk_and([same, earlier_present]);
+                    guard_parts.push(manager.mk_not(clash));
+                }
+                let count = count_term(e, b, manager);
+                if guard_parts.is_empty() {
+                    count
+                } else {
+                    let no_clash = manager.mk_and(guard_parts);
+                    manager.mk_ite(no_clash, count, zero)
+                }
+            })
+            .collect();
         if bag_is_closed(b, manager) {
-            let total = manager.mk_add(counts);
+            let total = manager.mk_add(deduped);
             out.axioms.push(manager.mk_eq(card, total));
             continue;
         }
@@ -451,7 +523,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             name.push_str(&format!("_{}", e.0));
         }
         let slack = manager.mk_var(&name, manager.sorts.int_sort);
-        let mut sum = counts;
+        let mut sum = deduped;
         sum.push(slack);
         let total = manager.mk_add(sum);
         out.axioms.push(manager.mk_eq(card, total));
@@ -459,16 +531,91 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         out.axioms.push(ge);
     }
 
+    // ---- cardinality propagation ----
+    // The per-element equations constrain the *known* counts; an opaque
+    // bag's unknown support is the slack. Two aggregate rules let the
+    // arithmetic solver see through the slack — both are theorems, and
+    // without the first, `b = ∅ ∧ |b| = 1` answered `sat` (a fuzz-found
+    // false-`sat`; CVC5: `unsat`; the set theory has always had this
+    // rule, `equality ⇒ equal cardinality`, which is why the same shape
+    // over sets refuted):
+    //
+    // * `a = b → |a| = |b|` — equal bags have equal sizes, so a bag
+    //   pinned to `∅` (or to any closed compound, whose size folds) has
+    //   its slack forced through its own cardinality equation.
+    // * the operator bounds: `|a ⊎ b| = |a| + |b|` exactly (the sum of
+    //   the sums), and `|x ⊙ y| ≤ |x| + |y|`-style upper bounds for the
+    //   other four operators and `|setof b| ≤ |b|` (squashing removes
+    //   copies, never adds) — every bound is `Σ min(count,1)-shaped`,
+    //   i.e. pointwise ≤ the operand sums.
+    if std::env::var_os("NIXIE_NO_BAG_EQCARD").is_none() {
+        for &(atom, a, b) in &s.bag_equalities {
+            let ca = manager.mk_bag_card(a);
+            let cb = manager.mk_bag_card(b);
+            let same = manager.mk_eq(ca, cb);
+            out.axioms.push(manager.mk_implies(atom, same));
+        }
+    }
+    for &(b, _) in &s.bags {
+        if std::env::var_os("NIXIE_NO_BAG_BOUNDS").is_none() {
+            let Some(kind) = manager.get(b).map(|d| d.kind.clone()) else {
+                continue;
+            };
+            match kind {
+                TermKind::BagUnionDisjoint(x, y) => {
+                    let (cx, cy, cb) = (
+                        manager.mk_bag_card(x),
+                        manager.mk_bag_card(y),
+                        manager.mk_bag_card(b),
+                    );
+                    let total = manager.mk_add([cx, cy]);
+                    out.axioms.push(manager.mk_eq(cb, total));
+                }
+                TermKind::BagUnionMax(x, y) => {
+                    let (cx, cy, cb) = (
+                        manager.mk_bag_card(x),
+                        manager.mk_bag_card(y),
+                        manager.mk_bag_card(b),
+                    );
+                    let sum = manager.mk_add([cx, cy]);
+                    out.axioms.push(manager.mk_le(cb, sum));
+                }
+                TermKind::BagInterMin(x, y) => {
+                    let (cx, cy, cb) = (
+                        manager.mk_bag_card(x),
+                        manager.mk_bag_card(y),
+                        manager.mk_bag_card(b),
+                    );
+                    out.axioms.push(manager.mk_le(cb, cx));
+                    out.axioms.push(manager.mk_le(cb, cy));
+                }
+                TermKind::BagDifferenceSubtract(x, _) | TermKind::BagDifferenceRemove(x, _) => {
+                    let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
+                    out.axioms.push(manager.mk_le(cb, cx));
+                }
+                TermKind::BagSetof(x) => {
+                    let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
+                    out.axioms.push(manager.mk_le(cb, cx));
+                }
+                _ => {}
+            }
+        }
+    }
+
     if out.axioms.len() > 20_000 {
         out.incomplete = true;
     }
 
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    out.axioms.retain(|a| seen.insert(*a));
+    if std::env::var_os("NIXIE_DEBUG_BAGS").is_some() {
+        let printer = nixie_core::smtlib::Printer::new(manager);
+        for a in &out.axioms {
+            eprintln!("BAGAXIOM {}", printer.print_term(*a));
+        }
+    }
     Reduction {
-        axioms: {
-            let mut seen: FxHashSet<TermId> = FxHashSet::default();
-            out.axioms.retain(|a| seen.insert(*a));
-            out.axioms
-        },
+        axioms: out.axioms,
         incomplete: out.incomplete,
     }
 }
