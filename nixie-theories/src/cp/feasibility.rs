@@ -10,7 +10,8 @@ impl CpModel {
     ) -> Option<bool> {
         Some(match constraint {
             Constraint::AllDifferent(vars) => matching(vars, domains)?,
-            Constraint::Table(vars, tuples) => tuples.iter().any(|tuple| {
+            Constraint::Table(statement) => statement.rows().iter().any(|tuple| {
+                let vars = statement.variables();
                 vars.iter().enumerate().all(|(i, v)| {
                     domains[v.0].contains(&tuple[i])
                         && vars[..i]

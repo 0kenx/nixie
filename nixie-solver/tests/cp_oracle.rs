@@ -98,6 +98,7 @@ fn encode(case: &Case, tm: &mut TermManager) -> Encoding {
 
 struct Oracle<'a> {
     case: &'a Case,
+    tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     atoms: Vec<Vec<TermId>>,
     literals: BTreeMap<TermId, (usize, usize, bool)>,
     solutions: Vec<Vec<usize>>,
@@ -139,6 +140,31 @@ impl Oracle<'_> {
     }
 
     fn consequence(&self, consequence: &Consequence, facts: &Facts) {
+        if let Some(certificate) = &consequence.table_certificate {
+            let original = self.tables.iter().find(|t| certificate.is_for(t)).unwrap();
+            certificate
+                .check(original, consequence.term, &consequence.justification)
+                .unwrap();
+        } else if self
+            .case
+            .rules
+            .iter()
+            .all(|r| matches!(r, Rule::Allowed(..)))
+        {
+            // In a pure-table model, only a domain-only implication may lack
+            // a table witness. Enumerate the original product WITHOUT tables.
+            assert!(
+                self.case.assignments().iter().all(|row| {
+                    !consequence
+                        .justification
+                        .iter()
+                        .all(|&p| self.truth(p, row))
+                        || self.truth(consequence.term, row)
+                }),
+                "table-dependent implication lacks a certificate: {:?}",
+                self.case
+            );
+        }
         assert!(
             consequence.term == self.true_term
                 || consequence.term == self.false_term
@@ -178,6 +204,7 @@ struct Counts {
     assignments: usize,
     states: usize,
     consequences: usize,
+    table_certificates: usize,
     conflicts: usize,
     satisfiable_cases: [usize; 6],
     infeasible_cases: [usize; 6],
@@ -201,7 +228,12 @@ fn inspect(
         ),
         PropagatorResult::Unsat(reasons) => {
             counts.conflicts += 1;
-            consequences.push(Consequence::new(oracle.false_term, reasons.clone()));
+            if !consequences
+                .iter()
+                .any(|c| c.term == oracle.false_term && c.justification == *reasons)
+            {
+                consequences.push(Consequence::new(oracle.false_term, reasons.clone()));
+            }
             assert!(!oracle.possible(facts), "false conflict: {:?}", oracle.case);
         }
         PropagatorResult::Unknown => {}
@@ -224,6 +256,10 @@ fn inspect(
     }
     counts.states += 1;
     counts.consequences += consequences.len();
+    counts.table_certificates += consequences
+        .iter()
+        .filter(|c| c.table_certificate.is_some())
+        .count();
 }
 
 #[test]
@@ -244,6 +280,7 @@ fn generated_explanations_and_scope_replay_match_exhaustive_oracle() {
             .collect();
         let oracle = Oracle {
             case: &case,
+            tables: cp.table_statements(),
             atoms,
             literals,
             solutions,
@@ -322,6 +359,7 @@ fn generated_explanations_and_scope_replay_match_exhaustive_oracle() {
     assert!(counts.satisfiable_cases.iter().all(|&n| n > 0));
     assert!(counts.infeasible_cases.iter().all(|&n| n > 0));
     assert!(counts.assignments > 1000 && counts.consequences > 1000 && counts.conflicts > 1000);
+    assert!(counts.table_certificates > 100);
     eprintln!("CP exhaustive explanation coverage: {counts:?}");
 }
 
@@ -393,6 +431,7 @@ fn generated_solver_verdicts_models_and_scopes_match_exhaustive_oracle() {
             .collect();
         let oracle = Oracle {
             case: &case,
+            tables: cp.table_statements(),
             atoms,
             literals,
             solutions,
@@ -440,7 +479,9 @@ fn oracle_rejects_an_omitted_reason_even_when_context_hides_it() {
     };
     let mut tm = TermManager::new();
     let Encoding {
-        atoms, literals, ..
+        cp,
+        atoms,
+        literals,
     } = encode(&case, &mut tm);
     let solutions = case
         .assignments()
@@ -449,6 +490,7 @@ fn oracle_rejects_an_omitted_reason_even_when_context_hides_it() {
         .collect();
     let oracle = Oracle {
         case: &case,
+        tables: cp.table_statements(),
         atoms,
         literals,
         solutions,
