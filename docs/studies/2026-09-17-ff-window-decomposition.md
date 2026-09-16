@@ -257,3 +257,45 @@ this is architecture-vs-architecture at equal ground truth, not a
 kernel-level benchmark. The comparator binary is preserved under
 `precompile/cvc5-e8c0387/` (with the auto-built `libgmp.so.10` it
 needs; `LD_LIBRARY_PATH` that directory to run it).
+
+## Addendum (same day): the 512×768/1024×1536 measurement, the corpus
+generator, and the worklist exchange
+
+The study's pre-registered next measurement (512×768 needs ~86 windows —
+the 64-round exchange cap's comfort zone) ran as designed:
+
+1. **The corpus generator is now in-repo** (`bench/ff/gen_chain.py` —
+   the original was never kept). Reverse-engineering it found the
+   load-bearing structure the hard way: the corpus's rows and quads come
+   in RESIDUE PASSES (rows at offsets ≡ 0, 1, 2 mod 6 in sequence,
+   quads at ≡ {2,4}, {3,5}, {4,6}; a {3,4,5} row and seam quads
+   {1,2,3},{5,6,7},{7,8,9} close the cycle). A naive single stride-6
+   sequence wrapping the ring chains EVERY row pair into one long RREF
+   elimination — measured: a 62-variable pivot definition, 1891-term
+   substituted quads, 172 degenerate windows, no verdict. The passes
+   keep the eliminations pairwise-local, definitions 2-local, and the
+   substituted quads at ≤4 variables. Two further generator bugs (a
+   shared row/quad loop bound truncating the last pass, and a top-up
+   that broke locality) each showed up as exact-count-but-not-rigid
+   systems the window path honestly refused — pinning the exact density
+   (n/2 rows, n quads) AND the pass locality as the family's defining
+   properties.
+2. **512×768 solves** (`sat` ~7-8 s, 87 windows, full pinning) — under
+   the round cap, as hoped.
+3. **1024×1536 died exactly at the 64-round cap** (measured: round 64
+   fired with the pin wavefront at window 165 of 171 — seven rounds
+   short). The named fix, the WORKLIST exchange, is landed: a window
+   that recomputes immediately offers its admissible elements to every
+   fitting window (FIFO, index-ordered scans — deterministic); offers
+   into not-yet-computed windows ACCUMULATE (a first cut dropped them
+   and the fixpoint terminated early with a weakened union — caught on
+   the regression corpus before landing); the round cap becomes a
+   total-admissions cap (4096). Result: **1024×1536 `sat` in ~18-24 s**
+   (342 admissions), and every smaller goal faster (128×192: 3.3 →
+   2.6 s; 512×768: 9.6 → 6.7 s) — the wavefront now propagates in one
+   arrival-ordered pass instead of one window per round.
+
+Corpus verdicts after the worklist landing: all 22 goals `sat`,
+including the two new files (`bn254_chain_planted_{512x768,1024x1536}`).
+FF oracle/fuzz/regression suites green; clippy/fmt clean. The full
+workspace + parity gate for this commit rides the combined pass below.

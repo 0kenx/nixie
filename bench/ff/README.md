@@ -24,3 +24,10 @@ BN254 goals answer an honest `unknown` in seconds (budget-proportional
 refusal). The exhaustive/planted fuzzers in
 `nixie-theories/tests/ff_{oracle,planted_fuzz}.rs` are the soundness
 canaries; these files are the *performance* substrate.
+
+The `chain` family's generator is now in-repo: `gen_chain.py <n_vars>
+<seed> [outfile]` (see its docstring for the residue-pass structure —
+the passes are load-bearing, a naive stride-6 ring chains the RREF
+eliminations globally and the window decomposition sees nothing
+window-shaped). `bn254_chain_planted_{512x768,1024x1536}.smt2` were
+generated with it (seeds 0xcafe0001 / 0xbeef0001).

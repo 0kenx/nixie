@@ -1008,7 +1008,6 @@ fn window_grobner_basis(
     component: &[&FrontGen],
     budget_steps: u64,
 ) -> Result<WindowBasis, GrobnerError> {
-    const WINDOW_ROUNDS: u32 = 64;
     // The landed caps. VAR_CAP=8 sits in the measured flat region of the
     // window-cap sweep on the chain corpus (caps 4–8 all solve both
     // frontier goals in ~3–5 s with identical verdicts; 12/24 solve
@@ -1056,99 +1055,116 @@ fn window_grobner_basis(
         .iter()
         .map(|w| w.iter().map(|&gi| component[gi].poly.clone()).collect())
         .collect();
-    let mut round = 0u32;
-    loop {
-        round += 1;
-        if round > WINDOW_ROUNDS {
-            // Noetherian in principle; bounded in practice (a long
-            // exchange chain is a capacity limit, not an answer).
-            return Err(GrobnerError::Budget);
+    // The WORKLIST exchange: a window that recomputes immediately
+    // offers its admissible elements to every fitting window, and a
+    // window with pending offers recomputes at once (FIFO). The
+    // round-synchronized sweep this replaces moves the pin wavefront
+    // ONE window per round — the chain's rigidity propagates along the
+    // ring — so the frontier goal (1024 vars, 171 windows) died at the
+    // 64-round cap seven rounds short (measured, the pre-registered
+    // falsification criterion). The worklist walks the same wavefront
+    // in arrival order: one pass propagates the whole chain.
+    // Determinism: FIFO order, index-ordered scans. Termination: the
+    // same Noetherian argument (every admission either is
+    // membership-skipped or strictly grows the target window's ideal),
+    // bounded in practice by a total-admissions cap — a capacity
+    // limit, never an answer.
+    let mut worklist: std::collections::VecDeque<usize> = (0..n_w).collect();
+    let mut admissions = 0usize;
+    const MAX_ADMISSIONS: usize = 4096;
+    // Skipped windows (budget-out on recompute) stay dead; offers into
+    // them are pointless. A not-yet-COMPUTED window is different: it is
+    // still on the worklist with its generators pending, and an offer
+    // to it must ACCUMULATE (admitted without a membership check — its
+    // basis does not exist yet; the recompute subsumes the check).
+    // Dropping such offers (the first worklist cut) lost every
+    // forward-edge into a not-yet-computed window and the fixpoint
+    // terminated early with a weakened union.
+    let mut dead = vec![false; n_w];
+    while let Some(w) = worklist.pop_front() {
+        if pending[w].is_empty() {
+            continue;
         }
-        for w in 0..n_w {
-            if pending[w].is_empty() {
-                continue;
-            }
-            let mut gens: Vec<MPoly> = bases[w]
-                .as_ref()
-                .map(|b| b.basis.iter().map(|t| t.poly.clone()).collect())
-                .unwrap_or_default();
-            gens.append(&mut pending[w]);
-            // Each window gets its own budget — the components'
-            // discipline ("component counts are small; a shared cap
-            // would starve late components") applies verbatim: window
-            // counts are small, windows are independent subproblems,
-            // and a shared cap lets an early window's burn decide a
-            // later window's verdict.
-            let mut wbudget = GrobnerBudget::new(budget_steps);
-            let r = grobner_basis_untraced(f, &gens, &mut wbudget);
-            if std::env::var_os("NIXIE_FF_STATS").is_some() {
-                eprintln!(
-                    "[ff-stats] window {w}-GB ({} gens) -> {}",
-                    gens.len(),
-                    r.as_ref()
-                        .map(|b| b.basis.len().to_string())
-                        .unwrap_or_else(|_| "budget-out".to_string())
-                );
-            }
-            match r {
-                Ok(b) => bases[w] = Some(b),
-                Err(GrobnerError::Budget) => {
-                    skipped += 1;
-                    pending[w] = Vec::new();
-                }
-            }
-        }
-        // The exchange: offer every basis element of the two admitted
-        // classes to every other window whose variable set its support
-        // fits, skipping ideal membership (cvc5's `!contains`).
-        let mut offers: Vec<Vec<MPoly>> = vec![Vec::new(); n_w];
-        for i in 0..n_w {
-            let Some(bi) = &bases[i] else {
-                continue;
-            };
-            for t in &bi.basis {
-                let p = &t.poly;
-                let pv = p.variables();
-                if pv.is_empty() {
-                    continue; // constants never exchange
-                }
-                let linear = p.lm(DEGREVLEX).is_some_and(|m| m.total_degree() <= 1);
-                let univariate = p
-                    .terms_iter()
-                    .all(|(m, _)| m.vars().iter().all(|vp| vp.var == pv[0]));
-                if !linear && !univariate {
-                    continue;
-                }
-                for j in 0..n_w {
-                    if j == i || bases[j].is_none() {
-                        // Never offer into a skipped window: it would
-                        // resurrect the window from the offers alone
-                        // (sound — ideal members — but pointless).
-                        continue;
-                    }
-                    if !pv.iter().all(|v| wvars[j].contains(v)) {
-                        continue;
-                    }
-                    let member = bases[j].as_ref().map(|bj| {
-                        let mut mb = GrobnerBudget::new(budget_steps);
-                        normal_form(f, p, bj, &mut mb).is_some_and(|nf| nf.is_zero())
-                    });
-                    if member != Some(true) && !offers[j].iter().any(|q| q == p) {
-                        offers[j].push(p.clone());
-                    }
-                }
-            }
-        }
-        if offers.iter().all(|o| o.is_empty()) {
-            break;
-        }
+        let mut gens: Vec<MPoly> = bases[w]
+            .as_ref()
+            .map(|b| b.basis.iter().map(|t| t.poly.clone()).collect())
+            .unwrap_or_default();
+        gens.append(&mut pending[w]);
+        // Each recompute gets its own budget — the components'
+        // discipline ("component counts are small; a shared cap would
+        // starve late components") applies verbatim: windows are small
+        // independent subproblems, and a shared cap would let an early
+        // window's burn decide a later window's verdict.
+        let mut wbudget = GrobnerBudget::new(budget_steps);
+        let r = grobner_basis_untraced(f, &gens, &mut wbudget);
         if std::env::var_os("NIXIE_FF_STATS").is_some() {
             eprintln!(
-                "[ff-stats] window exchange round {round}: admitted {:?} ({skipped} window(s) skipped)",
-                offers.iter().map(|o| o.len()).collect::<Vec<_>>()
+                "[ff-stats] window {w}-GB ({} gens) -> {}",
+                gens.len(),
+                r.as_ref()
+                    .map(|b| b.basis.len().to_string())
+                    .unwrap_or_else(|_| "budget-out".to_string())
             );
         }
-        pending = offers;
+        let new_basis = match r {
+            Ok(b) => b,
+            Err(GrobnerError::Budget) => {
+                skipped += 1;
+                dead[w] = true;
+                continue;
+            }
+        };
+        // Offer THIS window's admissible elements to every fitting
+        // window that does not already contain them (cvc5's `admit` /
+        // `!contains`). Only the recomputed window is scanned — the
+        // neighbors' elements were offered when THEY recomputed.
+        let mut offered = 0usize;
+        for t in &new_basis.basis {
+            let p = &t.poly;
+            let pv = p.variables();
+            if pv.is_empty() {
+                continue; // constants never exchange
+            }
+            let linear = p.lm(DEGREVLEX).is_some_and(|m| m.total_degree() <= 1);
+            let univariate = p
+                .terms_iter()
+                .all(|(m, _)| m.vars().iter().all(|vp| vp.var == pv[0]));
+            if !linear && !univariate {
+                continue;
+            }
+            for j in 0..n_w {
+                if j == w || dead[j] {
+                    continue;
+                }
+                if !pv.iter().all(|v| wvars[j].contains(v)) {
+                    continue;
+                }
+                let member = bases[j].as_ref().map(|bj| {
+                    let mut mb = GrobnerBudget::new(budget_steps);
+                    normal_form(f, p, bj, &mut mb).is_some_and(|nf| nf.is_zero())
+                });
+                if member != Some(true) && !pending[j].iter().any(|q| q == p) {
+                    pending[j].push(p.clone());
+                    worklist.push_back(j);
+                    offered += 1;
+                    admissions += 1;
+                    if admissions > MAX_ADMISSIONS {
+                        return Err(GrobnerError::Budget);
+                    }
+                }
+            }
+        }
+        bases[w] = Some(new_basis);
+        if offered > 0 && std::env::var_os("NIXIE_FF_STATS").is_some() {
+            eprintln!(
+                "[ff-stats] window exchange: {w} offered {offered} (total {admissions}, {skipped} skipped)"
+            );
+        }
+    }
+    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        eprintln!(
+            "[ff-stats] window exchange fixpoint: {admissions} admissions ({skipped} window(s) skipped)"
+        );
     }
     // The completion attempt: one cascade over the union of all window
     // bases. The union generates the component ideal (each window

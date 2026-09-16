@@ -92,15 +92,17 @@ in closed form). Certified mode accepts branch-exhaustion UNSATs.
 exact modular evaluation; FF `unsat` accepted only with a verified
 certificate; exhaustion fails closed.
 
-**Current capacity** (BN254, bench/ff/, after the window decomposition,
-2026-09-17 — see `docs/studies/2026-09-17-ff-window-decomposition.md`):
+**Current capacity** (BN254, bench/ff/, after the window decomposition
++ worklist exchange, 2026-09-17 — see
+`docs/studies/2026-09-17-ff-window-decomposition.md` and its addendum):
 sparse R1CS solves at every size (8×12…64×96 in ≤0.1 s, 128×192 in
-0.2 s); dense 12×20 `sat` 0.1 s; **the chain family now solves at every
-measured size** — 16×24 `sat` 0.3 s, 32×48 `sat` 0.16 s, 64×96 `sat`
-1.4 s, **128×192 `sat` ~3 s, 256×384 `sat` ~3.7 s** (windows + exchange
-wavefront + union cascade; the 2-way split and the monolithic cascade
-budget out first at these sizes). 512×768 unmeasured (≈86 windows —
-approaching the 64-round exchange cap's comfort zone).
+0.2 s); dense 12×20 `sat` 0.1 s; **the chain family solves at every
+size through 1024×1536** — 128×192 `sat` ~2.6 s, 256×384 `sat`
+~2.9 s, 512×768 `sat` ~7 s, **1024×1536 `sat` ~18-24 s** (windows +
+worklist exchange + union cascade; the corpus generator is now
+in-repo at `bench/ff/gen_chain.py` — its residue-pass structure is
+load-bearing, see the addendum). CoCoA-enabled cvc5 for comparison:
+14.4 s at 128×192, >120 s at 256×384.
 
 ## 3. Verification bar (run before declaring anything done)
 
@@ -231,19 +233,17 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 
 ## 5. Open work, in recommended order
 
-1. **Chain ≥512×768 capacity (measure first)**: the window decomposition
-   closed the named frontier (128×192 and 256×384 `sat`, ~3 s each —
-   windows + exchange + union, four studies under
-   `docs/studies/2026-09-16-ff-*` carry the prior arc). 512×768 needs
-   ~86 windows — the 64-round exchange cap's comfort zone ends around
-   there; measure before promising. The remaining named levers: a
-   worklist exchange (collapses the one-window-per-round wavefront to
-   ~2–3 rounds — only matters at the next size doubling), F4 (batched
-   linear-algebra reduction; composes with per-window cascades — and
-   the matrix kernel is where SIMD would first pay: exact modular
-   arithmetic is order-independent, so vectorization is deterministic
-   by construction), NTT (Goldilocks-class primes). All deterministic
-   front-end items — step counts, no matched null needed.
+1. **F4 (the big pre-registered Phase-7 lever)**: the window arc closed
+   the chain family through 1024×1536 (worklist exchange + union
+   cascade; see the 2026-09-17 study addendum), so the next capacity
+   lever is F4's batched linear-algebra reduction — orthogonal to and
+   composable with the per-window cascades, and the matrix kernel is
+   where SIMD first pays (exact modular arithmetic is order-independent,
+   so vectorization is deterministic by construction). NTT for
+   Goldilocks-class primes is the other named lever. Both deterministic
+   front-end items — step counts, no matched null needed. The corpus
+   generator (`bench/ff/gen_chain.py`) can produce the next frontier
+   files when F4 needs them.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
