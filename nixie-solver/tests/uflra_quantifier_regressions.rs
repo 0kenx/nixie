@@ -359,6 +359,94 @@ fn set16_family_answers_sat() {
     );
 }
 
+/// The `set9` corpus goal, verbatim shape: the same ten axioms with
+/// `not (seteq (difference a b) (difference b a))` — this needs the
+/// *powerset closure* of the used rows (disjoint non-empty base rows;
+/// union/intersection then demand the full and empty rows), which the
+/// 2-element frozen structure lacks until the fresh-row mint grows it.
+/// It also needed the structure-membership drop of entries keyed at
+/// out-of-domain compounds (`union(a,b)`, `skf!0(difference(a,b),
+/// difference(b,a))` — aux exploit routes the completed structure
+/// never justified).  z3 answers `sat`; this is the convergence pin
+/// for both mechanisms on the harder half of the family.
+#[test]
+fn set9_family_answers_sat() {
+    let output = run_bounded(
+        r#"
+        (set-logic UF)
+        (declare-sort Set 0)
+        (declare-sort Elem 0)
+        (declare-fun member (Elem Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (not (subset ?s1 ?s2)) (exists ((?x Elem)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (forall ((?x Elem)) (=> (member ?x ?s1) (member ?x ?s2))) (subset ?s1 ?s2))))
+        (declare-fun seteq (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (= ?s1 ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun union (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (union ?s1 ?s2)) (or (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun intersection (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (intersection ?s1 ?s2)) (and (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun difference (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (difference ?s1 ?s2)) (and (member ?x ?s1) (not (member ?x ?s2))))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (not (seteq (difference a b) (difference b a))))
+        (check-sat)
+    "#,
+        120_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "sat",
+        "the row-closure completion closes this goal (z3: sat); got {status}"
+    );
+}
+
+/// The `set19` corpus goal, verbatim shape: `subset a d` plus
+/// `not (subset (difference b a) (difference b d))` over the same ten
+/// axioms.  z3 4.16.0 TIMES OUT on this goal; nixie answers `sat`
+/// (~2 min) — a strict improvement over the reference, pinned so the
+/// mechanism that closes it (the fresh-row mint plus the
+/// structure-membership drop) cannot silently regress to `unknown`.
+#[test]
+fn set19_family_answers_sat() {
+    let output = run_bounded(
+        r#"
+        (set-logic UF)
+        (declare-sort Set 0)
+        (declare-sort Elem 0)
+        (declare-fun member (Elem Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (not (subset ?s1 ?s2)) (exists ((?x Elem)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (forall ((?x Elem)) (=> (member ?x ?s1) (member ?x ?s2))) (subset ?s1 ?s2))))
+        (declare-fun seteq (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (= ?s1 ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun union (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (union ?s1 ?s2)) (or (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun intersection (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (intersection ?s1 ?s2)) (and (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun difference (Set Set) Set)
+        (assert (forall ((?x Elem) (?s1 Set) (?s2 Set)) (= (member ?x (difference ?s1 ?s2)) (and (member ?x ?s1) (not (member ?x ?s2))))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (declare-fun d () Set)
+        (assert (subset a d))
+        (assert (not (subset (difference b a) (difference b d))))
+        (check-sat)
+    "#,
+        600_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "sat",
+        "nixie closes this goal where z3 4.16.0 times out; got {status}"
+    );
+}
+
 /// The universe-distinctness fold's groundness guard: the completed
 /// model's universes contain bound-variable artifact terms (entry args
 /// harvested by `collect_universes_from_model`), and folding

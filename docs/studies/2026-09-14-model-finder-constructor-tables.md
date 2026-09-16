@@ -817,3 +817,66 @@ off the SAT hot path and the mint is completion-layer only); the
 twins canary and both set16 honesty pins pass;
 `set16_family_answers_sat` added as the convergence pin (it fails if
 any of the three mechanisms regresses).
+
+
+## The out-of-structure keys dropped; the family closes (2026-09-16, fourteenth follow-up)
+
+The thirteenth follow-up left set9/set19 with the "base-row churn"
+diagnosis.  Per-round row dumps (`[rows]`) sharpened it: the base rows
+were *mostly* right — `rows(a) = ∅`, `rows(b) ≠ ∅`, disjoint, exactly
+the shape z3's model has — and the residual aux-`Sat` verdicts were
+**not** row churn at all.  The failing bodies' chains were keyed at a
+zoo of *out-of-structure compounds*: `(= ?s1 (union b a))`,
+`(= ?x (skf!0 (difference a b) (difference b a)))`, `(= ?s2
+(intersection a a))` — stale `member` pins harvested from instances
+asserted at terms the frozen two-element structure
+`[difference(a,b), difference(b,a)]` does not contain.  In the aux goal
+those compounds are free function applications: the aux can merge its
+Skolem with `union(b,a)` (both free) and route the chain through the
+stale branch — a falsification route the completed structure never
+justified.  The walk (odometer over the *frozen domain*) can never
+visit those keys, so the mining found nothing ("no relevant
+falsifier") — the divergence, fully decoded this time.
+
+**Fix (the arc's own rule, enforced)**: "the completed structure's
+tables must agree with their own quotient" — an entry keyed at a point
+the structure does not contain constrains nothing inside it.  The
+entry-table normalization (`5a6bc16c`'s block) now rewrites every
+entry argument through the *ground assignment chain* first (this is
+also what keeps asserted ground equalities true in the completed
+structure), then the constructor-table quotient, and then **drops the
+entry** when the argument is still outside the sort's frozen domain.
+Dropped keys cannot match the walk's tuples, cannot build chain
+conditions, and cannot feed the instantiation-set harvest — the aux's
+exploit routes disappear; the structure's own tables are all that
+remains, and they were already consistent.
+
+**Result: the whole family answers `sat`** — set16 0.1 s, set9 ~20 s,
+set19 ~2 min.  **z3 4.16.0 times out on set19**: nixie now decides a
+goal the reference solver cannot.  `set9_family_answers_sat` and
+`set19_family_answers_sat` join `set16_family_answers_sat` as the
+family's convergence pins (set19 gets a nextest slow-timeout override
+following the `pete_cxs_bp` precedent — it is the one goal in the
+family that needs the full row-closure growth).
+
+**Why the drop is sound**: the completed structure is the `sat`
+witness.  Asserted ground atoms survive — their terms normalize
+through the ground assignment chain before any drop decision, and the
+problem's own constants were in the frozen domain from the freeze
+round (their compounds minted by later instances were not, which is
+precisely why their pins were garbage).  Quantifier certification runs
+against the cleaned structure by construction.  An entry that survives
+normalization onto a structure point keeps its value (first-wins
+dedup, unchanged).
+
+Verification (recorded under a machine at load ~140 from concurrent
+arcs — the two full-suite timeouts below are the documented
+load-sensitive pins, both passing standalone at load 144 immediately
+after): quant_fuzz {41..46}x150 **CLEAN**; parity **176 Correct / 1
+Inconclusive / 0 wrong** (z3 4.16.0); nixie-solver + nixie-core debug
+**4833/4833**; workspace 11893 passed + the `arith_incremental`
+replay-fuzz and `re_running_the_search` pins terminated at their
+budgets only under 149-load parallel oversubscription (143 s / 152 s
+standalone); clippy/fmt/doc clean; perf gate **PASS** (conflicts
+geomean 1.000, no verdict changes); twins canary and all three family
+honesty pins pass.

@@ -707,10 +707,43 @@ pub(crate) fn compute_constructor_tables(
             let mut normalized: Vec<(Vec<TermId>, TermId)> = Vec::new();
             for e in raw {
                 let mut args = e.args;
+                let mut all_inside = true;
                 for a in args.iter_mut() {
-                    *a = model.semantic_value_of(*a, manager);
+                    // Ground-value normalization first (the ground model's
+                    // own assignment of the term — this is also what keeps
+                    // asserted ground equalities true in the completed
+                    // structure), then the constructor-table quotient.
+                    let mut v = *a;
+                    for _ in 0..4 {
+                        match model.assignments.get(&v) {
+                            Some(&next) if next != v => v = next,
+                            _ => break,
+                        }
+                    }
+                    v = model.semantic_value_of(v, manager);
+                    // Structure membership: a tabled sort's completed
+                    // interpretation lives on its frozen domain — an entry
+                    // keyed at a point the structure does not contain
+                    // constrains nothing inside it, and keeping it lets the
+                    // nested check route a chain branch through a free
+                    // compound the structure never justified (the set9
+                    // residual: `member` entries keyed at `union(a,b)`,
+                    // `skf!0(difference(a,b), difference(b,a))`, ... — all
+                    // outside the two-element structure, all aux exploit
+                    // routes).  Drop the entry.
+                    if let Some(node) = manager.get(v)
+                        && let Some(domain) = model.table_domains.get(&node.sort)
+                        && !domain.is_empty()
+                        && !domain.contains(&v)
+                    {
+                        all_inside = false;
+                        break;
+                    }
+                    *a = v;
                 }
-                normalized.push((args, e.result));
+                if all_inside {
+                    normalized.push((args, e.result));
+                }
             }
             let mut seen: FxHashSet<Vec<TermId>> = FxHashSet::default();
             let entries: Vec<FunctionEntry> = normalized

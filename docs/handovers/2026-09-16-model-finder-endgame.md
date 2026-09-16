@@ -1,18 +1,21 @@
 # Handoff: the set-family model finder — one minimized goal from `sat`
 
-> **CLOSED 2026-09-16 (thirteenth follow-up, see the study).**  The
-> minimized-aux-goal probe decoded the divergence into three defects —
-> the ill-typed sort-class diagonal in `emit_macro_defining_pins`, the
-> encoder-artifact sort default (the symbolic `?s2` else), and the
-> missing-row tuples that need a fresh element (z3's `get_fresh_value`
-> semantics, landed as `mint_fresh_row_element`).  **set16 answers `sat`
-> (0.1 s, z3 agrees)**; `set16_family_answers_sat` is the convergence
-> pin.  set9/set19 remain honestly `unknown` — the precise residual
-> (base-row churn; the compounds must be bound to the structure via a
-> *guarded* domain restriction) is diagnosed at the end of the study.
-> The continuations below (matched-null for the constructor-tables
-> unit, the unsat-forcing fuzz generator, the hint measurement) remain
-> open.
+> **CLOSED 2026-09-16 (thirteenth + fourteenth follow-ups, see the
+> study) — the goal is fully met: set9/set16/set19 all answer `sat`.**
+> The minimized-aux-goal probe decoded the divergence into **four**
+> defects: the ill-typed sort-class diagonal in
+> `emit_macro_defining_pins`; the encoder-artifact sort default (the
+> symbolic `?s2` else); the missing-row tuples that need a fresh
+> element (z3's `get_fresh_value` semantics, landed as
+> `mint_fresh_row_element`); and — closing set9/set19 — the
+> **out-of-structure entry keys** (`member` pins at `union(a,b)`-style
+> compounds outside the frozen domain), now normalized through the
+> ground assignment chain and dropped when still outside.  set16 0.1 s,
+> set9 ~20 s, set19 ~2 min — **z3 4.16.0 times out on set19**; nixie
+> decides it.  All three are pinned
+> (`set{9,16,19}_family_answers_sat`).  The continuations below
+> (matched-null for the constructor-tables unit, the unsat-forcing
+> fuzz generator, the hint measurement) remain open.
 
 **Date:** 2026-09-16
 **Arc:** `docs/studies/2026-09-14-model-finder-constructor-tables.md` (701 lines, twelve follow-ups — read it first; this handoff is the map, the study is the territory).

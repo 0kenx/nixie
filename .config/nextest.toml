@@ -69,6 +69,16 @@ threads-required = 1
 filter = 'test(re_running_the_search_on_an_unchanged_goal_converges)'
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# The set19 family convergence pin: the completed structure must grow the
+# row closure (fresh-row mints) and re-normalize the entry tables before
+# every constructor axiom certifies - ~120 s release standalone, ~180 s
+# debug under load (it is the one goal in the family z3 4.16.0 cannot
+# decide at all). Widen the budget rather than terminating a passing
+# test, following the pete_cxs_bp precedent above.
+[[profile.default.overrides]]
+filter = 'test(set19_family_answers_sat)'
+slow-timeout = { period = "60s", terminate-after = 7 }
+
 # The traced/untraced identity pin at its largest kept shape (12x12) runs
 # ~230 s in debug since the unsound Gebauer-Moller second criterion was
 # disabled (2026-09-18, see nixie-math/tests/ff_gb_seed_dedup_regression.rs
