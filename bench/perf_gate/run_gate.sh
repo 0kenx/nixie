@@ -57,24 +57,27 @@ for ext in "$SCRIPT_DIR"/external.d/*.list; do
 done
 [ "${#FILES[@]}" -ge 3 ] || { echo "error: corpus too small" >&2; exit 2; }
 
-run() { # bin file -> "verdict conflicts decisions propagations stats_present"
-    local out
+run() { # bin file -> "verdict conflicts decisions propagations stats_present wall_s"
+    local out t0 t1 w
+    t0=$(date +%s.%N)
     out=$(taskset -c 0-7 timeout "$CAP" "$1" --stats --dimacs "$2" 2>/dev/null) || true
+    t1=$(date +%s.%N)
+    w=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.2f", b-a}')
     local v c d p
     v=$(grep -E '^(sat|unsat|unknown)$' <<<"$out" | tail -1)
     c=$(grep -oP '^  Conflicts: \K[0-9]+' <<<"$out" | tail -1)
     d=$(grep -oP '^  Decisions: \K[0-9]+' <<<"$out" | tail -1)
     p=$(grep -oP '^  Propagations: \K[0-9]+' <<<"$out" | tail -1)
     if grep -q '^SAT Solver Statistics:$' <<<"$out"; then sp=1; else sp=0; fi
-    echo "${v:-none} ${c:-0} ${d:-0} ${p:-0} $sp"
+    echo "${v:-none} ${c:-0} ${d:-0} ${p:-0} $sp $w"
 }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '%-52s %10s %10s %8s %8s\n' instance base_verd cand_verd conf_ratio dec_ratio
 awk_ok=1
 for f in "${FILES[@]}"; do
-    read -r bv bc bd bp bsp <<<"$(run "$BASE" "$f")"
-    read -r cv cc cd cp csp <<<"$(run "$CAND" "$f")"
+    read -r bv bc bd bp bsp bw <<<"$(run "$BASE" "$f")"
+    read -r cv cc cd cp csp cw <<<"$(run "$CAND" "$f")"
     name=$(basename "$f" .cnf)
     if [ "$bv" != "$cv" ]; then
         echo "VERDICT MISMATCH on $name: base=$bv cand=$cv" >&2
@@ -110,8 +113,9 @@ for f in "${FILES[@]}"; do
         fi
         cr=$(awk -v a="$ma" -v b="$mb" 'BEGIN{printf "%.3f", b/a}')
         dr=$(awk -v a="$bd" -v b="$cd" 'BEGIN{if(a>0)printf "%.3f", b/a; else printf "-"}')
-        echo "$name $ma $mb $bd $cd $bv" >> "$tmp/pairs"
-        printf '%-52s %10s %10s %8s %8s\n' "${name:0:52}" "$bv" "$cv" "$cr" "$dr"
+        echo "$name $ma $mb $bd $cd $bw $cw $bv" >> "$tmp/pairs"
+        wr=$(awk -v a="$bw" -v b="$cw" 'BEGIN{if(a>0.05)printf "%.2f", b/a; else printf "-"}')
+        printf '%-52s %10s %10s %8s %8s %6s\n' "${name:0:52}" "$bv" "$cv" "$cr" "$dr" "w:$wr"
     elif { [ "$bv" = "sat" ] || [ "$bv" = "unsat" ]; } && { [ "$bsp" = 0 ] || [ "$csp" = 0 ]; }; then
         # Verdict survived but the stats block did not: a run that hit the
         # cap between verdict and stats (big cold-read file), or a baseline
@@ -129,14 +133,19 @@ if [ -e "$tmp/lost" ] && [ "$(wc -l < "$tmp/lost")" -gt 2 ]; then
     echo "GATE: FAIL (too many lost samples — raise GATE_CAP; a gate that skips its slow instances is not a gate)" >&2
     exit 1
 fi
+# Wall is load-noisy, so its band is wide and one-sided (improvements
+# never fail): it exists to catch semantics-inert constant-factor costs —
+# both 36 h regressions (env probes, CSR mirror) left every deterministic
+# counter untouched and inflated wall 3-6x.
 result=$(awk '
-    { if ($2>0 && $3>0) { lr += log($3/$2); n++; if ($3/$2 > worst) {worst=$3/$2; wi=$1}; if ($4>0 && $5>0) { ld += log($5/$4); nd++ } } }
+    { if ($2>0 && $3>0) { lr += log($3/$2); n++; if ($3/$2 > worst) {worst=$3/$2; wi=$1}; if ($4>0 && $5>0) { ld += log($5/$4); nd++ }; if ($6>0.05) { lw += log($7/$6); nw++ } } }
     END {
-        g = exp(lr/n); gd = nd>0 ? exp(ld/nd) : 0;
-        printf "GEOMEAN conflicts ratio: %.3f  decisions ratio: %.3f  (n=%d, worst %s %.2fx)\n", g, gd, n, wi, worst;
+        g = exp(lr/n); gd = nd>0 ? exp(ld/nd) : 0; gw = nw>0 ? exp(lw/nw) : 1;
+        printf "GEOMEAN conflicts ratio: %.3f  decisions ratio: %.3f  wall ratio: %.2f  (n=%d, worst %s %.2fx)\n", g, gd, gw, n, wi, worst;
         if (g > 1.15) { print "GATE: FAIL (conflicts geomean > 1.15 — measure, justify, or fix before landing)"; exit 1 }
-        else if (g > 1.05) { print "GATE: WARN (1.05–1.15 — record the cost delta in the landing message)"; exit 0 }
-        else { print "GATE: PASS (<= 1.05, neutrality band)"; exit 0 }
+        else if (gw > 1.5) { print "GATE: FAIL (wall geomean > 1.5x at identical counters — a semantics-inert constant-factor cost; profile before landing)"; exit 1 }
+        else if (g > 1.05 || gw > 1.25) { print "GATE: WARN (record the cost delta in the landing message)"; exit 0 }
+        else { print "GATE: PASS (counters <= 1.05, wall <= 1.25)"; exit 0 }
     }' "$tmp/pairs")
 echo "$result"
 gate_rc=$?
