@@ -109,5 +109,7 @@ wisas: what does the wide-row propagation feed the refinement/certifier
 path — here likely the model-rejection loop (concrete `sum` evaluations
 that should rule out each rejected `k`) never converges.
 
-Reproducer: `/tmp/recfun.smt2` body above; any cached binary pair
-(`82c3c926` vs current) demonstrates it in under 30 s.
+Reproducer: the script body above; any cached binary pair
+(`82c3c926` vs current) demonstrates it in under 30 s.  Confirmed
+**non-termination**, not eventual-`unknown`: current HEAD killed at
+900 s with rc=124 (`timeout`), still `Processing`.

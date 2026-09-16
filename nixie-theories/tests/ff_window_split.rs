@@ -172,13 +172,16 @@ const P: u32 = 65537;
 /// The budget at which a `Model` verdict on `planted_chain(48)` can
 /// ONLY come through the window path. Verified with NIXIE_FF_STATS at
 /// this budget: the monolithic cascade over the 71-generator component
-/// budget-outs, the 2-way split's l-GB completes but its nl-GB
-/// budget-outs, and the verdict arrives via 8 eight-variable windows +
-/// the worklist exchange (6 admissions) + the union cascade. This
-/// turns the routing property — previously only measurable on the
-/// release corpus — into a per-run test invariant: a window-path
-/// regression degrades the outcome to `OutOfBudget` and fails here.
-const ROUTING_BUDGET: u64 = 1 << 16;
+/// budget-outs, the 2-way split's nl-GB budget-outs, and the verdict
+/// arrives via 8 eight-variable windows + the worklist exchange + the
+/// union cascade (a `split-merged` basis). This turns the routing
+/// property — previously only measurable on the release corpus — into a
+/// per-run test invariant: a window-path regression degrades the
+/// outcome to `OutOfBudget` and fails here. (Recalibrated 2^16 → 2^18
+/// when the unsound GM second criterion was disabled — the window GBs
+/// process more pairs now; the monolithic and split nl-GB still
+/// budget-out far below any budget that completes the windows.)
+const ROUTING_BUDGET: u64 = 1 << 18;
 
 #[test]
 fn window_path_routes_solves_and_validates() {

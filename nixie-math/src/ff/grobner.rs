@@ -199,6 +199,13 @@ impl TracedPoly {
     }
 }
 
+/// Public wrapper: multiply a polynomial by a monomial (test-oracle
+/// support — the regression batteries construct reference S-polynomials
+/// with it).
+pub fn mul_by_monomial_pub(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
+    mul_by_monomial(f, p, m)
+}
+
 /// Multiply a polynomial by a monomial (a traced step shared by the
 /// S-polynomial setup and reduction).
 fn mul_by_monomial(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
@@ -286,6 +293,48 @@ fn grobner_basis_inner(
     // leading-term-reducing them first turns structured generators
     // (`x² − x`) into cross-terms (`xs`, `xy`) that blow the loop up. The
     // basis is inter-reduced once, after the pair loop.
+    //
+    // EXCEPTION (2026-09-18): LEADING-TERM-DEDUPLICATION of the inputs.
+    // The Gebauer–Möller discard is UNSOUND when two basis elements
+    // share a leading monomial (the duplicate trivially divides every
+    // lcm of its own multiples, discarding pairs whose S-polynomials do
+    // not reduce to zero): a whole-ring ideal — an UNSAT goal with a
+    // verified `1 = Σ cᵢ·fᵢ` witness — returned a 9-element non-basis
+    // with `is_gb = true`, missing the refutation entirely (the
+    // reproducer class in tests/ff_gb_seed_dedup_regression.rs). Each
+    // input's LEADING TERM is reduced against the others so the seed
+    // lms are distinct — not full inter-reduction (`x² − x` survives
+    // unless another seed's lm divides `x²`); admitted elements are
+    // already lm-irreducible by the pre-admission reduction, so the
+    // seeds are the only duplicate source.
+    {
+        let mut i = 0;
+        while i < basis.len() {
+            let others: Vec<TracedPoly> = basis
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .map(|(_, g)| g.clone())
+                .collect();
+            let others_lms = lm_cache(&others);
+            let cur = basis[i].clone();
+            let old_lm = cur.poly.lm(DEGREVLEX);
+            let (red, _) = reduce_traced(f, &cur, &others, &others_lms, budget)?;
+            if red.poly.is_zero() {
+                basis.swap_remove(i);
+                continue;
+            }
+            let red = red.monic_traced(f);
+            let new_lm = red.poly.lm(DEGREVLEX);
+            basis[i] = red;
+            if old_lm == new_lm {
+                i += 1;
+            }
+            // else: the lm shrank — re-reduce this slot against the
+            // updated basis (swap_remove may also have moved a fresh
+            // element into this slot).
+        }
+    }
 
     // Pair list with Gebauer–Möller criteria. Pairs are (i, j), i < j.
     let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -439,35 +488,34 @@ fn criterion_applies_lms(lms: &[Monomial], i: usize, j: usize) -> bool {
     if coprime {
         return true;
     }
-    // 2. Third element.
-    let lcm = monomial_lcm(lmi, lmj);
-    lms.iter().enumerate().any(|(k, lmk)| {
-        if k == i || k == j {
-            return false;
-        }
-        lcm.div(lmk).is_some() && *lmk != lcm
-    })
+    // 2. Third element: DISABLED (2026-09-18). The simplified second
+    //    criterion (`lm_k | lcm(i,j)` for some k) is only sound under
+    //    the full Gebauer–Möller installation discipline (pair-lcm
+    //    chain conditions on the incremental update order), which this
+    //    engine does not implement — measured: whole-ring ideals
+    //    returning non-bases with `is_gb = true` (missed refutations:
+    //    seeds 0xBEEF_0001 5×6 after the duplicate-lm fix, 0xF00D_CAFE
+    //    3×4 through the INITIAL pair set, which used the sibling
+    //    `criterion_applies`). Re-enabling requires the proper
+    //    Gebauer–Möller pair rules AND the battery in
+    //    tests/ff_gb_seed_dedup_regression.rs green.
+    false
 }
 
 fn criterion_applies(basis: &[TracedPoly], i: usize, j: usize) -> bool {
     let (Some(lmi), Some(lmj)) = (basis[i].poly.lm(DEGREVLEX), basis[j].poly.lm(DEGREVLEX)) else {
         return false;
     };
-    // 1. Relatively prime: no shared variable.
-    let coprime = lmi.vars().iter().all(|vp| lmj.degree(vp.var) == 0);
-    if coprime {
-        return true;
-    }
-    // 2. Third element.
-    let lcm = monomial_lcm(&lmi, &lmj);
-    basis.iter().enumerate().any(|(k, g)| {
-        if k == i || k == j {
-            return false;
-        }
-        g.poly
-            .lm(DEGREVLEX)
-            .is_some_and(|lmk| lcm.div(&lmk).is_some() && lmk != lcm)
-    })
+    // 1. Relatively prime: no shared variable (Buchberger's first
+    //    criterion — an unconditional theorem).
+    lmi.vars().iter().all(|vp| lmj.degree(vp.var) == 0)
+    // 2. Third element: DISABLED here as well — the INITIAL pair
+    //    creation went through this sibling while the incremental path
+    //    had it disabled, and the 3×4 reproducer's missing pairs were
+    //    exactly the initial ones (the dual-computed trace agreed on
+    //    every surviving pair; a criterion-1-only replay found the
+    //    whole-ring constant in 13 pairs where the engine saw 7). See
+    //    criterion_applies_lms for the full story.
 }
 
 /// The S-polynomial of two traced basis elements:
