@@ -157,6 +157,7 @@ pub(crate) struct ContextState {
     /// (retracted by `sat.pop()` with the scope), so the counter must roll
     /// back in lockstep or a later `Unsat` would be downgraded forever / never.
     pub(crate) model_blocking_active: usize,
+    pub(crate) model_blocks_nongenuine: usize,
 }
 
 #[cfg(debug_assertions)]
@@ -437,6 +438,9 @@ impl super::Solver {
             // counter is a *lifetime* count for the scope, deliberately NOT
             // per-search: a second `check` must keep downgrading over the
             // first one's still-live restrictions).
+            model_blocks_nongenuine: _, // SNAPSHOT: same lifetime as
+            // `model_blocking_active` — the clauses the count describes are
+            // retracted by the same `sat.pop()`.
             congruence_gap_repair_rounds: _, // PER-CHECK: budget of the lazy congruence-gap repair
             arrangement_rounds: _,           // PER-SEARCH: mirrors `case_split_rounds`;
             // the internalized atoms are SAT-scoped (retracted by `pop`), so

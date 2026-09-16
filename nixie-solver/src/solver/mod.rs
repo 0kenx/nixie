@@ -835,6 +835,15 @@ pub struct Solver {
     /// Nonzero means "the search space is restricted": see
     /// [`Solver::blocking_clauses_present`].
     pub(super) model_blocking_active: usize,
+    /// Blocking clauses added for `Unrepresentable` refutations (the
+    /// evaluator's width limit — not a certified-bad exclusion).
+    /// Snapshot in `ContextState` in lockstep with
+    /// `model_blocking_active`, so a `pop` retracting the clauses
+    /// retracts the count.  While nonzero, the `Unsat`-after-blocking
+    /// downgrade stays in force (upstream #40); at zero, every live
+    /// block excludes only provable assertion-violators and an `Unsat`
+    /// over them is a genuine `Unsat`.
+    pub(super) model_blocks_nongenuine: usize,
     /// Exact model values for the nonlinear-real variables that [`Model`]
     /// cannot hold — the `(get-model)` side-channel for algebraic witnesses
     /// (`√2`-style values with no rational form). Populated ONLY all-or-nothing
@@ -1243,6 +1252,7 @@ impl Solver {
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
             model_blocking_active: 0,
+            model_blocks_nongenuine: 0,
             dt_derived_size_vars: rustc_hash::FxHashSet::default(),
             nl_algebraic_values: rustc_hash::FxHashMap::default(),
             #[cfg(test)]
@@ -2986,11 +2996,21 @@ impl Solver {
                 SatResult::Unsat => {
                     self.statistics.propagations +=
                         self.sat.stats().propagations.saturating_sub(props_before);
-                    if self.blocking_clauses_present() {
+                    if self.blocking_clauses_present() && self.model_blocks_nongenuine > 0 {
                         self.model = None;
                         self.unsat_core = None;
                         return SolverResult::Unknown;
                     }
+                    // Blocks whose refutations were all GENUINE exclude
+                    // only assignments that provably violate the
+                    // assertions (the projection covers every variable
+                    // the refutation read — see `model_refutation_kind`),
+                    // so an `Unsat` over assertions+blocks is an `Unsat`
+                    // of the assertions themselves.  The blanket
+                    // downgrade (upstream #40) applied this rule to
+                    // width-limit blocks too, discarding genuine
+                    // refutations (the LRA gap survey's second residual
+                    // class).
                     self.build_unsat_core();
                     return SolverResult::Unsat;
                 }
@@ -3659,7 +3679,8 @@ impl Solver {
                         // is what makes "recompute after every re-solve" fall
                         // out of the loop structure instead of being a rule
                         // to remember.
-                        if self.model_refutes_assertions(manager) {
+                        let refutation = self.model_refutation_kind(manager);
+                        if refutation != model_eval::ModelRefutation::No {
                             // Bounded blocking (upstream #40): this one
                             // assignment did not hold up, which says nothing
                             // about the *next* one.  Exclude it and re-solve
@@ -3670,6 +3691,10 @@ impl Solver {
                             // pays for it.  (This fork removed the wall-clock
                             // refinement ceiling on principle, so the round
                             // budget is the only bound.)
+                            if refutation == model_eval::ModelRefutation::Unrepresentable {
+                                self.model_blocks_nongenuine =
+                                    self.model_blocks_nongenuine.saturating_add(1);
+                            }
                             if self.block_refuted_model_and_rebase() {
                                 let zero_term = manager.mk_int(0);
                                 theory_manager = TheoryManager::new(
@@ -4819,6 +4844,7 @@ impl Solver {
             dt_axioms_incomplete: self.dt_axioms_incomplete,
             array_theory_scope: self.array_theory.snapshot(),
             model_blocking_active: self.model_blocking_active,
+            model_blocks_nongenuine: self.model_blocks_nongenuine,
         });
         self.sat.push();
         // No EUF / arithmetic scope is opened here on purpose.
@@ -5042,6 +5068,7 @@ impl Solver {
             // The blocking clauses are retracted by `self.sat.pop()` above;
             // roll the counter back in lockstep (see the field doc).
             self.model_blocking_active = state.model_blocking_active;
+            self.model_blocks_nongenuine = state.model_blocks_nongenuine;
             // The FF tripwire is restored, not invariant: the dispatch
             // legitimately clears it when it answers a validated `Sat`,
             // and a `pop` must not inherit that cleared state into the

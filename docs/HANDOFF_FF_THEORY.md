@@ -227,8 +227,16 @@ pass once the symlinks exist). Delete worktrees when done. Never
   (seed lm-deduplication also landed); Buchberger's first criterion is
   unconditional and stays. Pinned by
   `nixie-math/tests/ff_gb_seed_dedup_regression.rs` — any re-enabling
-  (the proper G-M installation is the named performance follow-up,
-  worth ~1.2–1.5× on the chain corpus) must pass that battery.
+  must pass that battery. The SOUND form landed 2026-09-18: explicit
+  `zero_pairs` bookkeeping (processed-to-zero ∪ coprime ∪ verified
+  chains), a pair is skipped only when the classical precondition
+  actually holds — measured FASTER than the old unsound form at
+  128×192 (~1.0 s vs 2.6 s) and vs criterion-2-off (4.3 s). The
+  RATIONAL engines (`nixie-math/src/grobner/*`) still carry the
+  unsound simplified chain criterion (one with a "For now, simplified
+  check" confession) — UNWIRED today (only the dead NLSAT
+  preprocessor imports them); fix or loudly document before any
+  wiring.
 - **T11 — window routing cannot be forced at unit scale.** The
   monolithic cascade is the CHEAPEST strategy for small goals, so no
   small test routes through the windows (a budget that starves the
@@ -256,19 +264,20 @@ pass once the symlinks exist). Delete worktrees when done. Never
 
 ## 5. Open work, in recommended order
 
-1. **F4: correct and landed, UNWIRED (the optimization is the lever)**:
-   `f4_basis` (`nixie-math/src/ff/grobner.rs`) is property-pinned —
-   mutual ideal membership + lm agreement with Buchberger, determinism,
-   whole-ring detection — but costs ~8× Buchberger's monomial ops at
-   9×10 (measured; row-construction clones, O(basis) reducer scans,
-   admission reductions). No solver path calls it. The lever: optimize
-   to the cost crossover (the flat sparse-row layout is the SIMD-ready
-   kernel — exact modular arithmetic is order-independent, so
-   vectorization is deterministic by construction), then wire it into
-   the window path where the batches are small. NTT for Goldilocks-class
-   primes is the other named lever. Both deterministic front-end items —
-   step counts, no matched null needed. The corpus generator
-   (`bench/ff/gen_chain.py`) produces frontier files when needed.
+1. **F4: correct, optimized, and measured UNWIRED (the no-go clause fired
+   — 2026-09-18 addendum 4)**: two validated optimizations (cached-lms
+   reducer scan, fused row construction) landed; the crossover was
+   measured honestly: small shapes ~8× Buchberger, the best-case wide
+   shape (the union cascade, 686 pre-reduced elements) gives TICK
+   PARITY — the batching never pays when inputs are pre-reduced. No
+   solver path calls it; revisit only with new structure (non-prereduced
+   batches, or a SIMD echelonization kernel an order cheaper — the
+   flat sparse-row layout is the SIMD-ready shape, exact modular
+   arithmetic is order-independent so vectorization is deterministic).
+   One bisected-not-root-caused defect on record: the per-round monic
+   admission cache missed a whole-ring at 3×4 (study addendum 4); the
+   per-candidate snapshot stays. NTT for Goldilocks-class primes is the
+   other named lever.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

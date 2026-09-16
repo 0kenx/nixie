@@ -195,13 +195,14 @@ pub fn f4_basis(
             else {
                 continue;
             };
-            let left = mul_by_monomial(f, &basis[i], &qi);
-            let right = mul_by_monomial(f, &basis[j], &qj);
-            rows.push((qi, i));
-            rows.push((qj, j));
-            for (m, _) in left.terms_iter().chain(right.terms_iter()) {
-                if queued.insert(m.clone()) {
-                    queue.push(m.clone());
+            rows.push((qi.clone(), i));
+            rows.push((qj.clone(), j));
+            for (which, q) in [(i, &qi), (j, &qj)] {
+                for (m, _) in basis[which].terms_iter() {
+                    let shifted = m.mul(q);
+                    if queued.insert(shifted.clone()) {
+                        queue.push(shifted);
+                    }
                 }
             }
         }
@@ -209,23 +210,23 @@ pub fn f4_basis(
             rustc_hash::FxHashMap::default();
         while let Some(m) = queue.pop() {
             budget.charge(1)?;
-            let red = live(&dead).find(|&g| {
-                basis[g]
-                    .lm(DEGREVLEX)
-                    .is_some_and(|lmg| m.div(&lmg).is_some())
-            });
+            // Reducer scan over the CACHED leading monomials — an `lm()`
+            // call is a full terms-map scan, and calling it per candidate
+            // per monomial was the prototype's dominant cost (the same
+            // trap the budget-honesty study documented for the selection
+            // scan; `lms` sits right there).
+            let red = live(&dead).find(|&g| m.div(&lms[g]).is_some());
             let Some(gi) = red else {
                 continue;
             };
-            let lmg = basis[gi].lm(DEGREVLEX).unwrap_or_else(Monomial::unit);
-            let Some(q) = m.div(&lmg) else {
+            let Some(q) = m.div(&lms[gi]) else {
                 continue;
             };
-            let scaled = mul_by_monomial(f, &basis[gi], &q);
-            row_of_mono.insert(m.clone(), (q, gi));
-            for (mm, _) in scaled.terms_iter() {
-                if queued.insert(mm.clone()) {
-                    queue.push(mm.clone());
+            row_of_mono.insert(m.clone(), (q.clone(), gi));
+            for (mm, _) in basis[gi].terms_iter() {
+                let shifted = mm.mul(&q);
+                if queued.insert(shifted.clone()) {
+                    queue.push(shifted);
                 }
             }
         }
@@ -239,12 +240,16 @@ pub fn f4_basis(
             columns.iter().enumerate().map(|(c, m)| (m, c)).collect();
 
         // --- Matrix construction ---
+        // FUSED: iterate the basis element's terms directly and look up
+        // `q·term` in the column index — no intermediate scaled MPoly
+        // (each `mul_by_monomial` rebuilt a whole terms hash map per
+        // row, only for it to be iterated once and dropped).
         let mut matrix: Vec<Row> = Vec::with_capacity(rows.len());
         for (q, gi) in &rows {
-            let scaled = mul_by_monomial(f, &basis[*gi], q);
-            let mut row: Row = Vec::with_capacity(scaled.n_terms());
-            for (m, c) in scaled.terms_iter() {
-                if let Some(&col) = col_index.get(m) {
+            let src = &basis[*gi];
+            let mut row: Row = Vec::with_capacity(src.n_terms());
+            for (m, c) in src.terms_iter() {
+                if let Some(&col) = col_index.get(&m.mul(q)) {
                     row.push((col, c.clone()));
                     budget.charge(1)?;
                 }
@@ -335,8 +340,9 @@ pub fn f4_basis(
                 continue;
             }
             // Full reduction against the live basis (leading-term
-            // chain + tail sweep), charged like every reduction.
-            let p = {
+            // chain), charged like every reduction. Bisect form: the
+            // per-candidate snapshot (the round cache is the suspect).
+            {
                 let live_basis: Vec<MPoly> =
                     live(&dead).filter_map(|i| basis.get(i).cloned()).collect();
                 let live_lms = lm_cache_mp(&live_basis);
@@ -376,8 +382,8 @@ pub fn f4_basis(
                         break 'reduce;
                     }
                 }
-                cur
-            };
+                p = cur;
+            }
             if p.is_zero() {
                 continue;
             }
@@ -783,11 +789,22 @@ fn grobner_basis_inner(
     }
 
     // Pair list with Gebauer–Möller criteria. Pairs are (i, j), i < j.
+    //
+    // The chain criterion is carried as EXPLICIT BOOKKEEPING of
+    // provably-zero pairs — the sound form of Buchberger's second
+    // criterion: sp(i,j) reduces to zero if some k has lm_k |
+    // lcm(lm_i,lm_j) AND the pairs (i,k), (j,k) are THEMSELVES provably
+    // zero (processed-to-zero, coprime, or recursively chain-verified).
+    let mut zero_pairs: rustc_hash::FxHashSet<(usize, usize)> = rustc_hash::FxHashSet::default();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     for i in 0..basis.len() {
         for j in (i + 1)..basis.len() {
             if !criterion_applies(&basis, i, j) {
                 pairs.push((i, j));
+            } else {
+                // Coprime lms: the first criterion is an unconditional
+                // theorem — a provably-zero pair.
+                zero_pairs.insert((i, j));
             }
         }
     }
@@ -845,12 +862,40 @@ fn grobner_basis_inner(
         let (i, j) = pairs[next_pair];
         next_pair += 1;
 
+        // The SOUND chain criterion, at selection time (the processed-
+        // zero information is maximally available there).
+        let mut chain_verified = false;
+        let lcm_ij = monomial_lcm(&lms[i], &lms[j]);
+        // Index both `lms` and `zero_pairs` by element index; the
+        // range loop is the clearest shape for the indexed scan.
+        #[allow(clippy::needless_range_loop)]
+        for k in 0..basis.len() {
+            if k == i || k == j {
+                continue;
+            }
+            budget.charge(1)?;
+            if lcm_ij.div(&lms[k]).is_none() {
+                continue;
+            }
+            let (a, b) = (k.min(i), k.max(i));
+            let (c, d) = (k.min(j), k.max(j));
+            if zero_pairs.contains(&(a, b)) && zero_pairs.contains(&(c, d)) {
+                chain_verified = true;
+                break;
+            }
+        }
+        if chain_verified {
+            zero_pairs.insert((i, j));
+            continue;
+        }
+
         let cost = u64::try_from(basis[i].poly.n_terms() + basis[j].poly.n_terms())
             .unwrap_or(u64::MAX / 2);
         budget.charge(cost.saturating_add(1))?;
         let spoly = s_polynomial(f, &basis[i], &basis[j]);
         let (reduced, _) = reduce_traced(f, &spoly, &basis, &lms, budget)?;
         if reduced.poly.is_zero() {
+            zero_pairs.insert((i, j));
             continue;
         }
         // Reduce the new element fully against the current basis before
@@ -888,6 +933,8 @@ fn grobner_basis_inner(
         for k in 0..n {
             if !criterion_applies_lms(&lms, k, n) {
                 pairs.push((k, n));
+            } else {
+                zero_pairs.insert((k, n));
             }
         }
         // No inter-reduction inside the loop: `reduce_all` *shrinks* the

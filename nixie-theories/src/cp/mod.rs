@@ -11,6 +11,8 @@ use nixie_core::ast::{TermId, TermManager};
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
+mod domain_explanation;
+pub mod domain_proof;
 mod feasibility;
 mod table_explanation;
 pub mod table_proof;
@@ -199,6 +201,18 @@ impl CpModel {
         Ok(())
     }
 
+    /// Retain original exactly-one domains for independent certificate checking.
+    /// Statements share identity with the propagator and are never mutated.
+    pub fn domain_statements(&self) -> Vec<domain_proof::DomainStatement> {
+        self.domains
+            .iter()
+            .map(|domain| domain_proof::DomainStatement {
+                domain: domain.clone(),
+                false_term: self.false_term,
+            })
+            .collect()
+    }
+
     /// Retain immutable original tables for independent certificate checking.
     /// Returned statements share identity with the installed propagator; later
     /// additions to the model do not alter an existing statement.
@@ -315,11 +329,17 @@ impl CpModel {
             }) {
                 return PropagatorResult::Unknown;
             }
-            ctx.propagate(Consequence::new(self.false_term, reasons.clone()));
+            let Some(consequence) = self.explain(None, self.false_term, &reasons) else {
+                return PropagatorResult::Unknown;
+            };
+            ctx.propagate(consequence);
             return PropagatorResult::Unsat(reasons);
         }
         if domains.iter().any(Vec::is_empty) {
-            ctx.propagate(Consequence::new(self.false_term, reasons.clone()));
+            let Some(consequence) = self.explain(None, self.false_term, &reasons) else {
+                return PropagatorResult::Unknown;
+            };
+            ctx.propagate(consequence);
             return PropagatorResult::Unsat(reasons);
         }
         for constraint in &self.constraints {
@@ -387,8 +407,25 @@ impl CpModel {
         reasons: &[TermId],
     ) -> Option<Consequence> {
         let mut consequence = Consequence::new(term, reasons.to_vec());
-        if let Some(Constraint::Table(statement)) = constraint {
-            consequence.table_certificate = Some(statement.explain(term, reasons)?);
+        match constraint {
+            Some(Constraint::Table(statement)) => {
+                consequence.table_certificate = Some(statement.explain(term, reasons)?);
+            }
+            None => {
+                consequence.domain_certificate = Some(self.domains.iter().find_map(|domain| {
+                    domain_proof::DomainStatement {
+                        domain: domain.clone(),
+                        false_term: self.false_term,
+                    }
+                    .explain(term, reasons)
+                })?);
+            }
+            Some(
+                Constraint::AllDifferent(_)
+                | Constraint::Regular(..)
+                | Constraint::Circuit(_)
+                | Constraint::Cumulative(..),
+            ) => {}
         }
         Some(consequence)
     }
