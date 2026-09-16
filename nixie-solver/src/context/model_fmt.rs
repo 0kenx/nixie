@@ -1055,7 +1055,7 @@ impl Context {
         // Owned so the evaluation below can borrow `self.terms` mutably; see
         // `get_model` for why an empty assertion stack — or a populated
         // algebraic side-channel — yields an empty model rather than an error.
-        let model = match self.solver.model() {
+        let mut model = match self.solver.model() {
             Some(model) => model.clone(),
             None if self.assertions.is_empty() || !self.solver.nl_algebraic_values().is_empty() => {
                 crate::solver::Model::new()
@@ -1089,6 +1089,43 @@ impl Context {
             if let Some(value) = self.default_value_term(sort) {
                 completion.insert(term, value);
             }
+        }
+
+        // Relation compounds the query mentions that the assertion stack
+        // never did (`(get-value ((rel.join r s)))` with no asserted
+        // membership in the join): the model-build survey walks the
+        // assertions, so such compounds have no entry. Compose them on
+        // demand from the operands' verified values — the compound is a
+        // function of its operands, so the composed value is not a guess;
+        // anything the pass cannot verify still echoes (the honest
+        // non-answer). Explicit-stack walk: queries nest arbitrarily.
+        let mentions_rel = terms.iter().any(|&t| {
+            let mut stack = vec![t];
+            let mut seen = crate::prelude::FxHashSet::default();
+            while let Some(cur) = stack.pop() {
+                if !seen.insert(cur) {
+                    continue;
+                }
+                let Some(kind) = self.terms.get(cur).map(|d| d.kind.clone()) else {
+                    continue;
+                };
+                if matches!(
+                    kind,
+                    nixie_core::ast::TermKind::SetRelJoin(_, _)
+                        | nixie_core::ast::TermKind::SetRelProduct(_, _)
+                        | nixie_core::ast::TermKind::SetRelTranspose(_)
+                        | nixie_core::ast::TermKind::SetRelIden(_)
+                ) {
+                    return true;
+                }
+                stack.extend(nixie_core::ast::traversal::get_children(&kind));
+            }
+            false
+        });
+        if mentions_rel {
+            let survey = crate::solver::set_theory::survey_for_model(terms, &self.terms);
+            self.solver
+                .complete_rel_values(&survey, &mut model, &mut self.terms);
         }
 
         let mut values = Vec::with_capacity(terms.len());
