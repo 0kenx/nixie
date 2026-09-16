@@ -14,6 +14,7 @@ use num_traits::{ToPrimitive, Zero};
 mod domain_explanation;
 pub mod domain_proof;
 mod feasibility;
+pub mod proof;
 mod table_explanation;
 pub mod table_proof;
 use table_proof::{TableData, TableStatement};
@@ -23,7 +24,7 @@ use table_proof::{TableData, TableStatement};
 pub struct CpVar(usize);
 
 /// A mandatory, non-preemptive task occupying `[start, start + duration)`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
     /// Finite-domain start variable.
     pub start: CpVar,
@@ -34,7 +35,7 @@ pub struct Task {
 }
 
 /// An automaton transition `(source, symbol, destination)`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transition {
     /// Source state identifier.
     pub source: usize,
@@ -62,7 +63,7 @@ struct Domain {
     negations: Vec<TermId>,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Constraint {
     AllDifferent(Vec<CpVar>),
     Table(TableStatement),
@@ -88,6 +89,7 @@ pub struct CpModel {
     domains: Vec<Arc<Domain>>,
     constraints: Vec<Constraint>,
     assertions: Vec<TermId>,
+    bindings: Vec<(CpVar, TermId)>,
     true_term: TermId,
     false_term: TermId,
 }
@@ -99,6 +101,7 @@ impl CpModel {
             domains: Vec::new(),
             constraints: Vec::new(),
             assertions: Vec::new(),
+            bindings: Vec::new(),
             true_term: tm.mk_bool(true),
             false_term: tm.mk_bool(false),
         }
@@ -154,6 +157,7 @@ impl CpModel {
         if !tm.get(term).is_some_and(|t| t.sort == tm.sorts.int_sort) {
             return Err(CpError("binding requires an Int term"));
         }
+        self.bindings.push((var, term));
         for (value, &atom) in self.domains[var.0]
             .values
             .iter()
@@ -268,6 +272,18 @@ impl CpModel {
         self.constraints
             .push(Constraint::Cumulative(tasks, capacity));
         Ok(())
+    }
+
+    /// Retain immutable original declarations for complete proof checking.
+    pub fn statement(&self) -> proof::CpStatement {
+        proof::CpStatement {
+            domains: self.domains.clone(),
+            constraints: self.constraints.clone(),
+            assertions: self.assertions.clone(),
+            bindings: self.bindings.clone(),
+            true_term: self.true_term,
+            false_term: self.false_term,
+        }
     }
 
     /// Consume the model into domain assertions, watched Boolean atoms, and

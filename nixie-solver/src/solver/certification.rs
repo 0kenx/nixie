@@ -7,6 +7,10 @@
 //! transcript is checked. Unsupported or incomplete certificates fail closed
 //! to `Unknown`.
 
+#[cfg(feature = "std")]
+#[path = "cp_proof.rs"]
+pub mod cp_proof;
+
 use super::Solver;
 use super::types::{CertificationMode, Model, SolverResult};
 use crate::prelude::*;
@@ -25,6 +29,9 @@ impl Solver {
         raw_result: SolverResult,
         manager: &mut TermManager,
     ) -> SolverResult {
+        if raw_result == SolverResult::Unknown && self.user_state.active() {
+            return raw_result;
+        }
         self.certification_failure = None;
         if self.config.certification_mode != CertificationMode::Certified {
             return raw_result;
@@ -39,6 +46,10 @@ impl Solver {
         match checked {
             Ok(()) => raw_result,
             Err(reason) => {
+                #[cfg(feature = "std")]
+                {
+                    self.user_state.cp_proof = None;
+                }
                 self.certification_failure = Some(reason);
                 self.model = None;
                 self.unsat_core = None;
@@ -48,11 +59,26 @@ impl Solver {
     }
 
     /// Check a concrete witness against the original active assertion DAG.
-    fn certify_sat(&self, manager: &TermManager) -> Result<(), String> {
+    pub(super) fn certify_sat(&self, manager: &mut TermManager) -> Result<(), String> {
         let model = self
             .model
             .as_ref()
             .ok_or_else(|| "candidate Sat verdict did not include a model".to_string())?;
+        let mut budget = 10_000_000;
+        for original in &self.user_state.cp_originals {
+            original
+                .check_encoding(manager)
+                .map_err(|e| e.to_string())?;
+            original
+                .check_model(
+                    |atom| match self.eval_in_model_outcome(atom, model, manager, 0) {
+                        super::model_eval::EvalOutcome::Value(super::EvalVal::Bool(b)) => Some(b),
+                        _ => None,
+                    },
+                    &mut budget,
+                )
+                .map_err(|e| e.to_string())?;
+        }
         let mut certificate = certificate_model(model, manager);
         self.complete_uninterpreted_witnesses(&mut certificate, manager);
         let mut evaluator = CachedEvaluator::new(manager, &certificate);
@@ -65,7 +91,7 @@ impl Solver {
                 );
             }
         }
-        for (i, &assertion) in self.certificate_assertions.iter().enumerate() {
+        for (i, &assertion) in self.certification_roots().iter().enumerate() {
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_CERT_DEBUG").is_ok() {
                 eprintln!("[cert] assertion {i} = {:?}", evaluator.eval(assertion));
@@ -126,7 +152,7 @@ impl Solver {
         // ---- 1. collect reachable terms (deterministic walk order) ----
         let mut terms: Vec<TermId> = Vec::new();
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
-        let mut stack: Vec<TermId> = self.certificate_assertions.clone();
+        let mut stack: Vec<TermId> = self.certification_roots();
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {
                 continue;
@@ -207,7 +233,7 @@ impl Solver {
         // themselves and, recursively, the conjuncts of top-level `and`s.
         // An equality anywhere else (`or`, `not`, `ite`, …) is not known
         // true; skipping it can only lose coverage, never soundness.
-        let mut guarantee_stack: Vec<TermId> = self.certificate_assertions.clone();
+        let mut guarantee_stack: Vec<TermId> = self.certification_roots();
         while let Some(id) = guarantee_stack.pop() {
             let Some(term) = manager.get(id) else {
                 continue;
@@ -315,7 +341,7 @@ impl Solver {
 
         let mut table: FxHashMap<(Spur, String), String> = FxHashMap::default();
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
-        let mut stack: Vec<TermId> = self.certificate_assertions.clone();
+        let mut stack: Vec<TermId> = self.certification_roots();
         while let Some(id) = stack.pop() {
             if !visited.insert(id) {
                 continue;
@@ -366,6 +392,19 @@ impl Solver {
     /// Check an LRAT-backed canonical refutation of the original assertions.
     #[cfg(feature = "std")]
     fn certify_unsat(&self, manager: &mut TermManager) -> Result<(), String> {
+        if self.user_state.active() {
+            return self
+                .user_state
+                .cp_proof
+                .as_ref()
+                .ok_or_else(|| "missing complete CP refutation".to_string())?
+                .check(
+                    &self.user_state.cp_originals,
+                    &self.cp_user_assertions(),
+                    manager,
+                    10_000_000,
+                );
+        }
         // The finite-field ideal-membership / pigeonhole certificate
         // (FF design §8, the "easy half"): re-encode the named literals
         // and re-multiply the cofactors in exact arithmetic — one pass,

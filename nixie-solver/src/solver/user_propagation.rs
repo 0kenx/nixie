@@ -14,6 +14,14 @@ pub(super) struct UserState {
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
     pub(super) closed: bool,
+    pub(super) cp_originals: Vec<nixie_theories::cp::proof::CpStatement>,
+    pub(super) unproved_callbacks: usize,
+    cp_assertion_indices: FxHashSet<usize>,
+    pub(super) recording: bool,
+    pub(super) proof_lemmas: Vec<(TermId, Vec<TermId>)>,
+    lemma_keys: FxHashSet<(TermId, Vec<TermId>)>,
+    #[cfg(feature = "std")]
+    pub(super) cp_proof: Option<super::CpProof>,
 }
 impl core::fmt::Debug for UserState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -26,6 +34,16 @@ impl core::fmt::Debug for UserState {
 impl UserState {
     pub(super) fn active(&self) -> bool {
         self.manager.num_propagators() != 0
+    }
+
+    fn record(&mut self, conclusion: TermId, premises: &[TermId]) {
+        if !self.recording {
+            return;
+        }
+        let key = (conclusion, premises.to_vec());
+        if self.lemma_keys.insert(key.clone()) {
+            self.proof_lemmas.push(key);
+        }
     }
 
     fn certificate_valid(&self, consequence: &Consequence) -> bool {
@@ -55,6 +73,15 @@ impl UserState {
 }
 
 impl Solver {
+    #[cfg(not(feature = "std"))]
+    pub(super) fn certify_cp_result(
+        &mut self,
+        _: SolverResult,
+        _: &mut TermManager,
+    ) -> SolverResult {
+        SolverResult::Unknown
+    }
+
     /// Register a trusted Boolean user propagator before the first check and
     /// outside any assertion scope. Watches and their negations form the allowed
     /// explanation/consequence vocabulary; `false` denotes conflict.
@@ -96,6 +123,7 @@ impl Solver {
             self.user_state.manager.watch_term(term);
         }
         self.user_state.manager.register_propagator(propagator);
+        self.user_state.unproved_callbacks += 1;
         Ok(())
     }
 
@@ -106,16 +134,43 @@ impl Solver {
         model: nixie_theories::cp::CpModel,
         tm: &mut TermManager,
     ) -> Result<(), nixie_theories::cp::CpError> {
+        let original = model.statement();
         let tables = model.table_statements();
         let domains = model.domain_statements();
         let (assertions, watches, propagator) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)?;
+        self.user_state.unproved_callbacks -= 1;
+        self.user_state.cp_originals.push(original);
         self.user_state.tables.extend(tables);
         self.user_state.domains.extend(domains);
+        let before = self.certificate_assertions.len();
         for assertion in assertions {
             self.assert(assertion, tm);
         }
+        self.user_state
+            .cp_assertion_indices
+            .extend(before..self.certificate_assertions.len());
         Ok(())
+    }
+
+    // CP-generated inputs are reconstructed from declarations in a proof, not
+    // imported from the main solver's assertion ledger. Registrations happen
+    // at root, so these positions survive every legal assertion pop.
+    pub(super) fn cp_user_assertions(&self) -> Vec<TermId> {
+        self.certificate_assertions
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.user_state.cp_assertion_indices.contains(i))
+            .map(|(_, &term)| term)
+            .collect()
+    }
+
+    pub(super) fn certification_roots(&self) -> Vec<TermId> {
+        let mut roots = self.certificate_assertions.clone();
+        for original in &self.user_state.cp_originals {
+            roots.extend_from_slice(original.assertions());
+        }
+        roots
     }
 
     // Independent model gate, including all specialized solver early exits.
@@ -205,6 +260,8 @@ impl<'a, T: TheoryCallback> UserCallback<'a, T> {
             return TheoryCheckResult::Sat;
         }
         for consequence in consequences {
+            self.state
+                .record(consequence.term, &consequence.justification);
             let mut reasons: SmallVec<[Lit; 8]> = SmallVec::new();
             for term in consequence.justification {
                 if term == self.true_term {
@@ -320,6 +377,7 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
                 }
                 clause.push(!lit);
             }
+            self.state.record(self.false_term, reasons);
             return TheoryCheckResult::Conflict(clause);
         }
         if matches!(propagated, TheoryCheckResult::Sat) && result == PropagatorResult::Unknown {

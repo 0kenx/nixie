@@ -114,6 +114,9 @@ pub use nelson_oppen::{NelsonOppenCombiner, NelsonOppenStats, TermTheory, Theory
 #[cfg(feature = "std")]
 pub use nixie_proof::replay::VerificationResult;
 pub use optimization::{Objective, ObjectiveKind, OptimizationResult, Optimizer, ParetoPoint};
+#[cfg(feature = "std")]
+pub use solver::{CpLemma, CpProof};
+
 pub use solver::{
     CertificationMode, Model, Proof, ProofStep, Solver, SolverConfig, SolverResult, TheoryMode,
 };

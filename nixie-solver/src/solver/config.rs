@@ -48,6 +48,10 @@ impl Solver {
     /// was off (there is no core to hand over afterwards) or before a new random
     /// seed was supposed to perturb which model comes back.
     pub(super) fn settings_changed(&mut self) {
+        #[cfg(feature = "std")]
+        {
+            self.user_state.cp_proof = None;
+        }
         self.settings_epoch = self.settings_epoch.wrapping_add(1);
         self.certification_failure = None;
         self.last_check = None;

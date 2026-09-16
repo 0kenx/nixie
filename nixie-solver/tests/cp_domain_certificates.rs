@@ -129,7 +129,7 @@ fn reset_revokes_domain_statement_authority() {
     assert_eq!(solver.check(&mut tm), SolverResult::Unknown);
 }
 #[test]
-fn domain_certificates_do_not_enable_incomplete_unsat_proof_export() {
+fn domain_certificates_now_have_complete_unsat_proof_export() {
     let mut tm = TermManager::new();
     let (cp, a, b) = pair(&mut tm);
     let mut solver = Solver::with_config(SolverConfig {
@@ -139,8 +139,14 @@ fn domain_certificates_do_not_enable_incomplete_unsat_proof_export() {
     solver.register_cp(cp, &mut tm).unwrap();
     solver.assert(a, &mut tm);
     solver.assert(b, &mut tm);
-    assert_eq!(solver.check(&mut tm), SolverResult::Unknown);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
     assert!(solver.get_proof().is_none());
+    let (originals, assertions) = solver.cp_proof_inputs();
+    solver
+        .get_cp_proof()
+        .unwrap()
+        .check(&originals, &assertions, &mut tm, 10_000_000)
+        .unwrap();
 }
 
 #[test]

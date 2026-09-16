@@ -146,10 +146,29 @@ fn integer_binding_combines_with_arithmetic() {
     cp.bind_integer(x, xi, &mut tm).unwrap();
     cp.bind_integer(y, yi, &mut tm).unwrap();
     cp.alldifferent(vec![x, y]).unwrap();
-    let mut solver = Solver::new();
+    let mut solver = Solver::with_config(nixie_solver::SolverConfig::default().certified());
     solver.register_cp(cp, &mut tm).unwrap();
     solver.assert(tm.mk_eq(xi, yi), &mut tm);
-    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+    assert_eq!(
+        solver.check(&mut tm),
+        SolverResult::Unsat,
+        "{:?}",
+        solver.certification_failure()
+    );
+    let (originals, assertions) = solver.cp_proof_inputs();
+    solver
+        .get_cp_proof()
+        .unwrap()
+        .check(&originals, &assertions, &mut tm, 10_000_000)
+        .unwrap();
+    let mut incomplete = solver.get_cp_proof().unwrap().clone();
+    assert!(!incomplete.theory_lemmas.is_empty());
+    incomplete.theory_lemmas.clear();
+    assert!(
+        incomplete
+            .check(&originals, &assertions, &mut tm, 10_000_000)
+            .is_err()
+    );
 }
 
 #[test]
@@ -293,7 +312,7 @@ fn registration_lifecycle_reset_and_certification() {
         ..Default::default()
     });
     solver.register_cp(CpModel::new(&tm), &mut tm).unwrap();
-    assert_eq!(solver.check(&mut tm), SolverResult::Unknown);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     assert!(solver.get_proof().is_none());
 }
 
