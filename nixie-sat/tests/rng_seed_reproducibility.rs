@@ -84,3 +84,50 @@ fn different_seeds_move_the_trajectory() {
          moves the counters cannot support seed replication"
     );
 }
+
+#[test]
+fn restart_strategy_is_live_under_stabilization() {
+    // 2026-09-16 wiring regression: `restart_strategy` was unreachable under
+    // `enable_stabilize` (every preset sets it), making the whole knob facade.
+    // It now selects the focused-mode firing rule. Glucose is the config
+    // default and must keep the EMA rule; Luby must produce a *different*
+    // trajectory (the legacy cadence) — identical counters would mean the
+    // knob went inert again.
+    // 300 vars / 1200 clauses (ratio 4.0): ~2-5 k conflicts — enough
+    // restart activity for the strategies to diverge (verified: Glucose
+    // 5516 vs Luby 2114 conflicts), solves in ~0.1 s.  The 160-var
+    // instance above finishes in 25 conflicts without ever restarting.
+    let text = lcg_cnf(99, 300, 1200);
+    let glucose = solve_with_config_strategy(&text, nixie_sat::RestartStrategy::Glucose);
+    let luby = solve_with_config_strategy(&text, nixie_sat::RestartStrategy::Luby);
+    assert_eq!(
+        glucose.0, luby.0,
+        "verdict must not depend on the restart strategy here"
+    );
+    assert_ne!(
+        (glucose.1, glucose.2),
+        (luby.1, luby.2),
+        "Luby vs Glucose must reshape the trajectory under stabilization — \
+         identical counters mean `restart_strategy` is inert again"
+    );
+}
+
+fn solve_with_config_strategy(
+    text: &str,
+    strategy: nixie_sat::RestartStrategy,
+) -> (SolverResult, u64, u64) {
+    use nixie_sat::{DimacsParser, Solver, SolverConfig};
+    use std::io::Cursor;
+    let cfg = SolverConfig {
+        restart_strategy: strategy,
+        ..SolverConfig::default()
+    };
+    let mut sat = Solver::with_config(cfg);
+    let mut parser = DimacsParser::new();
+    parser
+        .parse_reader(Cursor::new(text.as_bytes()), &mut sat)
+        .unwrap_or_else(|e| panic!("parse: {e}"));
+    let result = sat.solve();
+    let st = sat.stats();
+    (result, st.decisions, st.conflicts)
+}

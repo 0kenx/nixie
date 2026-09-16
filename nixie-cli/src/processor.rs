@@ -735,7 +735,7 @@ fn process_single_file(
             // balanced/thorough/minimal) configure `Context` options the
             // fast path never consults: honoring one here would be a
             // silent no-op, so reject it as a per-file error instead.
-            let sat_config = match args.preset.as_deref().map(crate::parse_preset) {
+            let mut sat_config = match args.preset.as_deref().map(crate::parse_preset) {
                 Some(Ok(crate::CliPreset::Sat(p))) => p.config(),
                 Some(Ok(crate::CliPreset::Smt(_))) => {
                     let msg = format!(
@@ -767,6 +767,35 @@ fn process_single_file(
                     ..nixie_sat::SolverConfig::default()
                 },
             };
+            // Config-decomposition knobs (cnf_bench-parity, benchmarking
+            // use only): apply on top of whatever base the preset chose, so
+            // individual heuristic components can be isolated from the CLI
+            // exactly like `BVE=`/`RESTART=` isolate them in cnf_bench.
+            // (No `cfg(feature = "std")` here: nixie-cli does not declare a
+            // `std` feature, so that gate compiled this block out entirely —
+            // the knobs silently did nothing.)
+            {
+                if let Ok(v) = std::env::var("NIXIE_SAT_BVE") {
+                    sat_config.enable_bve = v != "0";
+                }
+                if let Ok(v) = std::env::var("NIXIE_SAT_RESTART") {
+                    sat_config.restart_strategy = match v.as_str() {
+                        "glucose" => nixie_sat::RestartStrategy::Glucose,
+                        "luby" => nixie_sat::RestartStrategy::Luby,
+                        "geometric" => nixie_sat::RestartStrategy::Geometric,
+                        "locallbd" => nixie_sat::RestartStrategy::LocalLbd,
+                        _ => sat_config.restart_strategy,
+                    };
+                }
+                if std::env::var("NIXIE_SAT_STABLE_POLARITY").as_deref() == Ok("0") {
+                    sat_config.random_polarity_prob_stable = Some(0.0);
+                }
+                if let Ok(v) = std::env::var("NIXIE_SAT_DELETION")
+                    && let Ok(n) = v.parse::<u64>()
+                {
+                    sat_config.clause_deletion_threshold = n as usize;
+                }
+            }
             let mut sat = nixie_sat::Solver::with_config(sat_config);
             // `NIXIE_SAT_SEED=<u64>`: seed replication for benchmarking
             // (docs/BENCHMARKING.md - a single trajectory is one sample of

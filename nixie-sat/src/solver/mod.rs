@@ -893,7 +893,12 @@ impl Default for SolverConfig {
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
             random_polarity_prob_stable: None,
-            restart_strategy: RestartStrategy::Luby,
+            // Glucose, not Luby: since the strategy was wired into the
+            // stabilized schedule's focused rule (2026-09-16), this default
+            // must be the strategy that rule implements (the EMA condition)
+            // so the historical default trajectory is preserved bit-for-bit;
+            // Luby here would switch focused restarts to the luby cadence.
+            restart_strategy: RestartStrategy::Glucose,
             // Off by default: the lazy hyper-binary derivation in
             // `check_hyper_binary_resolution` is not currently sound.  Its learned
             // binaries go straight into the binary implication graph, where they

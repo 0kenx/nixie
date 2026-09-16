@@ -1908,36 +1908,54 @@ impl Solver {
                     slow > 0.0 && fast >= margin * slow
                 }
             } else {
-                // Focused Glucose: check every 2 conflicts.
-                if self.stats.conflicts < self.lim_restart {
-                    false
-                } else {
-                    self.lim_restart = self.stats.conflicts.saturating_add(2);
-                    let slow = self.glue_current.slow.value();
-                    let fast = self.glue_current.fast.value();
-                    // 10% margin (cadical restartmarginfocused); guard against
-                    // the all-zero initial state.
-                    let margin = if focused_adaptive_enabled() {
-                        adaptive_margin(self.dec_conf_ema)
-                    } else {
-                        focused_restart_margin()
-                    };
-                    let glucose = slow > 0.0 && fast >= margin * slow;
-                    if glucose && focused_margin_null_enabled() {
-                        // Matched null v2: every-k-th pass of the UNTOUCHED
-                        // 1.10-margin condition (`NIXIE_FOCUSED_FIRE_EVERY=k`,
-                        // default 20 - the treatment's measured rate-reduction
-                        // family). Same restart-count reduction as the margin
-                        // treatment, no EMA information in WHICH passes fire.
-                        // v1 (scrambled-reference) was magnitude-broken: a
-                        // full-variance reference fires at the base rate
-                        // (j3037 null 33k restarts vs treatment 1.4k) and is
-                        // not a null at all - see the study.
-                        self.glue_null_pos = self.glue_null_pos.wrapping_add(1);
-                        self.glue_null_pos
-                            .is_multiple_of(focused_fire_every() as usize)
-                    } else {
-                        glucose
+                // Focused-mode rule is selected by `restart_strategy`
+                // (wired 2026-09-16; before this the knob was unreachable
+                // under `enable_stabilize` — every preset sets it, so the
+                // whole config surface was facade).  Glucose/LocalLbd keep
+                // the EMA rule bit-for-bit; Luby/Geometric fall back to the
+                // legacy conflict-threshold cadence that `decide.rs`'s
+                // per-strategy bookkeeping already maintains — so the
+                // MiniSAT/Glucose-era semantics are real again inside the
+                // stabilized schedule.
+                match self.config.restart_strategy {
+                    RestartStrategy::Glucose | RestartStrategy::LocalLbd => {
+                        // Focused Glucose: check every 2 conflicts.
+                        if self.stats.conflicts < self.lim_restart {
+                            false
+                        } else {
+                            self.lim_restart = self.stats.conflicts.saturating_add(2);
+                            let slow = self.glue_current.slow.value();
+                            let fast = self.glue_current.fast.value();
+                            // 10% margin (cadical restartmarginfocused); guard
+                            // against the all-zero initial state.
+                            let margin = if focused_adaptive_enabled() {
+                                adaptive_margin(self.dec_conf_ema)
+                            } else {
+                                focused_restart_margin()
+                            };
+                            let glucose = slow > 0.0 && fast >= margin * slow;
+                            if glucose && focused_margin_null_enabled() {
+                                // Matched null v2: every-k-th pass of the
+                                // UNTOUCHED 1.10-margin condition
+                                // (`NIXIE_FOCUSED_FIRE_EVERY=k`, default 20 -
+                                // the treatment's measured rate-reduction
+                                // family). Same restart-count reduction as the
+                                // margin treatment, no EMA information in
+                                // WHICH passes fire. v1 (scrambled-reference)
+                                // was magnitude-broken: a full-variance
+                                // reference fires at the base rate (j3037 null
+                                // 33k restarts vs treatment 1.4k) and is not a
+                                // null at all - see the study.
+                                self.glue_null_pos = self.glue_null_pos.wrapping_add(1);
+                                self.glue_null_pos
+                                    .is_multiple_of(focused_fire_every() as usize)
+                            } else {
+                                glucose
+                            }
+                        }
+                    }
+                    RestartStrategy::Luby | RestartStrategy::Geometric => {
+                        self.stats.conflicts >= self.restart_threshold
                     }
                 }
             }
