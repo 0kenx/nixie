@@ -2085,14 +2085,38 @@ impl Simplex {
                                 declined = true;
                                 break;
                             }
-                            let bound_kind = if let (Some(val), Some(hi)) = (
-                                self.assignment.get(idx),
-                                self.upper.get(idx).and_then(|o| o.as_ref()),
-                            ) && val > &hi.value
-                            {
-                                BoundType::Upper
-                            } else {
-                                BoundType::Lower
+                            // The violated side must be read from the EXACT
+                            // evaluation, never the stored entry: a wide
+                            // basic's entry is stale BY DESIGN whenever its
+                            // exact value does not narrow (the wide pass only
+                            // stores narrowing values), so the entry-based
+                            // inference picked the wrong side on exactly
+                            // those rows — every repair then searched the
+                            // reversed direction, found no eligible column,
+                            // and declined a repairable row.
+                            let bound_kind = match self.eval_big_raw(&wexpr) {
+                                Some((real, delta)) => {
+                                    let above_upper =
+                                        self.upper.get(idx).and_then(|o| o.as_ref()).is_some_and(
+                                            |hi| match real.cmp(&big_r64(&hi.value.real)) {
+                                                core::cmp::Ordering::Equal => {
+                                                    delta > big_r64(&hi.value.delta)
+                                                }
+                                                core::cmp::Ordering::Greater => true,
+                                                core::cmp::Ordering::Less => false,
+                                            },
+                                        );
+                                    if above_upper {
+                                        BoundType::Upper
+                                    } else {
+                                        BoundType::Lower
+                                    }
+                                }
+                                None => {
+                                    // Undecidable evaluation: the classification's
+                                    // `None` arm below owns this row.
+                                    BoundType::Lower
+                                }
                             };
                             let Some(entering) = self.find_wide_pivot_col(
                                 &wexpr,
@@ -3765,6 +3789,17 @@ impl Simplex {
         };
         let mut min = End(BR::zero(), BR::zero());
         let mut max = End(BR::zero(), BR::zero());
+        // An unbounded side makes THAT side's disjointness test vacuous
+        // (−∞ is never above an upper; +∞ never below a lower) — it must
+        // NOT bail the whole refutation: the OTHER side can still prove
+        // it.  The old early `return None` on any unbounded endpoint
+        // discarded valid refutations whenever the row had one free
+        // column in the irrelevant direction (measured: `v2 = v1 + c`,
+        // `v1 ≥ 0` unbounded above, `v2 ≤ 0` — the min side alone
+        // refutes; the unbounded max side hid it and the check declined
+        // an LP-infeasible goal to `unknown`).
+        let mut min_unbounded = false;
+        let mut max_unbounded = false;
         let mut reasons: Vec<u32> = Vec::new();
         let collect = |e: Option<&Bound>, reasons: &mut Vec<u32>| {
             if let Some(b) = e {
@@ -3809,7 +3844,7 @@ impl Simplex {
                         acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
                     }
                 }
-                None => return None, // unbounded below: range reaches -∞
+                None => min_unbounded = true, // range reaches -∞ on this side
             }
             match max_src {
                 Some(e) => {
@@ -3819,7 +3854,7 @@ impl Simplex {
                         acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
                     }
                 }
-                None => return None, // unbounded above
+                None => max_unbounded = true, // unbounded above
             }
         }
         // The basic's bounds; the violated direction decides disjointness.
@@ -3835,6 +3870,7 @@ impl Simplex {
             }
         };
         if let Some(hi) = bhi
+            && !min_unbounded
             && cmp_end(
                 &min,
                 &End(big_r64(&hi.value.real), big_r64(&hi.value.delta)),
@@ -3845,6 +3881,7 @@ impl Simplex {
             return Some(reasons);
         }
         if let Some(lo) = blo
+            && !max_unbounded
             && cmp_end(
                 &max,
                 &End(big_r64(&lo.value.real), big_r64(&lo.value.delta)),

@@ -1712,3 +1712,47 @@ fn pop_resnaps_a_nonbasic_left_outside_its_restored_window() {
     // And the system still solves (no phantom violation from the stale 0).
     assert!(s.check().is_ok());
 }
+
+// Regression (2026-09-17, the unsat-side gap's wide-classification
+// members): `wide_row_refuted_by_bounds` bailed (`return None`) whenever
+// ANY achievable-range endpoint was unbounded — including the side
+// irrelevant to the violation.  `v2 = v1 + c` with `v1 >= 0` (unbounded
+// above) and `v2 <= 0`: the MIN side alone refutes (`min = c > 0 =
+// upper`), but the unbounded MAX side hid it, the repair found no
+// eligible column (the only column sits at its lower), and the whole
+// check declined an LP-infeasible goal to `unknown`.  Unboundedness now
+// makes only ITS side's test vacuous.
+#[test]
+fn wide_row_refutation_survives_an_unbounded_irrelevant_side() {
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+    let mut s = Simplex::new();
+    let v1 = s.new_var();
+    let v2 = s.new_var();
+    // v2 (wide basic) = v1 + 2305843009213693941;  v1 ∈ [0, ∞); v2 ≤ 0.
+    let c = BigRational::from_integer(BigInt::from(2_305_843_009_213_693_941i64));
+    s.wide_rows.insert(
+        v2,
+        BigLinExpr {
+            terms: vec![(v1, BigRational::from_integer(BigInt::from(1)))],
+            constant: c,
+        },
+    );
+    s.column_push_known(v1, v2);
+    let hi_var = v1.max(v2);
+    s.basic.resize(hi_var as usize + 1, false);
+    s.basic[v2 as usize] = true;
+    s.set_lower(v1, Rational64::zero(), 1);
+    s.set_upper(v2, Rational64::zero(), 2);
+    // The violated row (v2 = c > 0 = its upper) must REFUTE through the
+    // min side: {v1's lower, v2's upper} force v2 >= c > 0.
+    let verdict = s.check();
+    assert!(
+        verdict.is_err(),
+        "the row system is infeasible (v1 >= 0 forces v2 = v1 + c > 0 = upper): {verdict:?}"
+    );
+    assert!(
+        !s.resource_limit_reached(),
+        "an unbounded irrelevant side must not turn a refutation into a decline"
+    );
+}

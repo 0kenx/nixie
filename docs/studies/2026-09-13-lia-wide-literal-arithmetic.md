@@ -1686,3 +1686,32 @@ Verification: workspace 11 909 green except the env self-test; gates
 clean; parity 176/177, 0 disagreements (z3 4.16.0); wide 3×300 + mixed
 3×400 fresh seeds (20261040–20261045) clean; perf gate PASS
 (bit-identical counters); the survey rerun on the same seeds.
+
+## Continuation 31 (2026-09-17): the wide-row refutation's unbounded-side bail (item 66)
+
+66. **Two coordination defects in the wide classification, fixed.**  The
+    unsat-side gap's wide-classification members (item 64's map, the
+    largest site) minimized to `xi <= -2.3e18 ∧ xi >= -14` — refutable
+    at the LP level with no B&B at all, yet declined to `unknown`:
+    * `wide_row_refuted_by_bounds` bailed (`return None`) whenever ANY
+      achievable-range endpoint was unbounded — including the side
+      IRRELEVANT to the violation.  `v2 = v1 + c` with `v1 >= 0`
+      (unbounded above) and `v2 <= 0`: the MIN side alone refutes
+      (`min = c > 0 = upper`), but the unbounded MAX side hid it.
+      Unboundedness now makes only ITS side's disjointness test vacuous.
+    * the repair step's `bound_kind` inference read the STORED
+      assignment entry — stale BY DESIGN for a wide basic whose exact
+      value does not narrow — so the repair searched the reversed
+      direction and found no eligible column.  The violated side is now
+      read from the EXACT evaluation (`eval_big_raw`, lexicographic).
+    * Measured: the unsat-side gap 11 → 7 on the same seeds; regression
+      `wide_row_refutation_survives_an_unbounded_irrelevant_side` (the
+      pinned contract — the pre-fix pass runs a slower repair route,
+      the survey delta is the load-bearing evidence).  The remaining 7:
+      the B&B node budget (1), the pivot budget (1), the honest
+      `i64::MIN` corner (4), one outer.
+
+Verification: workspace 11 920 green except the env self-test; gates
+clean; parity 176/177, 0 disagreements (z3 4.16.0); wide 2×300 + mixed
+2×400 fresh seeds (20261050–20261053) clean; perf gate PASS
+(bit-identical counters); the survey rerun on the same seeds.
