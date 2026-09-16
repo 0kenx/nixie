@@ -545,3 +545,46 @@ Verification: quant_fuzz seeds {41..46} x 150 CLEAN (the canary fired
 *within* the battery's development loop); parity 176 Correct / 1
 Inconclusive / 0 wrong (z3 4.16.0); 4767/4771 (wisas pre-existing);
 fmt/clippy clean.
+
+
+## The witness pins exist; the antecedent still folds (2026-09-16, ninth follow-up — handoff)
+
+Landed this session: `ceca2d31` (the `p => p` collapse) is on `main`
+(via `d2a83f3f`).  The remaining blocker chain, resolved to one
+concrete puzzle:
+
+1. **The forcing works end to end.**  The skolemized axiom 2 is a
+   tracked quantifier; its `(b, a)` instance landed; the ground solver
+   pinned the witness — `member(skf!0(b,a), b) = true ∧
+   member(skf!0(b,a), a) = false` — visible in **94 rounds'** worth of
+   completions.  The escalation admits the skf terms (12-element
+   domain confirmed by the `[quant]` probe).
+
+2. **The puzzle**: with those pins, axiom 3's antecedent
+   (`∀x. member(x,s1) => member(x,s2)`, expanded over the 12-element
+   domain, each disjunct a chain-implication over symbolic `?s1/?s2`)
+   must read FALSE at `(b, a)` — the skf disjunct is `true => false`.
+   Instead, q20's completed body' collapses to the tiny
+   `(ite (and (= ?s1 a) (= ?s2 a)) true (and (= ?s1 b) (= ?s2 b)))`
+   — the antecedent is gone, the body' is falsifiable at `(b, a)`
+   through its else-reading, and the aux verdict stays `Sat`.
+
+   The next cycle ties that tiny term to its construction path: it
+   looks like the antecedent's 12 chain-implications folded into a
+   two-point equality table (or the subset-hint's own symbolic psi
+   became the chain's else-leaf).  Instrumentation that is proven to
+   work, all print-only:
+   - `[quant]` (the Quant frame's first-tuple dump: tuples count +
+     first disjunct) — the expansion runs 12-tuple post-thaw;
+   - `[skf-pin]` (member/subset entries with skf args) — the witness
+     pins, every round;
+   - `[late-body']` (short/quantifier-carrying completed bodies) —
+     where the tiny term appears;
+   - the aux falsifying-assignment dump (merge exploit era) — for the
+     aux-side view of the same check.
+
+Disk note (2026-09-16): `/media/data` hit 99% during this session —
+the concurrent arcs' worktrees (`/tmp/sets-arc` 132 G, shared `target`
+106 G, `outputs/` 70 G) plus this arc's builds.  This arc's artifacts
+are cleaned (only its precompile entries remain, ~100 M); the next
+agent should budget builds carefully and re-run `git worktree prune`.
