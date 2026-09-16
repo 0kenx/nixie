@@ -906,3 +906,30 @@ fn wide_model_value_publishes_exactly_and_decides_sat() {
         "the published model value must be the EXACT rational (numerator          -27670116110564327424 over 13), not a default or a floor: {value:?}"
     );
 }
+
+/// The B&B dead-leaf class (2026-09-17, the unsat-side gap survey's dive
+/// site): `11·xi = 7` written through a `div`-by-1 feed — the search
+/// branches to an all-integral candidate whose LP point is feasible, but
+/// the leaf probe (`state_feasible`) re-derives through the bound-snap
+/// `crash_basis` — a CRUDE point, not the search's vertex — lands outside
+/// the windows, and the old code unwound the WHOLE search to `unknown`.
+/// The leaf now re-solves (converging repairs the crude point; a
+/// refutation is a DEAD BRANCH whose backtrack tries the siblings, and an
+/// all-dead tree answers `unsat`).
+#[test]
+fn bnb_dead_leaf_backtracks_instead_of_unwinding_unknown() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xi Int)\n\
+             (assert (= (* -1 xi) (+ 1 -8 (div (* 10 xi) 1))))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "unsat",
+        "xi = 7/11 is not integral (z3: unsat); `unknown` unwinds a repairable leaf"
+    );
+}

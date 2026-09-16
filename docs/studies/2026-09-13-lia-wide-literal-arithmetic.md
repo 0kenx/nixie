@@ -1654,3 +1654,35 @@ self-test (the timeouts were load artifacts — load 77–106 through the
 runs); gates clean; parity 176/177, 0 disagreements (z3 4.16.0); wide
 2×300 + mixed 3×400 fresh seeds (20261030–20261034) clean; perf gate
 PASS (bit-identical counters).
+
+## Continuation 30 (2026-09-17): the B&B dead-leaf backtrack (item 65)
+
+65. **The dive/leaf `state_feasible` decline, fixed at the leaf.**  The
+    unsat-side gap's dive site (item 64's map, 3 members; minimized to
+    `11·xi = 7` written through a `div`-by-1 feed): the search branches
+    to an all-integral candidate whose LP point IS feasible, but the
+    leaf probe (`state_feasible`) re-derives through the bound-snap
+    `crash_basis` — a CRUDE point, not the search's vertex — lands
+    outside the windows, and the old code unwound the WHOLE search to
+    `unknown` ("Infeasible here is not a leaf").  The honest reading:
+    the leaf needs a REPAIR.  The leaf arm now runs a full
+    `simplex.check()` — a converging repair snapshots the model (`Sat`
+    leaf), a refutation is a DEAD BRANCH whose backtrack tries the
+    siblings (an all-dead tree answers `Unsat`), and the pivot budget
+    keeps the honest `Unknown`.  The dead-leaf fall-through delivers
+    the all-dead outcome to the existing unwind loop (identical to both
+    branches having been tried and refuted).
+    * Measured: the survey gap moved 196 → 181 on the same seeds — the
+      unsat-side 15 → 13 AND the sat-side 183 → 168 (feasible integral
+      leaves that used to hit the crude-point violation now
+      repair-and-snapshot instead of declining).  Regression:
+      `bnb_dead_leaf_backtracks_instead_of_unwinding_unknown` (fails
+      pre-fix).
+    * The remaining 13 unsat-side members: the wide-classification
+      decline and pivot-budget sites of item 64's map (the campaign's
+      residual targets).
+
+Verification: workspace 11 909 green except the env self-test; gates
+clean; parity 176/177, 0 disagreements (z3 4.16.0); wide 3×300 + mixed
+3×400 fresh seeds (20261040–20261045) clean; perf gate PASS
+(bit-identical counters); the survey rerun on the same seeds.

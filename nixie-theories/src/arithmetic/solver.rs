@@ -2677,6 +2677,7 @@ impl ArithSolver {
                 return Ok(TheoryResult::Unknown);
             }
             *nodes += 1;
+            let mut dead_leaf = false;
             let (var, floor_v, ceil_v) = match self.find_fractional_int_var(int_vars) {
                 Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
                 Some(FracVar::Underivable) => {
@@ -2691,25 +2692,78 @@ impl ArithSolver {
                     return Ok(TheoryResult::Unknown);
                 }
                 None => {
-                    // A fully integral, feasible leaf — see the dive's base
-                    // case for why a fresh probe is required before a snapshot
-                    // is trusted.  Infeasible here is not a leaf: unwinding to
-                    // `Unknown` keeps the verdict honest.  (An underivable
-                    // wide-basic integer value reports as `Underivable` above,
-                    // so this acceptance never rests on a fabricated entry.)
-                    if !self.simplex.state_feasible() {
-                        for _ in 0..stack.len() {
-                            self.simplex.pop();
+                    // A fully integral candidate — see the dive's base case
+                    // for why a fresh feasibility pass is required before a
+                    // snapshot is trusted: sibling pops leave the flag down,
+                    // and `state_feasible`'s re-derivation (a bound-snap
+                    // `crash_basis`, a CRUDE point — not the search's
+                    // feasible vertex) can land outside the windows even
+                    // though the LP this node branched into was feasible.
+                    // The old code read that crude point's violation as
+                    // "infeasible leaf" and unwound the WHOLE search to
+                    // `Unknown`; the honest reading is "the leaf needs a
+                    // repair": re-solve (the repair from the crude point
+                    // converges when the node's LP is feasible), and treat a
+                    // refutation as a DEAD BRANCH — the backtrack loop then
+                    // tries the siblings, and an all-dead tree is `Unsat`
+                    // (the `11·xi = 7` gap class: three-disjunct div/mod
+                    // unsat-side members answered `unknown` here).
+                    match self.simplex.check() {
+                        Ok(()) if !self.simplex.resource_limit_reached() => {
+                            self.snapshot_lia_model(int_vars);
+                            for _ in 0..stack.len() {
+                                self.simplex.pop();
+                            }
+                            return Ok(TheoryResult::Sat);
                         }
-                        return Ok(TheoryResult::Unknown);
+                        Ok(()) => {
+                            // Pivot budget: honest Unknown, never a Sat.
+                            for _ in 0..stack.len() {
+                                self.simplex.pop();
+                            }
+                            return Ok(TheoryResult::Unknown);
+                        }
+                        Err(_) => {
+                            // Genuinely dead leaf: fall into the unwind
+                            // loop (it pops this node's scope and tries the
+                            // ancestors' siblings; an exhausted tree
+                            // answers Unsat).
+                            dead_leaf = true;
+                            (0, 0, 0)
+                        }
                     }
-                    self.snapshot_lia_model(int_vars);
-                    for _ in 0..stack.len() {
-                        self.simplex.pop();
-                    }
-                    return Ok(TheoryResult::Sat);
                 }
             };
+            if dead_leaf {
+                // The leaf took no branches: deliver the all-dead outcome
+                // for THIS subtree straight to the unwind loop (identical
+                // to both branches having been tried and refuted).
+                let mut outcome = TheoryResult::Unsat(self.bnb_unsat_core());
+                loop {
+                    let Some(mut frame) = stack.pop() else {
+                        return Ok(outcome);
+                    };
+                    self.simplex.pop();
+                    frame.saw_unknown |= matches!(outcome, TheoryResult::Unknown);
+                    if !frame.up_done {
+                        let ceil_v = frame.ceil;
+                        let mut saw = frame.saw_unknown;
+                        if take_branch(self, frame.var, ceil_v, false, &mut saw) {
+                            frame.up_done = true;
+                            frame.saw_unknown = saw;
+                            stack.push(frame);
+                            break;
+                        }
+                        frame.saw_unknown = saw;
+                    }
+                    outcome = if frame.saw_unknown {
+                        TheoryResult::Unknown
+                    } else {
+                        TheoryResult::Unsat(self.bnb_unsat_core())
+                    };
+                }
+                continue;
+            }
             let mut saw_unknown = false;
 
             // Branch down: var <= floor(value).
