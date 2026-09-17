@@ -682,12 +682,23 @@ fn unsupported_bag_ops_reject_honestly() {
     let out = context.execute_script(
         "(set-logic ALL)\n\
          (declare-const b (Bag Int))\n\
-         (declare-fun f (Int) Int)\n\
+         (declare-fun f (Int Int) Int)\n\
          (assert (= (bag.map f b) b))\n",
     );
     assert!(
         out.is_err(),
-        "bag.map is a parse-level rejection until function handling lands"
+        "bag.map with a non-unary function is a parse error"
+    );
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const b (Bag Int))\n\
+         (declare-fun g (Int) Int)\n\
+         (assert (= (bag.fold g 0 b) 0))\n",
+    );
+    assert!(
+        out.is_err(),
+        "bag.fold is a parse-level rejection in this slice"
     );
 }
 
@@ -1236,4 +1247,215 @@ fn subbag_queries_fold_from_values() {
     // `(bag.subbag b b)` folds to `true` in the builder at parse, so the
     // query term *is* `true` and prints as itself.
     assert!(joined.contains("(true true)"), "{joined}");
+}
+
+// ===== bag.map / bag.filter =====
+
+/// `bag.map` end to end: a `define-fun`'s body is inlined per element
+/// (the parser's call-site substitution, so the reduction's images and the
+/// user's `(f x)` spellings are one term), a `declare-fun` symbol becomes
+/// an EUF application, the image cardinality is preserved exactly, and
+/// the unknown-support slack keeps opaque domains honest in *both*
+/// directions.
+#[test]
+fn map_counts_follow_the_function() {
+    // Defined function: `count(2, map (+1) (1:3)) = 3` — and no other
+    // element reaches 2.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (+ x 1))\n\
+             (assert (= (bag.count 2 (bag.map f (bag 1 3))) 3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (+ x 1))\n\
+             (assert (= (bag.count 5 (bag.map f (bag 1 3))) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // The builder must not mint `f(x)` applications for a defined
+    // function: `f = *2` sends 1 to 2, so `count(2, map f (1:2)) = 0`
+    // refutes. (Before the make/⊎ normalizations were dropped from the
+    // builder, this answered `sat` — the leaked uninterpreted app was
+    // free to differ from the definition.)
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (* x 2))\n\
+             (assert (= (bag.count 2 (bag.map f (bag 1 2))) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // A declared function is genuinely uninterpreted: any preimage works.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) Int)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 5 (bag.map f b)) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // Cardinality is preserved exactly: |map f b| = |b|.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (* x 2))\n\
+             (assert (= (bag.card (bag.map f (bag.union_disjoint (bag 1 2) (bag 2 1)))) 3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (* x 2))\n\
+             (assert (= (bag.card (bag.map f (bag.union_disjoint (bag 1 2) (bag 2 1)))) 4))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Collisions merge: `f = 5` maps everything to 5, so the image is the
+    // sum of the multiplicities.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int 5)\n\
+             (assert (= (bag.map f (bag.union_disjoint (bag 1 2) (bag 2 1))) (bag 5 3)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // EUF ties the application: `f 1 = 2` forces the image of 1 to 2.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) Int)\n\
+             (assert (= (bag.map f (bag 1 1)) (bag 1 1)))\n\
+             (assert (= (f 1) 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // An opaque domain's unknown support can map anywhere: the per-element
+    // slack keeps this *satisfiable* (a false `unsat` here is the worst
+    // class — the encoding claimed the unknown elements contribute
+    // nothing).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) Int)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 3 b) 0))\n\
+             (assert (= (bag.count 5 (bag.map f b)) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+/// `bag.filter`: `count(x, filter p b) = ite(p(x), count(x, b), 0)` —
+/// exact per element (filter only removes), `|filter p b| <= |b|`.
+#[test]
+fn filter_keeps_the_satisfying_elements() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (assert (= (bag.count 2 (bag.filter p (bag 2 3))) 3))\n\
+             (assert (= (bag.count 1 (bag.filter p (bag 1 3))) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // A rejected element's count stays: the identity is `ite`, not `0`.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (assert (= (bag.count 1 (bag.filter p (bag 1 3))) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // A declared predicate is uninterpreted: `count(3, filter p b) = 2`
+    // beside `count(3, b) = 0` refutes through the identity.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun p (Int) Bool)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 3 (bag.filter p b)) 2))\n\
+             (assert (= (bag.count 3 b) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // `|filter p b| <= |b|` bounds the unknown support.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun p (Int) Bool)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.card b) 2))\n\
+             (assert (= (bag.card (bag.filter p b)) 3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // filter is idempotent over a bag whose elements all satisfy p.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 0))\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.filter p b) b))\n\
+             (assert (= (bag.count 1 b) 2))\n\
+             (assert (= (bag.count 5 b) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+/// The model side: a map's value assembles from its counts, and the
+/// query-side get-value reads it.
+#[test]
+fn map_and_filter_models_answer() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int (+ x 1))\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 1 2) (bag 2 1))))\n\
+             (check-sat)\n\
+             (get-value ((bag.map f b) (bag.count 2 (bag.map f b))\n\
+                         (bag.count 3 (bag.map f b)) (bag.card (bag.map f b))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    // The chain's cell order is the domain value's; assert the cells, not
+    // the nesting.
+    assert!(
+        joined.contains("((bag.map f b) (bag.union_disjoint (bag 3 1) (bag 2 2)))"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("((bag.count 2 (bag.map f b)) 2)"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("((bag.count 3 (bag.map f b)) 1)"),
+        "{joined}"
+    );
+    assert!(joined.contains("((bag.card (bag.map f b)) 3)"), "{joined}");
 }

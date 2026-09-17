@@ -169,6 +169,21 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
                 Err(NixieError::Internal("Bag operand not found".to_string()))
             }
         }
+        // `bag.map f b` is a bag of `f`'s codomain — the sort the term
+        // carries, because a bare function symbol is not a term to infer
+        // from.
+        TermKind::BagMap { ret, .. } => manager
+            .sorts
+            .find(&SortKind::Bag(*ret))
+            .ok_or_else(|| NixieError::Internal("bag sort not found".to_string())),
+        // `bag.filter p b` keeps `b`'s own bag sort.
+        TermKind::BagFilter { bag, .. } => {
+            if let Some(t) = manager.get(*bag) {
+                Ok(t.sort)
+            } else {
+                Err(NixieError::Internal("Bag operand not found".to_string()))
+            }
+        }
         // `bag.choose` returns an element of the bag it chooses from
         // (the set.choose arm, over `SortKind::Bag`).
         TermKind::BagChoose(bag) => {

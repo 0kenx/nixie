@@ -1412,6 +1412,16 @@ impl Solver {
                 }
                 _ => Opened::Done(EvalOutcome::UNDETERMINED),
             },
+            // `bag.map`/`bag.filter` compounds: the model entry the bag pass
+            // assembles from the counts, or undetermined — never a guess.
+            TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
+                match model.get(term).map(|v| parse_value_term(v, manager)) {
+                    Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
+                        Opened::Done(parsed)
+                    }
+                    _ => Opened::Done(EvalOutcome::UNDETERMINED),
+                }
+            }
             // Bit-vector comparison atoms (`bvult`/`bvule`/`bvslt`/`bvsle`):
             // evaluate both operands concretely and fold, for the same reason
             // as the BV equality arm above.  These are Bool-sorted terms whose

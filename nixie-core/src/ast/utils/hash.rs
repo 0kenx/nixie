@@ -160,6 +160,19 @@ fn hash_visit(
         | TermKind::BagChoose(a)
         | TermKind::StrFromCode(a) => stack.push(HashTask::Visit(*a)),
 
+        // The function symbol (and `bag.map`'s codomain) are part of the
+        // term's identity: two maps under different functions over one bag
+        // are different bags.
+        TermKind::BagMap { func, ret, bag } => {
+            func.hash(hasher);
+            ret.0.hash(hasher);
+            stack.push(HashTask::Visit(*bag));
+        }
+        TermKind::BagFilter { pred, bag } => {
+            pred.hash(hasher);
+            stack.push(HashTask::Visit(*bag));
+        }
+
         TermKind::BvExtract { high, low, arg } => {
             high.hash(hasher);
             low.hash(hasher);

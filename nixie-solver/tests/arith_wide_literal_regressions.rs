@@ -968,4 +968,67 @@ fn div_by_one_folds_and_the_gcd_refutation_decides() {
     let mut s = Solver::new();
     s.assert(claim, &mut tm);
     assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+/// The item-69 false `unsat` (2026-09-18, seed-20261102 mixed-fuzz instance
+/// 17; bytes preserved under `docs/studies/assets/2026-09-18/`).  z3: `sat`;
+/// nixie answered `unsat` from the first commit that had the machinery
+/// (`5c8bf7a8`) through `ee8caf48`.
+///
+/// Root cause (the completion of study item 70's decode): the writer of the
+/// unsound `hi = 7/20` was `rehome_stranded_row_bounds` -> `copy_bounds`.
+/// The sweep re-interned a stranded slack's recorded form and copied the OLD
+/// slack's live bound VALUES onto the fresh row.  After a pivot consumed the
+/// old row, the fresh row renders the form through the *current* tableau -
+/// which resolved it as `(20/7)*old`, a RESCALED multiple of the old slack
+/// itself (the rescale factor item 70 fingered, dropped on exactly one side
+/// by the value copy) - while the old slack's propagated pin said
+/// `old = 7/20`.  The value-for-value copy then asserted `(20/7)*old = 7/20`
+/// un-translated, a constraint nobody derived; it crossed the sound
+/// `old = 7/20` derivation, and the crossing exported a SINGLETON conflict
+/// blaming one Euclidean `div`/`mod` identity axiom - a learned unit
+/// negated axiom that collapsed the search to `unsat`.
+///
+/// The sweep now only re-asserts the ATOM's own zero bound (scale-invariant,
+/// and only for slacks no live row references at all); the instance decides
+/// `sat`.
+#[test]
+fn rehome_does_not_fabricate_a_crossing_on_a_referenced_slack() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (and (not (or (= (mod (* 1 xi) 4) (div (- (+ 60 (* 2 xi) 20) 3) 3)) (not (and (>= (+ (+ (+ 2147483648 (* 3 xi) (* 3 xi)) (+ (* 2 xi) (* -1 xi) 62) (+ -92 (* -2 xi))) (+ (+ -2147483648 -4611686018427387904) (* 2 xi) (mod 5 7))) (mod (* 10 xi) 7)) (>= (mod (- (div (* 1 xi) 7) 2) 5) -6))) (not (or (> (mod (mod (* 3 xi) 5) 5) 71) (> (* 5 xi) 1) (< (+ (+ (+ (* 2 xi) (* 1 xi)) (+ -1 (* -2 xi) (* -1 xi)) (* 10 xi)) (+ (mod (* 2 xi) 1) (- (* 1 xi) 3) (+ 2 -5 6)) (* 10 xi)) (+ (+ (+ (* -2 xi) (* 2 xi)) (mod (* -2 xi) 1) -7) (+ (div (* 3 xi) 7) (+ (* 2 xi) (* 5 xi) (* 3 xi)))))))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the full instance is satisfiable (z3 model xi = 658812288346769706);          `unsat` is the item-69 fabricated singleton-conflict false refutation"
+    );
+}
+
+/// The same defect's TWO-disjunct core - the shape that still answered
+/// `unsat` when the handoff shrank it (D1 alone, D1+C1 and D1+C2 all decided
+/// correctly; the wrongness needed both C1 and C2).  Kept as a second pin so
+/// a future regression in either the stranding gate or the atom-bound
+/// re-assertion trips at the smaller shape too.
+#[test]
+fn rehome_false_unsat_seed_20261102_core_decides_sat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (not (or (= (mod (* 1 xi) 4) (div (- (+ 60 (* 2 xi) 20) 3) 3)) (not (and (>= (+ (+ (+ 2147483648 (* 3 xi) (* 3 xi)) (+ (* 2 xi) (* -1 xi) 62) (+ -92 (* -2 xi))) (+ (+ -2147483648 -4611686018427387904) (* 2 xi) (mod 5 7))) (mod (* 10 xi) 7)) (>= (mod (- (div (* 1 xi) 7) 2) 5) -6))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the two-disjunct core is satisfiable (z3: sat); `unsat` is the item-69 defect"
+    );
 }

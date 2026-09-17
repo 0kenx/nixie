@@ -1295,6 +1295,52 @@ impl TermManager {
         self.intern(TermKind::BagChoose(bag), sort)
     }
 
+    /// `(bag.map f b)` — the pointwise image. Only the empty fold happens
+    /// here (`map f ∅ = ∅(codomain)`): the make/⊎ normalizations of
+    /// CVC5's rewriter would mint `f(x)` applications, and for a
+    /// **defined** function that leaks an uninterpreted app the
+    /// definition never constrains — the parser inlines call sites, the
+    /// builder has no defs table, and `count(2, map f (1:2)) = 0` with
+    /// `f = *2` answered `sat` (CVC5: `unsat`) before this was dropped.
+    /// The reduction owns the per-element work with the defs table.
+    ///
+    /// `func` is the function's *name* (a bare symbol is not a term);
+    /// `ret` is the codomain sort: the image bag's element sort.
+    pub fn mk_bag_map(&mut self, func: &str, ret: SortId, bag: TermId) -> TermId {
+        let bag_sort = self.sorts.bag(ret);
+        if self.is_bag_empty(bag) {
+            return self.mk_bag_empty_at(bag_sort);
+        }
+        let func_spur = self.intern_str(func);
+        self.intern(
+            TermKind::BagMap {
+                func: func_spur,
+                ret,
+                bag,
+            },
+            bag_sort,
+        )
+    }
+
+    /// `(bag.filter p b)` — the satisfying sub-bag. As with `bag.map`, only
+    /// the empty fold happens here; the make/⊎ normalizations stay with
+    /// the reduction (which owns the predicate's definition). `pred` is
+    /// the predicate's *name*; the result sort is the operand's own.
+    pub fn mk_bag_filter(&mut self, pred: &str, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return bag;
+        }
+        let bag_sort = self.bag_result_sort(bag);
+        let pred_spur = self.intern_str(pred);
+        self.intern(
+            TermKind::BagFilter {
+                pred: pred_spur,
+                bag,
+            },
+            bag_sort,
+        )
+    }
+
     /// `(set.card s)`.
     pub fn mk_set_card(&mut self, set: TermId) -> TermId {
         let sort = self.sorts.int_sort;
