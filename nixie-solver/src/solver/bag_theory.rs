@@ -158,6 +158,13 @@ fn bag_is_closed(b: TermId, manager: &TermManager) -> bool {
                 stack.push(c);
             }
             Some(TermKind::BagSetof(a)) => stack.push(a),
+            // An ite of closed bags is closed: its support is exactly
+            // the branches' makes (all collected — the support walk has
+            // the same arm), so its cardinality is the exact sum.
+            Some(TermKind::Ite(_, a, c)) => {
+                stack.push(a);
+                stack.push(c);
+            }
             _ => return false,
         }
     }
@@ -175,6 +182,29 @@ fn bag_element_of(t: TermId, manager: &TermManager) -> Option<SortId> {
         })
 }
 
+/// Whether a bag term is **opaque**: a variable, application or select —
+/// a bag whose value no structural definition pins, so a *derived*
+/// equality onto it (EUF congruence, the array theory) can change its
+/// meaning without any surveyed equality atom. Exactly the terms the
+/// pair-congruence pass exists for.
+fn bag_is_opaque(t: TermId, manager: &TermManager) -> bool {
+    matches!(
+        manager.get(t).map(|d| &d.kind),
+        Some(TermKind::Var(_) | TermKind::Apply { .. } | TermKind::Select(_, _))
+    )
+}
+
+/// Whether a bag term is a **constructor**: `bag.empty` or `bag.make` —
+/// stable under hash-consing, so pairs over them (like the set theory's
+/// constructor pairs) cannot mint fresh terms across the per-assert
+/// re-runs of the reduction.
+fn bag_is_constructor(t: TermId, manager: &TermManager) -> bool {
+    matches!(
+        manager.get(t).map(|d| &d.kind),
+        Some(TermKind::BagEmpty(_) | TermKind::BagMake(_, _))
+    )
+}
+
 /// The count of `e` in `b`, as a term: the existing `bag.count` when the
 /// formula already has one (hash-consed), a fresh one otherwise. The
 /// arithmetic solver owns the result as an ordinary integer column.
@@ -183,60 +213,91 @@ fn count_term(e: TermId, b: TermId, manager: &mut TermManager) -> TermId {
 }
 
 /// The defining identity for `count(e, b)`, computed structurally.
-/// `None` marks a construct outside this fragment (raising the honesty
-/// gate) — never a guess.
-fn count_definition(
-    e: TermId,
-    b: TermId,
-    zero: TermId,
-    manager: &mut TermManager,
-) -> Option<TermId> {
+/// [`CountDef::Unsupported`] marks a construct outside this fragment —
+/// the caller raises the honesty gate rather than letting the counts
+/// float free. A free count on a *determined* bag is a false-`sat` hole:
+/// before the `Ite` arm landed, a bag-shaped `(ite c a b)` fell through
+/// to exactly that (`x ≤ 0 ∧ count(1, ite(x > 0, (1:2), (2:2))) = 1`
+/// answered `sat`; CVC5: `unsat`).
+enum CountDef {
+    /// `count(e, b) = t` for the computed right-hand side.
+    Defined(TermId),
+    /// An opaque bag (variable, application, select): its counts are
+    /// free nonnegative integers — exactly the interface the arithmetic
+    /// solver needs for a bag whose value nobody has determined yet.
+    Opaque,
+    /// A shape this reduction does not know: raise `incomplete`, never
+    /// a silent default.
+    Unsupported,
+}
+
+fn count_definition(e: TermId, b: TermId, zero: TermId, manager: &mut TermManager) -> CountDef {
     let ca = |x: TermId, manager: &mut TermManager| count_term(e, x, manager);
-    match manager.get(b).map(|d| d.kind.clone())? {
-        TermKind::BagEmpty(_) => Some(zero),
-        TermKind::BagMake(y, n) => {
+    match manager.get(b).map(|d| d.kind.clone()) {
+        Some(TermKind::BagEmpty(_)) => CountDef::Defined(zero),
+        Some(TermKind::BagMake(y, n)) => {
             // CVC5 clamps: `ite(e = y ∧ n ≥ 1, n, 0)`.
             let same = manager.mk_eq(e, y);
             let one = manager.mk_int(1);
             let positive = manager.mk_ge(n, one);
             let present = manager.mk_and([same, positive]);
-            Some(manager.mk_ite(present, n, zero))
+            CountDef::Defined(manager.mk_ite(present, n, zero))
         }
-        TermKind::BagUnionMax(a, c) => {
+        Some(TermKind::BagUnionMax(a, c)) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
             let ge = manager.mk_ge(x, y);
-            Some(manager.mk_ite(ge, x, y))
+            CountDef::Defined(manager.mk_ite(ge, x, y))
         }
-        TermKind::BagUnionDisjoint(a, c) => {
+        Some(TermKind::BagUnionDisjoint(a, c)) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
-            Some(manager.mk_add([x, y]))
+            CountDef::Defined(manager.mk_add([x, y]))
         }
-        TermKind::BagInterMin(a, c) => {
+        Some(TermKind::BagInterMin(a, c)) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
             let le = manager.mk_le(x, y);
-            Some(manager.mk_ite(le, x, y))
+            CountDef::Defined(manager.mk_ite(le, x, y))
         }
-        TermKind::BagDifferenceSubtract(a, c) => {
+        Some(TermKind::BagDifferenceSubtract(a, c)) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
             let diff = manager.mk_sub(x, y);
             let pos = manager.mk_gt(x, y);
-            Some(manager.mk_ite(pos, diff, zero))
+            CountDef::Defined(manager.mk_ite(pos, diff, zero))
         }
-        TermKind::BagDifferenceRemove(a, c) => {
+        Some(TermKind::BagDifferenceRemove(a, c)) => {
             let (x, y) = (ca(a, manager), ca(c, manager));
             let y_pos = manager.mk_gt(y, zero);
-            Some(manager.mk_ite(y_pos, zero, x))
+            CountDef::Defined(manager.mk_ite(y_pos, zero, x))
         }
-        TermKind::BagSetof(s) => {
+        Some(TermKind::BagSetof(s)) => {
             let x = ca(s, manager);
             let one = manager.mk_int(1);
             let pos = manager.mk_gt(x, zero);
-            Some(manager.mk_ite(pos, one, zero))
+            CountDef::Defined(manager.mk_ite(pos, one, zero))
         }
-        // An opaque bag (variable, application): its counts are free
-        // integers — exactly the interface the arithmetic solver needs.
-        TermKind::Var(_) | TermKind::Apply { .. } | TermKind::Select(_, _) => None,
-        _ => None,
+        // `count` is a function of the bag *value*, and an ite picks a
+        // value: `count(e, ite(c, a, b)) = ite(c, count(e, a), count(e, b))`.
+        // Both branches are surveyed bags (the walk collects every
+        // bag-sorted subterm), so their counts carry their own identities.
+        Some(TermKind::Ite(c, a, b)) => {
+            let (x, y) = (ca(a, manager), ca(b, manager));
+            CountDef::Defined(manager.mk_ite(c, x, y))
+        }
+        // An opaque bag (variable, application, select): its counts are
+        // free integers — exactly the interface the arithmetic solver
+        // needs. (An application's or select's value may be *determined*
+        // by other axioms — an asserted equality, the array theory's
+        // select-over-store — and then the pair-congruence pass below
+        // ties the counts across the equal spellings; an equality nobody
+        // relates leaves them free, which is sound: the model may pick
+        // any bag with those counts.)
+        Some(TermKind::Var(_) | TermKind::Apply { .. } | TermKind::Select(_, _)) => {
+            CountDef::Opaque
+        }
+        // Anything else — a datatype `match` yielding a bag, a future
+        // constructor — is honestly refused: `incomplete`, so a `Sat`
+        // resting on it degrades to `Unknown` instead of trusting free
+        // counts on a bag whose value the term already determines.
+        _ => CountDef::Unsupported,
     }
 }
 
@@ -293,6 +354,16 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     TermKind::BagSetof(a) => {
                         stack.push(*a);
                     }
+                    // An ite bag's support is the union of its branches'
+                    // (the condition is `Bool`-sorted and contributes
+                    // none) — without this arm the branches' makes were
+                    // invisible to the element list and every count
+                    // identity over the ite was stated against an
+                    // incomplete universe.
+                    TermKind::Ite(_, a, c) => {
+                        stack.push(*a);
+                        stack.push(*c);
+                    }
                     _ => {}
                 }
             }
@@ -346,17 +417,27 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         for &e in elems {
             let c = count_term(e, b, manager);
             match count_definition(e, b, zero, manager) {
-                Some(def) => {
+                CountDef::Defined(def) => {
                     let eq = manager.mk_eq(c, def);
                     out.axioms.push(eq);
                 }
-                // An opaque bag's counts are free integers — and a
-                // multiplicity is nonnegative. Without this axiom a
-                // negative count satisfied `|b| = Σ + slack` and
-                // `count(1,b) = -3` answered `sat` (CVC5: `unsat`;
-                // found by differential testing on the model slice).
-                None => {
+                CountDef::Opaque => {
                     opaque = true;
+                    // A multiplicity is nonnegative even for an opaque
+                    // bag. Without this axiom a negative count satisfied
+                    // `|b| = Σ + slack` and `count(1,b) = -3` answered
+                    // `sat` (CVC5: `unsat`; found by differential testing
+                    // on the model slice).
+                    let ge = manager.mk_ge(c, zero);
+                    out.axioms.push(ge);
+                }
+                CountDef::Unsupported => {
+                    // A determined-but-unhandled shape: refuse honestly.
+                    // The nonneg axiom stays — multiplicities are always
+                    // nonnegative — but a `Sat` resting on this
+                    // reduction degrades to `Unknown`.
+                    opaque = true;
+                    out.incomplete = true;
                     let ge = manager.mk_ge(c, zero);
                     out.axioms.push(ge);
                 }
@@ -388,6 +469,74 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 let agree = manager.mk_eq(c1, c2);
                 out.axioms.push(manager.mk_implies(same, agree));
             }
+        }
+    }
+
+    // ---- bag-pair count and cardinality congruence ----
+    // `bag.count` and `bag.card` are functions of the bag **value**, so
+    // equal bags have equal counts and sizes — across *derived*
+    // equalities too, not just the `Eq` atoms the formula happens to
+    // contain (the extensionality pass below covers only the surveyed
+    // atoms). The purified encoding gives each `count`/`card` term its
+    // own integer column with no tie, so a congruence the EUF layer
+    // derives — `f x = f 0` from `x = 0`, `select(A, i) = v` from the
+    // array theory's select-over-store — never reached the columns, and
+    //     x = 0 ∧ count(1, f x) = 2 ∧ count(1, f 0) = 5
+    // answered `sat` (CVC5: `unsat`; differential probe). The axiom is
+    // stated over every surveyed bag pair, the same shape as the
+    // element-pair congruence above and the set theory's membership
+    // congruence: the antecedent is the (hash-consed) equality atom,
+    // which EUF commits when a derivation exists. `bag.card` rides the
+    // same pairs — without it, `x = 0 ∧ |f x| = 2 ∧ |f 0| = 5` had the
+    // same hole through the slack columns.
+    const MAX_BAG_PAIRS: usize = 128;
+    let mut bag_pairs = 0usize;
+    'outer: for (i, &(a, esa)) in s.bags.iter().enumerate() {
+        for &(b, esb) in s.bags.iter().skip(i + 1) {
+            if a == b || esa != esb {
+                continue;
+            }
+            // **Opaque-with-opaque or opaque-with-constructor pairs only** —
+            // the set theory's `implicit_pairs` eligibility, for the two
+            // reasons it documents there. First, the same measured one:
+            // a closed compound's counts are structurally defined from
+            // congruent bases, so stating congruence at the compound too is
+            // redundant — and not cheap (the union-rearrangement regression
+            // went from a second to an unfinishable search before this
+            // filter). Second, the feedback loop: the axiom mints a
+            // bag-sorted equality *atom*, the next `assert`'s re-survey
+            // (the reduction is conjoined onto the assertion, so the axiom
+            // set is re-walked) sees that atom as a user equality and
+            // mints an extensionality witness for the pair. Constructors
+            // and opaque terms are stable under hash-consing, so the pair
+            // set — and with it the witness growth — is bounded and
+            // one-shot; compounds would mint fresh pairs every pass.
+            // The hole the pass exists to close needs exactly this
+            // eligibility: `f x = f 0` (opaque×opaque) and
+            // `select(A, i) = v` with `v` a make or `∅` (opaque×constructor).
+            let eligible = |t: TermId| bag_is_opaque(t, manager) || bag_is_constructor(t, manager);
+            if !eligible(a)
+                || !eligible(b)
+                || (!bag_is_opaque(a, manager) && !bag_is_opaque(b, manager))
+            {
+                continue;
+            }
+            if bag_pairs >= MAX_BAG_PAIRS {
+                out.incomplete = true;
+                break 'outer;
+            }
+            bag_pairs += 1;
+            let same = manager.mk_eq(a, b);
+            if let Some(elems) = by_sort.get(&esa) {
+                for &e in elems {
+                    let (ca, cb) = (count_term(e, a, manager), count_term(e, b, manager));
+                    let agree = manager.mk_eq(ca, cb);
+                    out.axioms.push(manager.mk_implies(same, agree));
+                }
+            }
+            let (xa, xb) = (manager.mk_bag_card(a), manager.mk_bag_card(b));
+            let equal_card = manager.mk_eq(xa, xb);
+            out.axioms.push(manager.mk_implies(same, equal_card));
         }
     }
 
@@ -596,6 +745,23 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 TermKind::BagSetof(x) => {
                     let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
                     out.axioms.push(manager.mk_le(cb, cx));
+                }
+                // Cardinality is a function of the bag value, and an ite
+                // picks a value: `|ite(c, a, b)| = ite(c, |a|, |b|)`, exact
+                // for opaque operands too. Without it the ite's own slack
+                // absorbed whatever the branches' cardinalities forbade —
+                // `|A| = 5 ∧ b = ite(c, A, ∅) ∧ c ∧ |b| = 6`-shapes with
+                // the counts otherwise pinned — a false-`sat` family the
+                // count identities alone do not close (they tie the sums,
+                // not the slack, to the branches).
+                TermKind::Ite(c, x, y) => {
+                    let (cx, cy, cb) = (
+                        manager.mk_bag_card(x),
+                        manager.mk_bag_card(y),
+                        manager.mk_bag_card(b),
+                    );
+                    let picked = manager.mk_ite(c, cx, cy);
+                    out.axioms.push(manager.mk_eq(cb, picked));
                 }
                 _ => {}
             }

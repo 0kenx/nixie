@@ -395,6 +395,13 @@ fn collect_bag_support(
                 stack.push(c);
             }
             Some(TermKind::BagSetof(a)) => stack.push(a),
+            // An ite bag's support is the union of its branches' (the
+            // `Bool` condition contributes none) — mirrors the reduction's
+            // support walk so the two see the same element universe.
+            Some(TermKind::Ite(_, a, c)) => {
+                stack.push(a);
+                stack.push(c);
+            }
             _ => {}
         }
     }

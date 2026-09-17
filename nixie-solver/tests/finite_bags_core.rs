@@ -857,3 +857,144 @@ fn subbag_bounds_the_cardinality() {
         SolverResult::Unsat
     );
 }
+
+// ===== the ite/congruence holes (differential probes, pre-choose) =====
+
+/// A bag-shaped `ite` is *determined* by its branches — its counts are
+/// `ite(c, count(e,a), count(e,b))`, never free integers. Before the arm
+/// landed, `count_definition` fell through to the opaque treatment and
+/// `x ≤ 0 ∧ count(1, ite(x > 0, (1:2), (2:2))) = 1` answered `sat`
+/// (CVC5: `unsat`; differential probe on the pre-choose binary).
+#[test]
+fn ite_bags_counts_follow_the_branches() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (declare-const y Int)\n\
+             (assert (<= x 0))\n\
+             (assert (= y 1))\n\
+             (assert (= (bag.count 1 (ite (> x 0) (bag 1 2) (bag 2 2))) y))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // The other branch is live: `x > 0` makes the same count 2.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (assert (> x 0))\n\
+             (assert (= (bag.count 1 (ite (> x 0) (bag 1 2) (bag 2 2))) 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // An ite of closed bags is closed: its support is exactly the
+    // branches' makes, so the cardinality is the exact sum — no slack.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (assert (= x 1))\n\
+             (assert (= (bag.card (ite (> x 0) (bag 1 1) (bag 2 2))) 3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `|ite(c, a, b)| = ite(c, |a|, |b|)` exactly — over *opaque* operands
+/// too, where the count identities alone tie the sums but not the ite's
+/// own slack: `|A| = 5 ∧ b = ite(¬c, A, ∅) ∧ |b| = 6` must refute through
+/// the ite's cardinality, not through branch support.
+#[test]
+fn ite_cardinality_is_the_branch_cardinality() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const c Bool)\n\
+             (declare-const A (Bag Int))\n\
+             (assert (= (bag.card A) 5))\n\
+             (assert (= (bag.card (ite c A (as bag.empty (Bag Int)))) 6))\n\
+             (assert (not c))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // With the branch live the sizes agree.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const c Bool)\n\
+             (declare-const A (Bag Int))\n\
+             (assert (= (bag.card A) 5))\n\
+             (assert (= (bag.card (ite c A (as bag.empty (Bag Int)))) 5))\n\
+             (assert c)\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+/// `bag.count` is a function of the bag **value**, so a *derived* equality
+/// — EUF congruence `f x = f 0` from `x = 0` — ties the counts with no
+/// surveyed equality atom anywhere. Before the pair-congruence pass the
+/// purified encoding gave each count term its own integer column and
+/// `x = 0 ∧ count(1, f x) = 2 ∧ count(1, f 0) = 5` answered `sat`
+/// (CVC5: `unsat`). `bag.card` rides the same pairs.
+#[test]
+fn counts_follow_derived_equality_congruence() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) (Bag Int))\n\
+             (declare-const x Int)\n\
+             (assert (= x 0))\n\
+             (assert (= (bag.count 1 (f x)) 2))\n\
+             (assert (= (bag.count 1 (f 0)) 5))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // The cardinality has the same hole through the slack columns.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) (Bag Int))\n\
+             (declare-const x Int)\n\
+             (assert (= x 0))\n\
+             (assert (= (bag.card (f x)) 2))\n\
+             (assert (= (bag.card (f 0)) 5))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // A `select`-over-`store` bag is determined by the array theory's
+    // axiom: `select(A, 0) = (bag 1 2)`, so its count of 1 is 2, not 7.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const A (Array Int (Bag Int)))\n\
+             (assert (= A (store ((as const (Array Int (Bag Int))) (bag 1 1)) 0 (bag 1 2))))\n\
+             (assert (= (bag.count 1 (select A 0)) 7))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Subbag respects derived congruence: `f x ⊑ B ∧ ¬(f 0 ⊑ B) ∧ x = 0`
+    // is a contradiction.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun f (Int) (Bag Int))\n\
+             (declare-const B (Bag Int))\n\
+             (declare-const x Int)\n\
+             (assert (= x 0))\n\
+             (assert (bag.subbag (f x) B))\n\
+             (assert (not (bag.subbag (f 0) B)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
