@@ -56,6 +56,35 @@ impl CertValue {
     pub(crate) fn compare_int(&self, other: &CertValue) -> Option<Ordering> {
         Some(self.as_int()?.cmp(other.as_int()?))
     }
+
+    /// Order two NUMERIC values exactly, promoting `Int` to `Real`.
+    ///
+    /// SMT-LIB arithmetic comparisons and equalities admit mixed
+    /// `Int`/`Real` operands (`(< xi 3.5)` is well-sorted), and the answer
+    /// is an exact rational comparison — `3` and `3.0` are the same value.
+    /// `None` when either side is a boolean (a malformed comparison, not a
+    /// false one: the caller declines rather than inventing a verdict).
+    pub(crate) fn compare_numeric(&self, other: &CertValue) -> Option<Ordering> {
+        match (self, other) {
+            (CertValue::Int(a), CertValue::Int(b)) => Some(a.cmp(b)),
+            (CertValue::Real(a), CertValue::Real(b)) => Some(a.cmp(b)),
+            (CertValue::Int(a), CertValue::Real(b)) => Some(BigRational::from(a.clone()).cmp(b)),
+            (CertValue::Real(a), CertValue::Int(b)) => Some(a.cmp(&BigRational::from(b.clone()))),
+            (CertValue::Bool(_), _) | (_, CertValue::Bool(_)) => None,
+        }
+    }
+
+    /// Whether the two values are NUMERICALLY equal (promoting `Int` to
+    /// `Real`), or `None` when the pair is not numeric (booleans compare
+    /// only with booleans; a mixed boolean/numeric pair is malformed and
+    /// declines).
+    pub(crate) fn numeric_eq(&self, other: &CertValue) -> Option<bool> {
+        match (self, other) {
+            (CertValue::Bool(a), CertValue::Bool(b)) => Some(a == b),
+            (CertValue::Bool(_), _) | (_, CertValue::Bool(_)) => None,
+            _ => Some(self.compare_numeric(other)? == Ordering::Equal),
+        }
+    }
 }
 
 /// The sorts the certifier can enumerate and evaluate.

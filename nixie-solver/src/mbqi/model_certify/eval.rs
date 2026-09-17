@@ -12,7 +12,7 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::sort::SortId;
 use num_bigint::BigInt;
-use num_traits::{Euclid, Zero};
+use num_traits::{Euclid, One, Zero};
 use smallvec::SmallVec;
 
 #[allow(unused_imports)]
@@ -33,6 +33,36 @@ const MAX_DOMAIN: usize = 256;
 /// Guards against a `Mul` chain over model values blowing up allocation.  The
 /// values a certified model deals in are small; exceeding this declines.
 const MAX_INT_BITS: u64 = 4096;
+
+/// Cap on the magnitude (in bits) of an intermediate rational's numerator and
+/// denominator combined — the `Real` twin of [`MAX_INT_BITS`].
+const MAX_RAT_BITS: u64 = 4096;
+
+/// The arithmetic domain a node's RESULT lives in, read from its sort.
+///
+/// The evaluator is sort-driven, never value-driven: a Real-sorted `Div` over
+/// two Int-valued operands is exact RATIONAL division (the SMT-LIB `/`,
+/// `(/ 7 2)` is `7/2` — never the Euclidean `3`), while an Int-sorted `Div`
+/// is Euclidean `div`. Deciding by operand value types instead would floor a
+/// real quotient whenever both operands happen to carry integer model values
+/// — a different value than the term denotes.
+#[derive(Clone, Copy, PartialEq)]
+enum ArithDomain {
+    Int,
+    Real,
+}
+
+/// Classify an arithmetic node's result sort; `None` for non-arithmetic
+/// nodes (booleans, and everything the evaluator declines anyway).
+fn arith_domain(sort: SortId, manager: &TermManager) -> Option<ArithDomain> {
+    if sort == manager.sorts.real_sort {
+        Some(ArithDomain::Real)
+    } else if sort == manager.sorts.int_sort {
+        Some(ArithDomain::Int)
+    } else {
+        None
+    }
+}
 
 /// Why an evaluation stopped without a verdict.
 #[derive(Debug, PartialEq, Eq)]
@@ -148,6 +178,9 @@ fn eval_step(
         TermKind::True => machine.values.push(CertValue::Bool(true)),
         TermKind::False => machine.values.push(CertValue::Bool(false)),
         TermKind::IntConst(n) => machine.values.push(CertValue::Int(n.clone())),
+        TermKind::RealConst(r) => machine
+            .values
+            .push(CertValue::Real(super::value::rational_of(*r))),
         TermKind::Var(name) => {
             let value = machine
                 .env
@@ -200,7 +233,10 @@ fn reduce_step(
         .ok_or(EvalError::Unsupported)?;
     let args: Vec<CertValue> = machine.values.split_off(start);
 
-    let result = combine(&node.kind, &args, interp)?;
+    // The node's own sort decides which arithmetic its result lives in (see
+    // `ArithDomain`): comparisons and boolean operators pass `None`.
+    let domain = arith_domain(node.sort, manager);
+    let result = combine(&node.kind, &args, interp, domain)?;
     machine.values.push(result);
     Ok(())
 }
@@ -210,6 +246,7 @@ fn combine(
     kind: &TermKind,
     args: &[CertValue],
     interp: &Interpretation,
+    domain: Option<ArithDomain>,
 ) -> Result<CertValue, EvalError> {
     let bool_at = |i: usize| -> Result<bool, EvalError> {
         args.get(i)
@@ -221,9 +258,24 @@ fn combine(
             .and_then(CertValue::as_int)
             .ok_or(EvalError::Unsupported)
     };
+    // Exact rational read with `Int` promotion — the value semantics of
+    // mixed SMT-LIB arithmetic.
+    let rat_at = |i: usize| -> Result<num_rational::BigRational, EvalError> {
+        args.get(i)
+            .and_then(|v| match v {
+                CertValue::Int(n) => Some(num_rational::BigRational::from(n.clone())),
+                CertValue::Real(r) => Some(r.clone()),
+                CertValue::Bool(_) => None,
+            })
+            .ok_or(EvalError::Unsupported)
+    };
+    let rat_bits_ok = |r: &num_rational::BigRational| -> bool {
+        r.numer().bits() + r.denom().bits() <= MAX_RAT_BITS
+    };
     let order = |i: usize, j: usize| -> Result<Ordering, EvalError> {
         args.get(i)
-            .and_then(|l| args.get(j).and_then(|r| l.compare_int(r)))
+            .zip(args.get(j))
+            .and_then(|(l, r)| l.compare_numeric(r))
             .ok_or(EvalError::Unsupported)
     };
 
@@ -258,67 +310,89 @@ fn combine(
                 args.first().ok_or(EvalError::Unsupported)?,
                 args.get(1).ok_or(EvalError::Unsupported)?,
             );
-            // Comparing an `Int` with a `Bool` is a malformed term, not a
-            // false equality: decline rather than invent a verdict.
-            if core::mem::discriminant(l) != core::mem::discriminant(r) {
-                return Err(EvalError::Unsupported);
-            }
-            CertValue::Bool(l == r)
+            // Numeric operands compare exactly with `Int`→`Real` promotion
+            // (`3 = 3.0` is true); booleans only with booleans. A mixed
+            // boolean/numeric pair is a malformed term, not a false
+            // equality: decline rather than invent a verdict.
+            let eq = l.numeric_eq(r).ok_or(EvalError::Unsupported)?;
+            CertValue::Bool(eq)
         }
         TermKind::Distinct(_) => {
             let mut all_distinct = true;
             for (i, l) in args.iter().enumerate() {
                 for r in args.iter().skip(i + 1) {
-                    if core::mem::discriminant(l) != core::mem::discriminant(r) {
-                        return Err(EvalError::Unsupported);
-                    }
-                    if l == r {
+                    let ne = l.numeric_eq(r).ok_or(EvalError::Unsupported)?;
+                    if !ne {
                         all_distinct = false;
                     }
                 }
             }
             CertValue::Bool(all_distinct)
         }
-        TermKind::Neg(_) => CertValue::Int(-int_at(0)?.clone()),
-        TermKind::Add(_) => {
-            let mut acc = BigInt::from(0);
-            for i in 0..args.len() {
-                acc += int_at(i)?;
+        TermKind::Neg(_) => match domain {
+            Some(ArithDomain::Real) => {
+                let v = -rat_at(0)?;
+                CertValue::Real(v)
             }
-            CertValue::Int(acc)
-        }
-        TermKind::Sub(_, _) => CertValue::Int(int_at(0)? - int_at(1)?),
+            _ => CertValue::Int(-int_at(0)?.clone()),
+        },
+        TermKind::Add(_) => match domain {
+            Some(ArithDomain::Real) => {
+                let mut acc = num_rational::BigRational::zero();
+                for i in 0..args.len() {
+                    acc += rat_at(i)?;
+                    if !rat_bits_ok(&acc) {
+                        return Err(EvalError::Exhausted);
+                    }
+                }
+                CertValue::Real(acc)
+            }
+            _ => {
+                let mut acc = BigInt::from(0);
+                for i in 0..args.len() {
+                    acc += int_at(i)?;
+                }
+                CertValue::Int(acc)
+            }
+        },
+        TermKind::Sub(_, _) => match domain {
+            Some(ArithDomain::Real) => {
+                let v = rat_at(0)? - rat_at(1)?;
+                if !rat_bits_ok(&v) {
+                    return Err(EvalError::Exhausted);
+                }
+                CertValue::Real(v)
+            }
+            _ => CertValue::Int(int_at(0)? - int_at(1)?),
+        },
         TermKind::Div(_, _) => {
             // SMT-LIB Euclidean integer division (the exact semantics the
             // builder's constant folder and `arith_axioms` use: the unique
-            // `q` with `m = n·q + r`, `0 ≤ r < |n|`), or exact rational
-            // division when an operand is real.  A zero divisor is
-            // UNINTERPRETED per SMT-LIB — decline rather than invent a
-            // value, so a model resting on it stays uncertified (`Unknown`),
-            // never wrongly trusted.
-            let rat_at = |i: usize| -> Option<num_rational::BigRational> {
-                args.get(i).and_then(|v| match v {
-                    CertValue::Int(n) => Some(num_rational::BigRational::from(n.clone())),
-                    CertValue::Real(r) => Some(r.clone()),
-                    _ => None,
-                })
-            };
-            match (args.first(), args.get(1)) {
-                (Some(CertValue::Int(a)), Some(CertValue::Int(b))) => {
+            // `q` with `m = n·q + r`, `0 ≤ r < |n|`) for an Int-sorted
+            // node, or exact rational division for a Real-sorted one —
+            // decided by the node's SORT, never by the operand values
+            // (see `ArithDomain`). A zero divisor is UNINTERPRETED per
+            // SMT-LIB — decline rather than invent a value, so a model
+            // resting on it stays uncertified (`Unknown`), never wrongly
+            // trusted.
+            match domain {
+                Some(ArithDomain::Real) => {
+                    let (a, b) = (rat_at(0)?, rat_at(1)?);
+                    if b.is_zero() {
+                        return Err(EvalError::Unsupported);
+                    }
+                    let v = a / b;
+                    if !rat_bits_ok(&v) {
+                        return Err(EvalError::Exhausted);
+                    }
+                    CertValue::Real(v)
+                }
+                _ => {
+                    let (a, b) = (int_at(0)?, int_at(1)?);
                     if b.is_zero() {
                         return Err(EvalError::Unsupported);
                     }
                     CertValue::Int(a.div_euclid(b))
-                }
-                _ => {
-                    let (a, b) = (
-                        rat_at(0).ok_or(EvalError::Unsupported)?,
-                        rat_at(1).ok_or(EvalError::Unsupported)?,
-                    );
-                    if b.is_zero() {
-                        return Err(EvalError::Unsupported);
-                    }
-                    CertValue::Real(a / b)
                 }
             }
         }
@@ -332,16 +406,28 @@ fn combine(
             }
             CertValue::Int(a.rem_euclid(b))
         }
-        TermKind::Mul(_) => {
-            let mut acc = BigInt::from(1);
-            for i in 0..args.len() {
-                acc *= int_at(i)?;
-                if acc.bits() > MAX_INT_BITS {
-                    return Err(EvalError::Exhausted);
+        TermKind::Mul(_) => match domain {
+            Some(ArithDomain::Real) => {
+                let mut acc = num_rational::BigRational::one();
+                for i in 0..args.len() {
+                    acc *= rat_at(i)?;
+                    if !rat_bits_ok(&acc) {
+                        return Err(EvalError::Exhausted);
+                    }
                 }
+                CertValue::Real(acc)
             }
-            CertValue::Int(acc)
-        }
+            _ => {
+                let mut acc = BigInt::from(1);
+                for i in 0..args.len() {
+                    acc *= int_at(i)?;
+                    if acc.bits() > MAX_INT_BITS {
+                        return Err(EvalError::Exhausted);
+                    }
+                }
+                CertValue::Int(acc)
+            }
+        },
         TermKind::Lt(_, _) => CertValue::Bool(order(0, 1)? == Ordering::Less),
         TermKind::Le(_, _) => CertValue::Bool(order(0, 1)? != Ordering::Greater),
         TermKind::Gt(_, _) => CertValue::Bool(order(0, 1)? == Ordering::Greater),
@@ -349,10 +435,18 @@ fn combine(
         _ => return Err(EvalError::Unsupported),
     };
 
-    if let CertValue::Int(n) = &value
-        && n.bits() > MAX_INT_BITS
-    {
-        return Err(EvalError::Exhausted);
+    match (&value, domain) {
+        (CertValue::Int(n), _) => {
+            if n.bits() > MAX_INT_BITS {
+                return Err(EvalError::Exhausted);
+            }
+        }
+        (CertValue::Real(r), _) => {
+            if !rat_bits_ok(r) {
+                return Err(EvalError::Exhausted);
+            }
+        }
+        (CertValue::Bool(_), _) => {}
     }
     Ok(value)
 }

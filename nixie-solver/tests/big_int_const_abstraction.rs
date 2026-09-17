@@ -171,3 +171,45 @@ fn big_const_scope_round_trip() {
         .collect();
     assert_eq!(verdicts, vec!["unsat", "sat"]);
 }
+
+/// A `sat` over the big-constant abstraction in a MIXED `Int`/`Real` goal
+/// with Real literals publishes when (and only when) the model certifies
+/// against the original assertions.
+///
+/// The certifier's ground path used to decline any goal carrying a
+/// `RealConst` literal (`harvest`'s vocabulary had no arm for it), so every
+/// mixed LIRA instance with a wide constant answered `unknown` on the `sat`
+/// side however good its model — the gap survey's biggest single
+/// certification class (16 of 156 members, seeds 20261000–02).  The widened
+/// ground path evaluates `Int` promoted to `BigRational`, exactly: `xr = 0`
+/// satisfies `xr/2 < 3/4` and `xi = 0` satisfies `xi + 2^63 > 0` under the
+/// ORIGINAL constant, so the verdict is `sat` (z3 agrees).
+#[test]
+fn big_const_mixed_real_goal_certifies_sat() {
+    let out = run("(set-logic QF_LIRA)
+         (declare-const xr Real)
+         (declare-const xi Int)
+         (assert (> (+ xi 9223372036854775808) 0))
+         (assert (< (* xr (/ 1 2)) (/ 3 4)))
+         (check-sat)");
+    assert_eq!(last_status(&out), "sat");
+}
+
+/// The same widened path must not publish a model that fails certification:
+/// the abstraction's column is free to take any `Rational64` value, and the
+/// original assertion (evaluated `BigInt`-exact under the model) is the
+/// arbiter.  This goal is UNSAT (`xr/2 = 3/4` forces `xr = 3/2`, which
+/// contradicts `xr < 3/4`): no model can certify, and the abstraction's
+/// exact-for-refutation direction decides `unsat` (z3 agrees; the widened
+/// certifier does not touch the refutation path).
+#[test]
+fn big_const_mixed_unsat_goal_refutes_through_the_abstraction() {
+    let out = run("(set-logic QF_LIRA)
+         (declare-const xr Real)
+         (declare-const xi Int)
+         (assert (> (+ xi 9223372036854775808) 0))
+         (assert (= (* xr (/ 1 2)) (/ 3 4)))
+         (assert (< xr (/ 3 4)))
+         (check-sat)");
+    assert_eq!(last_status(&out), "unsat");
+}

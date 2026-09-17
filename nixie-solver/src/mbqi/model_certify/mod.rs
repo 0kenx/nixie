@@ -173,6 +173,26 @@ fn prepare(
     manager: &TermManager,
 ) -> Option<Preparation> {
     let harvested = harvest(assertions, manager)?;
+    // Real-sorted values certify only through the GROUND path: with no
+    // bound variables there are no domains to enumerate, so the pipeline
+    // degenerates to one exact evaluation of every assertion under the
+    // model (BigInt/BigRational-exact — see the ground-goal note below) and
+    // mixed Int/Real arithmetic is just arithmetic. With quantifiers or
+    // uninterpreted functions present, Real values are the REAL engine's
+    // business (or nobody's): the region/critical-set argument this engine's
+    // exhaustive domain rests on is written for `Int`, and a Real literal or
+    // Real-sorted free constant shifts atoms' crossing points off the
+    // critical set, so an enumeration over it would not be exhaustive —
+    // a certification could rest on a domain that missed the counterexample.
+    // Declining keeps such goals exactly where they were (`unknown`), never
+    // trusting an enumeration the completeness argument does not cover.
+    if (harvested.has_quantifier
+        || !harvested.bound_names.is_empty()
+        || !harvested.applied.is_empty())
+        && harvested.saw_real
+    {
+        return None;
+    }
     // A GROUND goal is certified by the same machinery: with no bound
     // variables there are no symbols to enumerate (`region_stable` holds
     // trivially), so the pipeline degenerates to one exhaustive evaluation

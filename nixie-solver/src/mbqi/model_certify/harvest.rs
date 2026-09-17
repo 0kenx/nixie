@@ -32,6 +32,15 @@ pub(crate) struct Harvest {
     pub(crate) int_consts: Vec<BigInt>,
     /// Whether a quantifier occurs at all (nothing to certify otherwise).
     pub(crate) has_quantifier: bool,
+    /// Whether a Real-sorted value can flow into the evaluation: a Real
+    /// literal (`2.5`, `(/ 1 3)`) or a Real-sorted free constant. The
+    /// quantifier machinery downstream (critical sets, region enumeration)
+    /// is written for `Int` — a Real value moves atoms' crossing points off
+    /// the critical set, so [`super::prepare`] declines such goals unless
+    /// they are GROUND (no quantifiers, no uninterpreted functions), where
+    /// one exact evaluation under the concrete model decides with no
+    /// domains at all.
+    pub(crate) saw_real: bool,
 }
 
 /// Cap on the number of distinct terms one harvest pass visits.
@@ -64,8 +73,16 @@ pub(crate) fn harvest(assertions: &[TermId], manager: &TermManager) -> Option<Ha
         let node = manager.get(current)?;
         let sort = node.sort;
         match &node.kind {
-            TermKind::True | TermKind::False | TermKind::Var(_) => {}
+            TermKind::True | TermKind::False | TermKind::Var(_) => {
+                // A Real-sorted free constant is a Real value waiting to
+                // flow: record it so `prepare` can keep the quantified path
+                // Int-only (the region argument does not transfer).
+                if matches!(&node.kind, TermKind::Var(_)) && node.sort == manager.sorts.real_sort {
+                    out.saw_real = true;
+                }
+            }
             TermKind::IntConst(n) => out.int_consts.push(n.clone()),
+            TermKind::RealConst(_) => out.saw_real = true,
             TermKind::Apply { func, args } => {
                 out.applied.insert(*func, value_sort(sort, manager)?);
                 stack.extend(args.iter().rev().copied());
@@ -123,6 +140,11 @@ pub(crate) fn supported_children(kind: &TermKind) -> Option<SmallVec<[TermId; 4]
             SmallVec::from_slice(&[*l, *r])
         }
         TermKind::Ite(c, t, e) => SmallVec::from_slice(&[*c, *t, *e]),
+        // A Real numeral literal is a LEAF for the walk: its value is fixed
+        // by the term alone (`rational_of` widens it exactly). Ground goals
+        // may carry any number of them; quantified goals that do are
+        // declined by `prepare` (see `Harvest::saw_real`).
+        TermKind::RealConst(_) => SmallVec::new(),
         // Everything else – reals, bit-vectors, arrays, strings,
         // floating point, datatypes – is outside the vocabulary.
         _ => return None,
