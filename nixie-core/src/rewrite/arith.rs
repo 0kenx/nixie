@@ -889,7 +889,10 @@ mod tests {
 
         let x = manager.mk_var("x", manager.sorts.int_sort);
         let one = manager.mk_int(1);
-        let div = manager.mk_div(x, one);
+        // `mk_div` folds the ±1 divisor at construction (the builder-level
+        // identity fold), so this test reaches the REWRITER's own rule the
+        // way a raw-interned term (built outside the builder) would.
+        let div = manager.intern(TermKind::Div(x, one), manager.sorts.int_sort);
 
         let result = rewriter.rewrite(div, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -964,7 +967,10 @@ mod tests {
 
         let x = manager.mk_var("x", manager.sorts.int_sort);
         let one = manager.mk_int(1);
-        let modop = manager.mk_mod(x, one);
+        // Raw-interned node: the builder folds `mod(t, ±1)` at mk-time, so
+        // the rewriter's own rule is only reachable for terms constructed
+        // outside the builder.
+        let modop = manager.intern(TermKind::Mod(x, one), manager.sorts.int_sort);
 
         let result = rewriter.rewrite(modop, &mut ctx, &mut manager);
         assert!(result.was_rewritten());

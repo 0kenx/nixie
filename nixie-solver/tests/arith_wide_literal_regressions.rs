@@ -933,3 +933,39 @@ fn bnb_dead_leaf_backtracks_instead_of_unwinding_unknown() {
         "xi = 7/11 is not integral (z3: unsat); `unknown` unwinds a repairable leaf"
     );
 }
+
+/// A `div` by a constant 1 over a SYMBOLIC dividend folds to its identity
+/// (`div(t,1)=t`) at construction, removing the term from the div-axiom
+/// feed: this pure-equality LIA goal (`15·xi + 3·zi = -52` once the
+/// `div(-xi,1)` folds) is refutable by the GCD argument alone, but with the
+/// `Div` node present the axiom feed hid the equality's coefficient
+/// structure and the goal answered honest `unknown` (z3: `unsat`).
+///
+/// Found by the gap survey (seed 20261002, instance 567); the ±1-divisor
+/// identity folds recovered 3 of the 7 UNSAT-side members on the fixed
+/// survey seeds (plus 18 SAT-side — the feed was also deflecting searches).
+#[test]
+fn div_by_one_folds_and_the_gcd_refutation_decides() {
+    let mut tm = TermManager::new();
+    let xi = tm.mk_var("xi", tm.sorts.int_sort);
+    let zi = tm.mk_var("zi", tm.sorts.int_sort);
+    let ten = tm.mk_int(10);
+    let five = tm.mk_int(5);
+    let neg_two = tm.mk_int(-2);
+    let three = tm.mk_int(3);
+    let neg_one = tm.mk_int(-1);
+    let one = tm.mk_int(1);
+    let t10 = tm.mk_mul([ten, xi]);
+    let t5 = tm.mk_mul([five, xi]);
+    let tm2 = tm.mk_mul([neg_two, xi]);
+    let t3z = tm.mk_mul([three, zi]);
+    let neg_xi = tm.mk_mul([neg_one, xi]);
+    // (div (* -1 xi) 1): folds to (* -1 xi) at construction.
+    let d1 = tm.mk_div(neg_xi, one);
+    let sum = tm.mk_add([t10, t5, tm2, t3z, d1]);
+    let rhs = tm.mk_int(-52);
+    let claim = tm.mk_eq(sum, rhs);
+    let mut s = Solver::new();
+    s.assert(claim, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
