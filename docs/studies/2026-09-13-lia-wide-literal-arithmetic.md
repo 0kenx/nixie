@@ -1892,3 +1892,16 @@ case — candidates: a column bound read through the PRE-rescale row, a
 weakened-integer bound consumed as exact, or the delta-loop's coefficient
 (`Δ·c`) read against a stale row.  Both probe worktrees' prints are
 described here; `/tmp/x69` (the parallel session's) was left standing.
+
+Item 70 closure note (same day): the writer of the fabricated
+`[7/20, 7/20]` pin is **`copy_bounds(old, fresh)` inside
+`rehome_stranded_row_bounds`** — backtrace-caught at the write
+(`set_lower_delta ← copy_bounds ← rehome_stranded_row_bounds ←
+final_check`): a stranded slack's CURRENT (propagated) bound values were
+copied onto a freshly re-interned row's slack whose form differs from the
+old row's by the rescale/substitution factor (here 20/7), fabricating the
+bounds of a different linear form.  The owning session's fix (in flight at
+the time of this note) removes the copy in favour of re-asserting the
+atom's own `∘ 0` bound with a live reason id, gated on
+`var_referenced_by_any_row`; the decode above (both manifestations) is
+consistent with it end to end.
