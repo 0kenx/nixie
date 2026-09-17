@@ -262,3 +262,33 @@ clause-quality question):
    outside counter splits; separating search wall from inprocessing
    wall is a named follow-up if cross-solver cost comparison ever
    needs it.
+
+## Session closure (2026-09-17): final standing vs kissat on the 30-instance corpus
+
+The full arc measured end-to-end (`precompile/098720f6/benchmark/final-standing.tsv`,
+60 s cap, pinned, interleaved, kissat 4.0.4 vs nixie `098720f6`):
+
+| | session start¹ | session end |
+|---|---|---|
+| solved / 30 | 16 | **26** |
+| verdict mismatches | 0 | **0** |
+| nixie/kissat wall geomean (both-solved) | ~3.1× | **1.93×** |
+| nixie faster than kissat | — | 8/26 |
+
+¹ 3-way benchmark (2026-09-15) under the old default with the env-probe
+and CSR-mirror taxes and the pre-fold configuration.
+
+Remaining gap anatomy (the honest map): the 1.93× geomean is carried by
+search quality on specific families — `bv_ILA` 41.7×, `oddball` 25.1×,
+`hwmcc-6s299` 12.1×, `x9` 8.8×, `GP_190` 8.4×, the `normalised` pair
+~7×, `5447072093nw` 7.0× — while the trivial-`arles` family and
+`Carry_Bits` are 2–5× *faster* than kissat, and `s38584`/`SCPC`/`circuit`
+are at 1.2–1.3×.  Four instances still time out (`WS_500`, `1.normalised`,
+`Break_12_30`, `nla-digbench`).
+
+Constant-factor work is exhausted (IPC 2.27, healthy profile, every
+mechanical regression fixed, both counter splits landed); everything
+above 1.5× is search quality — the props-per-decision volume and the
+specific families named in the standing-gap study — now measurable with
+`NIXIE_SAT_SEED` replication, the `NIXIE_SAT_*` decomposition knobs, and
+the inprocessing wall counter built this session.
