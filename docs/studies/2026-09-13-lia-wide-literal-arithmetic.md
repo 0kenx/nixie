@@ -1977,3 +1977,34 @@ consistent with it end to end.
       continuation-33 addendum described the in-flight fix as gated on
       `var_referenced_by_any_row` — superseded by this entry's postmortem;
       the landed fix has no reference gate.
+
+## Continuation 35 (2026-09-18): the ±1-divisor identity folds land — 21 survey members back (item 72); item 69/70 closed by the rehome fix
+
+72. **`div`/`mod` by a constant ±1 now folds to its identity at
+    construction** (`cd0430a5`; Z3's `arith_rewriter` policy):
+    `div_euclid(t, 1) = t` (hash-consed identity), `div_euclid(t, -1) =
+    -t`, `rem_euclid(t, ±1) = 0`.  Before, only the both-operands-constant
+    case folded, so a symbolic dividend under a ±1 divisor kept its
+    Div/Mod node and entered the div-axiom feed — hiding linear structure
+    (a pure-equality GCD-obvious LIA goal answered honest `unknown`; z3:
+    `unsat`) and deflecting searches well beyond that class.  Measured on
+    the survey seeds 20261000–02: **gap_sat 134 → 116, gap_unsat 7 → 4**
+    (unsat 576 → 579, all z3-correct), net decisive +13; timeouts 12 → 20
+    (load + trajectory reshuffle on instances that now search instead of
+    declining).  The rewriter's own ±1 rules remain as the second line for
+    raw-interned terms; the rewriter/encode tests now construct their
+    nodes that way / with non-folding divisors.  Verification: workspace
+    release-mode suite 11 924/11 940 — exactly the 15 known pre-existing
+    corpus-missing failures (the debug-mode full-suite link hit
+    `/media/data` at 100% mid-run; release covers the same tests);
+    clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3 4.16.0);
+    mixed 3×400 + wide 3×300 fresh seeds clean; perf gate PASS
+    (conflicts/decisions 1.000 bit-identical); panic sweep 177/177.
+    * Item 69/70's fix landed as `740c16bd` (the rehome never copies bound
+      values across the stranding boundary) and CLOSES the core
+      reproducer (`sat`, matching z3) — verified on the merged tree
+      before this landing (the merge conflict's two appended test blocks
+      both green: 36/36).  A process note for whoever reads the history:
+      an interim read of "main ships red rehome tests" was one commit
+      stale — the fix commit landed minutes after the test-build's
+      branch point; re-verify the tip before believing a red set.
