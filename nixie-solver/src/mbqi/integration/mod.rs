@@ -740,6 +740,12 @@ impl MBQIIntegration {
         let quantifier_ids: Vec<QuantifierId> = self.quantifiers.iter().map(|q| q.term).collect();
         self.budget
             .carve_per_quantifier(&quantifier_ids, Some(&self.conflict_scores));
+        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+            eprintln!(
+                "[qround-stats] cumulative aux conflicts {}",
+                self.model_checker.cumulative_aux_conflicts()
+            );
+        }
         callback.on_round_start(self.current_round);
         self.stats.num_checks += 1;
 

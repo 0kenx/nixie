@@ -880,3 +880,63 @@ budgets only under 149-load parallel oversubscription (143 s / 152 s
 standalone); clippy/fmt/doc clean; perf gate **PASS** (conflicts
 geomean 1.000, no verdict changes); twins canary and all three family
 honesty pins pass.
+
+
+## The mint budgeted: one stably-needed row per round (2026-09-17, fifteenth follow-up — perf)
+
+The family answers `sat` everywhere but set9/set19 pay for structure
+bloat: a cost-split (env-gated cumulative aux wall vs total) showed the
+aux checks are only ~14% of set19's 76 s — 86% is the completion layer
+and ground churn over a structure the eager mint had grown to the
+32-element restriction cap (194 of 245 compute passes at the cap, the
+member table peaking at 841 entries) for a goal that needs a handful of
+elements.
+
+**The experiment** (aux conflicts — a deterministic counter — as the
+primary metric; wall secondary): sticky-miss gating (mint only tuples
+that missed two consecutive rounds) was built first with a matched null
+(NIXIE_MINT_NULL=<seed>: the same mint count chosen by a seeded pick of
+the miss set).  Result: the null *beat* the treatment — set19
+4963 vs ~586 median conflicts (treatment/null ≈ 8.5), set9 720 vs ~300
+(≈ 2.4) — the churn-tracking semantic content is *negative*; the entire
+effect is the **mint count** (fewer rows per round ⇒ slower, cleaner
+structure growth).  A prefix-budget sweep deconfounded the rest: budget
+1 lands inside the null band on both goals; budget 4 and the in-walk
+mint both blow past 5k conflicts on set19 — extending the odometer to
+fresh tuples mid-walk covers `(fresh, fresh)`-shaped tuples against
+rows still in flux and mints garbage the nested checks then fight
+through.
+
+**What landed**: `MINT_BUDGET_PER_ROUND = 1` — at most one fresh row
+per constructor per round, the first miss in odometer order, installed
+*post-walk* (never extending the live odometer); the row-canonical mint
+name now sorts the row points by TermId and namespaces the bits by an
+FNV fingerprint of that sequence (a re-freeze can reorder the frozen
+axis domain, and the old positional bit string would re-mint the same
+row under a new name — a duplicate the structure's own quotient says
+is one point).  `NIXIE_MINT_NULL` ships as the matched-null knob, and
+`NIXIE_DEBUG_QROUNDS` gains a cumulative-aux-conflicts line
+(`[qround-stats]`) so the deterministic metric is readable without a
+probe build.
+
+**Measured** (treatment/null conflicts, 8 null seeds): set9
+255/~279 (0.91), set19 485/~586 (0.83) — the prefix selection carries
+no penalty; the count reduction is the mechanism.  Wall: set16 0.1 s
+(unchanged), set9 16.3 → **8.0 s**, set19 76.5 → **13.8 s**.  Verdicts
+unchanged (all three `sat`; z3 4.16.0 still times out on set19).
+
+Verification: quant_fuzz {41..46}x150 CLEAN; parity 176/1/0 (z3
+4.16.0); nixie-solver + nixie-core debug 4854/4854; workspace
+**release** 11921/11922 — the one failure is
+`solver::model_eval::tests::assertion_past_the_depth_budget_stays_inconclusive`,
+a **pre-existing release-profile-only stack overflow on main**
+(SIGABRT, `DEEP_WORKER_STACK` overflowed at depth 6250): verified
+failing at `bd05775b`, `067e89a3` (this arc's own earlier landing),
+`91f73fac` and current main — it predates every arc compared this
+week and is invisible to the default gate because the gate runs the
+debug profile (larger frames, no overflow).  It is *not* introduced by
+this diff (the mint-budget change does not touch `model_eval` or any
+eval-path frame); flagging it here for the owning arc — a release-run
+of the workspace suite belongs in the verification rotation, or the
+test's stack budget needs release-profile headroom.
+clippy/fmt/doc clean; perf gate PASS (conflicts geomean 1.000).

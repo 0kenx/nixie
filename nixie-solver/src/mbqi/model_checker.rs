@@ -402,6 +402,11 @@ impl ModelChecker {
         }
     }
 
+    /// Cumulative aux conflicts spent so far (diagnostic).
+    pub(crate) fn cumulative_aux_conflicts(&self) -> u64 {
+        self.conflicts_spent
+    }
+
     /// The signature of a completed model (see [`completed_model_signature`]).
     pub(crate) fn signature_of(&self, model: &CompletedModel) -> u64 {
         completed_model_signature(model)

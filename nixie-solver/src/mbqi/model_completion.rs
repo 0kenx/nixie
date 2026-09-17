@@ -752,6 +752,7 @@ pub struct ModelCompleter {
     /// axis domains while the structure grows explodes the row space —
     /// the set9 divergence: 17-wide rows, 32-element cap reached).
     pub(crate) last_round_fresh_mints: usize,
+
     /// Statistics
     stats: CompletionStats,
     /// Cardinality escalations used (see `thaw_table_domains`): the

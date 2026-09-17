@@ -845,7 +845,7 @@ fn compute_one(
     } else {
         model.ground_universe(qm.func_range, manager)
     };
-    let Some(mut universe) = universe else {
+    let Some(universe) = universe else {
         return;
     };
     if universe.is_empty() || universe.len() > MAX_CONSTRUCTOR_UNIVERSE {
@@ -977,7 +977,21 @@ fn compute_one(
     let mut entries: Vec<FunctionEntry> = Vec::new();
     let mut odometer = vec![0usize; arity];
     let mut walked = 0usize;
-    let mut fresh_mints_local = 0usize;
+    // (tuple, target row) for every row miss this walk saw.  The mint is
+    // POST-walk under a fixed per-round budget: minting in-walk extends
+    // the odometer to the fresh tuples immediately, which measured 10x
+    // the aux conflicts on set19 (the walk covers (fresh, fresh)-shaped
+    // tuples against rows still in flux — garbage entries the nested
+    // checks then fight through).  Post-walk, one per round: the
+    // structure grows slowly along a row algebra the search stably
+    // needs, and the next round's walk covers the new tuples against
+    // settled rows.
+    let mut missed_this_round: Vec<(Vec<TermId>, Vec<bool>)> = Vec::new();
+    // Matched null (NIXIE_MINT_NULL=<seed>): mint the same ONE tuple,
+    // chosen by a seeded pick instead of the odometer prefix.
+    let null_seed: Option<u64> = std::env::var("NIXIE_MINT_NULL")
+        .ok()
+        .and_then(|s| s.parse().ok());
     'tuples: loop {
         if walked >= MAX_TABLE_TUPLES {
             break;
@@ -1068,21 +1082,12 @@ fn compute_one(
             // needed row: the set family's permanent `difference` miss
             // (no element with the empty-set row) whose stale compounds
             // then fed the walk-vs-aux divergence.
-            else if frozen.contains_key(&qm.func_range)
-                && fresh_mints_local < MAX_FRESH_PER_TABLE
-                && let Some(fresh) =
-                    mint_fresh_row_element(qm, &target, &row_points, model, frozen, manager)
-            {
-                *fresh_mints += 1;
-                fresh_mints_local += 1;
-                universe.push(fresh);
-                rows.push(target.clone());
-                entries.push(FunctionEntry {
-                    args: tuple,
-                    result: fresh,
-                });
+            else if frozen.contains_key(&qm.func_range) {
+                // Record the miss; the mint decision is post-walk (see
+                // `missed_this_round`'s declaration comment).
+                missed_this_round.push((tuple.clone(), target.clone()));
             }
-            // else (unfrozen range sort, or the mint cap): leave the
+            // else (unfrozen range sort): leave the
             // tuple to the `else`; the nested check finds the falsifier
             // there and the loop grows the model (the revise step).
         }
@@ -1098,6 +1103,49 @@ fn compute_one(
             odometer[i] = 0;
             if i + 1 == odometer.len() {
                 break 'tuples;
+            }
+        }
+    }
+
+    // The mint: at most `MINT_BUDGET_PER_ROUND` fresh rows per
+    // constructor per round, the FIRST misses in odometer order
+    // (deterministic).  The matched null (NIXIE_MINT_NULL=<seed>) mints
+    // the same number chosen by a seeded pick of the miss set — same
+    // machinery, same magnitude, no selection content.  Measured
+    // treatment/null (conflicts, deterministic counter): set9 255/279
+    // (~0.91), set19 485/586 (~0.83) — the prefix's content carries no
+    // penalty; the count reduction is the mechanism (set19 aux conflicts
+    // 10x worse under in-walk sticky minting, and the eager mint sat at
+    // the 32-element cap for 194/245 passes).
+    if !missed_this_round.is_empty() {
+        let cap = MAX_FRESH_PER_TABLE.min(
+            frozen
+                .get(&qm.func_range)
+                .map_or(0, |d| FRESH_RESTRICTION_CAP.saturating_sub(d.len())),
+        );
+        let k = MINT_BUDGET_PER_ROUND.min(cap).min(missed_this_round.len());
+        // Seeded pick for the null; identity (prefix) for the treatment.
+        let mut order: Vec<usize> = (0..missed_this_round.len()).collect();
+        if let Some(seed) = null_seed {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).max(1);
+            for i in 0..k {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let j = i + (state as usize) % (order.len() - i);
+                order.swap(i, j);
+            }
+        }
+        for &i in &order[..k] {
+            let (tuple, target) = &missed_this_round[i];
+            if let Some(fresh) =
+                mint_fresh_row_element(qm, target, &row_points, model, frozen, manager)
+            {
+                *fresh_mints += 1;
+                entries.push(FunctionEntry {
+                    args: tuple.clone(),
+                    result: fresh,
+                });
             }
         }
     }
@@ -1122,6 +1170,20 @@ fn compute_one(
 /// round: the row algebra closes long before this on real problems, and
 /// a pathological psi must not grow the structure unboundedly.
 const MAX_FRESH_PER_TABLE: usize = 16;
+
+/// The aux Skolem restriction's universe cap (`model_checker`): the
+/// structure must stay readable by the nested check, so growth beyond
+/// this declines (see `mint_fresh_row_element`).
+const FRESH_RESTRICTION_CAP: usize = 32;
+
+/// Fresh rows minted per constructor per round.  Measured on the set
+/// family (aux conflicts, the deterministic counter): budget 1 lands at
+/// or below the seeded-null distribution (set9 255 vs ~279 median,
+/// set19 485 vs ~586), while budget 4 and the eager in-walk mint blow
+/// past 5k conflicts on set19 — the structure must grow *slowly*, one
+/// stably-needed row at a time, or the intermediate garbage rows cost
+/// more than the closure they buy.
+const MINT_BUDGET_PER_ROUND: usize = 1;
 
 /// Mint a fresh element of the constructor's range sort whose observer
 /// row is exactly `target`, and install it into the completed structure:
@@ -1151,9 +1213,33 @@ fn mint_fresh_row_element(
     if domain_len >= RESTRICTION_CAP {
         return None;
     }
-    let row_bits: String = target.iter().map(|&b| if b { '1' } else { '0' }).collect();
+    // Row-canonical name: the bits are taken over the row points sorted
+    // by TermId and namespaced by an FNV fingerprint of that sorted
+    // sequence — the frozen Elem domain's ORDER can change when an
+    // escalation re-freezes it at a grown universe, and a positional bit
+    // string would then re-mint the same row under a different name (a
+    // duplicate element where the structure's own quotient semantics
+    // says there is one point).
+    let mut flat: Vec<(TermId, bool)> = row_points
+        .iter()
+        .zip(target.iter())
+        .flat_map(|(point, &b)| point.iter().map(move |&p| (p, b)))
+        .collect();
+    flat.sort_by_key(|(p, _)| p.0);
+    let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
+    for (p, _) in &flat {
+        fingerprint ^= u64::from(p.0);
+        fingerprint = fingerprint.wrapping_mul(0x1000_0000_01b3);
+    }
+    let row_bits: String = flat
+        .iter()
+        .map(|(_, b)| if *b { '1' } else { '0' })
+        .collect();
     let fresh = manager.mk_var(
-        &format!("tbl!{}!{row_bits}", manager.resolve_str(qm.func)),
+        &format!(
+            "tbl!{}!{fingerprint:016x}!{row_bits}",
+            manager.resolve_str(qm.func)
+        ),
         qm.func_range,
     );
     // The observer's entries at the fresh element: the target row, at
