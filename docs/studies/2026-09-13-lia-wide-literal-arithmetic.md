@@ -1905,3 +1905,75 @@ the time of this note) removes the copy in favour of re-asserting the
 atom's own `∘ 0` bound with a live reason id, gated on
 `var_referenced_by_any_row`; the decode above (both manifestations) is
 consistent with it end to end.
+
+## Continuation 34 (2026-09-18): item 70 CLOSED — the writer was the rehome's value copy; the sound fix and the gate postmortem (item 71)
+
+71. **The item-69/item-70 false `unsat`, closed at the root and landed.**
+    The "remaining one probe iteration" from item 70 ran
+    (`set_upper_delta` write tracing + `Backtrace::force_capture` on the
+    writer): the planter of `v1112.upper = 7/20` is **`copy_bounds`, called
+    by `rehome_stranded_row_bounds`** — not the slice-6 propagation channel
+    item 70 suspected.  The full chain, decoded end to end:
+    * The stranded slack `v1037` (recorded form `−T74 + 2·T3 − 3·T14`,
+      rhs −78, reason T80) still carried its live PROPAGATED pin
+      `[7/20, 7/20]` (reason 5 = the T77 identity axiom, derived soundly
+      through `v12 = 1 − (20/7)·v1037` with v12 pinned [0,0]).
+    * The rehome re-interned the recorded form; `intern_row_reported`
+      rendered it through the CURRENT tableau, resolving it to the RESCALED
+      multiple `(20/7)·v1037` — item 70's rescale factor, appearing because
+      the rendering substitutes through rows that themselves express the
+      form via the old slack.
+    * `copy_bounds(old, fresh)` then copied the pin's VALUE un-translated:
+      `fresh = 7/20` asserts `(20/7)·v1037 = 7/20` — the 49/400-vs-7/20
+      fabrication nobody derived.  It crossed the sound `lo = 1`
+      derivation, and `record_crossing` exported the singleton conflict
+      blaming T77 alone → learned unit `¬axiom` → false `unsat`.
+    * **The fix** (lands with this entry): the sweep re-interns the
+      recorded form as before, but re-asserts ONLY the ATOM's own `∘ 0`
+      bound (scale-invariant under the positive rescale, so it carries
+      soundly onto ANY rendering) with a reason id already live for that
+      atom — never the old slack's current bound VALUES, which are
+      coordinates of the OLD variable, not of the form.  `copy_bounds` is
+      deleted (zero remaining callers).  `SlackForm` now records the
+      assertion direction (`Le`/`Ge`/`Eq`) so the atom's own bound is
+      reconstructible.  The instance decides `sat` (z3 model
+      `xi = 658812288346769706`; nixie publishes 658812288346769908,
+      hand-verified to satisfy ¬D1 ∧ C1 ∧ C2).
+    * **The gate postmortem** (why `var_referenced_by_any_row` is NOT in
+      the landed fix): the first cut also skipped any slack still
+      referenced by a live row, on the Dutertre–de Moura argument that a
+      pivot's rewritten row keeps the slack's equation live.  That
+      argument is FALSE in this tableau, measured twice: the
+      `parity_infeasibility_four_free_vars` and `bnb_dead_leaf`
+      regressions both flipped wrong (a false `sat` with an invalid model,
+      and a lost `unsat`) with the gate on, and a fresh mixed-fuzz seed
+      (20261120) produced another false `sat` (`fs1`: `(= (mod 3xi 1)
+      (− (div 5xi 1) 2))`, z3 `unsat`) — all three correct again with the
+      gate off.  The restoration is load-bearing even for narrow-referenced
+      slacks; WHY the preserved-equation argument fails (wide-store
+      migration? column substitution? the rehome cadence itself?) is
+      recorded as the next session's probe target, with the `fs1` shape as
+      a reproducer factory.
+    * Regressions: `rehome_does_not_fabricate_a_crossing_on_a_referenced_slack`
+      (full seed-20261102 instance) and
+      `rehome_false_unsat_seed_20261102_core_decides_sat` (the two-disjunct
+      core) in `nixie-solver/tests/arith_wide_literal_regressions.rs`; both
+      answer `unsat` on the pre-fix tree (revert-checked twice).
+    * Verification: workspace 11 942/11 943 (the one failure is the
+      in-flight `model_eval` SIGABRT of the parallel bags/parse session —
+      it fails identically without this change); clippy/fmt/rustdoc clean;
+      parity 176/177 Correct, 0 disagreements (z3 4.16.0); mixed
+      differential 3×400 fresh seeds (20261120–22) + the home seed 20261102
+      all clean; wide differential 3×300 fresh seeds clean; debug-panic
+      sweep 177/177 zero panics; perf gate PASS with conflicts/decisions
+      bit-identical at 1.000 (the rehome path only runs at
+      arithmetic final-check; the gate corpus is SAT-core dominated).
+    * Also resolved: the `(get-unsat-core)`-after-`check-sat` verdict flip
+      observed while shrinking (the CLI's chunked execution walked the
+      broken machinery down a different path) — both forms now agree `sat`.
+    * Housekeeping: probe worktrees `/tmp/x69` (this arc) and `/tmp/x70`
+      are REMOVED (the disk-pressure directive; every probe shape is
+      recorded here and in item 70's addendum).  The parallel session's
+      continuation-33 addendum described the in-flight fix as gated on
+      `var_referenced_by_any_row` — superseded by this entry's postmortem;
+      the landed fix has no reference gate.

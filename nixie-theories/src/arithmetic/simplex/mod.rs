@@ -5361,20 +5361,6 @@ impl Simplex {
     /// `to`, trailed at the CURRENT scope like a fresh assertion.  Used to
     /// re-home a constraint whose original slack lost its defining row (see
     /// `ArithSolver::rehome_stranded_row_bounds`).
-    pub fn copy_bounds(&mut self, from: VarId, to: VarId) {
-        let fi = from as usize;
-        let lo = self.lower.get(fi).and_then(|b| b.as_ref().cloned());
-        let hi = self.upper.get(fi).and_then(|b| b.as_ref().cloned());
-        if let Some(b) = lo {
-            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
-            self.set_lower_delta(to, b.value, reasons);
-        }
-        if let Some(b) = hi {
-            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
-            self.set_upper_delta(to, b.value, reasons);
-        }
-    }
-
     /// Whether `var` carries any bound at all.
     pub fn has_any_bound(&self, var: VarId) -> bool {
         let i = var as usize;

@@ -3,8 +3,8 @@
 use super::delta::DeltaRational;
 use super::nla::checked_neg_r64;
 use super::simplex::{
-    LinExpr, RowInternMode, Simplex, SimplexOptStatus, VarId, checked_add_r64, checked_div_r64,
-    checked_mul_r64, checked_sub_r64,
+    Bound, LinExpr, RowInternMode, Simplex, SimplexOptStatus, VarId, checked_add_r64,
+    checked_div_r64, checked_mul_r64, checked_sub_r64,
 };
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -50,9 +50,30 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a
 }
 
+/// The comparison flavour a slack's defining atom asserted — kept so the
+/// stranded-bound re-homing sweep can re-assert the ATOM's own bound on a
+/// rebuilt row (see [`ArithSolver::rehome_stranded_row_bounds`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SlackDir {
+    /// `lhs <= rhs`: the atom's own bound is `slack <= 0`.
+    Le,
+    /// `lhs >= rhs`: the atom's own bound is `slack >= 0`.
+    Ge,
+    /// `lhs = rhs`: the atom's own bound is `slack = 0`.
+    Eq,
+}
+
 /// The linear form that interned a row slack, kept for the stranded-bound
 /// re-homing sweep (see [`ArithSolver::rehome_stranded_row_bounds`]).
-type SlackForm = (Vec<(TermId, Rational64)>, Rational64, bool, TermId);
+#[derive(Clone, Debug)]
+struct SlackForm {
+    lhs: Vec<(TermId, Rational64)>,
+    rhs: Rational64,
+    dir: SlackDir,
+    /// The atom whose assertion interned the row.  Only bounds justified by
+    /// THIS term may be re-homed (see the sweep's soundness gates).
+    reason: TermId,
+}
 
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
@@ -553,10 +574,11 @@ impl ArithSolver {
         key: &RowKey,
         lhs: &[(TermId, Rational64)],
         rhs: Rational64,
-        equality: bool,
+        dir: SlackDir,
         reason: TermId,
     ) -> VarId {
         let _ = key;
+        let equality = dir == SlackDir::Eq;
         let mut expr = LinExpr::new();
         for &(term, coef) in lhs {
             let var = self.intern(term);
@@ -581,8 +603,15 @@ impl ArithSolver {
         if integral && self.intern_keeps_integrality(mode, slack) {
             self.int_vars.insert(slack);
         }
-        self.slack_forms
-            .insert(slack, (lhs.to_vec(), rhs, equality, reason));
+        self.slack_forms.insert(
+            slack,
+            SlackForm {
+                lhs: lhs.to_vec(),
+                rhs,
+                dir,
+                reason,
+            },
+        );
         self.atom_rows.insert(cache_key, slack);
         slack
     }
@@ -628,11 +657,50 @@ impl ArithSolver {
     /// reset+replay — which re-homed every atom by re-assertion — was
     /// replaced by the restart rebuild).
     ///
-    /// For each stranded slack: re-intern its recorded form (a fresh row,
-    /// content-addressed), copy the bounds over (same values, same reason
-    /// sets, trailed at the current scope), and keep going.  Returns how
-    /// many constraints were re-homed; the caller re-checks feasibility when
-    /// it is non-zero.
+    /// # Soundness gates (the item-69 false-`unsat` fix)
+    ///
+    /// The historical sweep re-interned the recorded form and copied the
+    /// old slack's CURRENT bound values onto the fresh row (`copy_bounds`,
+    /// since removed).  That copy was sound only under the assumption
+    /// `fresh ≡ old`, which stranding breaks from BOTH ends:
+    ///
+    /// * **The fresh row is the form rendered through the CURRENT tableau,
+    ///   not a copy of the old slack.**  After a pivot consumed the old
+    ///   row, later rows may have been substituted through the old slack,
+    ///   and the rendering can resolve the form as a MULTIPLE of the old
+    ///   slack itself — the observed case rendered `form ≡ (20/7)·old`
+    ///   while `old`'s live (propagated) pin said `old = 7/20`.  Copying
+    ///   the pin value-for-value then asserted `(20/7)·old = 7/20` — a
+    ///   constraint nobody ever derived — which crossed the sound
+    ///   derivation `old = 7/20` and produced a SINGLETON conflict blaming
+    ///   one Euclidean `div`/`mod` axiom, i.e. a learned unit `¬axiom` and
+    ///   a false `unsat` (the seed-20261102 mixed-fuzz core,
+    ///   `docs/studies/assets/2026-09-18/`; the completion of study
+    ///   item 70's decode — the rescale factor item 70 fingered was
+    ///   dropped by exactly this value copy).  The re-intern itself is
+    ///   sound (the fresh row is substitution-derived from live rows); only
+    ///   carrying bound VALUES across the stranding boundary was not.
+    ///
+    /// * **Only the atom's OWN bound may be re-asserted.**  A bound is only
+    ///   translatable to the fresh row when its justification is the
+    ///   recorded atom itself, because the fresh row is that atom's form:
+    ///   the atom's assertion is exactly `slack ∘ 0` on it, a value-free
+    ///   statement.  A TIGHTER bound on the old slack (a propagated pin,
+    ///   justified through rows that expressed the form via the old slack)
+    ///   has both a value and a justification tied to the OLD variable's
+    ///   coordinates; moving either fabricates.  If the atom's own bound is
+    ///   not live on the old slack, the atom is not currently asserted and
+    ///   re-asserting it would constrain the search with a dead literal.
+    ///
+    /// So the sweep now: (1) re-interns the recorded form (unchanged — the
+    /// restoration IS load-bearing; the `parity_infeasibility` and
+    /// `bnb_dead_leaf` regressions pin that even a slack still referenced
+    /// by narrow rows can have its constraint dropped from the live LP);
+    /// (2) re-asserts ONLY the atom's own `∘ 0` bound — scale-invariant,
+    /// so it carries soundly onto any rescaled rendering — and only when a
+    /// live bound on the old slack carries the recorded atom's reason (a
+    /// dead atom is never re-imposed).  Returns how many constraints were
+    /// re-homed; the caller re-checks feasibility when it is non-zero.
     ///
     /// Scope note: the re-homed bounds live at the CURRENT scope, while the
     /// stranded originals stay trailed at their own (possibly shallower)
@@ -654,17 +722,62 @@ impl ArithSolver {
         if std::env::var("NIXIE_REHOME_TRACE").is_ok() && n > 0 {
             eprintln!("[rehome] {n} stranded");
         }
+        let mut rehomed = 0usize;
         for old in stranded {
-            let Some((lhs, rhs, equality, reason)) = self.slack_forms.get(&old).cloned() else {
+            let Some(form) = self.slack_forms.get(&old).cloned() else {
                 continue;
             };
-            let key = self.row_key(&lhs, rhs, equality);
-            let fresh = self.cached_row_slack(&key, &lhs, rhs, equality, reason);
-            if fresh != old {
-                self.simplex.copy_bounds(old, fresh);
+            // Gate 1: still a column of a NARROW row — the bounds constrain
+            // the system through that live equation; nothing to restore, and
+            // a re-intern can fabricate (see the doc comment).  Wide-store
+            // references do NOT count: the wide side table is invisible to
+            // pivoting and LP feasibility, so a wide-referenced slack's
+            // constraint is genuinely dropped and must be re-homed.
+            // Gate: the atom's own bound must be live on the old slack.
+            // A bound's reason ids stay mapped to their terms for as long
+            // as the bound itself is live (bounds and reasons are undone by
+            // the same pops), so a reason id resolving to the recorded
+            // atom term is a live assertion of exactly that atom.
+            let atom_live = |bounds: Option<&Bound>| -> Option<u32> {
+                bounds?
+                    .all_reasons()
+                    .find(|&r| self.reasons.get(r as usize).copied() == Some(form.reason))
+            };
+            let lo_atom = atom_live(self.simplex.get_lower(old));
+            let hi_atom = atom_live(self.simplex.get_upper(old));
+            let (want_lower, want_upper) = match form.dir {
+                SlackDir::Le => (false, hi_atom.is_some()),
+                SlackDir::Ge => (lo_atom.is_some(), false),
+                SlackDir::Eq => (lo_atom.is_some(), hi_atom.is_some()),
+            };
+            if !want_lower && !want_upper {
+                continue; // the atom's own assertion is not live: restore nothing
+            }
+            let key = self.row_key(&form.lhs, form.rhs, form.dir == SlackDir::Eq);
+            let fresh = self.cached_row_slack(&key, &form.lhs, form.rhs, form.dir, form.reason);
+            if fresh == old {
+                continue;
+            }
+            // The re-asserted bound VALUE is exactly the atom's own `∘ 0`:
+            // the fresh slack is the recorded form, so this says precisely
+            // what the atom said when it was first asserted.  The reason id
+            // is one already live for this atom (never a recycled id).  The
+            // `if let`s keep that invariant structural: no arm can fire
+            // without the matching live atom reason in hand.
+            let mut moved = false;
+            if want_lower && let Some(id) = lo_atom {
+                self.simplex.set_lower(fresh, Rational64::zero(), id);
+                moved = true;
+            }
+            if want_upper && let Some(id) = hi_atom {
+                self.simplex.set_upper(fresh, Rational64::zero(), id);
+                moved = true;
+            }
+            if moved {
+                rehomed += 1;
             }
         }
-        n
+        rehomed
     }
 
     /// Like [`Self::cached_row_slack`] for strict comparisons: no
@@ -1055,7 +1168,7 @@ impl ArithSolver {
         // One shared, interned row per linear form; the assertion itself is
         // just the bound `slack <= 0` on it.
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack(&key, lhs, rhs, false, reason);
+        let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Le, reason);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason_id);
@@ -1088,7 +1201,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack(&key, lhs, rhs, false, reason);
+        let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Ge, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason_id);
@@ -1268,7 +1381,7 @@ impl ArithSolver {
         // One shared, interned row per linear form; the equality is the two
         // bounds `slack <= 0` and `slack >= 0` on it.
         let reason_id = self.add_reason(reason);
-        let slack = self.cached_row_slack(&lia_key, lhs, rhs, true, reason);
+        let slack = self.cached_row_slack(&lia_key, lhs, rhs, SlackDir::Eq, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
