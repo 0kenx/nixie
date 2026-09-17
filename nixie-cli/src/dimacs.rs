@@ -820,3 +820,140 @@ mod tests {
         assert!(smtlib2.contains("(or v1 (not v2))"));
     }
 }
+
+/// A flat, scanned DIMACS body: `(num_vars, lits)` where `lits` is the
+/// clause stream in file order, clauses separated (terminated) by `0` —
+/// the same representation the file itself uses, with none of the
+/// per-clause `Vec` materialization.
+///
+/// Built by [`FlatCnf::scan`], a byte-level scanner with the same token
+/// semantics as [`DimacsCnf::parse`] (comment lines skipped whole,
+/// clause boundaries at `0` regardless of line breaks, non-`i32` tokens
+/// error naming the token, unterminated trailing clause an error).  It
+/// exists because the line-based UTF-8 parse plus the `Vec<Vec<i32>>`
+/// intermediate cost ~70 % of whole-run wall on the 544 MB parse anatomy
+/// (`hwmcc-6s299`, zero search on both sides) — see
+/// `docs/studies/2026-09-15-env-probe-regression.md`.
+#[derive(Debug, Default)]
+pub struct FlatCnf {
+    pub num_vars: usize,
+    pub lits: Vec<i32>,
+}
+
+impl FlatCnf {
+    /// Byte-level scan of a whole DIMACS CNF body.
+    ///
+    /// # Errors
+    ///
+    /// Same error conditions as [`DimacsCnf::parse`], with analogous
+    /// messages (missing problem line, invalid literal, variable exceeding
+    /// the declared count, unterminated clause, clause count mismatch).
+    pub fn scan<R: BufRead>(mut reader: R) -> Result<Self, String> {
+        // One whole-file buffer: for CNF inputs (hundreds of MB at most)
+        // a single allocation beats chunk-carry machinery, and unlike the
+        // solver-side parser this scan builds no solver state mid-read.
+        let mut raw = Vec::new();
+        reader
+            .read_to_end(&mut raw)
+            .map_err(|e| format!("Failed to read DIMACS: {}", e))?;
+
+        let mut num_vars = 0usize;
+        let mut num_clauses_expected = 0usize;
+        let mut problem_line_found = false;
+        let mut lits: Vec<i32> = Vec::with_capacity(raw.len() / 8);
+        let mut clauses_found = 0usize;
+
+        let mut i = 0usize;
+        let n = raw.len();
+        while i < n {
+            let b = raw[i];
+            // Line classification mirrors `DimacsCnf::parse`: a line whose
+            // first non-space byte is 'c' is a comment (skipped whole);
+            // 'p' opens the problem line; anything else is body.
+            if b == b'c' || b == b'p' {
+                // Capture the whole line, then classify.
+                let start = i;
+                while i < n && raw[i] != b'\n' {
+                    i += 1;
+                }
+                let line = std::str::from_utf8(&raw[start..i])
+                    .map_err(|_| "Invalid UTF-8 in DIMACS".to_string())?;
+                let trimmed = line.trim();
+                if trimmed.starts_with('c') {
+                    continue; // comment
+                }
+                if trimmed.starts_with("p cnf") {
+                    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                    if parts.len() != 4 {
+                        return Err(format!("Invalid problem line: {}", trimmed));
+                    }
+                    num_vars = parts[2]
+                        .parse()
+                        .map_err(|_| format!("Invalid number of variables: {}", parts[2]))?;
+                    num_clauses_expected = parts[3]
+                        .parse()
+                        .map_err(|_| format!("Invalid number of clauses: {}", parts[3]))?;
+                    problem_line_found = true;
+                }
+                continue;
+            }
+            if b.is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            if !problem_line_found {
+                return Err(
+                    "Clause found before problem line. Problem line must come first.".to_string(),
+                );
+            }
+            // Literal token: [+-]?digits
+            let start = i;
+            if b == b'+' || b == b'-' {
+                i += 1;
+            }
+            let ds = i;
+            while i < n && raw[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i == ds {
+                let end = (start + 16).min(n);
+                return Err(format!(
+                    "Invalid literal in clause: {}",
+                    String::from_utf8_lossy(&raw[start..end])
+                ));
+            }
+            let token =
+                std::str::from_utf8(&raw[start..i]).map_err(|_| "Invalid token".to_string())?;
+            let lit: i32 = token
+                .parse()
+                .map_err(|_| format!("Invalid literal in clause: {}", token))?;
+            if lit == 0 {
+                clauses_found += 1;
+            } else if lit.unsigned_abs() as usize > num_vars {
+                return Err(format!(
+                    "Literal {} refers to variable {}, but only {} variables declared",
+                    lit,
+                    lit.unsigned_abs(),
+                    num_vars
+                ));
+            }
+            lits.push(lit);
+        }
+        if !problem_line_found {
+            return Err("No problem line found in DIMACS file".to_string());
+        }
+        // Unterminated trailing clause: the stream ends with literals but
+        // no 0. `lits` being empty or ending in 0 means every literal was
+        // terminated.
+        if lits.last().is_some_and(|&l| l != 0) {
+            return Err("Unterminated clause: literals are missing a trailing 0".to_string());
+        }
+        if clauses_found != num_clauses_expected {
+            return Err(format!(
+                "Expected {} clauses but found {}",
+                num_clauses_expected, clauses_found
+            ));
+        }
+        Ok(Self { num_vars, lits })
+    }
+}

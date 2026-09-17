@@ -678,6 +678,160 @@ fn process_single_file(
             }
         };
 
+        // Fast-path decision is purely argument-based, so it is hoisted
+        // above the parse: the fast path scans the file byte-level into a
+        // FLAT literal stream (`FlatCnf` — no per-clause Vecs, no
+        // line-based UTF-8 machinery; those cost ~70 % of whole-run wall
+        // on the 544 MB parse anatomy), then runs the identical
+        // upfront-var-creation + in-order `add_clause` sequence the
+        // `Vec<Vec<i32>>` path ran — bit-identical trajectories by
+        // construction (verified on the perf-gate corpus).
+        let fast_path_ok = !args.analyze
+            && !args.classify
+            && !args.dependencies
+            && !args.dependencies_detailed
+            && args.dependencies_export.is_none()
+            && !args.diagnostic
+            && args.diagnostic_export.is_none()
+            && !args.format_smtlib
+            && !args.validate_only
+            && !args.dimacs_output; // `v`-line models come from the SMT path
+        if fast_path_ok {
+            let flat = {
+                let reader = BufReader::new(&file_handle);
+                match dimacs::FlatCnf::scan(reader) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        return SolverResult {
+                            file: Some(file.display().to_string()),
+                            result: String::new(),
+                            error: Some(format!("Failed to parse DIMACS: {}", e)),
+                            time_ms: start.elapsed().as_millis(),
+                        };
+                    }
+                }
+            };
+            // Default = the CaDiCaL preset (folded 2026-09-16 by the
+            // powered experiment; see the study and config_presets.rs).
+            let mut sat_config = match args.preset.as_deref().map(crate::parse_preset) {
+                Some(Ok(crate::CliPreset::Sat(p))) => p.config(),
+                Some(Ok(crate::CliPreset::Smt(_))) => {
+                    // Unreachable in practice (`main` rejects SMT presets
+                    // for DIMACS files at the argument gate); honest error.
+                    let msg = "SMT-layer preset has no effect on DIMACS/CNF input; \
+                         use a SAT preset (default, industrial, random, \
+                         cryptographic, hardware, aggressive, conservative, glucose, minisat, \
+                         cadical)"
+                        .to_string();
+                    return SolverResult {
+                        file: Some(file.display().to_string()),
+                        result: String::new(),
+                        error: Some(msg),
+                        time_ms: start.elapsed().as_millis(),
+                    };
+                }
+                Some(Err(e)) => {
+                    return SolverResult {
+                        file: Some(file.display().to_string()),
+                        result: String::new(),
+                        error: Some(e),
+                        time_ms: start.elapsed().as_millis(),
+                    };
+                }
+                None => nixie_sat::ConfigPreset::CaDiCaL.config(),
+            };
+            {
+                if let Ok(v) = std::env::var("NIXIE_SAT_BVE") {
+                    sat_config.enable_bve = v != "0";
+                }
+                if let Ok(v) = std::env::var("NIXIE_SAT_RESTART") {
+                    sat_config.restart_strategy = match v.as_str() {
+                        "glucose" => nixie_sat::RestartStrategy::Glucose,
+                        "luby" => nixie_sat::RestartStrategy::Luby,
+                        "geometric" => nixie_sat::RestartStrategy::Geometric,
+                        "locallbd" => nixie_sat::RestartStrategy::LocalLbd,
+                        _ => sat_config.restart_strategy,
+                    };
+                }
+                if std::env::var("NIXIE_SAT_STABLE_POLARITY").as_deref() == Ok("0") {
+                    sat_config.random_polarity_prob_stable = Some(0.0);
+                }
+                if let Ok(v) = std::env::var("NIXIE_SAT_DELETION")
+                    && let Ok(n) = v.parse::<u64>()
+                {
+                    sat_config.clause_deletion_threshold = n as usize;
+                }
+            }
+            let mut sat = nixie_sat::Solver::with_config(sat_config);
+            if let Ok(seed) = std::env::var("NIXIE_SAT_SEED")
+                && let Ok(seed) = seed.trim().parse::<u64>()
+            {
+                sat.set_rng_seed(seed);
+            }
+            for _ in 0..flat.num_vars {
+                sat.new_var();
+            }
+            let deadline = if args.timeout > 0 {
+                std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
+            } else {
+                None
+            };
+            let interrupt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            sat.set_interrupt(std::sync::Arc::clone(&interrupt));
+            if let Some(d) = deadline {
+                std::thread::spawn(move || {
+                    let now = std::time::Instant::now();
+                    if now < d {
+                        std::thread::sleep(d - now);
+                    }
+                    interrupt.store(true, std::sync::atomic::Ordering::Relaxed);
+                });
+            }
+            // Walk the flat stream: each run of non-zero literals up to its
+            // `0` terminator is one clause, in file order — the exact
+            // sequence the `Vec<Vec<i32>>` path produced.
+            let mut verdict = None;
+            let mut clause: Vec<i32> = Vec::new();
+            for &lit in &flat.lits {
+                if lit == 0 {
+                    if clause.is_empty() {
+                        verdict = Some("unsat");
+                        break;
+                    }
+                    let lits: Vec<nixie_sat::Lit> = clause
+                        .iter()
+                        .map(|&l| {
+                            let v = nixie_sat::Var(l.unsigned_abs() - 1);
+                            if l > 0 {
+                                nixie_sat::Lit::pos(v)
+                            } else {
+                                nixie_sat::Lit::neg(v)
+                            }
+                        })
+                        .collect();
+                    sat.add_clause(lits);
+                    clause.clear();
+                } else {
+                    clause.push(lit);
+                }
+            }
+            let result = match verdict {
+                Some(v) => v.to_string(),
+                None => match sat.solve() {
+                    nixie_sat::SolverResult::Sat => "sat".to_string(),
+                    nixie_sat::SolverResult::Unsat => "unsat".to_string(),
+                    nixie_sat::SolverResult::Unknown => "unknown".to_string(),
+                },
+            };
+            ctx.absorb_sat_stats(sat.stats());
+            let time_ms = start.elapsed().as_millis();
+            return SolverResult {
+                file: Some(file.display().to_string()),
+                result,
+                error: None,
+                time_ms,
+            };
+        }
         let reader = BufReader::new(file_handle);
         let cnf = match dimacs::DimacsCnf::parse(reader) {
             Ok(c) => c,
