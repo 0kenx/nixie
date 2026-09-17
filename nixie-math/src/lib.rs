@@ -174,7 +174,8 @@ mod integration_tests {
             (-1, &[(0, 1)]), // -x
         ]);
 
-        let gb = grobner::grobner_basis(&[x_squared_minus_2.clone(), y_minus_x]);
+        let gb =
+            grobner::grobner_basis(&[x_squared_minus_2.clone(), y_minus_x]).expect("completes");
 
         // The Gröbner basis should contain polynomials
         assert!(!gb.is_empty());
@@ -287,7 +288,7 @@ mod integration_tests {
         ]);
 
         // Compute Gröbner basis of {x^2 - y^2}
-        let gb = grobner::grobner_basis(&[x_sq_minus_y_sq]);
+        let gb = grobner::grobner_basis(&[x_sq_minus_y_sq]).expect("completes");
 
         assert!(!gb.is_empty());
     }

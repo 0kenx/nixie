@@ -187,9 +187,9 @@ pub fn reduce(f: &Polynomial, g_set: &[Polynomial]) -> Polynomial {
 /// This implementation applies Buchberger's criteria (GCD criterion and chain criterion)
 /// via [`SyzygyComputer`] to eliminate redundant S-pairs before computing them,
 /// significantly reducing the number of S-polynomial reductions required.
-pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
+pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, GrobnerIterationCap> {
     if polynomials.is_empty() {
-        return vec![];
+        return Ok(vec![]);
     }
 
     // Remove zero polynomials and make primitive
@@ -200,7 +200,33 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
         .collect();
 
     if g.is_empty() {
-        return vec![];
+        return Ok(vec![]);
+    }
+
+    // Seed leading-term DEDUPLICATION: reduce each input's leading term
+    // against the other inputs so the seed leading monomials are
+    // distinct. The chain criterion is unsound over duplicate seed lms
+    // (a duplicate trivially divides every lcm of its own multiples)
+    // — root cause 1 of the 2026-09-18 𝔽_p missed-refutation finding;
+    // this is the same fix, over ℚ. Not full inter-reduction: only the
+    // leading-term chain, so structured generators survive.
+    {
+        let mut i = 0;
+        while i < g.len() {
+            let others: Vec<Polynomial> = g
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, q)| q.clone())
+                .collect();
+            let reduced = reduce(&g[i], &others);
+            if reduced.is_zero() {
+                g.swap_remove(i);
+                continue;
+            }
+            g[i] = reduced.primitive();
+            i += 1;
+        }
     }
 
     // Syzygy computer applies Buchberger's GCD criterion and chain criterion
@@ -215,11 +241,23 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
         }
     }
 
-    // Limit iterations to prevent infinite loops
-    let max_iterations = 1000;
+    // Iteration cap with HONEST failure: the first version silently
+    // returned whatever partial basis it had when the cap fired — a
+    // non-basis indistinguishable from a complete one (the
+    // no-silent-fallthrough rule; `grobner_basis_f5_tracked` already
+    // modeled the honest shape for the F5 variant). Buchberger over ℚ
+    // terminates (Noetherian), so the cap only guards pathological
+    // slowness — refusing is correct, truncating is not.
+    let max_iterations = 10_000;
     let mut iterations = 0;
 
-    while !pairs.is_empty() && iterations < max_iterations {
+    while !pairs.is_empty() {
+        if iterations >= max_iterations {
+            return Err(GrobnerIterationCap {
+                pairs_remaining: pairs.len(),
+                basis_size: g.len(),
+            });
+        }
         iterations += 1;
 
         // Take a pair. `pairs` is non-empty per the `while` guard, so this
@@ -234,8 +272,16 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
         }
 
         // Apply Buchberger's criteria: skip this pair if the GCD criterion
-        // or chain criterion guarantees the S-polynomial reduces to zero.
+        // or the verified chain criterion guarantees the S-polynomial
+        // reduces to zero (both record the proven-zero pair inside).
         if syzygy.apply_buchberger_criteria(i, j, &g[i], &g[j], &g) {
+            if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+                eprintln!(
+                    "[gb] pair ({i},{j}) lms {:?}/{:?}: SKIPPED by criteria",
+                    g[i].leading_monomial().map(|m| m.vars().to_vec()),
+                    g[j].leading_monomial().map(|m| m.vars().to_vec())
+                );
+            }
             continue;
         }
 
@@ -244,6 +290,25 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
 
         // Reduce S-polynomial with respect to G
         let s_reduced = reduce(&s, &g);
+
+        if s_reduced.is_zero() {
+            // A processed-to-zero reduction: a proven fact the chain
+            // criterion may cite.
+            syzygy.record_zero_pair(i, j);
+            if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+                eprintln!(
+                    "[gb] pair ({i},{j}): reduced to ZERO ({} pairs left, basis {})",
+                    pairs.len(),
+                    g.len()
+                );
+            }
+        } else if std::env::var_os("NIXIE_GB_TRACE").is_some() {
+            eprintln!(
+                "[gb] pair ({i},{j}): ADMIT lm {:?} (basis {})",
+                s_reduced.leading_monomial().map(|m| m.vars().to_vec()),
+                g.len()
+            );
+        }
 
         if !s_reduced.is_zero() {
             let s_primitive = s_reduced.primitive();
@@ -260,8 +325,30 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Vec<Polynomial> {
     }
 
     // Reduce the basis (interreduce)
-    interreduce(&g)
+    Ok(interreduce(&g))
 }
+
+/// The iteration cap fired: the computation was refused, NOT truncated
+/// — the caller must not treat any partial result as a Gröbner basis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrobnerIterationCap {
+    /// Unprocessed critical pairs at refusal.
+    pub pairs_remaining: usize,
+    /// Basis size at refusal.
+    pub basis_size: usize,
+}
+
+impl core::fmt::Display for GrobnerIterationCap {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Groebner iteration cap: {} pairs unprocessed, basis size {}",
+            self.pairs_remaining, self.basis_size
+        )
+    }
+}
+
+impl std::error::Error for GrobnerIterationCap {}
 
 /// Interreduce a Gröbner basis to make it minimal and reduced.
 ///
@@ -298,22 +385,27 @@ fn interreduce(basis: &[Polynomial]) -> Vec<Polynomial> {
 ///
 /// This is done by computing the Gröbner basis and checking if the polynomial
 /// reduces to zero.
-pub fn ideal_membership(f: &Polynomial, generators: &[Polynomial]) -> bool {
+pub fn ideal_membership(
+    f: &Polynomial,
+    generators: &[Polynomial],
+) -> Result<bool, GrobnerIterationCap> {
     if f.is_zero() {
-        return true;
+        return Ok(true);
     }
 
     if generators.is_empty() {
-        return false;
+        return Ok(false);
     }
 
-    // Compute Gröbner basis
-    let gb = grobner_basis(generators);
+    // Compute Gröbner basis (an honest refusal propagates: a truncated
+    // basis cannot decide membership — reduce-to-nonzero on a non-basis
+    // proves nothing).
+    let gb = grobner_basis(generators)?;
 
     // Reduce f with respect to the Gröbner basis
     let reduced = reduce(f, &gb);
 
-    reduced.is_zero()
+    Ok(reduced.is_zero())
 }
 
 /// Signature for F5 algorithm.
@@ -1342,7 +1434,7 @@ mod tests {
         let f1 = Polynomial::from_var(0); // x
         let f2 = Polynomial::from_var(1); // y
 
-        let gb = grobner_basis(&[f1, f2]);
+        let gb = grobner_basis(&[f1, f2]).expect("completes");
 
         // Should contain both x and y
         assert!(gb.len() >= 2);
@@ -1354,11 +1446,11 @@ mod tests {
         let f = Polynomial::from_coeffs_int(&[(1, &[(0, 2)])]);
         let generators = vec![Polynomial::from_var(0)];
 
-        assert!(ideal_membership(&f, &generators));
+        assert!(ideal_membership(&f, &generators).expect("completes"));
 
         // Test if y is in the ideal <x>
         let f = Polynomial::from_var(1);
-        assert!(!ideal_membership(&f, &generators));
+        assert!(!ideal_membership(&f, &generators).expect("completes"));
     }
 
     #[test]
@@ -1367,7 +1459,7 @@ mod tests {
         let f = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 1)])]);
         let generators = vec![Polynomial::from_var(0), Polynomial::from_var(1)];
 
-        assert!(ideal_membership(&f, &generators));
+        assert!(ideal_membership(&f, &generators).expect("completes"));
     }
 
     #[test]
@@ -1388,7 +1480,7 @@ mod tests {
         let f1 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-1, &[])]); // x^2 - 1
         let f2 = Polynomial::from_coeffs_int(&[(1, &[(0, 1), (1, 1)]), (-1, &[(1, 1)])]); // xy - y
 
-        let gb_buchberger = grobner_basis(&[f1.clone(), f2.clone()]);
+        let gb_buchberger = grobner_basis(&[f1.clone(), f2.clone()]).expect("completes");
         let gb_f4 = grobner_basis_f4(&[f1, f2]);
 
         // Both should produce Gröbner bases (may differ but should have same ideal)
@@ -1462,7 +1554,7 @@ mod tests {
         let f1 = Polynomial::from_coeffs_int(&[(1, &[(0, 2)]), (-1, &[])]); // x^2 - 1
         let f2 = Polynomial::from_coeffs_int(&[(1, &[(0, 1), (1, 1)]), (-1, &[(1, 1)])]); // xy - y
 
-        let gb_buchberger = grobner_basis(&[f1.clone(), f2.clone()]);
+        let gb_buchberger = grobner_basis(&[f1.clone(), f2.clone()]).expect("completes");
         let gb_f5 = grobner_basis_f5(&[f1, f2]);
 
         // Both should produce Gröbner bases

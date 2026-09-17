@@ -296,7 +296,7 @@ impl GroebnerPreprocessor {
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let gb = grobner_basis(&polys_clone);
+            let gb = grobner_basis(&polys_clone).ok();
             // Ignore send error – receiver may have already timed out.
             let _ = tx.send(gb);
             // Release our slot regardless of whether anyone was still
@@ -306,8 +306,11 @@ impl GroebnerPreprocessor {
         });
 
         let gb = match rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(_) => return None, // Timeout – skip preprocessing (thread keeps running).
+            Ok(Some(result)) => result,
+            // Timeout or iteration-cap refusal: either way there is no
+            // trustworthy basis to preprocess with — skip (the honest
+            // `None` the cap now returns, never a silent non-basis).
+            Ok(None) | Err(_) => return None, // skip prep (thread keeps running)
         };
 
         // Check if result is too large

@@ -7,7 +7,7 @@
 //! - Resolution of S-polynomials
 //! - Critical pair management
 
-use crate::polynomial::{Monomial, Polynomial, Var};
+use crate::polynomial::{Monomial, MonomialOrder, Polynomial, Term, Var};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use core::cmp::Ordering;
@@ -20,8 +20,21 @@ pub struct SyzygyComputer {
     critical_pairs: BinaryHeap<CriticalPair>,
     /// Syzygy module generators
     syzygies: Vec<Syzygy>,
-    /// Buchberger criteria cache
+    /// Buchberger criteria cache (POSITIVE results only — criterion
+    /// 2's truth grows monotonically with `zero_pairs`, so a cached
+    /// `false` can only be stale)
     criteria_cache: FxHashMap<(usize, usize), BuchbergerCriteria>,
+    /// Pairs whose S-polynomial PROVABLY reduces to zero: processed to
+    /// zero, coprime leading monomials (criterion 1 is an unconditional
+    /// theorem), or recursively chain-verified. The sound form of
+    /// Buchberger's second criterion consults this set — a pair (i, j)
+    /// is discardable only when some k has `lm_k | lcm(lm_i, lm_j)` AND
+    /// both (i,k) and (j,k) are themselves in the set. The simplified
+    /// form this replaces (a bare `lm_k | lcm`) is UNSOUND — the
+    /// missed-refutation class root-caused in the 𝔽_p engine on
+    /// 2026-09-18; tests/grobner_rational_soundness.rs is this
+    /// module's gate.
+    zero_pairs: std::collections::HashSet<(usize, usize)>,
     /// Statistics
     stats: SyzygyStats,
 }
@@ -85,8 +98,18 @@ impl SyzygyComputer {
             critical_pairs: BinaryHeap::new(),
             syzygies: Vec::new(),
             criteria_cache: FxHashMap::default(),
+            zero_pairs: std::collections::HashSet::new(),
             stats: SyzygyStats::default(),
         }
+    }
+
+    /// Record a pair whose S-polynomial provably reduces to zero —
+    /// after a processed-to-zero reduction, or a criteria-based
+    /// discard. The caller MUST call this for every such event; the
+    /// chain criterion's soundness rests on this set containing only
+    /// PROVEN facts.
+    pub fn record_zero_pair(&mut self, i: usize, j: usize) {
+        self.zero_pairs.insert((i.min(j), i.max(j)));
     }
 
     /// Generate critical pair for two polynomials.
@@ -147,13 +170,14 @@ impl SyzygyComputer {
         fj: &Polynomial,
         basis: &[Polynomial],
     ) -> bool {
-        // Check cache
-        if let Some(criteria) = self.criteria_cache.get(&(i, j)) {
-            if criteria.criterion1 || criteria.criterion2 {
-                self.stats.pairs_eliminated += 1;
-                return true;
-            }
-            return false;
+        // Cache lookup: POSITIVE results only (see the struct field's
+        // note — a negative-result cache goes stale as zero_pairs
+        // grows).
+        if let Some(criteria) = self.criteria_cache.get(&(i, j))
+            && (criteria.criterion1 || criteria.criterion2)
+        {
+            self.stats.pairs_eliminated += 1;
+            return true;
         }
 
         // Criterion 1: Relatively prime leading terms
@@ -168,6 +192,9 @@ impl SyzygyComputer {
                     criterion2: false,
                 },
             );
+            // Criterion 1 is an unconditional theorem: the pair is
+            // provably zero (a chain link may cite it).
+            self.zero_pairs.insert((i.min(j), i.max(j)));
             self.stats.pairs_eliminated += 1;
             return true;
         }
@@ -184,18 +211,13 @@ impl SyzygyComputer {
                     criterion2: true,
                 },
             );
+            // The verified chain proves this pair zero too.
+            self.zero_pairs.insert((i.min(j), i.max(j)));
             self.stats.pairs_eliminated += 1;
             return true;
         }
 
-        self.criteria_cache.insert(
-            (i, j),
-            BuchbergerCriteria {
-                criterion1: false,
-                criterion2: false,
-            },
-        );
-
+        // No negative-result cache entry (see the lookup note above).
         false
     }
 
@@ -209,7 +231,20 @@ impl SyzygyComputer {
         }
     }
 
-    /// Check Criterion 2: LCM(LM(fi), LM(fj)) = LM(fi) * LM(fj).
+    /// Check Criterion 2 (chain criterion, SOUND form): (i, j) is
+    /// discardable only when some k has `lm_k | lcm(lm_i, lm_j)` AND
+    /// both (i,k) and (j,k) are in `zero_pairs` — provably-zero pairs
+    /// (a DAG by construction). Two defects fixed relative to the old
+    /// form: (a) the bare chain scan was the UNSOUND simplified
+    /// criterion — its divisibility side-checks (`lcm_ik | lcm` etc.)
+    /// were tautologies whenever the outer divisibility held, so it
+    /// reduced to `∃k: lm_k | lcm`, which drops S-polynomials that do
+    /// not reduce to zero (the missed-refutation class, 2026-09-18);
+    /// (b) the `lcm == product` early return was criterion 1 restated
+    /// — and until this change it ran on VACUOUS monomial helpers (see
+    /// `monomial_lcm`'s note), making criterion 1 fire on EVERY pair
+    /// and the whole engine a decorated no-op that computed zero
+    /// S-polynomials.
     fn check_criterion2(
         &self,
         i: usize,
@@ -218,39 +253,26 @@ impl SyzygyComputer {
         fj: &Polynomial,
         basis: &[Polynomial],
     ) -> bool {
-        if let (Some(lt_i), Some(lt_j)) = (fi.leading_monomial(), fj.leading_monomial()) {
-            let lcm = Self::monomial_lcm(lt_i, lt_j);
-            let product = Self::monomial_mul(lt_i, lt_j);
-
-            // Check if LCM equals product
-            if lcm == product {
+        let (Some(lt_i), Some(lt_j)) = (fi.leading_monomial(), fj.leading_monomial()) else {
+            return false;
+        };
+        let lcm = Self::monomial_lcm(lt_i, lt_j);
+        for (k, fk) in basis.iter().enumerate() {
+            if k == i || k == j {
+                continue;
+            }
+            let Some(lt_k) = fk.leading_monomial() else {
+                continue;
+            };
+            if !Self::monomial_divides(lt_k, &lcm) {
+                continue;
+            }
+            let (a, b) = (k.min(i), k.max(i));
+            let (c, d) = (k.min(j), k.max(j));
+            if self.zero_pairs.contains(&(a, b)) && self.zero_pairs.contains(&(c, d)) {
                 return true;
             }
-
-            // Chain criterion: check if there exists k such that
-            // LM(fk) divides lcm(LM(fi), LM(fj)) and
-            // (i,k) and (j,k) are already processed
-            for (k, fk) in basis.iter().enumerate() {
-                if k == i || k == j {
-                    continue;
-                }
-
-                if let Some(lt_k) = fk.leading_monomial()
-                    && Self::monomial_divides(lt_k, &lcm)
-                {
-                    // Check if (i,k) and (j,k) satisfy the criterion
-                    let lcm_ik = Self::monomial_lcm(lt_i, lt_k);
-                    let lcm_jk = Self::monomial_lcm(lt_j, lt_k);
-
-                    if Self::monomial_divides(&lcm_ik, &lcm)
-                        && Self::monomial_divides(&lcm_jk, &lcm)
-                    {
-                        return true;
-                    }
-                }
-            }
         }
-
         false
     }
 
@@ -332,94 +354,74 @@ impl SyzygyComputer {
         }
     }
 
-    /// Monomial LCM.
+    /// Monomial LCM (per-variable max of exponents). Rewritten 2026-09-18
+    /// against the REAL `Monomial::vars()` API — the previous version went
+    /// through the `MonomialHelper` stub trait whose `powers()` returned a
+    /// **static empty map** ("Simplified"), making this and every other
+    /// helper vacuous: `are_relatively_prime` was always-true (so criterion
+    /// 1 skipped EVERY pair and the engine computed zero S-polynomials),
+    /// and lcm/mul/div returned near-unit monomials. The stub traits are
+    /// deleted below; these are the real operations.
     fn monomial_lcm(m1: &Monomial, m2: &Monomial) -> Monomial {
-        let mut result_powers = FxHashMap::default();
-
-        // Merge variables from both monomials
-        for (&var, &power) in m1.powers().iter() {
-            result_powers.insert(var, power);
+        let mut pairs: Vec<(Var, u32)> = m1.vars().iter().map(|vp| (vp.var, vp.power)).collect();
+        for vp2 in m2.vars() {
+            match pairs.iter_mut().find(|(v, _)| *v == vp2.var) {
+                Some((_, p)) => *p = (*p).max(vp2.power),
+                None => pairs.push((vp2.var, vp2.power)),
+            }
         }
-
-        for (&var, &power2) in m2.powers().iter() {
-            let max_power = result_powers.get(&var).copied().unwrap_or(0).max(power2);
-            result_powers.insert(var, max_power);
-        }
-
-        Monomial::from_powers(result_powers.into_iter().map(|(v, p)| (v, p as u32)))
+        Monomial::from_powers(pairs)
     }
 
-    /// Monomial GCD.
+    /// Monomial GCD (per-variable min of exponents).
     #[allow(dead_code)]
     fn monomial_gcd(m1: &Monomial, m2: &Monomial) -> Monomial {
-        let mut result_powers = FxHashMap::default();
-
-        for (&var, &power1) in m1.powers().iter() {
-            if let Some(&power2) = m2.powers().get(&var) {
-                let min_power = power1.min(power2);
-                if min_power > 0 {
-                    result_powers.insert(var, min_power);
-                }
-            }
-        }
-
-        Monomial::from_powers(result_powers.into_iter().map(|(v, p)| (v, p as u32)))
+        Monomial::from_powers(m1.vars().iter().filter_map(|vp1| {
+            m2.vars()
+                .iter()
+                .find(|vp2| vp2.var == vp1.var)
+                .map(|vp2| (vp1.var, vp1.power.min(vp2.power)))
+        }))
     }
 
-    /// Monomial multiplication.
+    /// Monomial multiplication (exponent sums — `from_powers` sums).
+    /// Kept real (not stubbed) for any future caller; the criteria no
+    /// longer use it since the vacuous `lcm == product` check went.
+    #[allow(dead_code)]
     fn monomial_mul(m1: &Monomial, m2: &Monomial) -> Monomial {
-        let mut result_powers = m1.powers().clone();
-
-        for (&var, &power) in m2.powers().iter() {
-            *result_powers.entry(var).or_insert(0) += power;
-        }
-
-        Monomial::from_powers(result_powers.into_iter().map(|(v, p)| (v, p as u32)))
+        Monomial::from_powers(
+            m1.vars()
+                .iter()
+                .map(|vp| (vp.var, vp.power))
+                .chain(m2.vars().iter().map(|vp| (vp.var, vp.power))),
+        )
     }
 
-    /// Monomial division.
+    /// Monomial division (saturating exponent differences).
     fn monomial_div(m1: &Monomial, m2: &Monomial) -> Monomial {
-        let mut result_powers = m1.powers().clone();
-
-        for (&var, &power) in m2.powers().iter() {
-            if let Some(p) = result_powers.get_mut(&var) {
-                *p = p.saturating_sub(power);
-                if *p == 0 {
-                    result_powers.remove(&var);
-                }
+        Monomial::from_powers(m1.vars().iter().filter_map(|vp1| {
+            match m2.vars().iter().find(|vp2| vp2.var == vp1.var) {
+                Some(vp2) => vp1.power.checked_sub(vp2.power).map(|p| (vp1.var, p)),
+                None => Some((vp1.var, vp1.power)),
             }
-        }
-
-        Monomial::from_powers(result_powers.into_iter().map(|(v, p)| (v, p as u32)))
+        }))
     }
 
     /// Check if m1 divides m2.
     fn monomial_divides(m1: &Monomial, m2: &Monomial) -> bool {
-        for (&var, &power1) in m1.powers().iter() {
-            if let Some(&power2) = m2.powers().get(&var) {
-                if power1 > power2 {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-
-        true
+        m1.vars().iter().all(|vp1| {
+            m2.vars()
+                .iter()
+                .any(|vp2| vp2.var == vp1.var && vp2.power >= vp1.power)
+        })
     }
 
-    /// Check if two monomials are relatively prime.
+    /// Check if two monomials are relatively prime (no shared
+    /// variable — `Monomial` never stores zero exponents).
     fn are_relatively_prime(m1: &Monomial, m2: &Monomial) -> bool {
-        for (&var, &power1) in m1.powers().iter() {
-            if let Some(&power2) = m2.powers().get(&var)
-                && power1 > 0
-                && power2 > 0
-            {
-                return false;
-            }
-        }
-
-        true
+        m1.vars()
+            .iter()
+            .all(|vp1| !m2.vars().iter().any(|vp2| vp2.var == vp1.var))
     }
 
     /// Get syzygy module.
@@ -471,7 +473,12 @@ impl Default for SyzygyComputer {
     }
 }
 
-// Helper trait extensions for Polynomial
+// Helper trait extensions for Polynomial: REAL delegations to
+// `Polynomial`'s native operations. The previous definitions were
+// stubs ("Simplified: return self" for mul_monomial/mul_scalar, zero
+// for from_monomial), which made `compute_s_polynomial` compute
+// fi - fj with no scaling and `create_syzygy` fabricate coefficients
+// — garbage through every path that used them (2026-09-18).
 #[allow(dead_code)]
 trait PolynomialSyzygy {
     fn sugar_degree(&self) -> usize;
@@ -481,70 +488,28 @@ trait PolynomialSyzygy {
     fn zero() -> Polynomial;
 }
 
+#[allow(dead_code)]
 impl PolynomialSyzygy for Polynomial {
     fn sugar_degree(&self) -> usize {
-        // Simplified: return total degree
+        // The sugar heuristic approximated by total degree (as before —
+        // an approximation, not a correctness matter).
         self.total_degree() as usize
     }
 
-    fn mul_monomial(&self, _m: &Monomial) -> Polynomial {
-        // Simplified: return self
-        self.clone()
+    fn mul_monomial(&self, m: &Monomial) -> Polynomial {
+        Polynomial::mul_monomial(self, m)
     }
 
-    fn mul_scalar(&self, _s: &BigRational) -> Polynomial {
-        // Simplified: return self
-        self.clone()
+    fn mul_scalar(&self, s: &BigRational) -> Polynomial {
+        Polynomial::scale(self, s)
     }
 
-    fn from_monomial(_m: Monomial, _coeff: BigRational) -> Polynomial {
-        // Simplified: return zero polynomial
-        Polynomial::zero()
+    fn from_monomial(m: Monomial, coeff: BigRational) -> Polynomial {
+        Polynomial::from_terms([Term { coeff, monomial: m }], MonomialOrder::default())
     }
 
     fn zero() -> Polynomial {
         Polynomial::constant(BigRational::zero())
-    }
-}
-
-// Helper trait for Monomial
-#[allow(dead_code)]
-trait MonomialHelper {
-    fn from_powers(powers: FxHashMap<Var, usize>) -> Monomial;
-    fn powers(&self) -> &FxHashMap<Var, usize>;
-    fn total_degree(&self) -> usize;
-}
-
-impl MonomialHelper for Monomial {
-    fn from_powers(_powers: FxHashMap<Var, usize>) -> Monomial {
-        // Simplified: create default monomial
-        Monomial::unit()
-    }
-
-    fn powers(&self) -> &FxHashMap<Var, usize> {
-        // Simplified: return empty map
-        #[cfg(feature = "std")]
-        {
-            use std::sync::OnceLock;
-            static EMPTY: OnceLock<FxHashMap<Var, usize>> = OnceLock::new();
-            EMPTY.get_or_init(FxHashMap::default)
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            // Single-threaded no_std (zkVM): leak a Box for a &'static reference
-            static mut EMPTY_PTR: *const FxHashMap<Var, usize> = core::ptr::null();
-            unsafe {
-                if EMPTY_PTR.is_null() {
-                    EMPTY_PTR = Box::into_raw(Box::new(FxHashMap::default()));
-                }
-                &*EMPTY_PTR
-            }
-        }
-    }
-
-    fn total_degree(&self) -> usize {
-        // Simplified: return 0
-        0
     }
 }
 

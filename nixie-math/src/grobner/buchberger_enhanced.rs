@@ -117,6 +117,10 @@ pub struct EnhancedBuchberger {
     pairs: BinaryHeap<CriticalPair>,
     /// Sugar degrees for polynomials
     sugar_degrees: Vec<usize>,
+    /// Pairs whose S-polynomial PROVABLY reduces to zero (processed to
+    /// zero, product criterion, or a verified chain) — the sound chain
+    /// criterion's bookkeeping. See `satisfies_chain_criterion`.
+    zero_pairs: std::collections::HashSet<(usize, usize)>,
 }
 
 impl EnhancedBuchberger {
@@ -128,6 +132,7 @@ impl EnhancedBuchberger {
             basis: Vec::new(),
             pairs: BinaryHeap::new(),
             sugar_degrees: Vec::new(),
+            zero_pairs: std::collections::HashSet::new(),
         }
     }
 
@@ -151,7 +156,12 @@ impl EnhancedBuchberger {
 
         // Main loop
         while let Some(pair) = self.pairs.pop() {
-            // Check degree bound
+            // Check degree bound. NOTE: a degree-bounded refusal leaves
+            // pairs unprocessed WITHOUT recording them as zero — the
+            // returned basis is then partial; the caller must not treat
+            // it as complete (the same honesty gap `grobner_basis`'s
+            // iteration cap had; kept as-is here because this engine
+            // has no live callers — see the module's status header).
             if let Some(max_deg) = self.config.max_degree
                 && pair.degree > max_deg
             {
@@ -168,6 +178,8 @@ impl EnhancedBuchberger {
             // Check if reduction is zero
             if self.is_zero(&reduced) {
                 self.stats.zero_reductions += 1;
+                self.zero_pairs
+                    .insert((pair.i.min(pair.j), pair.i.max(pair.j)));
                 continue;
             }
 
@@ -205,13 +217,16 @@ impl EnhancedBuchberger {
             let product = self.monomial_product(&lt_i, &lt_j);
             if self.monomial_equal(&lcm, &product) {
                 self.stats.pairs_eliminated_product += 1;
+                // Criterion 1 is an unconditional theorem: proven zero.
+                self.zero_pairs.insert((i.min(j), i.max(j)));
                 return Ok(());
             }
         }
 
-        // Chain criterion: check if there exists k with specific property
+        // Chain criterion (sound form): only a VERIFIED chain discards.
         if self.config.use_chain_criterion && self.satisfies_chain_criterion(i, j, &lcm)? {
             self.stats.pairs_eliminated_chain += 1;
+            self.zero_pairs.insert((i.min(j), i.max(j)));
             return Ok(());
         }
 
@@ -234,17 +249,21 @@ impl EnhancedBuchberger {
         Ok(())
     }
 
-    /// Check chain criterion (Buchberger's second criterion)
+    /// Check chain criterion (Buchberger's second criterion, SOUND
+    /// form): (i, j) is discardable only when some k has
+    /// `lm_k | lcm(lm_i, lm_j)` AND both (i,k) and (j,k) are in
+    /// `zero_pairs` — provably-zero pairs (processed to zero, product
+    /// criterion, or a verified chain; a DAG by construction). The
+    /// "For now, simplified check" this replaces (a bare divisibility
+    /// scan) is the unsound simplified criterion — the missed-refutation
+    /// class root-caused in the 𝔽_p engine on 2026-09-18 and pinned
+    /// there by tests/ff_gb_seed_dedup_regression.rs.
     fn satisfies_chain_criterion(
         &self,
         i: usize,
         j: usize,
         lcm_ij: &Monomial,
     ) -> Result<bool, String> {
-        // Check if exists k such that:
-        // 1. LT(k) divides LCM(LT(i), LT(j))
-        // 2. (i,k) and (j,k) have already been processed or eliminated
-
         for k in 0..self.basis.len() {
             if k == i || k == j {
                 continue;
@@ -252,39 +271,29 @@ impl EnhancedBuchberger {
 
             let lt_k = self.leading_monomial(&self.basis[k]);
 
-            // Check if LT(k) divides LCM(LT(i), LT(j))
             if self.monomial_divides(&lt_k, lcm_ij) {
-                // Found candidate k
-                // In practice, would check if pairs (i,k) and (j,k) were eliminated
-                // For now, simplified check
-                return Ok(true);
+                let (a, b) = (k.min(i), k.max(i));
+                let (c, d) = (k.min(j), k.max(j));
+                if self.zero_pairs.contains(&(a, b)) && self.zero_pairs.contains(&(c, d)) {
+                    return Ok(true);
+                }
             }
         }
 
         Ok(false)
     }
 
-    /// Gebauer-Möller installation strategy
+    /// Gebauer-Möller installation strategy. The pair-REMOVAL this once
+    /// performed (drop every pending pair whose lcm the new element's
+    /// lm divides) was the bare unsound form — removing pair (i, j) on
+    /// `lm_new | lcm(i,j)` requires the chain obligations (i, new) and
+    /// (j, new) to be DISCHARGED, and at update time they are merely
+    /// queued; the classical G-M rules encode that discipline, this did
+    /// not. Removed: the criteria-gated `add_critical_pair` below is
+    /// the sound part, and correctness does not need the removal (the
+    /// sound chain criterion prunes the same pairs once their chains
+    /// are actually verified).
     fn gebauer_moller_update(&mut self, new_idx: usize) -> Result<(), String> {
-        let lt_new = self.leading_monomial(&self.basis[new_idx]);
-
-        // Remove pairs whose LCM is divisible by LT(new)
-        let mut surviving_pairs = Vec::new();
-
-        while let Some(pair) = self.pairs.pop() {
-            let should_keep = !self.monomial_divides(&lt_new, &pair.lcm);
-
-            if should_keep {
-                surviving_pairs.push(pair);
-            }
-        }
-
-        // Restore surviving pairs
-        for pair in surviving_pairs {
-            self.pairs.push(pair);
-        }
-
-        // Add new pairs with existing basis elements
         for i in 0..new_idx {
             self.add_critical_pair(i, new_idx)?;
         }
