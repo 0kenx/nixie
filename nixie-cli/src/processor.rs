@@ -141,6 +141,7 @@ pub(crate) fn run_files(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
         max_time_ms: max_time,
         decisions: sat_stats.decisions,
         propagations: sat_stats.propagations,
+        propagations_inprocessing: sat_stats.propagations_inprocessing,
         conflicts: sat_stats.conflicts,
         restarts: sat_stats.restarts,
     };
@@ -1011,6 +1012,7 @@ pub(crate) fn run_stdin(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
         max_time_ms: time_ms,
         decisions: sat_stats.decisions,
         propagations: sat_stats.propagations,
+        propagations_inprocessing: sat_stats.propagations_inprocessing,
         conflicts: sat_stats.conflicts,
         restarts: sat_stats.restarts,
     };

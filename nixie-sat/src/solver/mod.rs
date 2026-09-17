@@ -981,6 +981,12 @@ pub struct SolverStats {
     pub decisions: u64,
     /// Number of propagations
     pub propagations: u64,
+    /// Propagations performed *inside inprocessing* (vivification, XOR
+    /// reasoning) — kept separate from `propagations` (search BCP) so
+    /// cross-solver props/conflict comparisons stay honest: kissat reports
+    /// search-only counters, and blending the two inflated nixie's
+    /// measured props/conflict by the whole inprocessing share.
+    pub propagations_inprocessing: u64,
     /// Number of conflicts
     pub conflicts: u64,
     /// Number of restarts
@@ -1247,6 +1253,10 @@ impl SolverStats {
         println!("========== Solver Statistics ==========");
         println!("Decisions:              {:>12}", self.decisions);
         println!("Propagations:           {:>12}", self.propagations);
+        println!(
+            "  (inprocessing):       {:>12}",
+            self.propagations_inprocessing
+        );
         println!("Conflicts:              {:>12}", self.conflicts);
         println!("Restarts:               {:>12}", self.restarts);
         println!("Learned clauses:        {:>12}", self.learned_clauses);
@@ -4872,6 +4882,8 @@ impl Solver {
     pub fn absorb_stats(&mut self, s: &SolverStats) {
         self.stats.decisions += s.decisions;
         self.stats.propagations += s.propagations;
+        self.stats.propagations_inprocessing += s.propagations_inprocessing;
+        self.stats.propagations_inprocessing += s.propagations_inprocessing;
         self.stats.conflicts += s.conflicts;
         self.stats.restarts += s.restarts;
         self.stats.learned_clauses += s.learned_clauses;

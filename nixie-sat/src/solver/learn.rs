@@ -2804,6 +2804,11 @@ impl Solver {
                 self.stats.subsumed_removed.saturating_sub(start_subsumed),
             );
         }
+        // Charge this round's propagation to the inprocessing counter
+        // (the budget above already measures the same delta).  Search
+        // BCP keeps `propagations` so cross-solver props/conflict
+        // comparisons stay honest — kissat reports search-only counters.
+        self.stats.propagations_inprocessing += self.stats.propagations.saturating_sub(start_props);
         // The shared version deliberately leaves the trail at the last
         // candidate's end state for reuse; this round is over, so restore
         // the level-0 invariant the surrounding inprocessing passes assume.

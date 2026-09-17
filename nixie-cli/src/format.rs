@@ -48,6 +48,9 @@ pub struct SolverStats {
     pub decisions: u64,
     /// SAT solver propagations
     pub propagations: u64,
+    /// Inprocessing-share propagations (vivify); search BCP keeps `propagations`
+    #[allow(clippy::struct_field_names)]
+    pub propagations_inprocessing: u64,
     /// SAT solver conflicts
     pub conflicts: u64,
     /// SAT solver restarts
@@ -834,6 +837,16 @@ pub(crate) fn print_statistics(stats: &SolverStats, args: &Args) {
             &format!("  Propagations: {}", stats.propagations),
             None,
         );
+        if stats.propagations_inprocessing > 0 {
+            println_colored(
+                args,
+                &format!(
+                    "  Propagations (inprocessing): {}",
+                    stats.propagations_inprocessing
+                ),
+                None,
+            );
+        }
         println_colored(args, &format!("  Conflicts: {}", stats.conflicts), None);
         println_colored(args, &format!("  Restarts: {}", stats.restarts), None);
         if stats.decisions > 0 {

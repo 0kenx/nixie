@@ -228,3 +228,37 @@ noise for deliberate heuristic landings (measured spreads to 13× per
 instance; this fold measured 1.296× at seed 1 and **0.854×** over 10
 seeds on the same corpus).  Heuristic landings gate at `GATE_SEEDS>=10`
 and cite their powered experiment.
+
+## Addendum (2026-09-17): the props/conflict gap, measured honestly — mostly config, residue 1.37×
+
+Audit of the "971 vs 300 props/conflict" claim on b21 (the generic
+clause-quality question):
+
+1. **Metric contamination: ruled out.**  Vivify's internal propagation
+   uses its own mini-propagator and never touches `stats.propagations`
+   (verified by the new split counter reading 0; the 4.2 M delta under
+   `NIXIE_INPROC_VIVSKIP=1` was second-order search change, not
+   vivify's own work).  XOR propagation is default-off.  Kissat's
+   counter has the same assigned-literal semantics.  To keep it that
+   way, `propagations_inprocessing` now exists as a separate stat
+   (printed by `--stats` when non-zero) with the vivify round charged
+   to it — future contamination becomes visible instead of silent.
+2. **The fold closed most of it**: 971 → 410 props/conflict
+   (old default → cadical preset).  The "3.2× quality gap" was mostly
+   the old configuration.
+3. **Not decisions/conflict**: 9.22 (nixie) vs **9.95 (kissat)** on
+   b21 — both dive equally deep.
+4. **Residue: 410 vs 300 = 1.37× genuine search-props/conflict**,
+   which at equal decisions/conflict and equal restart density is
+   **1.40× propagation volume per decision** — a search-shape property
+   (how many literals each decision drags in before the conflict), i.e.
+   branching-order quality: kissat's decisions contradict sooner.
+   Heuristic-domain; the honest counter + seed knob now support
+   measuring any candidate fix on this exact axis.
+5. b21's remaining wall gap (10.8 s vs 4.8 s ≈ 2.25×) decomposes as
+   1.11× conflicts × 1.40× props/decision × ~1.45× mixed per-work cost
+   — the latter folding in the preset's inprocessing share
+   (subsume+probe+kitten ≈ 15-20 % of runtime by profile), which no
+   outside counter splits; separating search wall from inprocessing
+   wall is a named follow-up if cross-solver cost comparison ever
+   needs it.
