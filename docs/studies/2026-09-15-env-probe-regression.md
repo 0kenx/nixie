@@ -292,3 +292,58 @@ above 1.5× is search quality — the props-per-decision volume and the
 specific families named in the standing-gap study — now measurable with
 `NIXIE_SAT_SEED` replication, the `NIXIE_SAT_*` decomposition knobs, and
 the inprocessing wall counter built this session.
+
+## Addendum (2026-09-17): the `hwmcc-6s299` 12× is pure parse/setup — anatomy measured, fix named, swap reverted
+
+The final standing's third-worst gap is not search at all: the instance is
+decided with **zero conflicts on both sides** (kissat 1.0 s vs nixie 12.2 s
+under the same load; 544 MB, 78 % binary clauses).  Profile of the old
+(CLI line-parser) path: line-based UTF-8 parsing ≈ 47 % (`Lines::next` +
+`from_utf8` + `trim` inline in `process_single_file`), the `Vec<Vec<i32>>`
+intermediate's growth+drop ≈ 25 %, shared `add_clause`/attach the rest.
+
+**A direct swap to the byte-level `nixie_sat::DimacsParser` was built and
+measured — and reverted**: trajectories bit-identical (conflicts equal on
+every gate instance), but wall 1.5× *worse* (24–34 s vs 16–18 s,
+interleaved, same conditions).  Its deferred-BIG design trades per-add
+edge churn for a full `rebuild_watches_and_binary_graph` +
+re-attach pass over all 400 K clauses — an extra whole-database walk that
+outweighs the 35 % the byte parser saves on this binary-heavy file.
+
+**The named fix** (SAT-core arc, nixie-sat): a *non-deferred* byte-level
+parse mode — `parse_reader_impl` with incremental attach (byte scanning +
+`add_clause` per clause, no BIG deferral, no rebuild pass).  Projected
+~3–4× on parse-dominated instances from the 47 %→12 % parse saving alone.
+Not landed here: it lives in `nixie-sat::dimacs`, is interface-visible to
+`cnf_bench`, and deserves its own trajectory-identity verification sweep.
+
+## Addendum (2026-09-17, closing the parse thread): BOTH byte-parser variants lose to the line-based path — negative result recorded
+
+The named fix was built and measured: `parse_reader_incremental` (byte
+scanning + incremental clause attachment, no deferred-BIG rebuild) with the
+CLI fast path streamed through it.  Trajectories **bit-identical** on every
+gate instance (conflicts equal), but wall on the 544 MB `hwmcc-6s299`
+anatomy, interleaved ×3 under identical conditions:
+
+| variant | wall (3 runs) |
+|---|---|
+| line-based `DimacsCnf` (current main) | **6.5 / 7.5 / 19.4 s** |
+| byte deferred-BIG (`parse_reader`) | 24–34 s (previous addendum) |
+| byte incremental (`parse_reader_incremental`) | 10.9 / 13.5 / 27.6 s |
+| kissat 4.0.4 | **0.73 / 0.77 / 0.94 s** |
+
+Both worktrees reverted; main keeps the line-based path.  **Why the
+incremental variant loses despite scanning 35 % cheaper** (hypothesis,
+unverified): the CLI path creates all vars upfront from the header (`for _
+in 0..num_vars { new_var() }` — one array-growth phase, then pure clause
+adds), while the byte parser creates each var when first *encountered*,
+interleaving per-var array growth (phase/activity/heap/mark resizes across
+live solver structures) with clause attachment.
+
+**The remaining 6.5 s vs kissat's 0.8 s at zero search needs a different
+design, not a parser swap**: kissat reads via mmap with a zero-copy scanner
+and defers all solver structure until after the scan.  A mmap-based
+parse-then-build (byte scan to a compact clause buffer, then one upfront
+`new_var` loop + adds) is the shape that should win; that is SAT-core
+interface work (`nixie-sat::dimacs` + `cnf_bench` visibility), recorded
+here for that arc.  Do not retry the two tested variants — both measured.
