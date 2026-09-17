@@ -292,3 +292,27 @@ above 1.5× is search quality — the props-per-decision volume and the
 specific families named in the standing-gap study — now measurable with
 `NIXIE_SAT_SEED` replication, the `NIXIE_SAT_*` decomposition knobs, and
 the inprocessing wall counter built this session.
+
+## Addendum (2026-09-17): the `hwmcc-6s299` 12× is pure parse/setup — anatomy measured, fix named, swap reverted
+
+The final standing's third-worst gap is not search at all: the instance is
+decided with **zero conflicts on both sides** (kissat 1.0 s vs nixie 12.2 s
+under the same load; 544 MB, 78 % binary clauses).  Profile of the old
+(CLI line-parser) path: line-based UTF-8 parsing ≈ 47 % (`Lines::next` +
+`from_utf8` + `trim` inline in `process_single_file`), the `Vec<Vec<i32>>`
+intermediate's growth+drop ≈ 25 %, shared `add_clause`/attach the rest.
+
+**A direct swap to the byte-level `nixie_sat::DimacsParser` was built and
+measured — and reverted**: trajectories bit-identical (conflicts equal on
+every gate instance), but wall 1.5× *worse* (24–34 s vs 16–18 s,
+interleaved, same conditions).  Its deferred-BIG design trades per-add
+edge churn for a full `rebuild_watches_and_binary_graph` +
+re-attach pass over all 400 K clauses — an extra whole-database walk that
+outweighs the 35 % the byte parser saves on this binary-heavy file.
+
+**The named fix** (SAT-core arc, nixie-sat): a *non-deferred* byte-level
+parse mode — `parse_reader_impl` with incremental attach (byte scanning +
+`add_clause` per clause, no BIG deferral, no rebuild pass).  Projected
+~3–4× on parse-dominated instances from the 47 %→12 % parse saving alone.
+Not landed here: it lives in `nixie-sat::dimacs`, is interface-visible to
+`cnf_bench`, and deserves its own trajectory-identity verification sweep.
