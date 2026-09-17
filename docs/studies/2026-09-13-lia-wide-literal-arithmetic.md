@@ -1868,3 +1868,27 @@ corpus; survey delta on the fixed seeds as above.
 The campaign's remaining classes (item 67's map) are unchanged; item 70's
 fix is the priority — the reproducer, its two-disjunct core, and the probe
 worktree are all standing.
+
+Item 70 addendum (same day, second probe worktree `/tmp/x70` — now
+removed; probe shapes recorded here): instrumenting every
+`set_{lower,upper}_delta` write (fractional values) plus the crossing
+record shows the SAME defect through a second manifestation on a slightly
+different base (the landed tree): the exported crossing sits on **v6 with
+row `(1/4)v7 − (1/4)v5 + (1/28)v2 + (1/28)v1 + 4611686018427387929/28`**
+(the mod-4 and mod-7 axiom rows combined through a **1/28 rescale**;
+4611686018427387929 = the folded C1/D1 constants), with propagated bounds
+`lo = 6588122883467697047/40` vs `hi = 6588122883467697038/40` — a
+crossing of **exactly 9/40** in the 1.6e17 range, both sides derived
+(r=2 with rich aux sets), 9/40 = the fractional residue the two
+derivations disagree by through the 1/4 and 1/28 scaled coefficients.
+Consistent with the first manifestation (the 7/20 unscaled plant): the
+propagation's exact arithmetic through RESCALED rows is the defect
+surface — the derivations are not preserving the row's scale on one of
+the two sides.  The next session's entry point: trace the two v6 bound
+derivations' source rows and column reads (the `X70 set`/`crossing`
+prints + the `X69 ROW` print shapes), and audit `propagate_bounds_in`'s
+exact solve (`x_j = (basic − k − Σ c_k x_k)/c_j`) for the rescaled-row
+case — candidates: a column bound read through the PRE-rescale row, a
+weakened-integer bound consumed as exact, or the delta-loop's coefficient
+(`Δ·c`) read against a stale row.  Both probe worktrees' prints are
+described here; `/tmp/x69` (the parallel session's) was left standing.
