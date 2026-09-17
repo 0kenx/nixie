@@ -968,6 +968,8 @@ fn div_by_one_folds_and_the_gcd_refutation_decides() {
     let mut s = Solver::new();
     s.assert(claim, &mut tm);
     assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
 /// The item-69 false `unsat` (2026-09-18, seed-20261102 mixed-fuzz instance
 /// 17; bytes preserved under `docs/studies/assets/2026-09-18/`).  z3: `sat`;
 /// nixie answered `unsat` from the first commit that had the machinery
