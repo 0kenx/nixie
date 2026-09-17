@@ -1203,3 +1203,37 @@ fn choose_models_and_queries() {
         "{joined}"
     );
 }
+
+/// Query-only `bag.subbag` folds from the installed values: pointwise ≤
+/// over the union of the cells (absent cells count 0), the same
+/// evaluation contract as the count/member folds.
+#[test]
+fn subbag_queries_fold_from_values() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 1 2) (bag 2 1))))\n\
+             (check-sat)\n\
+             (get-value ((bag.subbag (bag 1 2) b) (bag.subbag b (bag 1 2))\n\
+                         (bag.subbag (bag 3 1) b) (bag.subbag b b)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("((bag.subbag (bag 1 2) b) true)"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("((bag.subbag b (bag 1 2)) false)"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("((bag.subbag (bag 3 1) b) false)"),
+        "{joined}"
+    );
+    // `(bag.subbag b b)` folds to `true` in the builder at parse, so the
+    // query term *is* `true` and prints as itself.
+    assert!(joined.contains("(true true)"), "{joined}");
+}

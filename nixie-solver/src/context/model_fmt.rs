@@ -1200,7 +1200,7 @@ impl Context {
             .collect();
         for (t, n) in bag_folds {
             let v = match self.terms.get(t).map(|d| &d.kind) {
-                Some(TermKind::BagMember(_, _)) => {
+                Some(TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _)) => {
                     if n > 0 {
                         self.terms.true_id
                     } else {
@@ -1465,6 +1465,24 @@ impl Context {
                         out.push((t, if n > 0 { 1 } else { 0 }));
                     }
                 }
+                // `bag.subbag a b` from installed values: pointwise ≤ over
+                // the union of the cells (a cell absent from `b` counts 0) —
+                // evaluation of verified objects, the same contract as the
+                // count/member folds beside it. A side with no model entry
+                // still folds when it is a closed ground chain (a compound
+                // like `(bag 1 2)` is never installed — its value is
+                // itself).
+                TermKind::BagSubbag(a, b) => {
+                    if model.get(t).is_none()
+                        && let (Some(ca), Some(cb)) = (
+                            self.value_bag_cells(a, model),
+                            self.value_bag_cells(b, model),
+                        )
+                    {
+                        let holds = ca.iter().all(|&(e, n)| self.cell_of(e, &cb) >= n);
+                        out.push((t, if holds { 1 } else { 0 }));
+                    }
+                }
                 _ => {
                     stack.extend(nixie_core::ast::traversal::get_children(&kind));
                 }
@@ -1480,9 +1498,36 @@ impl Context {
         bag: TermId,
         model: &crate::solver::Model,
     ) -> Option<Vec<(TermId, i64)>> {
-        let value = model.get(bag)?;
+        self.bag_cells_of_term(model.get(bag)?, &|t: &TermId| {
+            model.get(*t).filter(|&v| v != *t)
+        })
+    }
+
+    /// A bag's cells for query folding: its installed value when it has
+    /// one, else the term itself when it is a closed ground chain (a
+    /// compound like `(bag 1 2)` is its own value — nothing installs it).
+    fn value_bag_cells(
+        &self,
+        bag: TermId,
+        model: &crate::solver::Model,
+    ) -> Option<Vec<(TermId, i64)>> {
+        match model.get(bag) {
+            Some(v) => self.bag_cells_of_term(v, &|t: &TermId| model.get(*t).filter(|&v| v != *t)),
+            None => self.bag_cells_of_term(bag, &|_| None),
+        }
+    }
+
+    /// Walk a `bag.union_disjoint` chain of `bag.make` cells to its
+    /// `bag.empty` base, collecting `(element, multiplicity)` pairs.
+    /// `resolve` substitutes nested non-ground elements through the model
+    /// (installed values); a walk that meets anything unparseable returns
+    /// `None` — the caller echoes honestly.
+    fn bag_cells_of_term(
+        &self,
+        mut cur: TermId,
+        resolve: &dyn Fn(&TermId) -> Option<TermId>,
+    ) -> Option<Vec<(TermId, i64)>> {
         let mut cells: Vec<(TermId, i64)> = Vec::new();
-        let mut cur = value;
         loop {
             match self.terms.get(cur).map(|d| d.kind.clone()) {
                 Some(nixie_core::ast::TermKind::BagEmpty(_)) => break,
@@ -1493,11 +1538,13 @@ impl Context {
                         return None;
                     };
                     let n = self.int_of(n)?;
+                    let e = resolve(&e).unwrap_or(e);
                     cells.push((e, n));
                     cur = a;
                 }
                 Some(nixie_core::ast::TermKind::BagMake(e, n)) => {
                     let n = self.int_of(n)?;
+                    let e = resolve(&e).unwrap_or(e);
                     cells.push((e, n));
                     break;
                 }
