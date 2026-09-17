@@ -347,3 +347,19 @@ parse-then-build (byte scan to a compact clause buffer, then one upfront
 `new_var` loop + adds) is the shape that should win; that is SAT-core
 interface work (`nixie-sat::dimacs` + `cnf_bench` visibility), recorded
 here for that arc.  Do not retry the two tested variants — both measured.
+
+## Addendum (2026-09-17): the flat byte-scan WINS where the two byte-parser variants lost
+
+The design insight from the two refuted variants: what made them lose was
+not byte scanning (35 % cheaper than line parsing) but *interleaving*
+per-var array growth with clause attachment.  `FlatCnf::scan` (landed
+`13173c88`) keeps the winning shape — byte scan into a flat literal
+stream, then the identical upfront `new_var` phase + in-order
+`add_clause` sequence — so trajectories are bit-identical by construction
+(verified on 13 instances) while the parse drops the line/UTF-8 machinery
+and the `Vec<Vec<i32>>` intermediate entirely.
+
+Measured (user CPU, load-independent): **1.5–1.6 s vs 2.2 s (−27 %)** on
+the 544 MB anatomy; wall inconclusive under current machine load.  The
+remaining gap to kissat (0.8 s) is its mmap zero-copy I/O — sys-time
+territory, separable if it ever matters.
