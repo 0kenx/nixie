@@ -1715,3 +1715,99 @@ Verification: workspace 11 920 green except the env self-test; gates
 clean; parity 176/177, 0 disagreements (z3 4.16.0); wide 2×300 + mixed
 2×400 fresh seeds (20261050–20261053) clean; perf gate PASS
 (bit-identical counters); the survey rerun on the same seeds.
+
+## Continuation 32 (2026-09-17): the SAT-side gap campaign opened — the full site map, the certification vocabulary slice landed, and a fresh PRE-EXISTING false `unsat` found and fenced (items 67–69)
+
+67. **The gap survey reconstructed and the SAT-side site-mapped** (the
+    items-54–66 handoff's open item 1).  The capture-loop survey ships as
+    `bench/differential/gap_survey.py` (imports `mixed_fuzz.py`'s generator
+    verbatim — the seed→instance mapping is identical to the standing
+    differential; seeds 20261000–02 × 600).  On the handoff's start binary
+    (`5c8bf7a8`): 156 members (149 SAT-side, 7 UNSAT-side) + 11 timeouts.
+    Probe-binary attribution (tagged prints at every
+    `TheoryResult::Unknown` return, every `resource_limit`/`resource_exhausted`
+    set, every top-level `SolverResult::Unknown` return, arm-level tags in
+    the wide classification):
+    * **29** B&B `FracVar::Underivable` — branch bounds (floor/ceil of the
+      exact value) leave `i64`: the honest width wall (dual-width bounds
+      are the named project; item 42's `wide_floor_ceil_big` already
+      recovers the recoverable).
+    * **25** blocking downgrade with non-genuine blocks (item 64's residual;
+      the `Undef`-omission projection question is the recorded design).
+    * **22** big-const abstraction uncertified `Sat` — split by probe: 16
+      declined at the certifier's HARVEST (vocabulary), 5 evaluated and
+      genuinely failed (`no-combination` — the model the search found does
+      not satisfy the original under the abstraction; the honest wall), 1
+      evaluator-unsupported.
+    * **17** B&B node/depth budget burn (the true "search capacity" class).
+    * **10** `arith_atoms_need_theory` parse gate (the wide-const
+      nonlinearity class of item 32).
+    * **8** wide-repair NOCOL — `find_wide_pivot_col` finds no eligible
+      entering column (repair eligibility rule; a heuristic item).
+    * **6** BV late-minting 8-round budget (arithmetic div/mod atoms
+      minting BV circuits — BV-front interplay).
+    * misc tails (LP pivot budget, Diophantine GiveUp, outer declines).
+    The campaign's implication: the SAT-side gap is NOT one class; the
+    largest sound-completeness slice is the certification vocabulary (below),
+    and the next-largest are the width wall and the blocking design question.
+68. **The certification vocabulary slice, LANDED (`bc5e0b7a`)** — the 16
+    harvest-declined members were declined because `harvest` had no
+    `RealConst` arm: any ground goal carrying a Real literal (a decimal, a
+    `(/ n d)`) was outside the certifier's vocabulary, so a `Sat` over the
+    big-const abstraction could never publish.  The fix: `RealConst` is an
+    accepted leaf; a Real literal or Real-sorted free constant records
+    `saw_real`; **`prepare` still declines quantified/UF goals that saw a
+    Real value** — the region/critical-set argument is written for `Int`
+    and a Real value shifts atoms' crossing points OFF the critical set
+    (an enumeration over it would not be exhaustive; this is a soundness
+    gate, not conservatism).  The evaluator is now SORT-driven
+    (`ArithDomain` from the node's sort): a Real-sorted `Div` over
+    Int-valued operands is exact RATIONAL division, never the Euclidean
+    floor the value-driven dispatch computed (unreachable end-to-end today
+    — `arith_atoms_need_theory` gates symbolic-divisor atoms first — but
+    the invariant is now structural, not incidental); `Add/Sub/Neg/Mul`
+    widen by the same sort signal; comparisons and `Eq`/`Distinct` promote
+    `Int`→`BigRational` exactly; `MAX_RAT_BITS` guards rational blow-up.
+    Measured: the survey on the fixed seeds moves `gap_sat` 145 → 131
+    (**14 recovered**, every one's published model validated by binding it
+    as `define-fun`s and re-solving with z3 — all 14 `sat`), `unsat`
+    576 = 576, timeouts 17 → 15.  Regressions: 3 unit tests
+    (`ground_mixed_real_arithmetic_certifies`,
+    `ground_real_division_is_exact_not_floored`,
+    `quantified_goal_with_real_values_still_declines`) and 2 e2e pins
+    (`big_const_mixed_real_goal_certifies_sat`,
+    `big_const_mixed_unsat_goal_refutes_through_the_abstraction`).
+69. **A fresh PRE-EXISTING false `unsat`, found by the differential's
+    fresh seeds and fenced (NOT this slice's regression — the certifier is
+    Sat-side only and cannot produce `unsat`)**.  Seed 20261102, instance
+    17 of 400: z3 `sat`, nixie `unsat`; reproduces on `5c8bf7a8` (the
+    handoff's start), `fd1f0595`, and the landed `bc5e0b7a` — live on
+    `main` since before this stretch.  Shape: the fi1 class —
+    `not(or …)` nesting over `div`/`mod` with a wide constant
+    (−2^62) split across nested sums.  Bytes preserved:
+    `docs/studies/assets/2026-09-18/false-unsat-mixed-fuzz-20261102.smt2`
+    (full) and `…-core.smt2` (the TWO-disjunct core that still answers
+    `unsat` — smaller than fi1's three: `D1 = (= (mod xi 4)
+    (div (+ 2xi 77) 3))`, `D2 = (not (and C1 C2))` with C1's nested-sum
+    constant assembly and C2 = `(>= (mod (- (div xi 7) 2) 5) -6)`).
+    Shrink boundary: D1+D2-simplified (`v1`, `v2`) and D1+C1-only (`v3`)
+    all answer CORRECTLY — the wrongness needs the nested C1 AND C2
+    together.  Probes run: the strengthened `debug_verify_invariant` is
+    SILENT on the core (the defect is not a tableau-shape violation), and
+    the corner auditor (`NIXIE_S6_AUDIT=1`) is silent (not a wide-row
+    propagation endpoint defect) — the remaining suspects are the cut
+    layer (an unsound Gomory lemma), the div/mod axiom feed, or a
+    reason-set hole in `explain_conflict`; the arc's probe set
+    (row-history logging, set-bound backtraces, exact row validation at
+    z3's model) decodes which.  **This is the next session's item 1 — a
+    live wrong verdict outranks every capacity item.**
+
+Verification for the landing: workspace 11 916/11 931 (the 15 failures
+reproduce identically on clean `fd1f0595` — the pre-existing
+corpus-missing set, another front's); clippy/fmt/rustdoc clean; Z3 parity
+176/177, 0 disagreements (z3 4.16.0, re-run on the merged tree); wide
+differential 3×300 fresh seeds (20261110–12) clean; mixed differential
+seeds 20261100/01 clean, seed 20261102 = item 69's pre-existing find;
+perf gate PASS (conflicts/decisions 1.000 bit-identical — the certifier
+never runs on the gate corpus); debug-panic sweep 177/177 over the parity
+corpus; survey delta on the fixed seeds as above.
