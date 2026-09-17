@@ -23,6 +23,12 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CAP="${GATE_CAP:-150}"
+# Seed count per instance: 1 (default) detects semantics-inert regressions,
+# where conflicts must be bit-identical.  For DELIBERATE heuristic landings
+# the single-seed ratio is trajectory noise (measured spreads up to 13x per
+# instance) — run GATE_SEEDS>=10 and evaluate the seeded aggregate; the
+# landing must then cite its powered experiment (docs/BENCHMARKING.md).
+SEEDS="${GATE_SEEDS:-1}"
 CACHE="$SCRIPT_DIR/.cache"
 
 CAND="${1:-}"
@@ -57,10 +63,15 @@ for ext in "$SCRIPT_DIR"/external.d/*.list; do
 done
 [ "${#FILES[@]}" -ge 3 ] || { echo "error: corpus too small" >&2; exit 2; }
 
-run() { # bin file -> "verdict conflicts decisions propagations stats_present wall_s"
-    local out t0 t1 w
+run() { # bin file [seed] -> "verdict conflicts decisions propagations stats_present wall_s"
+    local out t0 t1 w seedv
+    seedv="${3:-}"
     t0=$(date +%s.%N)
-    out=$(taskset -c 0-7 timeout "$CAP" "$1" --stats --dimacs "$2" 2>/dev/null) || true
+    if [ -n "$seedv" ]; then
+        out=$(taskset -c 0-7 env "NIXIE_SAT_SEED=$seedv" timeout "$CAP" "$1" --stats --dimacs "$2" 2>/dev/null) || true
+    else
+        out=$(taskset -c 0-7 timeout "$CAP" "$1" --stats --dimacs "$2" 2>/dev/null) || true
+    fi
     t1=$(date +%s.%N)
     w=$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.2f", b-a}')
     local v c d p
@@ -76,8 +87,30 @@ tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 printf '%-52s %10s %10s %8s %8s\n' instance base_verd cand_verd conf_ratio dec_ratio
 awk_ok=1
 for f in "${FILES[@]}"; do
-    read -r bv bc bd bp bsp bw <<<"$(run "$BASE" "$f")"
-    read -r cv cc cd cp csp cw <<<"$(run "$CAND" "$f")"
+    # Aggregate conflicts over the seed set: geometric mean of the
+    # per-seed counts in log space (integer products overflow at k~3),
+    # accumulated through a scratch file.  A missing/timeout seed
+    # contributes nothing; the solved-count budget below catches it.
+    : > "$tmp/seeds"
+    for sd in $(seq 1 "$SEEDS"); do
+        seedarg=""; [ "$SEEDS" -gt 1 ] && seedarg=$((sd * 7919))
+        IFS=' ' read -r v1 c1 d1 p1 s1 w1 <<<"$(run "$BASE" "$f" "$seedarg")"
+        IFS=' ' read -r v2 c2 d2 p2 s2 w2 <<<"$(run "$CAND" "$f" "$seedarg")"
+        bv="$v1"; cv="$v2"
+        if [ "$v1" != "$v2" ]; then
+            echo "VERDICT MISMATCH on $name seed=$sd: base=$v1 cand=$v2" >&2
+            awk_ok=0
+        fi
+        echo "$c1 $c2 $d1 $d2 $p1 $p2 $w1 $w2 $s1 $s2" >> "$tmp/seeds"
+    done
+    # Log-space geomeans (integer products overflow at k~3 seeds).
+    read -r bc cc bd cd bp cp bw cw bsp csp nseeds <<<"$(awk '
+        { if ($1>0 && $2>0) { lc+=log($1); lcc+=log($2); ld+=log($3); lcd+=log($4)
+                               lp+=log($5); lcp+=log($6); n++; bw+=$7; cw+=$8 } }
+        { if ($9==1) bsp=1; if ($10==1) csp=1 }
+        END { printf "%d %d %d %d %d %d %.2f %.2f %d %d %d",
+               (n>0?exp(lc/n):0), (n>0?exp(lcc/n):0), (n>0?exp(ld/n):0), (n>0?exp(lcd/n):0),
+               (n>0?exp(lp/n):0), (n>0?exp(lcp/n):0), (n>0?bw/n:0), (n>0?cw/n:0), bsp, csp, n }' "$tmp/seeds")"
     name=$(basename "$f" .cnf)
     if [ "$bv" != "$cv" ]; then
         echo "VERDICT MISMATCH on $name: base=$bv cand=$cv" >&2

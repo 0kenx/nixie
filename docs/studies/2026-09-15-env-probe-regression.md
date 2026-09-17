@@ -196,3 +196,35 @@ fold decision needs the powered experiment: ≥20 seeds × the full
 geomean conflicts and solved-at-cap.  Data:
 `precompile/f21d0def/benchmark/config-ab/` (cfg_ab.tsv, decomp.tsv,
 decomp.py).
+
+## Addendum (2026-09-16, final): the powered experiment settles the fold — cadical preset is now the CLI default
+
+15 seeds × 12 instances × 2 arms (384 runs,
+`precompile/c868c54e/benchmark/fold-power/power.tsv`):
+
+* **conflicts geomean 0.842×** (cadical preset 16 % cheaper),
+* solved **190/192 vs 189/192** (the n=5 WS_500 timeouts did not
+  reproduce at power),
+* **bootstrap sign stability**: geomean < 1.0 in 183/200 (k=3), 194/200
+  (k=5), **200/200 (k≥10)** — the earlier sign flip was small-sample
+  noise, exactly the failure mode the power table predicts.
+
+Per-instance: s38584 0.51, b21 0.64, x9 0.75, 6s299 0.91, Carry 0.95,
+circuit 0.87, WS_500 0.68 — vs frb35 **1.71** (the BVE-averse family;
+BVE-alone measured 3.1× worse there) and SCPC 1.03.  Net strongly
+positive; the losing family is named for the next component-tuning
+round.
+
+**Landed**: the CLI fast-path default is now
+`ConfigPreset::CaDiCaL.config()` (the standing-table reference
+configuration, finally reachable as the default it always should have
+been).  `--preset` still overrides; `NIXIE_SAT_BVE/_RESTART/
+_STABLE_POLARITY/_DELETION` decompose on top.
+
+**Gate hardening in the same landing**: `GATE_SEEDS=k` — single-seed
+conflicts (the old mode, still default) detects semantics-inert
+regressions where counters must be bit-identical, but is trajectory
+noise for deliberate heuristic landings (measured spreads to 13× per
+instance; this fold measured 1.296× at seed 1 and **0.854×** over 10
+seeds on the same corpus).  Heuristic landings gate at `GATE_SEEDS>=10`
+and cite their powered experiment.

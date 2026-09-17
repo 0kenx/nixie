@@ -762,10 +762,14 @@ fn process_single_file(
                         time_ms: start.elapsed().as_millis(),
                     };
                 }
-                None => nixie_sat::SolverConfig {
-                    enable_inprocessing: true,
-                    ..nixie_sat::SolverConfig::default()
-                },
+                // Default = the CaDiCaL preset (folded 2026-09-16 by the
+                // powered experiment: 0.842x conflicts geomean, 190/192 vs
+                // 189/192 solved, bootstrap sign stable 200/200 at k>=10 —
+                // see the study addendum and
+                // precompute/../fold-power/power.tsv).  This is also the
+                // configuration the SATCOMP standing table has always
+                // measured through `cnf_bench PRESET=cadical`.
+                None => nixie_sat::ConfigPreset::CaDiCaL.config(),
             };
             // Config-decomposition knobs (cnf_bench-parity, benchmarking
             // use only): apply on top of whatever base the preset chose, so
