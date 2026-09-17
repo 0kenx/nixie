@@ -1967,12 +1967,19 @@ mod tests {
     /// returned at all" is itself part of each assertion.
     const WORKER_STACK: usize = 1 << 20;
 
-    /// The stack the *past-the-budget* test below runs on.  It is an eighth of
-    /// [`WORKER_STACK`], paired with an eighth of that test's depth, so the
-    /// bytes-per-frame threshold the test really pins (~21 B per level) is
-    /// unchanged while the term the test has to build – and keep interned –
-    /// shrinks by 8x.  Never change one of the two without the other.
-    const DEEP_WORKER_STACK: usize = 1 << 17;
+    /// The stack the *past-the-budget* test below runs on.
+    ///
+    /// Formerly an eighth of [`WORKER_STACK`], "pinning ~21 B per level" of
+    /// the *recursive* evaluator this driver replaced.  The pin was
+    /// misconceived twice over: the driver's native usage is **constant** in
+    /// the term's depth (see the module doc), and the small thread's real
+    /// load is the closure's own frame — `outcome` + `gate_refuses` inlined
+    /// together in the release profile exceed 128 KiB *at any depth*
+    /// (verified: the closure overflowed 128 KiB with a 64-level chain), so
+    /// the old constant was testing release codegen luck, not the evaluator.
+    /// [`WORKER_STACK`] holds the closure in both profiles (the sibling
+    /// in-budget test's own evidence).
+    const DEEP_WORKER_STACK: usize = 1 << 20;
 
     /// Run `body` on a fresh thread with `stack_size` bytes of stack.
     fn on_stack<T: Send + 'static>(
@@ -2244,8 +2251,8 @@ mod tests {
     /// same answer the recursive version gave – rather than aborting the
     /// process on the way there.
     ///
-    /// Stack and depth scale together (1 MiB/50k -> 128 KiB/6.25k): the
-    /// ~21 B-per-frame threshold is the pin, so never raise one alone.
+    /// The depth stays far past `ENCODE_DEPTH_LIMIT` (512) — twelve times
+    /// over — so the budget, not the stack, is what answers.
     #[test]
     fn assertion_past_the_depth_budget_stays_inconclusive() {
         const DEPTH: usize = 6_250;
