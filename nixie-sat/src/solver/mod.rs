@@ -7,6 +7,7 @@ mod congruence;
 mod decide;
 mod eliminate;
 mod equiv;
+use self::equiv::EquivScratch;
 mod factor;
 pub mod heuristic;
 mod incremental;
@@ -1737,6 +1738,16 @@ pub struct Solver {
     /// ~90 MB alloc/free per round on big-DB instances — the dominant round
     /// wall cost).  Contents are cleared per round; capacity persists.
     pub(super) subsume_scratch: SubsumeScratch,
+    /// Reused ELS/Tarjan scratch (2026-09-17 amortization: the per-round
+    /// `vec![-1; 2·V]` / `vec![0; 2·V]` / `vec![false; 2·V]` allocations
+    /// were the `extend_with`+`memset` hotspot in inprocessing-heavy
+    /// profiles — b21 attributed ~2.5 % of whole-run time to their fills
+    /// alone).  `index` is epoch-stamped (no fill); `on_stack` is balanced
+    /// set/reset by construction; `lowlink` is written before first read;
+    /// only `sub` keeps its semantic identity fill per round.
+    pub(super) equiv_scratch: EquivScratch,
+    /// Monotonic round stamp for `equiv_scratch`'s epoch arrays.
+    pub(super) equiv_epoch: u32,
     /// Compare the compact round index with the original database lookups.
     #[cfg(test)]
     pub(super) subsume_database_oracle: bool,
@@ -2390,6 +2401,8 @@ impl Solver {
             inproc_diag_props: [0; 5],
             inproc_diag_wall: [0; 5],
             subsume_scratch: SubsumeScratch::default(),
+            equiv_scratch: EquivScratch::default(),
+            equiv_epoch: 0,
             #[cfg(test)]
             subsume_database_oracle: false,
             subsume_dirty: Vec::new(),

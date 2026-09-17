@@ -103,6 +103,24 @@ pub(super) enum SubstOutcome {
     Unsat,
 }
 
+/// Reused ELS/Tarjan scratch (see `Solver::equiv_scratch`).
+#[derive(Default, Debug)]
+pub(crate) struct EquivScratch {
+    /// `sub[code(l)]` = representative literal for `l`.
+    pub(crate) sub: Vec<Lit>,
+    /// Tarjan discovery index (valid only when `epoch[code] == stamp`).
+    pub(crate) index: Vec<i64>,
+    /// Tarjan low-link (valid only for visited nodes).
+    pub(crate) lowlink: Vec<usize>,
+    /// On-SCC-stack flags (balanced set/reset within a round).
+    pub(crate) on_stack: Vec<bool>,
+    /// Epoch stamp: `index`/`lowlink` entries carry values from their last
+    /// visited round; `epoch[code] == stamp` marks "visited this round".
+    pub(crate) epoch: Vec<u32>,
+    pub(crate) stack: Vec<usize>,
+    pub(crate) work: Vec<(usize, usize)>,
+}
+
 impl Solver {
     /// Detect equivalent literals (SCCs of the binary implication graph) and
     /// rewrite every clause through the representative map.
@@ -154,28 +172,56 @@ impl Solver {
             big_augmented = true;
         }
 
-        // `sub[code(l)]` = representative literal equivalent to `l` (itself if
-        // `l` is in no non-trivial SCC). Members are set directly to the rep,
-        // and the rep maps to itself, so one lookup resolves any chain.
-        let mut sub: Vec<Lit> = (0..num_lits as u32).map(Lit::from_code).collect();
-
         // ======== Iterative Tarjan over the binary implication graph. ========
         // Nodes are literal codes; successors of `lit` are the literals it
         // directly implies (binary_graph edges). Recursion would overflow on
         // deep implication chains (thousands deep on multiplier circuits).
+        //
+        // Scratch is solver-owned and reused across rounds (2026-09-17
+        // amortization): `index` is epoch-stamped instead of refilled with
+        // `-1`, because the per-round `vec![-1; 2·V]` / `vec![0; 2·V]` /
+        // `vec![false; 2·V]` allocations were the measured
+        // `extend_with`+`memset` hotspot (~2.5 % of whole-run wall on
+        // b21-class instances).  Soundness of the no-fill scheme:
+        // `on_stack` is balanced set/reset by construction (every push sets,
+        // every SCC pop resets; the loops below read `on_stack[w]` /
+        // `lowlink[w]` only for nodes whose epoch matches this round, and
+        // both are written before their first read within a visit).
+        let mut scratch = std::mem::take(&mut self.equiv_scratch);
+        if scratch.sub.len() != num_lits {
+            scratch.sub = (0..num_lits as u32).map(Lit::from_code).collect();
+            scratch.index = vec![0; num_lits];
+            scratch.lowlink = vec![0; num_lits];
+            scratch.on_stack = vec![false; num_lits];
+            scratch.epoch = vec![u32::MAX; num_lits];
+        } else {
+            for (c, l) in scratch.sub.iter_mut().enumerate() {
+                *l = Lit::from_code(c as u32);
+            }
+        }
+        // Epoch stamps: u32::MAX initial + wrapping round counter means a
+        // fresh round's stamp never collides with an unused entry.
+        let stamp = self.equiv_epoch;
+        self.equiv_epoch = self.equiv_epoch.wrapping_add(1);
+        let EquivScratch {
+            sub,
+            index,
+            lowlink,
+            on_stack,
+            epoch,
+            stack,
+            work,
+        } = &mut scratch;
         let mut index_counter: usize = 0;
-        let mut index: Vec<i64> = vec![-1; num_lits]; // -1 = unseen
-        let mut lowlink = vec![0usize; num_lits];
-        let mut on_stack = vec![false; num_lits];
-        let mut stack: Vec<usize> = Vec::new();
-        // DFS work stack of (node, next-successor-cursor).
-        let mut work: Vec<(usize, usize)> = Vec::new();
+        stack.clear();
+        work.clear();
 
         for root in 0..num_lits {
-            if index[root] != -1 {
+            if epoch[root] == stamp {
                 continue;
             }
             // Seed root.
+            epoch[root] = stamp;
             index[root] = index_counter as i64;
             lowlink[root] = index_counter;
             index_counter += 1;
@@ -190,7 +236,8 @@ impl Solver {
                         entry.1 = succ_i + 1;
                     }
                     let w = succs[succ_i].0.code() as usize;
-                    if index[w] == -1 {
+                    if epoch[w] != stamp {
+                        epoch[w] = stamp;
                         index[w] = index_counter as i64;
                         lowlink[w] = index_counter;
                         index_counter += 1;
@@ -244,6 +291,16 @@ impl Solver {
                 }
             }
         }
+
+        // Tarjan phase complete: every `sub` write happened inside the SCC
+        // pops above, and the rest of the round only READS the map — so
+        // clone it out, return the scratch (all `&mut` borrows dead), and
+        // continue with a plain local exactly like the pre-amortization
+        // code.  The clone is one 2·V memcpy, the amortized equivalent of
+        // the per-round identity fill it replaces.
+        let sub: Vec<Lit> = scratch.sub.clone();
+        self.equiv_scratch = scratch;
+        let sub = &sub;
 
         // Contradiction check: pos(v) ≡ neg(v) (both resolve to the same rep)
         // means the formula entails both v and ¬v → UNSAT.
