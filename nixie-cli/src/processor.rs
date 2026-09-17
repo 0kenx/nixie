@@ -142,6 +142,7 @@ pub(crate) fn run_files(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
         decisions: sat_stats.decisions,
         propagations: sat_stats.propagations,
         propagations_inprocessing: sat_stats.propagations_inprocessing,
+        inprocessing_ns: sat_stats.inprocessing_ns,
         conflicts: sat_stats.conflicts,
         restarts: sat_stats.restarts,
     };
@@ -344,6 +345,8 @@ fn accumulate_sat_stats(
 ) {
     total.decisions += file_stats.decisions;
     total.propagations += file_stats.propagations;
+    total.propagations_inprocessing += file_stats.propagations_inprocessing;
+    total.inprocessing_ns += file_stats.inprocessing_ns;
     total.conflicts += file_stats.conflicts;
     total.restarts += file_stats.restarts;
 }
@@ -1013,6 +1016,7 @@ pub(crate) fn run_stdin(ctx: &mut Context, args: &Args, verbosity: Verbosity) {
         decisions: sat_stats.decisions,
         propagations: sat_stats.propagations,
         propagations_inprocessing: sat_stats.propagations_inprocessing,
+        inprocessing_ns: sat_stats.inprocessing_ns,
         conflicts: sat_stats.conflicts,
         restarts: sat_stats.restarts,
     };

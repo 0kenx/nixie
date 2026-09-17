@@ -3286,6 +3286,19 @@ impl Solver {
 
     /// Perform inprocessing (apply preprocessing during search)
     pub(super) fn inprocess(&mut self) {
+        // Wall attribution: time spent inside inprocessing rounds (search
+        // keeps everything else).  This is the counter the mixed-per-work
+        // cost analysis lacked — cross-solver wall comparisons folded the
+        // inprocessing share into "per-prop cost" invisibly.
+        let t0 = std::time::Instant::now();
+        self.inprocess_inner();
+        self.stats.inprocessing_ns = self
+            .stats
+            .inprocessing_ns
+            .saturating_add(t0.elapsed().as_nanos() as u64);
+    }
+
+    fn inprocess_inner(&mut self) {
         use crate::Preprocessor;
 
         // Only inprocess at decision level 0. LRAT tracing steps aside entirely:

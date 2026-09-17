@@ -988,6 +988,8 @@ pub struct SolverStats {
     /// search-only counters, and blending the two inflated nixie's
     /// measured props/conflict by the whole inprocessing share.
     pub propagations_inprocessing: u64,
+    /// Wall nanoseconds inside inprocessing rounds (search keeps the rest).
+    pub inprocessing_ns: u64,
     /// Number of conflicts
     pub conflicts: u64,
     /// Number of restarts
@@ -4896,7 +4898,7 @@ impl Solver {
         self.stats.decisions += s.decisions;
         self.stats.propagations += s.propagations;
         self.stats.propagations_inprocessing += s.propagations_inprocessing;
-        self.stats.propagations_inprocessing += s.propagations_inprocessing;
+        self.stats.inprocessing_ns += s.inprocessing_ns;
         self.stats.conflicts += s.conflicts;
         self.stats.restarts += s.restarts;
         self.stats.learned_clauses += s.learned_clauses;

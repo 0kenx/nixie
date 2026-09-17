@@ -51,6 +51,8 @@ pub struct SolverStats {
     /// Inprocessing-share propagations (vivify); search BCP keeps `propagations`
     #[allow(clippy::struct_field_names)]
     pub propagations_inprocessing: u64,
+    /// Wall ns inside inprocessing rounds
+    pub inprocessing_ns: u64,
     /// SAT solver conflicts
     pub conflicts: u64,
     /// SAT solver restarts
@@ -837,6 +839,16 @@ pub(crate) fn print_statistics(stats: &SolverStats, args: &Args) {
             &format!("  Propagations: {}", stats.propagations),
             None,
         );
+        if stats.inprocessing_ns > 0 {
+            println_colored(
+                args,
+                &format!(
+                    "  Inprocessing wall: {:.1}s",
+                    stats.inprocessing_ns as f64 / 1e9
+                ),
+                None,
+            );
+        }
         if stats.propagations_inprocessing > 0 {
             println_colored(
                 args,
