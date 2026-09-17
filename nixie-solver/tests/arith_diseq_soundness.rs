@@ -650,3 +650,45 @@ fn lazy_mode_refutes_the_a1_shape_like_eager_mode() {
         "both conjuncts hold, so the negation fails"
     );
 }
+
+// ===== the empty-xor parity lemma (a false `unsat` on a three-liner) =====
+
+/// An ite whose branches agree in parity (both even: `ite(cond, 2, 0)`)
+/// makes its column's image the *constant* `false`; folding it into a
+/// parity row left an empty xor chain, and the lemma builder returned
+/// the bare rhs constant as the lemma — asserting `false` as a ground
+/// unit and refuting **every** containing goal. Found by the bags fuzz
+/// campaign (the both-even signature was the tell); reproduced on
+/// `4ade3b1e`, before any bags work.
+#[test]
+fn both_even_ite_branches_do_not_refute() {
+    for k in [1, 2, 3, 4, 5, 7] {
+        let script = format!(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (assert (= (ite (= 3 x) {k} 0) {k}))\n\
+             (check-sat)\n"
+        );
+        let mut context = nixie_solver::Context::new();
+        let out = context
+            .execute_script(&script)
+            .unwrap_or_else(|_| panic!("script for k={k} must execute"));
+        assert_eq!(
+            out.first().map(String::as_str),
+            Some("sat"),
+            "k={k}: x = 3 satisfies the equality"
+        );
+    }
+    // The contradiction direction keeps refuting: the parity consequence
+    // genuinely conflicts when the row's parity is odd.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const x Int)\n\
+             (assert (= (ite (= 3 x) 2 0) 1))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("unsat"));
+}

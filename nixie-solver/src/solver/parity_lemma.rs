@@ -571,8 +571,20 @@ impl Solver {
     }
 }
 
-/// Build the Bool term `xor(l_1, …, l_k) = c` (or the constant `c` when no
-/// literal survives folding).  `lits` carries `(term, negate)` pairs.
+/// Build the Bool term `xor(l_1, …, l_k) = c`.  `lits` carries
+/// `(term, negate)` pairs.
+///
+/// An empty chain is the empty xor — semantically `false` — so the lemma
+/// is `false = c`: trivially `true` when `c` is false, the genuine
+/// contradiction constant when `c` is true.  Returning the *bare*
+/// constant `c` here instead (the old behaviour) asserted `false`
+/// outright whenever the folded image left no literal — and an
+/// image-determined column whose branches agree in parity (both even,
+/// e.g. `ite(cond, 2, 0)`) folds to exactly that: its image is the
+/// constant `false`, it merges into the rhs, and
+/// `(assert (= (ite (= 3 x) 2 0) 2))` answered **unsat** on a
+/// satisfiable three-liner (found by the bags fuzz campaign; the
+/// both-even signature was the tell).
 fn build_xor_lemma(lits: &[(TermId, bool)], c: bool, manager: &mut TermManager) -> TermId {
     let mut acc: Option<TermId> = None;
     for &(term, neg) in lits {
@@ -584,7 +596,10 @@ fn build_xor_lemma(lits: &[(TermId, bool)], c: bool, manager: &mut TermManager) 
     }
     let value = manager.mk_bool(c);
     match acc {
-        None => value,
+        None => {
+            let empty_xor = manager.false_id;
+            manager.mk_eq(empty_xor, value)
+        }
         Some(chain) => manager.mk_eq(chain, value),
     }
 }
@@ -800,8 +815,12 @@ pub(super) mod tests {
         let lemma = build_xor_lemma(&folded, true, &mut m);
         let expect = m.mk_eq(c, m.mk_bool(true));
         assert_eq!(lemma, expect);
-        // Empty fold: the lemma is the constant itself.
-        assert_eq!(build_xor_lemma(&[], false, &mut m), m.mk_false());
+        // Empty fold: the empty xor is `false`, so the lemma is
+        // `false = c` — `true` when `c` is false (a vacuous
+        // consequence, never a unit `false`), and the genuine
+        // contradiction constant when `c` is true.
+        assert_eq!(build_xor_lemma(&[], false, &mut m), m.mk_true());
+        assert_eq!(build_xor_lemma(&[], true, &mut m), m.mk_false());
     }
 
     // ---- solver-level: the fuzzer's mixed-parity shapes ----------------
