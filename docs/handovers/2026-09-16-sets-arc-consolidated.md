@@ -173,27 +173,22 @@ each has a regression:
    The campaign's remaining two mismatches reduce to a **pre-existing
    core bug outside this arc** — handed to its owner below.
 
-## A core bug for the parity owner (found by the bag fuzz campaign)
+## The both-even ite parity bug — **FIXED** (`c0998491`)
 
-`(assert (= (ite (= 3 x) 2 0) 2))` answers **unsat** (want `sat`) —
-reproduced on `4ade3b1e`, *before any bags work*, so it is not this
-arc's. The trigger is the ite branches being **both even**: `then ∈
-{2, 4}` with `else = 0` misfires; odd `then` (1, 3, 5, 7) and any
-`else ≠ 0` are fine. That signature points at the parity-lemma
-machinery (`derive_parity_lemmas` over the ite definitions — both-even
-branches make the ite variable's parity forced, and something there
-concludes the condition must be false). Three-line reproducer:
-
-```smt2
-(set-logic ALL)
-(declare-const x Int)
-(assert (= (ite (= 3 x) 2 0) 2))
-(check-sat)   ; cvc5/z3: sat (x = 3); nixie: unsat (wrong)
-```
-
-This also blocks deeper bag fuzzing: the count identities fold to
-`ite(e = y ∧ n ≥ 1, n, 0)`, and every even-multiplicity make over a
-variable element hits the shape.
+`(assert (= (ite (= 3 x) 2 0) 2))` answered **unsat** (want `sat`) —
+reproduced on `4ade3b1e`, *before any bags work*. Root cause found and
+closed the same session: `build_xor_lemma` returned the **bare rhs
+constant** when literal folding left an empty chain, instead of the
+empty xor (semantically `false`) compared against it — so a column
+whose ite branches agree in parity (both even) folded its image into
+the rhs and the builder asserted `false` as a ground unit, refuting
+everything. The lemma is now `false = c` (trivially true when `c` is
+false; the genuine contradiction constant when `c` is true); the unit
+test that had pinned the buggy behaviour is corrected with it, and
+`both_even_ite_branches_do_not_refute` regression-guards the shape.
+With the fix, the bags differential fuzz campaign runs **clean: 1800
+fresh cases, 0 mismatches** (a few honest timeouts on deep-ite search
+shapes — the count-identity encoding's known cost).
 2. **Synthesis reach**: intersection shapes beyond binary unions of
    opaque classes; uninterpreted element sorts (no mintable witness);
    complements over large finite sorts (> 1024, `MAX_UNIVERSE_ENUM`);
