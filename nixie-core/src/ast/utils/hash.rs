@@ -157,6 +157,7 @@ fn hash_visit(
         | TermKind::SetRelIden(a)
         | TermKind::BagCard(a)
         | TermKind::BagSetof(a)
+        | TermKind::BagChoose(a)
         | TermKind::StrFromCode(a) => stack.push(HashTask::Visit(*a)),
 
         TermKind::BvExtract { high, low, arg } => {

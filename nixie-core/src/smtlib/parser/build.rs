@@ -46,9 +46,9 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // Relations (CVC5's `rel.*` surface): transpose takes a
             // relation, `rel.iden` takes the plain set it diagonalizes.
             | "rel.transpose" | "rel.iden"
-            // Bags (CVC5's `bag.*` surface, slice 1): `bag.card` and
-            // `bag.setof` take one bag.
-            | "bag.card" | "bag.setof" => Plan::Fixed(1),
+            // Bags (CVC5's `bag.*` surface, slice 1): `bag.card`,
+            // `bag.setof` and `bag.choose` take one bag.
+            | "bag.card" | "bag.setof" | "bag.choose" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -699,12 +699,17 @@ impl Parser<'_> {
                 self.check_bag_operand(op, x)?;
                 self.manager.mk_bag_setof(x)
             }
-            // `bag.choose`/`bag.map`/`bag.filter`/`bag.all`/`bag.some`/
-            // `bag.fold`/`bag.partition` are honest parse-level
-            // rejections in this slice: the theory arc lands them with
-            // their own reduction rules.
-            "bag.choose" | "bag.map" | "bag.filter" | "bag.all" | "bag.some" | "bag.fold"
-            | "bag.partition" => {
+            // `bag.choose` — some element of the bag (CVC5 `BAG_CHOOSE`):
+            // `b ≠ ∅ → count(choose(b), b) ≥ 1`, congruent in the bag.
+            "bag.choose" => {
+                self.check_bag_operand(op, x)?;
+                self.manager.mk_bag_choose(x)
+            }
+            // `bag.map`/`bag.filter`/`bag.all`/`bag.some`/`bag.fold`/
+            // `bag.partition` are honest parse-level rejections in this
+            // slice: they need function handling (see the bags handover's
+            // open chores) and land with their own reduction rules.
+            "bag.map" | "bag.filter" | "bag.all" | "bag.some" | "bag.fold" | "bag.partition" => {
                 return Err(NixieError::ParseError {
                     position: self.lexer.position(),
                     message: format!(

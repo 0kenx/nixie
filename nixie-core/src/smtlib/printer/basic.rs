@@ -494,6 +494,11 @@ impl<'a> Printer<'a> {
                 self.write_term(w, *b);
                 let _ = write!(w, ")");
             }
+            TermKind::BagChoose(b) => {
+                let _ = write!(w, "(bag.choose ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
             TermKind::SetCard(s) => {
                 let _ = write!(w, "(set.card ");
                 self.write_term(w, *s);

@@ -100,6 +100,140 @@ impl Solver {
             v
         };
 
+        // ---- value the choose elements ----
+        // A choose's value must satisfy its count constraints over every
+        // bag, and the one the reduction's axiom pins is its own:
+        //     count(choose(b), b) = n
+        // so `choose(b)`'s value is a cell of `b` whose multiplicity is
+        // exactly `n` (any such cell — the choose axioms only demand
+        // membership and congruence, and class-equal bags share cells, so
+        // congruent chooses agree on the deterministic first match). For
+        // `n = 0` (an empty bag, or the element simply absent) the value
+        // must *avoid* the cells. This runs before assembly because the
+        // grouping keys on resolved element values: a choose without an
+        // entry would decline every bag it counts over.
+        //
+        // The provisional cells come from the non-choose elements only
+        // (their values never depend on a choose, so there is no cycle);
+        // the assembly loop below then re-groups with the chooses present
+        // and its disagreement check validates the pick.
+        let mut valued_chooses: Vec<(TermId, TermId, i64)> = Vec::new();
+        for &(choose, b) in &survey.chooses {
+            if model.get(choose).is_some() {
+                continue;
+            }
+            let Some(es) = bag_element_of(b, manager) else {
+                continue;
+            };
+            let Some(elems) = by_sort.get(&es) else {
+                continue;
+            };
+            // Provisional cells of `b`, grouped by resolved value.
+            let mut cells: Vec<(TermId, i64)> = Vec::new();
+            let mut trusted = true;
+            for &e in elems {
+                if survey.chooses.iter().any(|&(c, _)| c == e) {
+                    continue; // chooses resolved below, not here
+                }
+                let c = manager.mk_bag_count(e, b);
+                let Some(n) = count_value(c, model, &self.arith, &self.arith_purify, manager)
+                else {
+                    trusted = false;
+                    break;
+                };
+                if n <= 0 {
+                    continue;
+                }
+                let Some(v) = self.element_value_term(e, model, manager) else {
+                    trusted = false;
+                    break;
+                };
+                match cells.iter_mut().find(|(cv, _)| *cv == v) {
+                    Some((_, m)) if *m != n => trusted = false,
+                    Some(_) => {}
+                    None => cells.push((v, n)),
+                }
+                if !trusted {
+                    break;
+                }
+            }
+            if !trusted {
+                continue;
+            }
+            cells.sort_by_key(|&(v, _)| v.0);
+            let c = manager.mk_bag_count(choose, b);
+            let Some(n) = count_value(c, model, &self.arith, &self.arith_purify, manager) else {
+                continue;
+            };
+            // **Committed equalities come first.** The SAT layer may have
+            // committed `choose(b) = e` (a user assertion) or
+            // `choose(b) ≠ e` for a known element; a pick that ignores
+            // them publishes a value falsifying an atom the search already
+            // decided — the set model's choose pass reads the same
+            // commitment (`committed_bool_model`). A committed-true pick
+            // must still be a cell (the axioms force the counts to agree;
+            // if they did not, the verification below rolls it back).
+            let mut value = None;
+            let mut avoid: FxHashSet<TermId> = FxHashSet::default();
+            for &e in elems {
+                let same = manager.mk_eq(choose, e);
+                match self.committed_bool_model(same, model, manager) {
+                    Some(true) => {
+                        if let Some(v) = self.element_value_term(e, model, manager) {
+                            value = Some(v);
+                        }
+                        break;
+                    }
+                    Some(false) => {
+                        avoid.insert(e);
+                    }
+                    None => {}
+                }
+            }
+            let value = value.or_else(|| {
+                if n > 0 {
+                    // A member: the first cell whose multiplicity is exactly
+                    // `n` (count(choose(b), b) is the multiplicity of
+                    // choose(b)'s value, so the pick must match it), avoiding
+                    // committed-disequal elements.
+                    cells
+                        .iter()
+                        .find(|&&(v, m)| m == n && !avoid.contains(&v))
+                        .map(|&(v, _)| v)
+                } else {
+                    // Not a member: a fresh value of the sort that is no
+                    // cell's — `0` when free, else the smallest nonnegative
+                    // integer no cell holds. Non-`Int` element sorts decline
+                    // (the honest echo) rather than guess a string/BV that
+                    // might collide with a cell.
+                    if es == manager.sorts.int_sort {
+                        let mut candidate = 0i64;
+                        while cells
+                            .iter()
+                            .any(|&(v, _)| int_cell_value(v, manager) == Some(candidate))
+                        {
+                            candidate += 1;
+                        }
+                        Some(manager.mk_int(num_bigint::BigInt::from(candidate)))
+                    } else {
+                        None
+                    }
+                }
+            });
+            let Some(v) = value else {
+                // No consistent cell (or an unvalued sort): leave the
+                // choose unvalued — the assembly's disagreement check
+                // will decline the bag if that mattered.
+                continue;
+            };
+            model.set(choose, v);
+            valued_chooses.push((choose, b, n));
+            let list = by_sort.entry(es).or_default();
+            if !list.contains(&choose) {
+                list.push(choose);
+            }
+        }
+
         // ---- assemble and install ----
         let mut installed_bags: Vec<TermId> = Vec::new();
         for &(b, es) in &survey.bags {
@@ -229,6 +363,13 @@ impl Solver {
                     }
                 }
                 installed_bags.retain(|&t| bag_element_of(t, manager) != Some(es));
+                // The choose entries of the rolled-back sort reference
+                // those bag values; they go with them.
+                for &(choose, cb, _) in &valued_chooses {
+                    if bag_element_of(cb, manager) == Some(es) {
+                        model.remove(choose);
+                    }
+                }
                 continue;
             }
             // Verified: the card term prints as the assembled size (the
@@ -236,6 +377,81 @@ impl Solver {
             // reconciled with the arithmetic solver's word).
             let n_term = manager.mk_int(num_bigint::BigInt::from(assembled));
             model.set(card, n_term);
+        }
+
+        // ---- verify the choose commitments ----
+        // A valued choose's multiplicity among the *installed* cells of its
+        // bag must equal the arithmetic count the pick was made from — the
+        // same reconciliation the cardinality check performs, per element.
+        // A mismatch means the counts and the published value disagree;
+        // both roll back (the honest echo), never a falsifying value.
+        for &(choose, b, n) in &valued_chooses {
+            if !installed_bags.contains(&b) {
+                continue;
+            }
+            let Some(value) = model.get(choose) else {
+                continue;
+            };
+            let Some(es) = bag_element_of(b, manager) else {
+                continue;
+            };
+            let Some(bag_value) = model.get(b) else {
+                continue;
+            };
+            let mut found: Option<i64> = None;
+            let mut cur = bag_value;
+            loop {
+                match manager.get(cur).map(|d| d.kind.clone()) {
+                    Some(TermKind::BagEmpty(_)) => break,
+                    Some(TermKind::BagUnionDisjoint(a, make)) => {
+                        if let Some(TermKind::BagMake(e, m)) =
+                            manager.get(make).map(|d| d.kind.clone())
+                        {
+                            let same_value = e == value
+                                || (int_cell_value(e, manager).is_some()
+                                    && int_cell_value(e, manager)
+                                        == int_cell_value(value, manager));
+                            if same_value
+                                && let Some(TermKind::IntConst(k)) = manager.get(m).map(|d| &d.kind)
+                            {
+                                found = num_traits::ToPrimitive::to_i64(k);
+                            }
+                        }
+                        cur = a;
+                    }
+                    Some(TermKind::BagMake(e, m)) => {
+                        let same_value = e == value
+                            || (int_cell_value(e, manager).is_some()
+                                && int_cell_value(e, manager) == int_cell_value(value, manager));
+                        if same_value
+                            && let Some(TermKind::IntConst(k)) = manager.get(m).map(|d| &d.kind)
+                        {
+                            found = num_traits::ToPrimitive::to_i64(k);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+            let ok = match found {
+                Some(m) => m == n,
+                // `n = 0`: the value must appear in no cell, which the walk
+                // just confirmed.
+                None => n == 0,
+            };
+            if !ok {
+                for &t in &installed_bags {
+                    if bag_element_of(t, manager) == Some(es) {
+                        model.remove(t);
+                    }
+                }
+                installed_bags.retain(|&t| bag_element_of(t, manager) != Some(es));
+                for &(choose2, cb2, _) in &valued_chooses {
+                    if bag_element_of(cb2, manager) == Some(es) {
+                        model.remove(choose2);
+                    }
+                }
+            }
         }
     }
 }
@@ -248,6 +464,8 @@ struct BagModelSurvey {
     elements: Vec<(TermId, SortId)>,
     /// `bag.card` terms over bags.
     cards: Vec<(TermId, TermId)>,
+    /// `bag.choose` terms: `(choose, bag)`.
+    chooses: Vec<(TermId, TermId)>,
 }
 
 fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
@@ -255,6 +473,7 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
         bags: Vec::new(),
         elements: Vec::new(),
         cards: Vec::new(),
+        chooses: Vec::new(),
     };
     let bag_es = |sort: SortId| -> Option<SortId> {
         manager.sorts.get(sort).and_then(|s| match &s.kind {
@@ -281,6 +500,7 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
                 }
             }
             TermKind::BagCard(b) => out.cards.push((t, *b)),
+            TermKind::BagChoose(b) => out.chooses.push((t, *b)),
             _ => {}
         }
         stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
@@ -352,6 +572,14 @@ impl Solver {
             ElementValue::Term(t) => Some(t),
             ElementValue::Int(n) => Some(manager.mk_int(num_bigint::BigInt::from(n))),
         }
+    }
+}
+
+/// An `IntConst` cell value's integer, for fresh-value scans.
+fn int_cell_value(v: TermId, manager: &TermManager) -> Option<i64> {
+    match manager.get(v).map(|d| &d.kind) {
+        Some(TermKind::IntConst(k)) => num_traits::ToPrimitive::to_i64(k),
+        _ => None,
     }
 }
 

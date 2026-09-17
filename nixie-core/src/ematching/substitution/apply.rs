@@ -717,6 +717,10 @@ fn rebuild(
             let s = sub(s);
             manager.mk_bag_setof(s)
         }
+        TermKind::BagChoose(s) => {
+            let s = sub(s);
+            manager.mk_bag_choose(s)
+        }
         TermKind::SetUniv(sort) => manager.mk_set_univ_at(sort),
         TermKind::SetComplement(s) => {
             let s = sub(s);

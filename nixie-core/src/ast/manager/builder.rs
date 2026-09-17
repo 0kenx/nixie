@@ -1242,6 +1242,32 @@ impl TermManager {
         self.intern(TermKind::BagSetof(bag), sort)
     }
 
+    /// `(bag.choose b)` — some element of `b`, CVC5's rewriter
+    /// normalizations: `choose (bag y c) = y` for a literal `c > 0` (the
+    /// make with `c ≤ 0` has already folded to `∅`, whose choose stays —
+    /// an unspecified element), and `choose ∅` stays.
+    ///
+    /// The result sort is the bag's element sort; a non-bag operand is a
+    /// caller error the type rules catch (falls back to `Int` like the
+    /// other bag builders).
+    #[must_use]
+    pub fn mk_bag_choose(&mut self, bag: TermId) -> TermId {
+        if let Some(TermKind::BagMake(y, n)) = self.get(bag).map(|d| d.kind.clone())
+            && let Some(TermKind::IntConst(c)) = self.get(n).map(|d| &d.kind)
+            && *c > BigInt::from(0)
+        {
+            return y;
+        }
+        let sort = match self.get(bag).map(|t| t.sort) {
+            Some(s) => match self.sorts.get(s).map(|s| &s.kind) {
+                Some(SortKind::Bag(elem)) => *elem,
+                _ => self.sorts.int_sort,
+            },
+            None => self.sorts.int_sort,
+        };
+        self.intern(TermKind::BagChoose(bag), sort)
+    }
+
     /// `(set.card s)`.
     pub fn mk_set_card(&mut self, set: TermId) -> TermId {
         let sort = self.sorts.int_sort;

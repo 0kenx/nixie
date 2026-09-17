@@ -476,6 +476,7 @@ impl Solver {
             | TermKind::SetRelIden(a)
             | TermKind::BagCard(a)
             | TermKind::BagSetof(a)
+            | TermKind::BagChoose(a)
             | TermKind::BvNot(a) => push(*a),
             TermKind::SetUnion(a, b)
             | TermKind::SetInter(a, b)

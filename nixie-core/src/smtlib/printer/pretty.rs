@@ -426,6 +426,11 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *b, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            TermKind::BagChoose(b) => {
+                let _ = write!(w, "(bag.choose ");
+                self.write_term(w, *b, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }

@@ -67,6 +67,8 @@ struct Survey {
     subbags: Vec<(TermId, TermId, TermId)>,
     /// `bag.card` terms: `(term, bag)`.
     cards: Vec<(TermId, TermId)>,
+    /// `bag.choose` terms: `(choose, bag)`.
+    chooses: Vec<(TermId, TermId)>,
     /// Equalities between bag-sorted terms (the extensionality inputs).
     bag_equalities: Vec<(TermId, TermId, TermId)>,
 }
@@ -79,6 +81,7 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
         members: Vec::new(),
         subbags: Vec::new(),
         cards: Vec::new(),
+        chooses: Vec::new(),
         bag_equalities: Vec::new(),
     };
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
@@ -114,6 +117,7 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
             }
             TermKind::BagSubbag(a, b) => out.subbags.push((t, *a, *b)),
             TermKind::BagCard(b) => out.cards.push((t, *b)),
+            TermKind::BagChoose(b) => out.chooses.push((t, *b)),
             TermKind::Eq(a, b) => {
                 let a_bag = manager.get(*a).map(|d| d.sort).and_then(bag_es);
                 let b_bag = manager.get(*b).map(|d| d.sort).and_then(bag_es);
@@ -307,7 +311,23 @@ fn count_definition(e: TermId, b: TermId, zero: TermId, manager: &mut TermManage
 const MAX_BAG_ELEMENTS: usize = 24;
 
 /// Reduce the bag constraints of `roots` to arithmetic over `bag.count`.
-pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
+///
+/// `user_eq_atoms` are the bag-sorted equality atoms the *user* wrote;
+/// `minted_eq_atoms` (persisted by the caller across asserts) are the ones
+/// this reduction minted on an earlier pass. A minted atom is re-surveyed
+/// by the next assert's walk (the axioms are conjoined onto the assertion),
+/// and without the distinction it would be treated as a user equality:
+/// an extensionality witness per minted atom, each joining the element
+/// list, until the quadratic passes around it ballooned — three-assert
+/// fuzz shapes went from instant to unfinishable. Minted atoms get their
+/// congruence from the pair pass that minted them; user atoms get the
+/// full extensionality treatment (forward implications and witness).
+pub(crate) fn reduce(
+    roots: &[TermId],
+    user_eq_atoms: &FxHashSet<TermId>,
+    minted_eq_atoms: &mut FxHashSet<TermId>,
+    manager: &mut TermManager,
+) -> Reduction {
     let mut out = Reduction::default();
     let s = survey(roots, manager);
     if s.bags.is_empty() {
@@ -387,7 +407,15 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             by_sort.entry(ea).or_default().push(k);
         }
     }
-    for &(_, a, b) in &s.bag_equalities {
+    for &(atom, a, b) in &s.bag_equalities {
+        // A reduction-minted atom (pair congruence, choose emptiness) gets
+        // no witness: the pass that minted it states its congruence
+        // directly, and a witness per minted atom is exactly the
+        // element-list balloon the `minted_eq_atoms` registry exists to
+        // stop.
+        if !user_eq_atoms.contains(&atom) && minted_eq_atoms.contains(&atom) {
+            continue;
+        }
         let (Some(ea), Some(eb)) = (bag_element_of(a, manager), bag_element_of(b, manager)) else {
             continue;
         };
@@ -397,6 +425,22 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let k = manager.mk_var(&format!("@bag_ext_{}_{}", a.0, b.0), ea);
         if !by_sort.entry(ea).or_default().contains(&k) {
             by_sort.entry(ea).or_default().push(k);
+        }
+    }
+
+    // The **choose elements** join the list for the same reason: the
+    // choose axiom below mints `count(choose(b), b)`, and the identity
+    // loop must state that count (and the counts over every compound of
+    // the sort) for the element the formula now depends on. Without the
+    // entry, `count(choose(b), (bag 1 3)) = ite(choose(b) = 1 ∧ 3 ≥ 1, 3, 0)`
+    // was never stated and a choose pinned off the support answered
+    // `sat` beside a closed bag.
+    for &(choose, b) in &s.chooses {
+        let Some(es) = bag_element_of(b, manager) else {
+            continue;
+        };
+        if !by_sort.entry(es).or_default().contains(&choose) {
+            by_sort.entry(es).or_default().push(choose);
         }
     }
 
@@ -515,10 +559,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             // eligibility: `f x = f 0` (opaque×opaque) and
             // `select(A, i) = v` with `v` a make or `∅` (opaque×constructor).
             let eligible = |t: TermId| bag_is_opaque(t, manager) || bag_is_constructor(t, manager);
-            if !eligible(a)
-                || !eligible(b)
-                || (!bag_is_opaque(a, manager) && !bag_is_opaque(b, manager))
-            {
+            if !eligible(a) || !eligible(b) {
                 continue;
             }
             if bag_pairs >= MAX_BAG_PAIRS {
@@ -527,6 +568,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             }
             bag_pairs += 1;
             let same = manager.mk_eq(a, b);
+            minted_eq_atoms.insert(same);
             if let Some(elems) = by_sort.get(&esa) {
                 for &e in elems {
                     let (ca, cb) = (count_term(e, a, manager), count_term(e, b, manager));
@@ -594,6 +636,10 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // Both directions over the known elements: equal counts elementwise,
     // and a differing witness when the equality is false.
     for &(atom, a, b) in &s.bag_equalities {
+        // Minted, non-user: the pair pass owns this atom's congruence.
+        if !user_eq_atoms.contains(&atom) && minted_eq_atoms.contains(&atom) {
+            continue;
+        }
         let (Some(ea), Some(eb)) = (bag_element_of(a, manager), bag_element_of(b, manager)) else {
             continue;
         };
@@ -614,6 +660,100 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let differs = manager.mk_not(same);
         let neg = manager.mk_not(atom);
         out.axioms.push(manager.mk_implies(neg, differs));
+    }
+
+    // ---- choose ----
+    // CVC5's `BAG_CHOOSE` elimination (`theory_bags.cpp`,
+    // `expandChooseOperator`): the skolem `k` carries
+    // `A = ∅ ∨ count(k, A) ≥ 1`. Two shapes, by whether the formula
+    // already cardinalizes the bag:
+    //
+    // * **with a `bag.card` term present** (surveyed, so its equation
+    //   `|b| = Σ + slack` is stated and the model pass verifies it):
+    //   `count(choose(b), b) ≥ 1 ↔ |b| ≥ 1` — the set theory's
+    //   `SET_CHOOSE` shape. This is what makes
+    //   `|b| ≥ 1 ∧ count(choose(b), b) = 0` refute at the arithmetic
+    //   layer, through the card the formula itself owns.
+    // * **without one**: CVC5's disjunction over the emptiness
+    //   *equality atom*, never a minted `bag.card` — a card term minted
+    //   here would join the assertion's conjoined axioms, the model
+    //   pass would survey it, and its barely-constrained slack column
+    //   would roll back perfectly good bag values (found on
+    //   `count(3,b) = 2 ∧ choose(b) = 3`, which printed `b = ∅`).
+    //   Because the atom is minted *after* the survey, the
+    //   extensionality pass has not seen the pair — so the forward
+    //   direction is stated here directly: `b = ∅ → count(e, b) = 0`
+    //   for every known element (the choose included), which is what
+    //   keeps a single-assert script's disjunction from vacuously
+    //   committing `b = ∅` beside a nonzero count.
+    for &(choose, b) in &s.chooses {
+        let Some(es) = bag_element_of(b, manager) else {
+            continue;
+        };
+        let c = count_term(choose, b, manager);
+        let one = manager.mk_int(1);
+        let count_ge = manager.mk_ge(c, one);
+        if s.cards.iter().any(|&(_, bb)| bb == b) {
+            let card = manager.mk_bag_card(b);
+            let nonempty = manager.mk_ge(card, one);
+            out.axioms.push(manager.mk_eq(count_ge, nonempty));
+            continue;
+        }
+        let bag_sort = manager.sorts.bag(es);
+        let empty = manager.mk_bag_empty_at(bag_sort);
+        let is_empty = manager.mk_eq(b, empty);
+        minted_eq_atoms.insert(is_empty);
+        out.axioms.push(manager.mk_or([is_empty, count_ge]));
+        let zero = manager.mk_int(0);
+        if let Some(elems) = by_sort.get(&es) {
+            for &e in elems {
+                let ce = count_term(e, b, manager);
+                let zero_count = manager.mk_eq(ce, zero);
+                out.axioms.push(manager.mk_implies(is_empty, zero_count));
+            }
+        }
+    }
+    // `choose` is a function symbol: equal bags give equal elements. EUF
+    // would supply this if the choose term were an ordinary application
+    // (CVC5's skolem is `uf(A)` for exactly that reason); here the
+    // equality atoms are booleanized, so the congruence is stated over
+    // the choose pairs the survey found — the set theory's discipline,
+    // budget included. Without it, `a = b ∧ |a| ≥ 1 ∧ choose(a) ≠ choose(b)`
+    // answered `Sat` there, and the bag shape is identical.
+    {
+        const MAX_CHOOSE_PAIRS: usize = 128;
+        let mut choose_pairs = 0usize;
+        'choose: for (i, &(ua, ta)) in s.chooses.iter().enumerate() {
+            for &(ub, tb) in s.chooses.iter().skip(i + 1) {
+                if ta == tb || bag_element_of(ta, manager) != bag_element_of(tb, manager) {
+                    continue;
+                }
+                if choose_pairs >= MAX_CHOOSE_PAIRS {
+                    out.incomplete = true;
+                    break 'choose;
+                }
+                choose_pairs += 1;
+                let same = manager.mk_eq(ta, tb);
+                minted_eq_atoms.insert(same);
+                let agree = manager.mk_eq(ua, ub);
+                out.axioms.push(manager.mk_implies(same, agree));
+            }
+        }
+        // `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` true
+        // the ite *is* `a`, so the two chooses must agree — but the pair
+        // rule above conditions on an equality atom nobody asserts. The
+        // set theory's choose-over-ite rule, same shape. Minting the
+        // branch chooses is sound: the choose axiom above is valid for
+        // every bag, and hash-consing keeps the minted terms stable
+        // across the per-assert re-runs.
+        for &(u, t) in &s.chooses {
+            if let Some(TermKind::Ite(c, a, b)) = manager.get(t).map(|d| d.kind.clone()) {
+                let ca = manager.mk_bag_choose(a);
+                let cb = manager.mk_bag_choose(b);
+                let picked = manager.mk_ite(c, ca, cb);
+                out.axioms.push(manager.mk_eq(u, picked));
+            }
+        }
     }
 
     // ---- cardinality ----
@@ -699,6 +839,9 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     //   i.e. pointwise ≤ the operand sums.
     if std::env::var_os("NIXIE_NO_BAG_EQCARD").is_none() {
         for &(atom, a, b) in &s.bag_equalities {
+            if !user_eq_atoms.contains(&atom) && minted_eq_atoms.contains(&atom) {
+                continue;
+            }
             let ca = manager.mk_bag_card(a);
             let cb = manager.mk_bag_card(b);
             let same = manager.mk_eq(ca, cb);

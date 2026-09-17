@@ -165,6 +165,7 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::BagCount(_, _)
         | TermKind::BagCard(_)
         | TermKind::BagSetof(_)
+        | TermKind::BagChoose(_)
         | TermKind::Select(_, _)
         | TermKind::Store(_, _, _)
         | TermKind::StrConcat(_, _)

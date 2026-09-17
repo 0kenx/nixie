@@ -895,6 +895,10 @@ impl TermManager {
                 let b = sub(b);
                 self.mk_bag_setof(b)
             }
+            TermKind::BagChoose(b) => {
+                let b = sub(b);
+                self.mk_bag_choose(b)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);

@@ -1208,7 +1208,22 @@ impl Solver {
             // Bags reduce in the same eager pass: every constraint becomes
             // arithmetic over `bag.count` terms, conjoined onto this
             // assertion under the same honesty contract.
-            let bag_reduction = super::bag_theory::reduce(&roots, manager);
+            //
+            // `bag_user_eq_atoms` tells the reduction which bag equalities
+            // the *user* wrote (this term plus every earlier certificate
+            // assertion): those keep their extensionality witnesses. The
+            // equality atoms the reduction itself mints (pair congruence,
+            // choose emptiness) must NOT spawn witnesses on the next
+            // assert's re-survey — the conjoined axioms are re-walked, and
+            // a witness per minted atom ballooned the element list until
+            // three-assert fuzz shapes went from instant to unfinishable.
+            let bag_user_eq_atoms = self.bag_user_eq_atoms(term, manager);
+            let bag_reduction = super::bag_theory::reduce(
+                &roots,
+                &bag_user_eq_atoms,
+                &mut self.bag_minted_eq_atoms,
+                manager,
+            );
             if bag_reduction.incomplete {
                 self.set_terms_unconstrained = true;
             }
@@ -3329,6 +3344,40 @@ impl Solver {
         lit
     }
 
+    /// The bag-sorted equality atoms the *user* wrote: in this term and in
+    /// every earlier certificate assertion (the untouched copies). Used by
+    /// the bag reduction to exempt user equalities from the
+    /// minted-atom witness suppression.
+    fn bag_user_eq_atoms(&self, term: TermId, manager: &TermManager) -> FxHashSet<TermId> {
+        let mut out = FxHashSet::default();
+        let bag_es = |t: TermId| -> Option<nixie_core::SortId> {
+            manager
+                .sorts
+                .get(manager.get(t)?.sort)
+                .and_then(|s| match &s.kind {
+                    nixie_core::SortKind::Bag(e) => Some(*e),
+                    _ => None,
+                })
+        };
+        let mut stack: Vec<TermId> = self.certificate_assertions.clone();
+        stack.push(term);
+        let mut seen = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Some(data) = manager.get(t) else { continue };
+            if let TermKind::Eq(a, b) = &data.kind
+                && bag_es(*a).is_some()
+                && bag_es(*b).is_some()
+            {
+                out.insert(t);
+            }
+            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+        }
+        out
+    }
+
     /// The arm dispatch of the Tseitin encoder.  Only called by
     /// [`Solver::encode_depth`], which owns the memo lookup and the depth
     /// guard; recursive descent goes back through `encode_depth` so every
@@ -3390,6 +3439,15 @@ impl Solver {
             | TermKind::BagCount(_, _)
             | TermKind::BagCard(_)
             | TermKind::BagSetof(_) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
+            // `bag.choose` is element-sorted, so a well-typed formula never
+            // reaches here (a literal is expected); the arm exists so the
+            // encoder stays exhaustive, and keeps the honesty gate up the
+            // same way the bag compounds' arm does.
+            TermKind::BagChoose(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

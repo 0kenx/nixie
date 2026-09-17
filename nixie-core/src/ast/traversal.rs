@@ -125,6 +125,7 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::SetRelIden(a)
         | TermKind::BagCard(a)
         | TermKind::BagSetof(a)
+        | TermKind::BagChoose(a)
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }

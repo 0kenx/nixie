@@ -236,7 +236,7 @@ impl FingerprintCache {
             // Bags fingerprint exactly as sets do: the empty bag by its
             // sort, everything else by its children.
             TermKind::BagEmpty(sort) => sort.0.hash(&mut hasher),
-            TermKind::BagCard(a) | TermKind::BagSetof(a) => {
+            TermKind::BagCard(a) | TermKind::BagSetof(a) | TermKind::BagChoose(a) => {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
             }

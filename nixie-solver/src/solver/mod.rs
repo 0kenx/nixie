@@ -322,6 +322,14 @@ pub struct Solver {
     pub(super) define_fun_equations: Vec<TermId>,
     /// Untouched caller assertions used only by the independent certificate gate.
     pub(super) certificate_assertions: Vec<TermId>,
+    /// Equality atoms over bag-sorted terms that the **reduction** minted
+    /// (pair congruence, choose emptiness): persisted across asserts so the
+    /// next pass's re-survey — which re-walks the conjoined axioms — can
+    /// tell them from user-written equalities and refuse them extensionality
+    /// witnesses (the pair pass states their congruence directly). Stale
+    /// entries after a `pop` only ever suppress; a re-asserted equality is
+    /// user-written and therefore exempt from the suppression.
+    pub(super) bag_minted_eq_atoms: FxHashSet<TermId>,
     /// Named assertions for unsat core tracking
     pub(super) named_assertions: Vec<NamedAssertion>,
     /// Assumption literals for unsat core tracking (maps assertion index to assumption var)
@@ -1159,6 +1167,7 @@ impl Solver {
             assertions: Vec::new(),
             define_fun_equations: Vec::new(),
             certificate_assertions: Vec::new(),
+            bag_minted_eq_atoms: FxHashSet::default(),
             named_assertions: Vec::new(),
             assumption_vars: FxHashMap::default(),
             model: None,
@@ -5226,6 +5235,7 @@ impl Solver {
         self.assertions.clear();
         self.define_fun_equations.clear();
         self.certificate_assertions.clear();
+        self.bag_minted_eq_atoms.clear();
         self.named_assertions.clear();
         self.invalidate_results();
         self.context_stack.clear();

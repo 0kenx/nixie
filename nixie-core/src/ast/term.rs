@@ -617,6 +617,12 @@ pub enum TermKind {
     /// `(bag.setof b)` — duplicate removal (CVC5 `BAG_SETOF`, the delta
     /// operator): `count(x, setof b) = ite(count(x,b) > 0, 1, 0)`.
     BagSetof(TermId),
+    /// `(bag.choose b)` — some element of `b` (CVC5 `BAG_CHOOSE`):
+    /// `b ≠ ∅ → count(choose(b), b) ≥ 1`, and `choose` is congruent
+    /// (`a = b → choose(a) = choose(b)`); of an empty bag it is an
+    /// unspecified value of the element sort. The result sort is the
+    /// element sort.
+    BagChoose(TermId),
 }
 
 /// A case in a match expression.

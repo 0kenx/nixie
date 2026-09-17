@@ -144,6 +144,7 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::SetRelIden(a)
                 | TermKind::BagCard(a)
                 | TermKind::BagSetof(a)
+                | TermKind::BagChoose(a)
                 | TermKind::BvNot(a) => stack.push(*a),
                 TermKind::BvExtract { arg, .. } => stack.push(*arg),
                 TermKind::And(args)

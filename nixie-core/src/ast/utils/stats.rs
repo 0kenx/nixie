@@ -261,6 +261,7 @@ fn combine_complexity(
             | TermKind::SetRelIden(a)
             | TermKind::BagCard(a)
             | TermKind::BagSetof(a)
+            | TermKind::BagChoose(a)
             | TermKind::StrFromCode(a)
             | TermKind::FfNeg(a),
         ) => 2 + get(*a),

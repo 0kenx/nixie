@@ -313,6 +313,7 @@ impl Solver {
                 | TermKind::SetChoose(a)
                 | TermKind::BagCard(a)
                 | TermKind::BagSetof(a)
+                | TermKind::BagChoose(a)
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
                 TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}

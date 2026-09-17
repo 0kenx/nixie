@@ -169,6 +169,19 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
                 Err(NixieError::Internal("Bag operand not found".to_string()))
             }
         }
+        // `bag.choose` returns an element of the bag it chooses from
+        // (the set.choose arm, over `SortKind::Bag`).
+        TermKind::BagChoose(bag) => {
+            if let Some(t) = manager.get(*bag)
+                && let Some(sort) = manager.sorts.get(t.sort)
+                && let SortKind::Bag(elem) = sort.kind
+            {
+                return Ok(elem);
+            }
+            Err(NixieError::Internal(
+                "Cannot infer sort for bag.choose".to_string(),
+            ))
+        }
         TermKind::BagMake(element, _) => {
             if let Some(e) = manager.get(*element)
                 && let Some(id) = manager.sorts.find(&SortKind::Bag(e.sort))

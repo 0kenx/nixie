@@ -1159,6 +1159,41 @@ impl Context {
         // query-only `(bag.card b)` — one whose assertion stack never
         // constrained any cardinality — is exactly the case with no
         // readback entry to print otherwise.
+        //
+        // A query-only `bag.choose` — one the assertion stack never
+        // mentioned, so the reduction stated no choose axiom and the bag
+        // pass valued nothing — completes first, from the same installed
+        // value: the first cell's element (a member, which is what the
+        // choose of a nonempty bag is), or a fresh `0`-style default over
+        // an empty bag (unspecified, so any value models it). This is the
+        // same "complete the model before the query" discipline as the
+        // rel pass above — and it must run *before* the folds below,
+        // because `(bag.count (bag.choose b) b)` reads the entry.
+        let mut choose_installs: Vec<(TermId, TermId)> = Vec::new();
+        {
+            let mut stack = terms.to_vec();
+            let mut seen = crate::prelude::FxHashSet::default();
+            while let Some(t) = stack.pop() {
+                if !seen.insert(t) {
+                    continue;
+                }
+                let Some(kind) = self.terms.get(t).map(|d| d.kind.clone()) else {
+                    continue;
+                };
+                if let nixie_core::ast::TermKind::BagChoose(b) = kind {
+                    if model.get(t).is_none()
+                        && let Some(v) = self.query_choose_value(b, &model)
+                    {
+                        choose_installs.push((t, v));
+                    }
+                } else {
+                    stack.extend(nixie_core::ast::traversal::get_children(&kind));
+                }
+            }
+        }
+        for (t, v) in choose_installs {
+            model.set(t, v);
+        }
         let bag_folds: Vec<(TermId, i64)> = terms
             .iter()
             .flat_map(|&t| self.complete_bag_query(t, &model))
@@ -1410,6 +1445,13 @@ impl Context {
                     if model.get(t).is_none()
                         && let Some(cells) = self.installed_bag_cells(b, model)
                     {
+                        // The element may itself have a model entry — a
+                        // `bag.choose` valued by the bag pass, or any
+                        // element-sorted term the model pins — and the
+                        // fold must read *its* value's cell, not the
+                        // term's spelling (`(bag.count (bag.choose b) b)` is
+                        // the query the choose exists for).
+                        let e = model.get(e).unwrap_or(e);
                         let n = self.cell_of(e, &cells);
                         out.push((t, n));
                     }
@@ -1418,6 +1460,7 @@ impl Context {
                     if model.get(t).is_none()
                         && let Some(cells) = self.installed_bag_cells(b, model)
                     {
+                        let e = model.get(e).unwrap_or(e);
                         let n = self.cell_of(e, &cells);
                         out.push((t, if n > 0 { 1 } else { 0 }));
                     }
@@ -1485,6 +1528,33 @@ impl Context {
             return m;
         }
         0
+    }
+
+    /// A query-only `bag.choose(b)`'s value, from the installed bag value:
+    /// the first cell's element — the same deterministic pick the model
+    /// pass makes for asserted chooses, so a choose that appears in both
+    /// an assertion and a query prints one value. An empty installed bag
+    /// leaves the choose unspecified; `0` models it for `Int` element
+    /// sorts (any value does), and other sorts echo honestly. No installed
+    /// value at all (a declined bag) echoes too.
+    fn query_choose_value(&mut self, bag: TermId, model: &crate::solver::Model) -> Option<TermId> {
+        let cells = self.installed_bag_cells(bag, model)?;
+        match cells.first() {
+            Some(&(e, _)) => Some(e),
+            None => {
+                let es = self.terms.get(bag).map(|d| d.sort).and_then(|s| {
+                    self.terms.sorts.get(s).and_then(|sort| match &sort.kind {
+                        nixie_core::SortKind::Bag(e) => Some(*e),
+                        _ => None,
+                    })
+                })?;
+                if es == self.terms.sorts.int_sort {
+                    Some(self.terms.mk_int(0))
+                } else {
+                    None
+                }
+            }
+        }
     }
 }
 

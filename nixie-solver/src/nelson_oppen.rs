@@ -300,7 +300,8 @@ impl NelsonOppenCombiner {
             | TermKind::BagSubbag(_, _)
             | TermKind::BagCount(_, _)
             | TermKind::BagCard(_)
-            | TermKind::BagSetof(_) => TermTheory::Set,
+            | TermKind::BagSetof(_)
+            | TermKind::BagChoose(_) => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

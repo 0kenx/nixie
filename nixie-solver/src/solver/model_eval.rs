@@ -1402,6 +1402,16 @@ impl Solver {
                 }
                 _ => Opened::Done(EvalOutcome::UNDETERMINED),
             },
+            // `bag.choose(b)` as an ELEMENT: the same contract — the model
+            // entry the bag pass pins (a cell of the bag with the counted
+            // multiplicity, or a fresh value for the absent case), or
+            // undetermined.
+            TermKind::BagChoose(_) => match model.get(term).map(|v| parse_value_term(v, manager)) {
+                Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
+                    Opened::Done(parsed)
+                }
+                _ => Opened::Done(EvalOutcome::UNDETERMINED),
+            },
             // Bit-vector comparison atoms (`bvult`/`bvule`/`bvslt`/`bvsle`):
             // evaluate both operands concretely and fold, for the same reason
             // as the BV equality arm above.  These are Bool-sorted terms whose

@@ -666,16 +666,28 @@ fn bag_sort_operands_are_type_checked() {
 
 #[test]
 fn unsupported_bag_ops_reject_honestly() {
+    // `bag.choose` returns an element: asserting one is ill-sorted, and
+    // the pipeline answers `unknown` (the encoder's `BagChoose` arm keeps
+    // the honesty gate up) rather than guessing a meaning for it.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (bag.choose b))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unknown
+    );
     let mut context = nixie_solver::Context::new();
     let out = context.execute_script(
         "(set-logic ALL)\n\
          (declare-const b (Bag Int))\n\
-         (assert (bag.choose b))\n\
-         (check-sat)\n",
+         (declare-fun f (Int) Int)\n\
+         (assert (= (bag.map f b) b))\n",
     );
     assert!(
         out.is_err(),
-        "bag.choose is a parse-level rejection in this slice"
+        "bag.map is a parse-level rejection until function handling lands"
     );
 }
 
@@ -996,5 +1008,198 @@ fn counts_follow_derived_equality_congruence() {
              (check-sat)\n",
         ),
         SolverResult::Unsat
+    );
+}
+
+// ===== bag.choose =====
+
+/// The CVC5 `BAG_CHOOSE` semantics end to end: `choose` of a nonempty bag
+/// is a member, congruent in the bag, and the builder folds
+/// `choose (bag y c) = y` for a literal `c > 0` (CVC5's
+/// `CHOOSE_BAG_MAKE`).
+#[test]
+fn choose_picks_a_member() {
+    // The fold: `(bag.choose (bag 1 3))` is `1`.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (assert (= (bag.choose (bag 1 3)) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // The only element of a singleton make is forced; refusing it refutes.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (assert (not (= (bag.choose (bag 5 2)) 5)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // `card >= 1` (the formula's own cardinality) makes `choose` a member.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (>= (bag.card b) 1))\n\
+             (assert (= (bag.count (bag.choose b) b) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Without the cardinality, the emptiness disjunction carries it:
+    // `b = ∅ ∨ count(choose(b), b) >= 1` beside a nonzero count.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 3 b) 2))\n\
+             (assert (= (bag.choose b) 3))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    // The same shape with the count on the choose pinned to zero refutes
+    // through the element congruence (`choose(b) = 3` ties the counts).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 3 b) 2))\n\
+             (assert (= (bag.choose b) 3))\n\
+             (assert (= (bag.count (bag.choose b) b) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `choose` is a function of the bag: `a = c -> choose(a) = choose(c)`,
+/// stated over the choose pairs (the set theory's discipline).
+#[test]
+fn choose_is_congruent() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const a (Bag Int))\n\
+             (declare-const c (Bag Int))\n\
+             (assert (= a c))\n\
+             (assert (= (bag.count 1 a) 2))\n\
+             (assert (>= (bag.card a) 1))\n\
+             (assert (not (= (bag.choose a) (bag.choose c))))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` committed
+/// the ite *is* its branch, so the chooses must agree.
+#[test]
+fn choose_unfolds_over_ite() {
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-const c Bool)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (ite c (bag 1 1) (bag 2 1))))\n\
+             (assert c)\n\
+             (assert (not (= (bag.choose b) 1)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// The model side: an asserted choose prints its committed value (and its
+/// count follows); a query-only choose completes from the installed bag
+/// value; the empty bag's choose is unspecified (any value models it, the
+/// count is 0). The `count(3,b) = 2 ∧ choose(b) = 3` case is the
+/// card-mint regression: the choose axiom must not mint `bag.card` for a
+/// bag the formula never cardinalized — its slack column rolled the bag
+/// back to `∅`.
+#[test]
+fn choose_models_and_queries() {
+    // Committed equality: the choose prints the element, the count its
+    // multiplicity.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 5 2) (bag 7 1))))\n\
+             (assert (= (bag.choose b) 5))\n\
+             (check-sat)\n\
+             (get-value ((bag.choose b) (bag.count (bag.choose b) b)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("((bag.choose b) 5)"), "{joined}");
+    assert!(
+        joined.contains("((bag.count (bag.choose b) b) 2)"),
+        "{joined}"
+    );
+
+    // Query-only choose: completes from the installed value — a member
+    // with its multiplicity, never a falsifying 0.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 5 2) (bag 7 1))))\n\
+             (check-sat)\n\
+             (get-value ((bag.choose b) (bag.count (bag.choose b) b)\n                         (bag.member (bag.choose b) b)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("((bag.choose b) 7)"), "{joined}");
+    assert!(
+        joined.contains("((bag.count (bag.choose b) b) 1)"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("((bag.member (bag.choose b) b) true)"),
+        "{joined}"
+    );
+
+    // The card-mint regression: the bag's own value must survive.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 3 b) 2))\n\
+             (assert (= (bag.choose b) 3))\n\
+             (check-sat)\n\
+             (get-value (b (bag.choose b) (bag.count (bag.choose b) b)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("(b (bag 3 2))"), "{joined}");
+    assert!(joined.contains("((bag.choose b) 3)"), "{joined}");
+    assert!(
+        joined.contains("((bag.count (bag.choose b) b) 2)"),
+        "{joined}"
+    );
+
+    // The empty bag: choose is unspecified; `0` models it and the count
+    // reads 0.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (as bag.empty (Bag Int))))\n\
+             (check-sat)\n\
+             (get-value ((bag.choose b) (bag.count (bag.choose b) b)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("((bag.choose b) 0)"), "{joined}");
+    assert!(
+        joined.contains("((bag.count (bag.choose b) b) 0)"),
+        "{joined}"
     );
 }

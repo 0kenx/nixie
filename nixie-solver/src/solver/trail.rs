@@ -344,9 +344,14 @@ impl super::Solver {
             // `invalidate_results` — the certificate belongs to the check
             // that produced it, exactly as the model does.
             set_terms_unconstrained: _, // SNAPSHOT
-            ff_terms_unconstrained: _,  // SNAPSHOT
-            has_array_ops: _,           // SNAPSHOT
-            array_theory: _,            // SCOPED: snapshot/`pop` via `array_theory_scope`
+            // PERSISTED: minted-atom suppression entries survive pops —
+            // they only ever suppress witnesses, a re-asserted equality
+            // is user-written and exempt, so a stale entry cannot change
+            // a verdict (see the field's doc on `Solver`).
+            bag_minted_eq_atoms: _,
+            ff_terms_unconstrained: _, // SNAPSHOT
+            has_array_ops: _,          // SNAPSHOT
+            array_theory: _,           // SCOPED: snapshot/`pop` via `array_theory_scope`
             // in `ContextState` (entries are encoded at `assert` time, not as
             // individual `TrailOp`s).
             array_select_terms: _, // Stage-1 bookkeeping: accumulates across

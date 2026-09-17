@@ -1909,7 +1909,7 @@ impl Solver {
 
     /// The committed truth of a Boolean atom: the model entry first, then
     /// the SAT assignment.
-    fn committed_bool_model(
+    pub(super) fn committed_bool_model(
         &self,
         atom: TermId,
         model: &Model,
