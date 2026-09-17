@@ -1459,3 +1459,42 @@ fn map_and_filter_models_answer() {
     );
     assert!(joined.contains("((bag.card (bag.map f b)) 3)"), "{joined}");
 }
+
+/// A **core** wrong verdict the `bag.all`/`bag.some` work uncovered, kept
+/// here because the reproducer is bags: `purify_numeric_uf_args` proxies
+/// numeric constants globally, and a proxy minted in a *later* assert split
+/// the count spellings — the first assert's `count(2, b)` stayed raw, later
+/// asserts' became `count(proxy, b)`, two arithmetic columns with no tie
+/// (counts are columns, not EUF applications; the reduction's
+/// element-congruence axiom — the only tie — was itself rewritten by the
+/// same substitution into a tautology and folded away). With the count
+/// equation asserted *before* the `(p 2)` assert that creates the proxy,
+/// `(count(2,b) = 1) ∧ (count(2,filter) = 0) ∧ (p 2)` answered `sat`
+/// (CVC5: `unsat`). Fixed by shielding bag element positions in the
+/// purifier's substitution (`substitute_keeping_bag_elements`).
+#[test]
+fn count_spellings_survive_late_purification() {
+    for order in 0..4 {
+        let mut lines = vec![
+            "(set-logic ALL)".to_string(),
+            "(declare-fun p (Int) Bool)".to_string(),
+            "(declare-const b (Bag Int))".to_string(),
+        ];
+        let cb = "(assert (= (bag.count 2 b) 1))";
+        let cf = "(assert (= (bag.count 2 (bag.filter p b)) 0))";
+        let p2 = "(assert (p 2))";
+        let asserts = match order {
+            0..=0 => vec![cb, cf, p2], // the failing order: proxy minted last
+            1..=1 => vec![cf, cb, p2],
+            2..=2 => vec![cb, p2, cf],
+            _ => vec![p2, cb, cf],
+        };
+        lines.extend(asserts.into_iter().map(String::from));
+        lines.push("(check-sat)".to_string());
+        assert_eq!(
+            solve_smt(&lines.join("\n")),
+            SolverResult::Unsat,
+            "order {order}"
+        );
+    }
+}
