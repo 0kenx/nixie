@@ -38,6 +38,7 @@
 //! a `Sat` resting on it degrades to `Unknown` — never a guess.
 
 use crate::prelude::*;
+use nixie_core::interner::Spur;
 use nixie_core::{SortId, TermId, TermKind, TermManager};
 
 /// The result of reducing a formula's bag constraints.
@@ -69,6 +70,10 @@ struct Survey {
     cards: Vec<(TermId, TermId)>,
     /// `bag.choose` terms: `(choose, bag)`.
     chooses: Vec<(TermId, TermId)>,
+    /// `bag.map` terms: `(term, func, ret, domain bag)`.
+    maps: Vec<(TermId, Spur, SortId, TermId)>,
+    /// `bag.filter` terms: `(term, pred, bag)`.
+    filters: Vec<(TermId, Spur, TermId)>,
     /// Equalities between bag-sorted terms (the extensionality inputs).
     bag_equalities: Vec<(TermId, TermId, TermId)>,
 }
@@ -82,6 +87,8 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
         subbags: Vec::new(),
         cards: Vec::new(),
         chooses: Vec::new(),
+        maps: Vec::new(),
+        filters: Vec::new(),
         bag_equalities: Vec::new(),
     };
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
@@ -118,6 +125,10 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
             TermKind::BagSubbag(a, b) => out.subbags.push((t, *a, *b)),
             TermKind::BagCard(b) => out.cards.push((t, *b)),
             TermKind::BagChoose(b) => out.chooses.push((t, *b)),
+            TermKind::BagMap { func, ret, bag } => {
+                out.maps.push((t, *func, *ret, *bag));
+            }
+            TermKind::BagFilter { pred, bag } => out.filters.push((t, *pred, *bag)),
             TermKind::Eq(a, b) => {
                 let a_bag = manager.get(*a).map(|d| d.sort).and_then(bag_es);
                 let b_bag = manager.get(*b).map(|d| d.sort).and_then(bag_es);
@@ -168,6 +179,13 @@ fn bag_is_closed(b: TermId, manager: &TermManager) -> bool {
             Some(TermKind::Ite(_, a, c)) => {
                 stack.push(a);
                 stack.push(c);
+            }
+            // A map of a closed bag is closed: its support is exactly
+            // the images of the domain's makes, and every image is in
+            // the codomain element list (the image-collection step adds
+            // them). A filter's support is a subset of the domain's.
+            Some(TermKind::BagMap { bag: a, .. }) | Some(TermKind::BagFilter { bag: a, .. }) => {
+                stack.push(a);
             }
             _ => return false,
         }
@@ -235,7 +253,37 @@ enum CountDef {
     Unsupported,
 }
 
-fn count_definition(e: TermId, b: TermId, zero: TermId, manager: &mut TermManager) -> CountDef {
+/// The function application `f(x)` of a `bag.map`/`bag.filter` operand:
+/// a `define-fun`'s body **inlined** — matching the parser's call-site
+/// substitution, so the reduction's images and the user's `(f x)` spellings
+/// are the same terms — folded ground; a `declare-fun` symbol becomes an
+/// ordinary `Apply` the EUF layer owns.
+fn bag_apply_fun(
+    func: Spur,
+    x: TermId,
+    ret: SortId,
+    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
+    manager: &mut TermManager,
+) -> TermId {
+    if let Some(&(param, body)) = fun_defs.get(&func) {
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        subst.insert(param, x);
+        let sub = manager.substitute(body, &subst);
+        return manager.simplify(sub);
+    }
+    let name = manager.resolve_str(func).to_string();
+    manager.mk_apply(&name, [x], ret)
+}
+
+fn count_definition(
+    e: TermId,
+    b: TermId,
+    zero: TermId,
+    by_sort: &FxHashMap<SortId, Vec<TermId>>,
+    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
+    extra_axioms: &mut Vec<TermId>,
+    manager: &mut TermManager,
+) -> CountDef {
     let ca = |x: TermId, manager: &mut TermManager| count_term(e, x, manager);
     match manager.get(b).map(|d| d.kind.clone()) {
         Some(TermKind::BagEmpty(_)) => CountDef::Defined(zero),
@@ -286,6 +334,77 @@ fn count_definition(e: TermId, b: TermId, zero: TermId, manager: &mut TermManage
             let (x, y) = (ca(a, manager), ca(b, manager));
             CountDef::Defined(manager.mk_ite(c, x, y))
         }
+        // `count(y, map(f, b)) = Σ_x ite(f(x) = y, count(x, b), 0)` over
+        // the *distinct-valued* domain elements — the de-duplication guard
+        // is the cardinality sum's (two spellings of one value must
+        // contribute once). Over a **closed** domain bag this is exact
+        // (its support is its makes, all collected); over an opaque one
+        // an unknown element may map to `y`, so the identity carries a
+        // nonnegative slack — without it the encoding claimed the unknown
+        // support contributes nothing and `count(5, map(f, b)) = 1` with
+        // no known preimage answered `unsat` where the truth is `sat`
+        // — a false *unsat*, the worst class.
+        Some(TermKind::BagMap { func, ret, bag: d }) => {
+            let Some(des) = bag_element_of(d, manager) else {
+                return CountDef::Unsupported;
+            };
+            let Some(domain) = by_sort.get(&des) else {
+                return CountDef::Unsupported;
+            };
+            let mut parts: Vec<TermId> = Vec::with_capacity(domain.len());
+            for (i, &x) in domain.iter().enumerate() {
+                let fx = bag_apply_fun(func, x, ret, fun_defs, manager);
+                let same = manager.mk_eq(fx, e);
+                let cx = count_term(x, d, manager);
+                let cx_pos = manager.mk_gt(cx, zero);
+                let hit = manager.mk_and([same, cx_pos]);
+                let term = manager.mk_ite(hit, cx, zero);
+                // The guard: no *earlier* domain element of the same value
+                // already contributed (its count agrees by element
+                // congruence, so the first spelling is the representative).
+                let mut guards: Vec<TermId> = Vec::new();
+                for &earlier in &domain[..i] {
+                    let dup = manager.mk_eq(x, earlier);
+                    let ce = count_term(earlier, d, manager);
+                    let present = manager.mk_gt(ce, zero);
+                    let clash = manager.mk_and([dup, present]);
+                    guards.push(manager.mk_not(clash));
+                }
+                let part = if guards.is_empty() {
+                    term
+                } else {
+                    let no_clash = manager.mk_and(guards);
+                    manager.mk_ite(no_clash, term, zero)
+                };
+                parts.push(part);
+            }
+            let sum = if parts.is_empty() {
+                zero
+            } else {
+                manager.mk_add(parts)
+            };
+            if bag_is_closed(d, manager) {
+                CountDef::Defined(sum)
+            } else {
+                let mut name = format!("@bag_map_slack_{}_{}", b.0, e.0);
+                for &x in domain {
+                    name.push_str(&format!("_{}", x.0));
+                }
+                let slack = manager.mk_var(&name, manager.sorts.int_sort);
+                let ge = manager.mk_ge(slack, zero);
+                extra_axioms.push(ge);
+                CountDef::Defined(manager.mk_add([sum, slack]))
+            }
+        }
+        // `count(x, filter(p, b)) = ite(p(x), count(x, b), 0)` — exact per
+        // element: filter only removes, so the known elements' counts are
+        // determined regardless of the domain's unknown support (which the
+        // cardinality slack absorbs, with `|filter| <= |b|` below).
+        Some(TermKind::BagFilter { pred, bag: d }) => {
+            let px = bag_apply_fun(pred, e, manager.sorts.bool_sort, fun_defs, manager);
+            let cd = count_term(e, d, manager);
+            CountDef::Defined(manager.mk_ite(px, cd, zero))
+        }
         // An opaque bag (variable, application, select): its counts are
         // free integers — exactly the interface the arithmetic solver
         // needs. (An application's or select's value may be *determined*
@@ -326,6 +445,7 @@ pub(crate) fn reduce(
     roots: &[TermId],
     user_eq_atoms: &FxHashSet<TermId>,
     minted_eq_atoms: &mut FxHashSet<TermId>,
+    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
     manager: &mut TermManager,
 ) -> Reduction {
     let mut out = Reduction::default();
@@ -384,12 +504,41 @@ pub(crate) fn reduce(
                         stack.push(*a);
                         stack.push(*c);
                     }
+                    // A map's/filter's support lives in its domain bag's
+                    // (the *images* are collected by the dedicated pass
+                    // below, not by this walk — they are not makes).
+                    TermKind::BagMap { bag, .. } | TermKind::BagFilter { bag, .. } => {
+                        stack.push(*bag);
+                    }
                     _ => {}
                 }
             }
         }
     }
     let zero = manager.mk_int(0);
+
+    // ---- the map images join the codomain element list ----
+    // `count(y, map(f, b))` is stated over the codomain's element list, and
+    // the image bag's support is exactly the images of the domain's
+    // elements — `f(x)` for every known `x` (an inlined `define-fun` body
+    // folded ground, or an `Apply` the EUF layer owns). Without this the
+    // list for `(Bag T2)` could be empty and the identities stated
+    // nothing — the exact vacuity the support walk exists to prevent.
+    for &(_, func, ret, d) in &s.maps {
+        let Some(des) = bag_element_of(d, manager) else {
+            continue;
+        };
+        let Some(domain) = by_sort.get(&des).cloned() else {
+            continue;
+        };
+        for x in domain {
+            let image = bag_apply_fun(func, x, ret, fun_defs, manager);
+            let list = by_sort.entry(ret).or_default();
+            if !list.contains(&image) {
+                list.push(image);
+            }
+        }
+    }
 
     // ---- the witnesses join the element list first ----
     // The negated subbag/equality directions constrain a skolem element's
@@ -460,7 +609,10 @@ pub(crate) fn reduce(
         let mut opaque = false;
         for &e in elems {
             let c = count_term(e, b, manager);
-            match count_definition(e, b, zero, manager) {
+            let mut extra_here: Vec<TermId> = Vec::new();
+            let def = count_definition(e, b, zero, &by_sort, fun_defs, &mut extra_here, manager);
+            out.axioms.append(&mut extra_here);
+            match def {
                 CountDef::Defined(def) => {
                     let eq = manager.mk_eq(c, def);
                     out.axioms.push(eq);
@@ -886,6 +1038,19 @@ pub(crate) fn reduce(
                     out.axioms.push(manager.mk_le(cb, cx));
                 }
                 TermKind::BagSetof(x) => {
+                    let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
+                    out.axioms.push(manager.mk_le(cb, cx));
+                }
+                // `|map(f, b)| = |b|` exactly: `f` is total, so every one
+                // of the `|b|` copies maps to exactly one copy — collisions
+                // merge multiplicities, the sum is preserved. This is what
+                // ties the per-element image slacks to the domain's.
+                TermKind::BagMap { bag: x, .. } => {
+                    let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
+                    out.axioms.push(manager.mk_eq(cb, cx));
+                }
+                // `|filter(p, b)| <= |b|`: filtering only removes.
+                TermKind::BagFilter { bag: x, .. } => {
                     let (cx, cb) = (manager.mk_bag_card(x), manager.mk_bag_card(b));
                     out.axioms.push(manager.mk_le(cb, cx));
                 }

@@ -240,6 +240,17 @@ impl FingerprintCache {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
             }
+            TermKind::BagMap { func, ret, bag } => {
+                manager.resolve_str(*func).hash(&mut hasher);
+                ret.0.hash(&mut hasher);
+                let fp = self.compute(*bag, manager);
+                fp.0.hash(&mut hasher);
+            }
+            TermKind::BagFilter { pred, bag } => {
+                manager.resolve_str(*pred).hash(&mut hasher);
+                let fp = self.compute(*bag, manager);
+                fp.0.hash(&mut hasher);
+            }
             TermKind::SetSingleton(a) | TermKind::SetCard(a) => {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);

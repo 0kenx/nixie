@@ -623,6 +623,36 @@ pub enum TermKind {
     /// unspecified value of the element sort. The result sort is the
     /// element sort.
     BagChoose(TermId),
+    /// `(bag.map f b)` — pointwise image (CVC5 `BAG_MAP`):
+    /// `count(y, map(f, b)) = Σ_x ite(f(x) = y, count(x, b), 0)` over the
+    /// distinct-valued elements of the domain, and the cardinality is
+    /// preserved exactly (`|map(f, b)| = |b|` — every copy maps to one
+    /// copy). Carries the function's name symbol and its **codomain**
+    /// sort (a bare symbol is not a term, so the image bag's element
+    /// sort must be stored); the result sort is `(Bag ret)`.
+    ///
+    /// A `define-fun` function is inlined per element by the reduction
+    /// (matching the parser's call-site substitution); a `declare-fun`
+    /// symbol becomes an `Apply` the EUF layer owns.
+    BagMap {
+        /// The function's interned name.
+        func: Spur,
+        /// The function's codomain sort: the image bag's element sort.
+        ret: SortId,
+        /// The domain bag.
+        bag: TermId,
+    },
+    /// `(bag.filter p b)` — the sub-bag of elements satisfying `p` (CVC5
+    /// `BAG_FILTER`): `count(x, filter(p, b)) = ite(p(x), count(x, b), 0)`
+    /// — exact per element (filter only removes), with `|filter(p, b)| ≤
+    /// |b|`. Carries the predicate's name symbol; the result sort is the
+    /// operand's own bag sort.
+    BagFilter {
+        /// The predicate's interned name.
+        pred: Spur,
+        /// The bag.
+        bag: TermId,
+    },
 }
 
 /// A case in a match expression.

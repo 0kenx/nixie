@@ -1218,10 +1218,12 @@ impl Solver {
             // a witness per minted atom ballooned the element list until
             // three-assert fuzz shapes went from instant to unfinishable.
             let bag_user_eq_atoms = self.bag_user_eq_atoms(term, manager);
+            let bag_fun_defs = self.bag_fun_defs.clone();
             let bag_reduction = super::bag_theory::reduce(
                 &roots,
                 &bag_user_eq_atoms,
                 &mut self.bag_minted_eq_atoms,
+                &bag_fun_defs,
                 manager,
             );
             if bag_reduction.incomplete {
@@ -3446,8 +3448,9 @@ impl Solver {
             // `bag.choose` is element-sorted, so a well-typed formula never
             // reaches here (a literal is expected); the arm exists so the
             // encoder stays exhaustive, and keeps the honesty gate up the
-            // same way the bag compounds' arm does.
-            TermKind::BagChoose(_) => {
+            // same way the bag compounds' arm does. `bag.map`/`bag.filter`
+            // are bag compounds of the same kind as the arm above.
+            TermKind::BagChoose(_) | TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

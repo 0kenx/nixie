@@ -1616,7 +1616,9 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
         | TermKind::SetRelIden(a)
         | TermKind::BagCard(a)
         | TermKind::BagSetof(a)
-        | TermKind::BagChoose(a) => out.push(*a),
+        | TermKind::BagChoose(a)
+        | TermKind::BagMap { bag: a, .. }
+        | TermKind::BagFilter { bag: a, .. } => out.push(*a),
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
@@ -2994,6 +2996,9 @@ fn rebuild_with(
         TermKind::BagSetof(..) => manager.mk_bag_setof(one(0)?),
         TermKind::BagChoose(..) => {
             return Err("bag.choose has no theory to evaluate it");
+        }
+        TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
+            return Err("bag.map/bag.filter have no theory to evaluate them");
         }
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;

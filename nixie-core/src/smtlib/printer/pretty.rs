@@ -431,6 +431,20 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *b, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            TermKind::BagMap { func, bag, .. } => {
+                let _ = write!(w, "(bag.map ");
+                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(w, " ");
+                self.write_term(w, *bag, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::BagFilter { pred, bag } => {
+                let _ = write!(w, "(bag.filter ");
+                let _ = write!(w, "{}", self.manager.resolve_str(*pred));
+                let _ = write!(w, " ");
+                self.write_term(w, *bag, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }

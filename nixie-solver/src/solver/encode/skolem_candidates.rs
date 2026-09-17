@@ -247,6 +247,8 @@ impl Solver {
                 | TermKind::BagCard(a)
                 | TermKind::BagSetof(a)
                 | TermKind::BagChoose(a)
+                | TermKind::BagMap { bag: a, .. }
+                | TermKind::BagFilter { bag: a, .. }
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
                 TermKind::SetUniv(_) => {}

@@ -317,6 +317,8 @@ impl CombinedRewriter {
             | TermKind::BagCard(_)
             | TermKind::BagSetof(_)
             | TermKind::BagChoose(_)
+            | TermKind::BagMap { .. }
+            | TermKind::BagFilter { .. }
             // Finite-field terms are already in normal form at construction
             // (`mk_ff_*` folds), so no rewriter pass applies. Sound for the
             // same reason as the sets arm: a missing simplification costs

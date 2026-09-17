@@ -633,6 +633,8 @@ impl EqualityPropagator {
             | TermKind::BagCard(_)
             | TermKind::BagSetof(_)
             | TermKind::BagChoose(_)
+            | TermKind::BagMap { .. }
+            | TermKind::BagFilter { .. }
             | TermKind::Select(_, _)
             | TermKind::Store(_, _, _)
             | TermKind::StrConcat(_, _)

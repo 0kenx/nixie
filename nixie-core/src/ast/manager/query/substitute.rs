@@ -899,6 +899,16 @@ impl TermManager {
                 let b = sub(b);
                 self.mk_bag_choose(b)
             }
+            TermKind::BagMap { func, ret, bag } => {
+                let bag = sub(bag);
+                let name = self.resolve_str(func).to_string();
+                self.mk_bag_map(&name, ret, bag)
+            }
+            TermKind::BagFilter { pred, bag } => {
+                let bag = sub(bag);
+                let name = self.resolve_str(pred).to_string();
+                self.mk_bag_filter(&name, bag)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);
