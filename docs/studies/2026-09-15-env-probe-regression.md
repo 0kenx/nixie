@@ -316,3 +316,34 @@ parse mode — `parse_reader_impl` with incremental attach (byte scanning +
 ~3–4× on parse-dominated instances from the 47 %→12 % parse saving alone.
 Not landed here: it lives in `nixie-sat::dimacs`, is interface-visible to
 `cnf_bench`, and deserves its own trajectory-identity verification sweep.
+
+## Addendum (2026-09-17, closing the parse thread): BOTH byte-parser variants lose to the line-based path — negative result recorded
+
+The named fix was built and measured: `parse_reader_incremental` (byte
+scanning + incremental clause attachment, no deferred-BIG rebuild) with the
+CLI fast path streamed through it.  Trajectories **bit-identical** on every
+gate instance (conflicts equal), but wall on the 544 MB `hwmcc-6s299`
+anatomy, interleaved ×3 under identical conditions:
+
+| variant | wall (3 runs) |
+|---|---|
+| line-based `DimacsCnf` (current main) | **6.5 / 7.5 / 19.4 s** |
+| byte deferred-BIG (`parse_reader`) | 24–34 s (previous addendum) |
+| byte incremental (`parse_reader_incremental`) | 10.9 / 13.5 / 27.6 s |
+| kissat 4.0.4 | **0.73 / 0.77 / 0.94 s** |
+
+Both worktrees reverted; main keeps the line-based path.  **Why the
+incremental variant loses despite scanning 35 % cheaper** (hypothesis,
+unverified): the CLI path creates all vars upfront from the header (`for _
+in 0..num_vars { new_var() }` — one array-growth phase, then pure clause
+adds), while the byte parser creates each var when first *encountered*,
+interleaving per-var array growth (phase/activity/heap/mark resizes across
+live solver structures) with clause attachment.
+
+**The remaining 6.5 s vs kissat's 0.8 s at zero search needs a different
+design, not a parser swap**: kissat reads via mmap with a zero-copy scanner
+and defers all solver structure until after the scan.  A mmap-based
+parse-then-build (byte scan to a compact clause buffer, then one upfront
+`new_var` loop + adds) is the shape that should win; that is SAT-core
+interface work (`nixie-sat::dimacs` + `cnf_bench` visibility), recorded
+here for that arc.  Do not retry the two tested variants — both measured.
