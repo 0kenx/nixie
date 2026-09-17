@@ -1811,3 +1811,60 @@ seeds 20261100/01 clean, seed 20261102 = item 69's pre-existing find;
 perf gate PASS (conflicts/decisions 1.000 bit-identical — the certifier
 never runs on the gate corpus); debug-panic sweep 177/177 over the parity
 corpus; survey delta on the fixed seeds as above.
+
+## Continuation 33 (2026-09-18): item 69 decoded to the mechanism — the rescale-dropped bound that refuted a division axiom (item 70)
+
+70. **The false `unsat` (item 69), decoded live to the plant.**  Probes:
+    tagged `TheoryResult::Unsat` exports, reason/intern/assert algebra
+    dumps, plant-time crossing records, the slice-6 consider/row trace, and
+    a term printer at `conflict_from_terms` (worktree `/tmp/x69`, branch
+    `x69-probe`, env `NIXIE_X69=1` [+ `NIXIE_X69_ROW=1` for row dumps] —
+    instrumented by two interleaved sessions; left standing for the next
+    step).  The chain, end to end, on the two-disjunct core
+    (`…-core.smt2`, z3 model `xi = 658812288346769706`):
+    * The endgame exports pairwise-pin lemmas on `mod(10xi,7)` (plausible,
+      sound shapes), then the FINAL theory conflict blames **the division
+      axiom `(= t (+ (* 3 (div t 3)) (mod t 3)))` for `t = 2xi+77` ALONE**
+      — a theorem.  `conflict_from_terms` builds the clause `¬axiom`; the
+      axiom is also an asserted clause ⇒ empty clause ⇒ false `unsat`.
+      The item-54 fingerprint (single-atom core over an axiom), now
+      reached through the bound-crossing export channel.
+    * The crossing: `v1112 lo=(1,0) r=5 hi=(7/20,0) r=5`, where reason 5 =
+      the axiom (one epoch; no staleness — one RESET, table continuous,
+      `ntab=88` mapped consistently).  `v1112`'s tableau row is
+      **`(20/7)·v1037 + 0`** and `v1037` is pinned `[7/20, 7/20]` r=5 by
+      TWO independent pinned-row derivations (algebra verified sound:
+      `v12 = −(20/7)v1037 + 1` pinned [0,0] ⇒ v1037 = 7/20; likewise
+      through `v999`).  Therefore **lo=1 is CORRECT** (`20/7 · 7/20 = 1`)
+      and **hi=7/20 is the UNSOUND bound — the UNSCALED v1037 value
+      planted into the rescaled row's slack v1112: the 20/7 rescale factor
+      was dropped on exactly one side**.
+    * v1112 is never a slice-6 `dir2` target (no consider/ROW lines) — its
+      `hi=7/20` arrives through the OTHER plant channel: the
+      delta-propagation / `propagated`-list application
+      (`propagate_bounds_in`'s tail `set_upper_delta(prop.var, prop.value,
+      …)` or `on_nonbasic_bound_change`'s delta loop), i.e. the narrow
+      direction-1 machinery passing through a RESCALED row.
+    * **The remaining step (one probe iteration)**: instrument
+      `set_upper_delta`/`set_lower_delta` (or the prop application) to
+      print the writer of `v1112.upper = 7/20` — the suspected defect is a
+      delta/value computed against the PRE-rescale row (coefficient 1
+      instead of 20/7: `Δv1112 = Δv1037` instead of `Δv1112 =
+      (20/7)·Δv1037`), the same scale-drop shape item 63 fixed on the
+      MODEL-value channel, now on the BOUND channel through rescaled rows.
+      The fix will follow the item-63 pattern: every consumer of a bound
+      near a rescaled row must derive through the row's ACTUAL
+      coefficients.
+    * Layer note (AGENTS principle 2): the export channel guarded stale
+      REASON ids (discard-stale-first at `check`) but nothing guards
+      stale/un-scaled VALUES — and the strengthened
+      `debug_verify_invariant` was silent because the corrupted state is a
+      BOUND (bounds are only checked when a basic's window is violated at
+      convergence; v1112's lo=1/hi=7/20 crossing was consumed as a
+      conflict before the invariant's convergence point ran), and the
+      corner auditor was silent because the plant is not a wide-row
+      derivation.
+
+The campaign's remaining classes (item 67's map) are unchanged; item 70's
+fix is the priority — the reproducer, its two-disjunct core, and the probe
+worktree are all standing.
