@@ -167,16 +167,25 @@ impl Solver {
                         )
                     }
                     GateType::Xor => {
-                        let i1 = uf.find(g.in1.code());
-                        let i2 = uf.find(g.in2.code());
-                        let key = if i1 <= i2 {
-                            (GateType::Xor, false, i1, i2, u32::MAX)
-                        } else {
-                            (GateType::Xor, false, i2, i1, u32::MAX)
-                        };
+                        // Signed-input presentations (kissat hashes the gate
+                        // rhs as-is): f = a⊕b has the two presentations
+                        // (a, b) and (¬a, ¬b); its complement ¬f the two
+                        // (¬a, b) and (a, ¬b).  Canonical = min per family.
+                        // Duplicate polarity readings of one definition
+                        // (output o vs ¬o with correspondingly flipped
+                        // inputs) then land pos-of-one on neg-of-the-other
+                        // and self-cancel — the 2026-09-18 false-unsat was
+                        // parity-folding the input signs into one key,
+                        // merging o with ¬o (minimized: 37≡41≡122≡123).
+                        let a = uf.find(g.in1.code());
+                        let b = uf.find(g.in2.code());
+                        let na = a ^ 1;
+                        let nb = b ^ 1;
+                        let pos = if (a, b) <= (na, nb) { (a, b) } else { (na, nb) };
+                        let neg = if (na, b) <= (a, nb) { (na, b) } else { (a, nb) };
                         (
-                            key,
-                            (GateType::Xor, true, key.2, key.3, u32::MAX),
+                            (GateType::Xor, false, pos.0, pos.1, u32::MAX),
+                            (GateType::Xor, true, neg.0, neg.1, u32::MAX),
                             g.out.code(),
                         )
                     }
@@ -224,8 +233,8 @@ impl Solver {
                     }
                     continue;
                 }
-                if g.ty == GateType::Ite {
-                    // Rule 3: our POSITIVE triple recorded as a complement.
+                if matches!(g.ty, GateType::Ite | GateType::Xor) {
+                    // Rule 3: our POSITIVE signature recorded as a complement.
                     if let Some(&prev) = first.get(&(GateType::Ite, true, key.2, key.3, key.4)) {
                         // prev = ¬outH with ¬f_H = f_G ⇒ out ≡ prev.
                         if uf.find(prev) != uf.find(out) && uf.union(prev, out) {
@@ -277,6 +286,35 @@ impl Solver {
             }
         }
         let sentinel = ClauseId::new(u32::MAX);
+        #[cfg(feature = "std")]
+        if let Ok(path) = std::env::var("NIXIE_DUMP_GATE_CLASSES") {
+            use std::fmt::Write as _;
+            let mut out = String::new();
+            let mut n = 0usize;
+            for members in classes.values() {
+                let uniq: std::collections::BTreeSet<u32> = members.iter().copied().collect();
+                if uniq
+                    .iter()
+                    .map(|c| c / 2)
+                    .collect::<std::collections::BTreeSet<u32>>()
+                    .len()
+                    < 2
+                {
+                    continue;
+                }
+                n += 1;
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    uniq.iter()
+                        .map(|c| c.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
+            }
+            let prev = std::fs::read_to_string(&path).unwrap_or_default();
+            let _ = std::fs::write(&path, prev + &format!("classes {n}\n{out}"));
+        }
         for members in classes.values() {
             if members.len() < 2 {
                 continue;
@@ -359,36 +397,48 @@ impl Solver {
             ts.contains_key(&(k[0], k[1], k[2]))
         };
         for lits in &ternary {
-            // Try each literal as the output o; the other two are a candidate
-            // (a, b). Verify the four XOR clauses are all present.
+            // Try each literal as the output o; the other two (p, q) are the
+            // input candidates in ALL FOUR sign presentations — a complete
+            // XOR definition fixes only o⊕a⊕b, so the clause set carries any
+            // mix of input signs (XNOR shapes included); checking the signs
+            // as they appear in one clause misses every definition whose
+            // o-form clauses negate an input (measured: 2534 complete sets
+            // in bv_ILA's raw file, zero found by the signs-as-written scan).
             for i in 0..3 {
                 let o = lits[i];
-                let a = lits[(i + 1) % 3];
-                let b = lits[(i + 2) % 3];
-                if a.var() == o.var() || b.var() == o.var() || a.var() == b.var() {
+                let p = lits[(i + 1) % 3];
+                let q = lits[(i + 2) % 3];
+                if p.var() == o.var() || q.var() == o.var() || p.var() == q.var() {
                     continue;
                 }
-                // one of the four clauses is the current `lits`; check the
-                // other three. The four forms (modulo a/b swap):
-                //   (¬o∨a∨b), (¬o∨¬a∨¬b), (o∨¬a∨b), (o∨a∨¬b)
-                let forms = [
-                    (o.negate(), a, b),
-                    (o.negate(), a.negate(), b.negate()),
-                    (o, a.negate(), b),
-                    (o, a, b.negate()),
-                ];
-                if forms
-                    .iter()
-                    .all(|&(x, y, z)| has_ternary(x, y, z, &ternary_set))
-                {
-                    gates.push(Gate {
-                        ty: GateType::Xor,
-                        in1: a,
-                        in2: b,
-                        in3: a, // unused
-                        out: o,
-                    });
-                    break;
+                for (a, b) in [
+                    (p, q),
+                    (p, q.negate()),
+                    (p.negate(), q),
+                    (p.negate(), q.negate()),
+                ] {
+                    // one of the four clauses is the current `lits`; check
+                    // the other three. The four forms (modulo a/b swap):
+                    //   (¬o∨a∨b), (¬o∨¬a∨¬b), (o∨¬a∨b), (o∨a∨¬b)
+                    let forms = [
+                        (o.negate(), a, b),
+                        (o.negate(), a.negate(), b.negate()),
+                        (o, a.negate(), b),
+                        (o, a, b.negate()),
+                    ];
+                    if forms
+                        .iter()
+                        .all(|&(x, y, z)| has_ternary(x, y, z, &ternary_set))
+                    {
+                        gates.push(Gate {
+                            ty: GateType::Xor,
+                            in1: a,
+                            in2: b,
+                            in3: a, // unused
+                            out: o,
+                        });
+                        break;
+                    }
                 }
             }
         }

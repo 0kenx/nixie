@@ -3318,7 +3318,7 @@ impl Simplex {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     new_expr.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.tableau.insert(nonbasic_var, Arc::new(new_expr));
+                self.tableau.insert(nonbasic_var, Arc::new(new_expr));
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
                     // listed it as a row owner; push without the membership
@@ -3334,7 +3334,7 @@ impl Simplex {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     wide.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.wide_rows.insert(nonbasic_var, wide);
+                self.wide_rows.insert(nonbasic_var, wide);
                 for v in entering_terms {
                     self.column_push_known(v, nonbasic_var);
                 }
@@ -3391,7 +3391,7 @@ impl Simplex {
                 self.column_push_known(v, var);
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.tableau.insert(var, Arc::new(new_row));
+            self.tableau.insert(var, Arc::new(new_row));
             // A row that narrowed back from the wide store leaves it (the
             // tableau entry is now authoritative) — and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
@@ -3413,7 +3413,7 @@ impl Simplex {
                 }
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.wide_rows.remove(&var);
+            self.wide_rows.remove(&var);
         }
         // Commit wide updates: same diff-based column maintenance against
         // the previous content (either store), and the assignment goes
@@ -3451,9 +3451,9 @@ impl Simplex {
                 self.column_push_known(v, var);
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.tableau.remove(&var);
+            self.tableau.remove(&var);
             self.rows_ver = self.rows_ver.wrapping_add(1);
-        self.wide_rows.insert(var, new_wide);
+            self.wide_rows.insert(var, new_wide);
         }
         self.basic[basic_var as usize] = false;
         self.basic[nonbasic_var as usize] = true;
@@ -4328,7 +4328,12 @@ impl Simplex {
     /// exactly these components.  Value- and trajectory-identical to full
     /// re-derivation: at an unchanged stamp the last derivation already
     /// stored everything it could and set every crossing it would set.
-    fn row_stamp(&self, basic: VarId, vars: impl Iterator<Item = VarId>, int_vars: usize) -> (u64, u64, u64, usize) {
+    fn row_stamp(
+        &self,
+        basic: VarId,
+        vars: impl Iterator<Item = VarId>,
+        int_vars: usize,
+    ) -> (u64, u64, u64, usize) {
         let mut max_ver = 0u64;
         let bi = basic as usize;
         if bi < self.bound_ver.len() {
@@ -4343,6 +4348,9 @@ impl Simplex {
         (self.rows_ver, self.cross_ver, max_ver, int_vars)
     }
 
+    /// Propagate implied bounds through the tableau (see the module and
+    /// [`Self::tighten_snapshot`]-adjacent derivation-stamp docs). Returns
+    /// the number of bounds STORED this pass — the fixpoint signal.
     pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) -> usize {
         self.propagated.clear();
         // NARROW direction-2 is env-gated while under evaluation: solve a
@@ -4396,8 +4404,11 @@ impl Simplex {
             })
             .collect();
         for (basic_var, expr) in &narrow_rows {
-            let stamp =
-                self.row_stamp(*basic_var, expr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            let stamp = self.row_stamp(
+                *basic_var,
+                expr.terms.iter().map(|(v, _)| *v),
+                int_vars.len(),
+            );
             if self.derive_stamp.get(basic_var) == Some(&stamp) {
                 continue;
             }
@@ -4440,8 +4451,11 @@ impl Simplex {
             self.derive_stamp.insert(*basic_var, stamp);
         }
         for (basic_var, expr) in &self.tableau {
-            let stamp =
-                self.row_stamp(*basic_var, expr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            let stamp = self.row_stamp(
+                *basic_var,
+                expr.terms.iter().map(|(v, _)| *v),
+                int_vars.len(),
+            );
             if self.derive_stamp.get(basic_var) == Some(&stamp) {
                 continue;
             }
@@ -4460,8 +4474,11 @@ impl Simplex {
             if idx >= self.assignment.len() {
                 continue;
             }
-            let stamp =
-                self.row_stamp(*basic_var, wexpr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            let stamp = self.row_stamp(
+                *basic_var,
+                wexpr.terms.iter().map(|(v, _)| *v),
+                int_vars.len(),
+            );
             if self.derive_stamp.get(basic_var) == Some(&stamp) {
                 continue;
             }

@@ -2042,10 +2042,31 @@ impl ArithSolver {
             let hi = self.simplex.upper_real_at(idx);
             match (lo, hi) {
                 (Some(lo), Some(hi)) => {
-                    let range = hi - lo;
-                    if best_range.is_none_or(|r| range < r) {
-                        best_range = Some(range);
-                        best = Some(branch);
+                    // CHECKED subtraction: on wide-literal instances the
+                    // stored bounds straddle ±2^62, the difference leaves
+                    // `i64` (num-rational's `sub` PANICS under
+                    // debug-assertions and WRAPS in release — a wrapped
+                    // range silently misranks the branch variable).  The
+                    // range only RANKS candidates (any branch choice is
+                    // sound), so a non-representable range ranks this
+                    // candidate as worst-of-class instead of guessing: an
+                    // unbounded-vars fallback ordering.  Found by the
+                    // rehome canary's debug run after the derivation
+                    // stamps changed which fractional variable the search
+                    // visits first — the site is trajectory-independent
+                    // (any B&B visit of a straddling pair hits it).
+                    match num_traits::CheckedSub::checked_sub(&hi, &lo) {
+                        Some(range) => {
+                            if best_range.is_none_or(|r| range < r) {
+                                best_range = Some(range);
+                                best = Some(branch);
+                            }
+                        }
+                        None => {
+                            if best.is_none() {
+                                best = Some(branch);
+                            }
+                        }
                     }
                 }
                 _ => {
