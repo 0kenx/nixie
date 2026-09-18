@@ -86,3 +86,35 @@ arith owner's arc is ACTIVE on `docs/studies/2026-09-13-lia-wide-
 literal-arithmetic.md` (items 74–77 landed today; item 76's design is
 their next step) — the stamps' hole and the delta-propagation
 invariant belong in their queue with this handover's evidence.
+
+---
+
+# RESOLVED (same night): three stacked defects, bit-identity proven
+
+The open hole above is closed (`5f5dc847`). The skip-audit (re-derive
+inside the skip, compare) plus store-sequence alignment isolated three
+INDEPENDENT defects, stacked:
+
+1. **Shared stamp namespace across derivation families** — loops (a)
+   (direction-2 per-target) and (b) (direction-1 basic) derive
+   different bounds for the same row; one key let (a) suppress (b).
+   Families now keyed `(VarId, 0|1|2)`.
+2. **Max-of-versions stamp** — a bump on any non-max variable was
+   invisible (the audit caught `basic=100` skipped with a tighter
+   `U -1` derivable); the component is now the SUM of the versions
+   (bump-monotone).
+3. **Last-writer-wins `pending_crossing`** — the exported conflict
+   depended on which unchanged-input rows re-derived; every plant site
+   is now first-writer-wins, a deterministic function of the input
+   state (this re-baselines trajectories — a semantic change, sound
+   both ways, screened by the differentials).
+
+**Proof**: store sequences (env-gated `[store]` trace) cand vs
+skips-neutralized: equal-pin 160 136/160 136 and rehome-original
+690 070/690 070 — IDENTICAL. Perf: rehome 564 s → 34 s, minimal
+107 s → 9 s, canary 1180 s → 55 s; 4637/4637 theories+solver green
+(`equal_pin` back); differentials, parity, gate clean. The
+delta-propagation debug_assert no longer fires.
+
+Also: `fa0d59c9` repairs a one-line compile error the sat XOR landing
+shipped on main (workspace was unbuildable at `570d8ad5`).
