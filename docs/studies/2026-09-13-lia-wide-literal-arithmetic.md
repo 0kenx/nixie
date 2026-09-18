@@ -2119,3 +2119,18 @@ consistent with it end to end.
       bit-identical 1.000.  The three failures seen at the 740c16bd base
       (`model_eval` SIGABRT, `si2_b03m`, `bench_679`) were pre-existing
       there and are fixed by the parallel front's landed work.
+
+### Standing numbers after items 74-75 (2026-09-18, binary `d75fa881`)
+
+The post-landing soundness sweep: **13 fresh mixed differential seeds ×
+400 (20261120-22, 20261130-32, 20261140-41, 20261150-55) + 5 wide seeds
+× 300 — zero verdict disagreements, zero refuted models**, after the two
+wrong-verdict finds of the window (seeds 20261102 and 20261130) were
+closed at their roots.  The gap survey re-run on the fixed seeds
+(20261000-02 × 600, `bench/differential/gap_survey.py`): 113 gap members
+captured, EVERY one an honest `unknown` against z3-decisive; the 1 575
+decisive instances (1 095 `sat` + 480 `unsat`) agree with z3 with no
+disagreement — no wrong verdict anywhere on the fixed-seed sample either.
+The remaining gap is pure search capacity (item 67's site map governs);
+the wrong-verdict ledger for the arithmetic arc's mixed-fuzz family is,
+as of this measurement, empty.
