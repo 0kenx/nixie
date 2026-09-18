@@ -4579,6 +4579,19 @@ impl Simplex {
             // used as a supremum endpoint derived a phony `−3−ε` upper).
             let bound = match (lo, hi) {
                 (Some(a), Some(b)) => {
+                    // A STRICTLY INVERTED pair (lower > upper) is a crossed
+                    // window: the variable's bound set is contradictory
+                    // under the current atoms, and the crossing channel
+                    // owns that state (`record_crossing` exports the
+                    // conflict).  Deriving through an EMPTY interval
+                    // fabricates a bound whose endpoint is the pair's
+                    // WRONG side (the `want_min == a_first` pick swaps
+                    // min/max exactly when the pair is inverted) — a bound
+                    // no antecedent implies.  Decline; the vacuous-truth
+                    // case loses nothing (the crossing fires on its own).
+                    if a.value > b.value {
+                        return None;
+                    }
                     let a_first = a.value < b.value;
                     if want_min == a_first { a } else { b }
                 }
@@ -4637,6 +4650,12 @@ impl Simplex {
             let want_min = if want_inf { s_positive } else { !s_positive };
             match (lo, hi) {
                 (Some(a), Some(b)) => {
+                    // Crossed window: decline (see the direction-1
+                    // selection for the full argument) — the crossing
+                    // channel owns the contradictory state.
+                    if a.value > b.value {
+                        return None;
+                    }
                     let a_first = a.value < b.value;
                     Some(if want_min == a_first { a } else { b })
                 }

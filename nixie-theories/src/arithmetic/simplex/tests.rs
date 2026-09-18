@@ -1756,3 +1756,54 @@ fn wide_row_refutation_survives_an_unbounded_irrelevant_side() {
         "an unbounded irrelevant side must not turn a refutation into a decline"
     );
 }
+
+/// A derivation must DECLINE through a strictly crossed window (lower >
+/// upper) instead of picking the pair's wrong-side endpoint: the crossed
+/// state belongs to the crossing channel (`record_crossing` exports the
+/// conflict), and an interval derivation over an EMPTY interval fabricates
+/// a bound no antecedent implies — the `NIXIE_S6_NDIR2` false-`unsat`
+/// (seed 20261123: a v19/v63-family crossed window fed dir2/dir1
+/// derivations whose planted bounds refuted six atoms that are all TRUE
+/// at z3's model `xi = 120`).
+#[test]
+fn derivation_through_a_crossed_window_declines_instead_of_fabricating() {
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+
+    // A crossed column window: lower 5 > upper 0.
+    s.set_lower(x, Rational64::from_integer(5), 1);
+    s.set_upper(x, Rational64::zero(), 2);
+
+    // `derive_bound_big_parts` (the wide interval walk the slice-6
+    // selectors share): a crossed COLUMN window must decline — pre-fix,
+    // the `want_min == a_first` endpoint pick chose the pair's WRONG side
+    // exactly when inverted, fabricating a bound no antecedent implies.
+    // (`derive_basic_bound` is deliberately NOT tested here: it reads
+    // stored bounds as-is, sound-input-sound-output; the fabrication site
+    // is the pair-swap selectors alone.)
+    let zero = num_rational::BigRational::from(num_bigint::BigInt::from(0));
+    let one = num_rational::BigRational::from(num_bigint::BigInt::from(1));
+    let terms = vec![(x, one.clone())];
+    for lower in [true, false] {
+        assert!(
+            s.derive_bound_big_parts(&zero, &terms, lower).is_none(),
+            "the interval walk must decline over a crossed window (lower={lower})"
+        );
+    }
+
+    // Direction-2 (the general solve): a crossed BASIC window must
+    // decline.  Cross y's window and solve the row `y = x + 0` for x.
+    s.set_lower(y, Rational64::from_integer(7), 3);
+    s.set_upper(y, Rational64::from_integer(2), 4);
+    let wexpr = BigLinExpr {
+        terms: vec![(x, one)],
+        constant: zero,
+    };
+    for lower in [true, false] {
+        assert!(
+            s.derive_var_bound_big_parts(y, &wexpr, x, lower).is_none(),
+            "direction-2 must decline over a crossed basic window (lower={lower})"
+        );
+    }
+}
