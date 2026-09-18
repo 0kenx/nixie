@@ -139,10 +139,16 @@ mod tests_2 {
 
         // The accessor methods work
         let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(5));
+        assert_eq!(
+            lo.value.narrow().expect("narrow").real,
+            Rational64::from_integer(5)
+        );
 
         let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(15));
+        assert_eq!(
+            hi.value.narrow().expect("narrow").real,
+            Rational64::from_integer(15)
+        );
 
         assert!(simplex.check().is_ok());
     }
@@ -233,7 +239,10 @@ mod tests_2 {
 
         assert!(simplex.check().is_ok());
         let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(50));
+        assert_eq!(
+            lo.value.narrow().expect("narrow").real,
+            Rational64::from_integer(50)
+        );
 
         // Push to level 2
         simplex.push();
@@ -248,9 +257,15 @@ mod tests_2 {
 
         // After pop, bounds should be back to x >= 50, x <= 60
         let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::from_integer(50));
+        assert_eq!(
+            lo.value.narrow().expect("narrow").real,
+            Rational64::from_integer(50)
+        );
         let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(60));
+        assert_eq!(
+            hi.value.narrow().expect("narrow").real,
+            Rational64::from_integer(60)
+        );
 
         assert!(simplex.check().is_ok());
 
@@ -259,9 +274,12 @@ mod tests_2 {
 
         // After pop, bounds should be back to x >= 0, x <= 100
         let lo = simplex.get_lower(x).expect("test operation should succeed");
-        assert_eq!(lo.value.real, Rational64::zero());
+        assert_eq!(lo.value.narrow().expect("narrow").real, Rational64::zero());
         let hi = simplex.get_upper(x).expect("test operation should succeed");
-        assert_eq!(hi.value.real, Rational64::from_integer(100));
+        assert_eq!(
+            hi.value.narrow().expect("narrow").real,
+            Rational64::from_integer(100)
+        );
 
         assert!(simplex.check().is_ok());
     }
@@ -957,13 +975,13 @@ mod soi_differential {
                             let val = soi.assignment[v];
                             if let Some(lo) = &soi.lower[v] {
                                 assert!(
-                                    val >= lo.value,
+                                    lo.value.cmp_narrow(&val) != core::cmp::Ordering::Greater,
                                     "seed={seed} n={n}: SOI model violates lower on var {v}"
                                 );
                             }
                             if let Some(hi) = &soi.upper[v] {
                                 assert!(
-                                    val <= hi.value,
+                                    hi.value.cmp_narrow(&val) != core::cmp::Ordering::Less,
                                     "seed={seed} n={n}: SOI model violates upper on var {v}"
                                 );
                             }
@@ -1025,19 +1043,21 @@ mod soi_differential {
                                 );
                             }
                             if let Some(lo) = &soi.lower[b as usize]
-                                && acc < lo.value
+                                && lo.value.cmp_narrow(&acc) == core::cmp::Ordering::Greater
                             {
                                 panic!(
                                     "LOWER-VIOL b={b} acc={:?} lo={:?}",
-                                    acc.real, lo.value.real
+                                    acc.real,
+                                    lo.value.narrow()
                                 );
                             }
                             if let Some(hi) = &soi.upper[b as usize]
-                                && acc > hi.value
+                                && hi.value.cmp_narrow(&acc) == core::cmp::Ordering::Less
                             {
                                 panic!(
                                     "UPPER-VIOL b={b} acc={:?} hi={:?}",
-                                    acc.real, hi.value.real
+                                    acc.real,
+                                    hi.value.narrow()
                                 );
                             }
                         }
@@ -1151,10 +1171,16 @@ mod soi_differential {
                     }
                     assert_eq!(s.assignment[bv as usize], acc, "row divergence");
                     if let Some(lo) = &s.lower[bv as usize] {
-                        assert!(acc >= lo.value, "lower violation seed={seed}");
+                        assert!(
+                            lo.value.cmp_narrow(&acc) != core::cmp::Ordering::Greater,
+                            "lower violation seed={seed}"
+                        );
                     }
                     if let Some(hi) = &s.upper[bv as usize] {
-                        assert!(acc <= hi.value, "upper violation seed={seed}");
+                        assert!(
+                            hi.value.cmp_narrow(&acc) != core::cmp::Ordering::Less,
+                            "upper violation seed={seed}"
+                        );
                     }
                 }
             }
@@ -1452,9 +1478,9 @@ fn basic_bound_exact_retry_does_not_double_count() {
     let props = simplex.get_propagated();
     let want = DeltaRational::from_rational(Rational64::from_integer(3));
     assert!(
-        props
-            .iter()
-            .any(|p| p.var == slack && p.is_lower && p.value == want),
+        props.iter().any(|p| p.var == slack
+            && p.is_lower
+            && p.value.cmp_narrow(&want) == core::cmp::Ordering::Equal),
         "the row's exact value at the pins is 3 (the exact-retry result);              a different propagated lower is the double-count: {props:?}"
     );
     // (`derive_basic_bound` returns at most one direction per call —

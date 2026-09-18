@@ -36,6 +36,7 @@ use super::{ENCODE_DEPTH_LIMIT, EvalVal, Solver};
 use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_rational::Rational64;
+use num_traits::Zero;
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub, ToPrimitive};
 use smallvec::SmallVec;
 
@@ -58,7 +59,7 @@ pub(super) enum ModelRefutation {
     Unrepresentable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum EvalOutcome {
     /// A concrete value the model determines.
     Value(EvalVal),
@@ -104,7 +105,7 @@ impl EvalOutcome {
     }
 
     /// The value this outcome carries, if any.
-    fn value(self) -> Option<EvalVal> {
+    fn value_owned(self) -> Option<EvalVal> {
         match self {
             EvalOutcome::Value(v) => Some(v),
             _ => None,
@@ -174,7 +175,7 @@ enum IteState {
 }
 
 /// How far an `=>` has got.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum ImpliesState {
     /// The antecedent has not produced a value yet.
     Antecedent,
@@ -216,6 +217,9 @@ enum Op {
         product: bool,
         /// The running sum or product.
         acc: Rational64,
+        /// The EXACT running fold once a step left `Rational64` width (see
+        /// the fold step in [`Frame::accept`]).
+        acc_big: Option<num_rational::BigRational>,
     },
     /// `ite`, which evaluates the condition and then only the taken branch.
     Ite {
@@ -330,13 +334,17 @@ impl Frame {
         match &mut self.op {
             // A fixed-arity operator gives up at the first operand it cannot
             // use, exactly as the recursive version's `rec(a)?` did.
-            Op::Eager { .. } => match result.value() {
-                Some(value) => {
+            Op::Eager { .. } => match result {
+                EvalOutcome::Value(value) => {
                     values.push(value);
                     self.filled += 1;
                     None
                 }
-                None => Some(result.demote()),
+                // `Undetermined` / `Unrepresentable` pass through exactly as
+                // `value()`+`demote()` did (`demote` mapped every non-Value
+                // outcome to itself except `Undetermined`, which is already
+                // itself).
+                other => Some(other),
             },
             Op::Connective { conjunction, .. } => {
                 let conjunction = *conjunction;
@@ -356,7 +364,7 @@ impl Frame {
                     // later operand may still decide the connective.
                     other => {
                         let demoted = other.demote();
-                        self.carried = Some(match self.carried {
+                        self.carried = Some(match self.carried.take() {
                             Some(existing) => existing.worse(demoted),
                             None => demoted,
                         });
@@ -365,22 +373,62 @@ impl Frame {
                     }
                 }
             }
-            Op::Arith { product, acc, .. } => {
+            Op::Arith {
+                product,
+                acc,
+                acc_big,
+                ..
+            } => {
                 let product = *product;
-                let EvalOutcome::Value(EvalVal::Num(operand)) = result else {
-                    return Some(result.demote());
+                // Classify the operand: exact (beyond width), narrow, or
+                // unusable (a Bool/Undetermined — demote as before).
+                let operand: EvalVal = match result {
+                    EvalOutcome::Value(v) => v,
+                    other => return Some(other.demote()),
                 };
-                // Checked, because `Rational64` is fixed width.  See
-                // [`EvalOutcome::Unrepresentable`] for what the unchecked fold
-                // did to the gate in each build profile.
-                let folded = if product {
-                    acc.checked_mul(&operand)
+                let widen = |r: &Rational64| {
+                    num_rational::BigRational::new(
+                        num_bigint::BigInt::from(*r.numer()),
+                        num_bigint::BigInt::from(*r.denom()),
+                    )
+                };
+                let (big_op, narrow_op): (Option<num_rational::BigRational>, Option<Rational64>) =
+                    match operand {
+                        EvalVal::NumBig(b) => (Some((*b).clone()), None),
+                        EvalVal::Num(n) => (None, Some(n)),
+                        EvalVal::Bool(_) => return Some(EvalOutcome::UNDETERMINED),
+                    };
+                // Once any step leaves `Rational64` width (an overflowing
+                // fold or a beyond-width operand) the accumulator moves to
+                // `BigRational` and stays there: the final may or may not
+                // narrow, and comparisons on it are decisive either way
+                // (the checked-narrow-only fold used to report
+                // `Unrepresentable` here, which the gate treats as a
+                // nongenuine block — degrading boundary-valued models).
+                if acc_big.is_some() || big_op.is_some() {
+                    let cur = acc_big.clone().unwrap_or_else(|| widen(acc));
+                    let op = big_op.unwrap_or_else(|| {
+                        narrow_op.map_or_else(num_rational::BigRational::zero, |n| widen(&n))
+                    });
+                    *acc_big = Some(if product { cur * op } else { cur + op });
                 } else {
-                    acc.checked_add(&operand)
-                };
-                match folded {
-                    Some(value) => *acc = value,
-                    None => return Some(EvalOutcome::Unrepresentable),
+                    let operand = narrow_op.unwrap_or_else(Rational64::zero);
+                    // Checked, because `Rational64` is fixed width.  See
+                    // [`EvalOutcome::Unrepresentable`] for what the unchecked
+                    // fold did to the gate in each build profile.
+                    let folded = if product {
+                        acc.checked_mul(&operand)
+                    } else {
+                        acc.checked_add(&operand)
+                    };
+                    match folded {
+                        Some(value) => *acc = value,
+                        None => {
+                            let cur = widen(acc);
+                            let op = widen(&operand);
+                            *acc_big = Some(if product { cur * op } else { cur + op });
+                        }
+                    }
                 }
                 self.filled += 1;
                 None
@@ -425,7 +473,7 @@ impl Frame {
                 // `_ => true` is `true` whatever the antecedent was.
                 ImpliesState::ConsequentMayRescue(carried) => Some(match result {
                     EvalOutcome::Value(EvalVal::Bool(true)) => EvalOutcome::boolean(true),
-                    other => carried.worse(other.demote()),
+                    other => carried.clone().worse(other.demote()),
                 }),
             },
         }
@@ -455,15 +503,27 @@ impl Frame {
                     // No operand decided the connective.  If every one agreed
                     // with it the connective holds; otherwise the most cautious
                     // outcome seen stands.
-                    Step::Done(match self.carried {
+                    Step::Done(match self.carried.clone() {
                         Some(carried) => carried,
                         None => EvalOutcome::boolean(*conjunction),
                     })
                 }
             }
-            Op::Arith { operands, acc, .. } => {
+            Op::Arith {
+                operands,
+                acc,
+                acc_big,
+                ..
+            } => {
                 if self.filled < operands.len() {
                     Step::Need(operands[self.filled])
+                } else if let Some(big) = acc_big {
+                    // Publish the exact fold, narrowed when it fits (the
+                    // narrow consumers downstream are the fast path).
+                    Step::Done(match narrow_big_rational(big) {
+                        Some(n) => EvalOutcome::number(n),
+                        None => EvalOutcome::Value(EvalVal::NumBig(Box::new(big.clone()))),
+                    })
                 } else {
                     Step::Done(EvalOutcome::number(*acc))
                 }
@@ -489,12 +549,32 @@ impl Frame {
 /// `values` holds exactly the operands the frame collected, in order; the
 /// driver only reaches here once every one of them produced a value.
 fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
+    use num_rational::BigRational;
+    /// Exact subtraction / negation on values that may be beyond width.
+    fn sub_big(a: &EvalVal, b: &EvalVal) -> Option<BigRational> {
+        Some(a.to_big()? - b.to_big()?)
+    }
+    fn number_big(v: BigRational) -> EvalOutcome {
+        EvalOutcome::Value(EvalVal::NumBig(Box::new(v)))
+    }
     match (kind, values) {
         (EagerKind::Not, [EvalVal::Bool(b)]) => EvalOutcome::boolean(!b),
-        (EagerKind::Eq, [a, b]) => combine_eq(*a, *b),
+        (EagerKind::Eq, [a, b]) => combine_eq(a.clone(), b.clone()),
         (EagerKind::Sub, [EvalVal::Num(x), EvalVal::Num(y)]) => match x.checked_sub(y) {
             Some(d) => EvalOutcome::number(d),
-            None => EvalOutcome::Unrepresentable,
+            // Beyond width is not unverifiable: the exact difference is
+            // computable, and comparisons on it stay decisive (the
+            // `(- x > i64::MAX)` at `x = i64::MIN` class — the honest
+            // model used to be blocked as nongenuine and the goal degraded
+            // to `unknown`).
+            None => match sub_big(&EvalVal::Num(*x), &EvalVal::Num(*y)) {
+                Some(d) => number_big(d),
+                None => EvalOutcome::Unrepresentable,
+            },
+        },
+        (EagerKind::Sub, [x, y]) => match sub_big(x, y) {
+            Some(d) => number_big(d),
+            None => EvalOutcome::UNDETERMINED,
         },
         // Negation is the one arithmetic operator that overflows on a *single*
         // operand: `-i64::MIN` has no `i64`.  Negating the numerator of an
@@ -502,14 +582,36 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
         // so no re-reduction is needed.
         (EagerKind::Neg, [EvalVal::Num(n)]) => match n.numer().checked_neg() {
             Some(numer) => EvalOutcome::number(Rational64::new_raw(numer, *n.denom())),
-            None => EvalOutcome::Unrepresentable,
+            None => {
+                // Exact negation at the boundary.
+                let b = num_rational::BigRational::new(
+                    num_bigint::BigInt::from(*n.numer()),
+                    num_bigint::BigInt::from(*n.denom()),
+                );
+                number_big(-b)
+            }
         },
+        (EagerKind::Neg, [EvalVal::NumBig(n)]) => number_big(-(**n).clone()),
         (EagerKind::CmpStrict { less }, [EvalVal::Num(x), EvalVal::Num(y)]) => {
             cmp_strict(*x, *y, less)
         }
+        (EagerKind::CmpStrict { less }, [x, y]) => match (x.to_big(), y.to_big()) {
+            (Some(a), Some(b)) => {
+                if a == b {
+                    EvalOutcome::UNDETERMINED
+                } else {
+                    EvalOutcome::boolean(if less { a < b } else { a > b })
+                }
+            }
+            _ => EvalOutcome::UNDETERMINED,
+        },
         (EagerKind::CmpWeak { less }, [EvalVal::Num(x), EvalVal::Num(y)]) => {
             EvalOutcome::boolean(if less { x <= y } else { x >= y })
         }
+        (EagerKind::CmpWeak { less }, [x, y]) => match (x.to_big(), y.to_big()) {
+            (Some(a), Some(b)) => EvalOutcome::boolean(if less { a <= b } else { a >= b }),
+            _ => EvalOutcome::UNDETERMINED,
+        },
         // Ill-typed operands (a Bool where a number was wanted, or the other
         // way round).  The gate has nothing to say about such a term.
         _ => EvalOutcome::UNDETERMINED,
@@ -548,6 +650,18 @@ fn combine_eq(a: EvalVal, b: EvalVal) -> EvalOutcome {
 /// `Undetermined` there keeps the gate from falsely refuting a genuine
 /// strict-inequality model; away from the boundary the comparison is concrete
 /// and trustworthy.  Non-strict `<=` / `>=` have no such ambiguity.
+/// Narrow an exact rational into the fixed-width form when it fits (the
+/// `i64::MIN` numerator is not narrow: its negation does not fit, and the
+/// evaluator's consumers negate).
+fn narrow_big_rational(r: &num_rational::BigRational) -> Option<Rational64> {
+    use num_traits::ToPrimitive as _;
+    let (n, d) = (r.numer().to_i64()?, r.denom().to_i64()?);
+    if n == i64::MIN {
+        return None;
+    }
+    Some(Rational64::new(n, d))
+}
+
 fn cmp_strict(x: Rational64, y: Rational64, less: bool) -> EvalOutcome {
     if x == y {
         EvalOutcome::UNDETERMINED
@@ -1135,7 +1249,7 @@ impl Solver {
         depth: u32,
     ) -> Option<EvalVal> {
         self.eval_in_model_outcome(term, model, manager, depth)
-            .value()
+            .value_owned()
     }
 
     /// Evaluate `term` under `model`.
@@ -1279,7 +1393,15 @@ impl Solver {
                     }
                     match self.arith.value(term) {
                         Some(n) => EvalOutcome::number(n),
-                        None => EvalOutcome::UNDETERMINED,
+                        // A value beyond `Rational64` width (an honest
+                        // boundary model — `x = i64::MIN`, a wide published
+                        // witness) still has its EXACT value: evaluate it
+                        // exactly rather than inconclusively, so the gate can
+                        // certify (or refute) boundary-valued candidates.
+                        None => match self.arith.value_exact(term) {
+                            Some(b) => EvalOutcome::Value(EvalVal::NumBig(Box::new(b))),
+                            None => EvalOutcome::UNDETERMINED,
+                        },
                     }
                 } else {
                     // Boolean / bit-vector / other: the model witness is fine
@@ -1493,6 +1615,7 @@ impl Solver {
                     operands: args.clone(),
                     product: false,
                     acc: Rational64::from_integer(0),
+                    acc_big: None,
                 },
                 depth,
             )),
@@ -1502,6 +1625,7 @@ impl Solver {
                     operands: args.clone(),
                     product: true,
                     acc: Rational64::from_integer(1),
+                    acc_big: None,
                 },
                 depth,
             )),
@@ -1637,7 +1761,12 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
         TermKind::False => EvalOutcome::boolean(false),
         TermKind::IntConst(n) => match n.to_i64() {
             Some(v) => EvalOutcome::number(Rational64::from_integer(v)),
-            None => EvalOutcome::UNDETERMINED,
+            // A constant beyond `i64` evaluates EXACTLY (the value is
+            // known; declining here made every wide-constant goal
+            // inconclusive to the gate).
+            None => EvalOutcome::Value(EvalVal::NumBig(Box::new(num_rational::BigRational::from(
+                n.clone(),
+            )))),
         },
         TermKind::RealConst(r) => EvalOutcome::number(*r),
         _ => EvalOutcome::UNDETERMINED,
@@ -2035,7 +2164,9 @@ mod tests {
     /// `(< (+ 2^62 2^62) 0)` is false – `2^63` is positive – so the gate must
     /// refuse the model.  Unchecked, this wrapped to `i64::MIN < 0` in release
     /// and reported `true`, hiding the violation; in debug it aborted with
-    /// `attempt to add with overflow` before answering anything at all.
+    /// `attempt to add with overflow` before answering anything at all.  The
+    /// exact channel evaluates the sum to `NumBig(2^63)` and the comparison
+    /// DECIDES it — the refusal is now semantic, not a width concession.
     #[test]
     fn overflowing_addition_never_hides_a_violated_assertion() {
         let mut manager = TermManager::new();
@@ -2047,20 +2178,24 @@ mod tests {
         let zero = manager.mk_int(0);
         let assertion = manager.mk_lt(sum, zero);
 
-        assert_eq!(outcome(&manager, sum), EvalOutcome::Unrepresentable);
+        assert!(matches!(
+            outcome(&manager, sum),
+            EvalOutcome::Value(EvalVal::NumBig(_))
+        ));
         assert!(gate_refuses(&manager, assertion));
     }
 
     /// The same overflow under an assertion the model **satisfies**.
     ///
-    /// `(>= (+ 2^62 2^62) 0)` is true, so refusing the model costs precision –
-    /// the caller answers `Unknown` for a formula it could have called `Sat`.
-    /// That is the deliberate direction: a `false` answer from the gate is
-    /// consumed as "report `Sat`", and an assertion the evaluator could not
-    /// evaluate is no evidence that the model satisfies it.  Unchecked, this
-    /// wrapped the other way and refuted the model on garbage.
+    /// `(>= (+ 2^62 2^62) 0)` is true, and the EXACT channel now evaluates
+    /// it — the gate can vouch for the model on `2^63`-scale arithmetic.
+    /// (The width-limited channel refused here by design — precision, not
+    /// soundness — and the caller answered `Unknown` for a formula it could
+    /// have called `Sat`; the exact evaluation retires that precision loss.
+    /// Unchecked — before the checked era — this wrapped the other way and
+    /// refuted the model on garbage.)
     #[test]
-    fn overflowing_addition_never_vouches_for_a_model() {
+    fn overflowing_addition_now_vouches_for_a_satisfied_model() {
         let mut manager = TermManager::new();
         let half = manager.mk_int(HALF_MAX);
         let sum = unfolded(
@@ -2070,10 +2205,17 @@ mod tests {
         let zero = manager.mk_int(0);
         let assertion = manager.mk_ge(sum, zero);
 
-        assert!(gate_refuses(&manager, assertion));
+        assert!(!gate_refuses(&manager, assertion));
     }
 
-    /// Every arithmetic operator the evaluator folds is checked, not just `+`.
+    /// Every arithmetic operator the evaluator folds leaves the fixed-width
+    /// channel when the result does not fit — and the exact continuation
+    /// CARRIES the value instead of conceding: the outcome is the exact
+    /// value (`NumBig`), never a wrapped number, and comparisons on it stay
+    /// decisive.  (The pre-exact channel reported `Unrepresentable`, which
+    /// the gate treated as a nongenuine block — retiring that concession is
+    /// what lets boundary-valued models certify; the WRAPPED behaviour
+    /// before the checked era is what this file's header documents.)
     #[test]
     fn every_arithmetic_operator_reports_overflow() {
         let mut manager = TermManager::new();
@@ -2090,7 +2232,22 @@ mod tests {
         let negation = unfolded(TermKind::Neg(min), &mut manager);
 
         for term in [product, difference, negation] {
-            assert_eq!(outcome(&manager, term), EvalOutcome::Unrepresentable);
+            match outcome(&manager, term) {
+                EvalOutcome::Value(EvalVal::NumBig(_)) => {}
+                EvalOutcome::Unrepresentable => {}
+                other => panic!("overflow must leave the narrow channel exactly, got {other:?}"),
+            }
+        }
+        // And the exact values are the TRUE ones (`-i64::MIN = 2^63`).
+        let negation = unfolded(TermKind::Neg(min), &mut manager);
+        match outcome(&manager, negation) {
+            EvalOutcome::Value(EvalVal::NumBig(b)) => assert_eq!(
+                *b,
+                num_rational::BigRational::from(num_bigint::BigInt::from(
+                    9_223_372_036_854_775_808u64
+                ))
+            ),
+            other => panic!("exact negation expected, got {other:?}"),
         }
     }
 

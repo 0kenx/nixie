@@ -242,8 +242,14 @@ mod tests {
             .simplex
             .get_upper(x)
             .expect("test operation should succeed");
-        assert_eq!(x_lower.value.real, Rational64::from_integer(2));
-        assert_eq!(x_upper.value.real, Rational64::from_integer(2));
+        assert_eq!(
+            x_lower.value.narrow().expect("narrow").real,
+            Rational64::from_integer(2)
+        );
+        assert_eq!(
+            x_upper.value.narrow().expect("narrow").real,
+            Rational64::from_integer(2)
+        );
 
         // y should still have loose bounds
         let y_lower = solver
@@ -254,8 +260,14 @@ mod tests {
             .simplex
             .get_upper(y)
             .expect("test operation should succeed");
-        assert_eq!(y_lower.value.real, Rational64::zero());
-        assert_eq!(y_upper.value.real, Rational64::from_integer(10));
+        assert_eq!(
+            y_lower.value.narrow().expect("narrow").real,
+            Rational64::zero()
+        );
+        assert_eq!(
+            y_upper.value.narrow().expect("narrow").real,
+            Rational64::from_integer(10)
+        );
     }
 
     #[test]

@@ -59,13 +59,11 @@ fn refuted_candidate_is_retried_not_conceded() {
     );
 }
 
-/// No candidate survives the gate: the loop must run out and concede, and the
-/// concession must be `unknown`.
-///
-/// `unsat` here would be the wrong answer twice over — the formula is
-/// satisfiable in the mathematical sense (the evaluator's width limit is the
-/// only obstacle), and the refutation would rest on clauses no assertion
-/// entails.
+/// The width-limited "no certifiable candidate" class retired with the
+/// exact evaluation channel: `x = 2^62` under `2x >= 0` evaluates exactly
+/// (`2^63 >= 0`), so the boundary-valued model CERTIFIES where the
+/// `Rational64` gate could only concede.  The pinned contract is the
+/// correct verdict (z3 agrees) with the boundary model published.
 #[test]
 fn no_certifiable_candidate_concedes_unknown() {
     let out = run(&format!(
@@ -75,13 +73,16 @@ fn no_certifiable_candidate_concedes_unknown() {
          (assert (>= (+ x x) 0))
          (check-sat)"
     ));
-    assert_eq!(out[0], "unknown");
+    assert_eq!(out[0], "sat");
 }
 
 /// The same, with several equally uncertifiable candidates: each is blocked in
 /// turn and the loop still terminates inside its budget rather than spinning.
 #[test]
 fn several_refuted_candidates_still_terminate() {
+    // Every candidate satisfies the sum bound and now certifies exactly —
+    // the loop terminates by CERTIFYING (the width-limit refutations this
+    // fixture relied on retired with the exact evaluator).
     let out = run(&format!(
         "(set-logic QF_LIA)
          (declare-const x Int)
@@ -89,7 +90,7 @@ fn several_refuted_candidates_still_terminate() {
          (assert (>= (+ x x) 0))
          (check-sat)"
     ));
-    assert_eq!(out[0], "unknown");
+    assert_eq!(out[0], "sat");
 }
 
 /// Regression guard for the failure mode this fix could introduce: an ordinary

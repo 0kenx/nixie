@@ -950,10 +950,34 @@ pub(super) const ENCODE_DEPTH_LIMIT: u32 = 512;
 /// A fully-evaluated ground value used by the model-verification soundness gate
 /// ([`Solver::model_refutes_assertions`]).  Integers and reals are unified as an
 /// exact rational so mixed Int/Real arithmetic and comparisons fold without loss.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) enum EvalVal {
     Bool(bool),
     Num(num_rational::Rational64),
+    /// An exact value beyond `Rational64` width (`-i64::MIN`, `2^63`-scale
+    /// model values, wide published witnesses).  The evaluator's arithmetic
+    /// and comparisons widen into this form instead of declining: the
+    /// model-verification gate's `Unrepresentable` used to turn every
+    /// boundary-valued candidate (an honest `x = i64::MIN` model under
+    /// `(-x > i64::MAX)`) into a nongenuine block and degrade a decidable
+    /// `sat` to `unknown`; worse, the pre-checked wrap evaluated such
+    /// atoms to the WRONG truth value (a false-`sat` hazard).  Exact
+    /// arithmetic keeps the gate sound AND complete at the boundary.
+    NumBig(Box<num_rational::BigRational>),
+}
+
+impl EvalVal {
+    /// The exact rational view (narrow values widened).
+    pub(super) fn to_big(&self) -> Option<num_rational::BigRational> {
+        match self {
+            EvalVal::Num(r) => Some(num_rational::BigRational::new(
+                num_bigint::BigInt::from(*r.numer()),
+                num_bigint::BigInt::from(*r.denom()),
+            )),
+            EvalVal::NumBig(b) => Some((**b).clone()),
+            EvalVal::Bool(_) => None,
+        }
+    }
 }
 
 impl Default for Solver {
@@ -2669,7 +2693,9 @@ impl Solver {
             {
                 return SolverResult::Sat;
             }
-            return SolverResult::Unknown;
+            {
+                return SolverResult::Unknown;
+            }
         }
         if self.fp_atoms_need_theory(manager) {
             // Fold clauses were asserted this check: the formula may be
@@ -2698,7 +2724,9 @@ impl Solver {
         // spurious Sat/Unsat.  If the nonlinear dispatch above could not decide
         // the problem and such an atom survives, answer `Unknown`.
         if self.arith_atoms_need_theory(manager) {
-            return SolverResult::Unknown;
+            {
+                return SolverResult::Unknown;
+            }
         }
 
         // Pure QF_BV fast path (Z3's `qfbv` pipeline shape): when every
@@ -2807,10 +2835,14 @@ impl Solver {
 
         // Check resource limits before starting
         if self.config.max_conflicts > 0 && self.statistics.conflicts >= self.config.max_conflicts {
-            return SolverResult::Unknown;
+            {
+                return SolverResult::Unknown;
+            }
         }
         if self.config.max_decisions > 0 && self.statistics.decisions >= self.config.max_decisions {
-            return SolverResult::Unknown;
+            {
+                return SolverResult::Unknown;
+            }
         }
 
         // Equality-logic transitivity preprocessing (Sparse method, Bryant &
@@ -3029,7 +3061,9 @@ impl Solver {
                     if self.blocking_clauses_present() && self.model_blocks_nongenuine > 0 {
                         self.model = None;
                         self.unsat_core = None;
-                        return SolverResult::Unknown;
+                        {
+                            return SolverResult::Unknown;
+                        }
                     }
                     // Blocks whose refutations were all GENUINE exclude
                     // only assignments that provably violate the
@@ -3214,7 +3248,9 @@ impl Solver {
                     if self.blocking_clauses_present() {
                         self.model = None;
                         self.unsat_core = None;
-                        return SolverResult::Unknown;
+                        {
+                            return SolverResult::Unknown;
+                        }
                     }
                     self.build_unsat_core();
                     // After a theory/Boolean conflict has been turned into an
@@ -3236,7 +3272,9 @@ impl Solver {
                         // A real theory conflict was dropped at the conflict
                         // limit; never fabricate Sat over a suppressed conflict.
                         self.unsat_core = None;
-                        return SolverResult::Unknown;
+                        {
+                            return SolverResult::Unknown;
+                        }
                     }
                     // FP fold fall-through (see the FP honesty gate in
                     // `check_core`): the search ran with fp atoms as free
@@ -3251,7 +3289,9 @@ impl Solver {
                     {
                         self.model = None;
                         self.unsat_core = None;
-                        return SolverResult::Unknown;
+                        {
+                            return SolverResult::Unknown;
+                        }
                     }
                     // If no quantifiers, we're done
                     if !self.has_quantifiers {
@@ -3270,7 +3310,9 @@ impl Solver {
                                 if bv_pending_rounds >= 8 {
                                     self.model = None;
                                     self.unsat_core = None;
-                                    return SolverResult::Unknown;
+                                    {
+                                        return SolverResult::Unknown;
+                                    }
                                 }
                                 bv_pending_rounds += 1;
                                 let linked = self.link_pending_bv_atoms(manager);
@@ -3622,7 +3664,9 @@ impl Solver {
                                 // `Unknown`.
                                 self.model = None;
                                 self.unsat_core = None;
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             // A read-over-write lemma is an `ite` over the two
                             // array values; at Int/Real sort that `ite` is a new
@@ -3765,7 +3809,9 @@ impl Solver {
                             // clearing the model (see the ORDER note above).
                             self.model = None;
                             self.unsat_core = None;
-                            return SolverResult::Unknown;
+                            {
+                                return SolverResult::Unknown;
+                            }
                         }
                         // Lazy congruence-gap repair — runs ONLY on a
                         // candidate the refutation gate already ACCEPTED
@@ -3878,7 +3924,9 @@ impl Solver {
                                 "injective-distinct model collision: separation rounds exhausted"
                                     .into(),
                             );
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                         }
                         self.unsat_core = None;
@@ -4041,7 +4089,9 @@ impl Solver {
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
                             if self.downgrade_if_injective_model_dishonest(manager) {
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             self.unsat_core = None;
                             self.debug_check_invariants(
@@ -4057,7 +4107,9 @@ impl Solver {
                             // certified before `sat` may be printed.
                             if self.unowned_quantifier_seen && !self.certify_quantified_sat(manager)
                             {
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             return SolverResult::Sat;
                         }
@@ -4067,7 +4119,9 @@ impl Solver {
                                 if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                                     eprintln!("[qround] Satisfied downgraded: injective-dishonest");
                                 }
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             self.unsat_core = None;
                             self.debug_check_invariants(
@@ -4088,13 +4142,17 @@ impl Solver {
                                         "[qround] Satisfied downgraded: unowned quantifier uncertified"
                                     );
                                 }
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             return SolverResult::Sat;
                         }
                         MBQIResult::InstantiationLimit => {
                             // Too many instantiations - return unknown
-                            return SolverResult::Unknown;
+                            {
+                                return SolverResult::Unknown;
+                            }
                         }
                         MBQIResult::Conflict {
                             quantifier: _,
@@ -4337,7 +4395,9 @@ impl Solver {
                                     );
                                     return SolverResult::Sat;
                                 }
-                                return SolverResult::Unknown;
+                                {
+                                    return SolverResult::Unknown;
+                                }
                             }
                             // Continue MBQI loop
                         }
@@ -4360,7 +4420,9 @@ impl Solver {
                         self.mbqi_round_clauses.push(self.sat.num_clauses());
                     }
                     if mbqi_iteration >= max_mbqi_iterations {
-                        return SolverResult::Unknown;
+                        {
+                            return SolverResult::Unknown;
+                        }
                     }
 
                     // MBQI round boundary: this round encoded fresh
@@ -4589,7 +4651,9 @@ impl Solver {
         // verdict over the remaining clauses would be a guess about a formula
         // this solver never saw.  Same rule as `check_core`'s top gate.
         if self.encode_depth_exceeded {
-            return SolverResult::Unknown;
+            {
+                return SolverResult::Unknown;
+            }
         }
 
         let raw_result = match self.sat.solve() {

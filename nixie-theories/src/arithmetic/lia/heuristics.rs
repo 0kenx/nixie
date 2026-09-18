@@ -6,6 +6,8 @@ use super::types::{CutInfo, LiaSolver};
 use crate::prelude::*;
 use nixie_core::error::Result;
 use num_rational::Rational64;
+
+use super::super::delta::DeltaRational;
 use num_traits::Zero;
 impl LiaSolver {
     /// Feasibility Pump heuristic for finding integer-feasible solutions
@@ -54,9 +56,13 @@ impl LiaSolver {
                 // Don't override bounds, but bias toward target if possible
                 // (This is a simplified version - full implementation needs objective function)
                 if let Some(ub) = self.simplex.get_upper(var)
-                    && target_rational <= ub.value.real
+                    && ub
+                        .value
+                        .cmp_narrow(&DeltaRational::from_rational(target_rational))
+                        != core::cmp::Ordering::Less
                 {
-                    // Target is within upper bound, good
+                    // Target is within upper bound, good (a wide upper
+                    // bound admits every narrow target).
                 }
             }
 
@@ -167,8 +173,17 @@ impl LiaSolver {
                 let upper = self.simplex.get_upper(var);
 
                 if let (Some(lb), Some(ub)) = (lower, upper) {
-                    let lb_int = lb.value.real.ceil().to_integer();
-                    let ub_int = ub.value.real.floor().to_integer();
+                    // Integer-round the bounds EXACTLY (a wide bound's
+                    // ceil/floor can leave i64; the probe then declines
+                    // that candidate — a heuristic).
+                    use num_traits::ToPrimitive as _;
+                    let (lb_int, ub_int) = (
+                        lb.value.real_big().ceil().to_integer().to_i64(),
+                        ub.value.real_big().floor().to_integer().to_i64(),
+                    );
+                    let (Some(lb_int), Some(ub_int)) = (lb_int, ub_int) else {
+                        continue;
+                    };
 
                     // Skip if variable is already fixed
                     if lb_int == ub_int {
@@ -268,9 +283,12 @@ impl LiaSolver {
             let slack_val = self.simplex.value(cut.slack_var);
             let is_binding = match self.simplex.get_lower(cut.slack_var) {
                 Some(lb) => {
-                    // Use a small epsilon for floating-point-safe comparison.
-                    // Rational arithmetic is exact, so direct equality suffices.
-                    slack_val == lb.value.real
+                    // Rational arithmetic is exact, so direct equality
+                    // suffices (a WIDE bound is never equal to the narrow
+                    // slack value).
+                    lb.value
+                        .cmp_narrow(&DeltaRational::from_rational(slack_val))
+                        == core::cmp::Ordering::Equal
                 }
                 None => slack_val.is_zero(),
             };

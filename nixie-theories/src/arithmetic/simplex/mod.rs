@@ -1,7 +1,7 @@
 // Copyright 2026 COOLJAPAN OU (Team KitaSan)
 // SPDX-License-Identifier: Apache-2.0
 
-use super::delta::DeltaRational;
+use super::delta::{BigDeltaRational, BoundValue, DeltaRational};
 use crate::config::SimplexConfig;
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -909,8 +909,9 @@ pub enum BoundType {
 pub struct Bound {
     /// Bound type
     pub kind: BoundType,
-    /// Bound value (supports strict bounds via delta)
-    pub value: DeltaRational,
+    /// Bound value (supports strict bounds via delta; exact wide values
+    /// through [`BoundValue::Wide`])
+    pub value: BoundValue,
     /// Primary reason (assertion that caused this bound).
     pub reason: u32,
     /// Additional contributing reasons beyond `reason`. Populated when this
@@ -937,8 +938,9 @@ pub struct PropagatedBound {
     pub var: VarId,
     /// Whether it's a lower bound (true) or upper bound (false)
     pub is_lower: bool,
-    /// The bound value
-    pub value: DeltaRational,
+    /// The bound value (exact when the derivation's value leaves width —
+    /// see [`BoundValue`])
+    pub value: BoundValue,
     /// The reasons (assertion IDs) that imply this bound
     pub reasons: SmallVec<[u32; 4]>,
 }
@@ -1006,6 +1008,18 @@ pub struct Simplex {
     /// wide-LP wall's remaining territory made sound and partial: no
     /// wrapped verdicts, decided wherever representability allows.
     wide_rows: FxHashMap<VarId, BigLinExpr>,
+    /// Exact POINT values of variables (basic or non-basic) whose current
+    /// assignment does not fit `Rational64` width — the point-value
+    /// counterpart of `wide_rows`: a non-basic snapped to a wide bound
+    /// (branch bounds at `2^63`), or a pivot snap whose target is wide.
+    /// `assignment[i]` then holds a stale representative while THIS map
+    /// holds the honest value; exact readers (`delta_value_exact`,
+    /// `eval_big_raw`, `update_row_exact`) consult it first, narrow
+    /// consumers defer through the staleness flag as they already do for
+    /// wide basics.  Cleared whenever a narrow value is assigned to the
+    /// variable, and on `reset` (points are re-derived like assignments,
+    /// not trailed).
+    wide_points: FxHashMap<VarId, BigDeltaRational>,
     /// A bounded wide row's value was unrepresentable (or stale-ref'd) at
     /// the last assignment pass: mid-search this is TRANSIENT (the search
     /// may move to a point where it narrows — often the value is exactly 0
@@ -1106,6 +1120,7 @@ impl Simplex {
             upper: Vec::new(),
             tableau: FxHashMap::default(),
             wide_rows: FxHashMap::default(),
+            wide_points: FxHashMap::default(),
             wide_pending: false,
             columns: FxHashMap::default(),
             row_ids: FxHashMap::default(),
@@ -1180,17 +1195,52 @@ impl Simplex {
             }
         }
         let var = idx as VarId;
+        // A BASIC variable's value is DERIVED from its row — snapping it
+        // into the new window would desync the entry from the row (the
+        // row still evaluates to the old point), and the pivot delta
+        // algebra trusts that consistency (the delta-vs-reeval canary
+        // caught the desync the moment exact-int branch bounds made the
+        // derived bounds tight enough to exercise it).  The honest
+        // semantics for a basic outside its new window is a VIOLATION:
+        // `find_violating` reads the bounds directly and the repair pivot
+        // drives the entry back in.  `pop`'s re-snap and `crash_basis`
+        // already skip basics for exactly this reason.
+        if idx < self.basic.len() && self.basic[idx] {
+            return;
+        }
         let old = self.assignment[idx];
         let mut new = old;
-        if let Some(lo) = &self.lower[idx]
-            && new < lo.value
-        {
-            new = lo.value;
+        // Exact comparisons: a WIDE bound (beyond `Rational64` width)
+        // still orders against the narrow point, and a snap into it lands
+        // in the wide point store (`snap_point_to`), leaving `assignment`
+        // stale for the exact re-derivation — never a fabricated narrow
+        // stand-in.
+        let mut snapped_wide = false;
+        let lo_v = self.lower[idx].as_ref().and_then(|lo| {
+            (lo.value.cmp_narrow(&new) == core::cmp::Ordering::Greater).then(|| lo.value.clone())
+        });
+        if let Some(v) = lo_v {
+            match self.snap_point_to(idx, &v) {
+                Some(nv) => new = nv,
+                None => snapped_wide = true,
+            }
         }
-        if let Some(hi) = &self.upper[idx]
-            && new > hi.value
-        {
-            new = hi.value;
+        if !snapped_wide {
+            let hi_v = self.upper[idx].as_ref().and_then(|hi| {
+                (hi.value.cmp_narrow(&new) == core::cmp::Ordering::Less).then(|| hi.value.clone())
+            });
+            if let Some(v) = hi_v {
+                match self.snap_point_to(idx, &v) {
+                    Some(nv) => new = nv,
+                    None => snapped_wide = true,
+                }
+            }
+        }
+        if snapped_wide {
+            // The exact point is recorded; only the dependents' incremental
+            // updates are skipped (the staleness flag set by
+            // `snap_point_to` drives the full exact re-derivation).
+            return;
         }
         if new == old {
             return;
@@ -1285,10 +1335,10 @@ impl Simplex {
                 self.assignment.get(*v as usize),
                 self.lower
                     .get(*v as usize)
-                    .and_then(|b| b.as_ref().map(|b| b.value)),
+                    .and_then(|b| b.as_ref().map(|b| b.value.narrow())),
                 self.upper
                     .get(*v as usize)
-                    .and_then(|b| b.as_ref().map(|b| b.value)),
+                    .and_then(|b| b.as_ref().map(|b| b.value.narrow())),
                 self.basic.get(*v as usize).copied().unwrap_or(false),
             );
         }
@@ -1397,7 +1447,51 @@ impl Simplex {
         if let Some(wexpr) = self.wide_rows.get(&var) {
             return self.eval_big_expr(wexpr);
         }
+        if let Some(w) = self.wide_points.get(&var) {
+            return w.narrow();
+        }
         Some(self.delta_value(var))
+    }
+
+    /// The EXACT point value of `var` (a `BigDeltaRational`): the wide
+    /// point store's entry when one exists, the wide row's exact evaluation
+    /// for a wide basic, else the (exact) narrow assignment widened.  This
+    /// is the honest read for consumers that must not fabricate — equality
+    /// derivation, model publication — where [`Self::delta_value_exact`]'s
+    /// narrowed form does not exist.
+    #[must_use]
+    pub fn point_value_exact(&self, var: VarId) -> Option<BigDeltaRational> {
+        if let Some(w) = self.wide_points.get(&var) {
+            return Some(w.clone());
+        }
+        if let Some(wexpr) = self.wide_rows.get(&var) {
+            let (real, delta) = self.eval_big_raw(wexpr)?;
+            return Some(BigDeltaRational { real, delta });
+        }
+        self.assignment
+            .get(var as usize)
+            .map(BigDeltaRational::from_narrow)
+    }
+
+    /// Assign `var`'s POINT value from a bound value, exactly.  A narrow
+    /// target lands in `assignment` (any wide point is retired); a wide
+    /// target lands in the wide point store with `assignment` left holding
+    /// the stale representative and the staleness flag DOWN (narrow
+    /// consumers re-derive through the existing guard; exact consumers read
+    /// the point).  Returns the narrow value written, when one was.
+    fn snap_point_to(&mut self, idx: usize, value: &BoundValue) -> Option<DeltaRational> {
+        match value.narrow() {
+            Some(v) => {
+                self.assignment[idx] = v;
+                self.wide_points.remove(&(idx as VarId));
+                Some(v)
+            }
+            None => {
+                self.wide_points.insert(idx as VarId, value.to_big());
+                self.assignment_current = false;
+                None
+            }
+        }
     }
 
     /// The EXACT value (`BigRational`) of a wide basic's defining row — the
@@ -1411,6 +1505,15 @@ impl Simplex {
         let (real, _delta) = self.eval_big_raw(wexpr)?;
         Some(real)
     }
+    /// The EXACT delta-rational of a wide basic's defining row (both parts),
+    /// for model publication's δ-instantiation; see
+    /// [`Self::wide_basic_value_exact`].
+    #[must_use]
+    pub fn wide_basic_delta_exact(&self, var: VarId) -> Option<BigDeltaRational> {
+        let wexpr = self.wide_rows.get(&var)?;
+        let (real, delta) = self.eval_big_raw(wexpr)?;
+        Some(BigDeltaRational { real, delta })
+    }
     /// Branch bounds `(floor, ceil)` for a WIDE-basic variable, derived
     /// from its exact UN-NARROWED value: intermediates beyond `i64` still
     /// have small integer floors/ceils (`−9 − 41/2⁶³` branches at
@@ -1421,21 +1524,47 @@ impl Simplex {
     /// the caller declines).
     #[must_use]
     pub fn wide_floor_ceil_big(&self, var: VarId) -> Option<(i64, i64)> {
-        use num_rational::BigRational as BR;
         use num_traits::ToPrimitive as _;
-        let wexpr = self.wide_rows.get(&var)?;
-        let (real, delta) = self.eval_big_raw(wexpr)?;
-        // Mirror `DeltaRational::floor`/`ceil`: an integral real part
-        // shifts by the infinitesimal's sign.
+        let (floor, ceil) = self.wide_floor_ceil_exact(var)?;
+        Some((floor.to_i64()?, ceil.to_i64()?))
+    }
+    /// Branch bounds (`floor`, `ceil`) for a variable whose exact value is
+    /// wide, as EXACT integral `BigRational`s — the widened branch channel:
+    /// a branch bound beyond `i64` (the value's floor/ceil at `2^63`-scale)
+    /// exists exactly here where `wide_floor_ceil_big` declined, so the
+    /// branch-and-bound's `Underivable` arm disappears into an exact
+    /// branch on the widened bound store.  `None` when the variable is
+    /// not wide, its row is not evaluable, or the value has no floor/ceil
+    /// (impossible for a rational — kept for exhaustiveness).
+    #[must_use]
+    pub fn wide_floor_ceil_exact(
+        &self,
+        var: VarId,
+    ) -> Option<(num_rational::BigRational, num_rational::BigRational)> {
+        let exact = self.point_value_exact(var)?;
+        Some(Self::floor_ceil_big(&exact.real, &exact.delta))
+    }
+    /// Branch bounds of an exact delta-rational, mirroring
+    /// `DeltaRational::floor`/`ceil`: an integral real part shifts by the
+    /// infinitesimal's sign (`r − δ` floors to `r − 1`, `r + δ` ceils to
+    /// `r + 1`); a fractional real part's bounds ignore the infinitesimal.
+    /// The bounds are integral and never equal (a fractional real has
+    /// `floor < ceil`; an integral real with a nonzero infinitesimal shifts
+    /// one of them), so every branch is a genuine split.
+    pub(crate) fn floor_ceil_big(
+        real: &num_rational::BigRational,
+        delta: &num_rational::BigRational,
+    ) -> (num_rational::BigRational, num_rational::BigRational) {
+        use num_rational::BigRational as BR;
         let (mut floor, mut ceil) = (real.floor(), real.ceil());
         if real.fract().is_zero() {
-            if delta < BR::zero() {
+            if *delta < BR::zero() {
                 floor -= BR::one();
-            } else if delta > BR::zero() {
+            } else if *delta > BR::zero() {
                 ceil += BR::one();
             }
         }
-        Some((floor.to_i64()?, ceil.to_i64()?))
+        (floor, ceil)
     }
     /// Iterate the wide store: `(basic variable, exact row)`.
     pub fn wide_rows_iter(&self) -> impl Iterator<Item = (VarId, &BigLinExpr)> {
@@ -1466,7 +1595,87 @@ impl Simplex {
     ///
     /// Reference: Z3's `lp::lar_solver::get_model` delta adjustment.
     #[must_use]
-    pub fn delta_instantiation(&self) -> Rational64 {
+    /// Whether any bound or point in the system is wide: the narrow
+    /// instantiation below may not read those, so its callers must defer
+    /// to [`Self::delta_instantiation_exact`] (the model-value channel
+    /// handles it; a wrong `δ₀` here would publish a witness that violates
+    /// the very strict bound that produced it).
+    fn has_wide_bound_state(&self) -> bool {
+        !self.wide_points.is_empty()
+            || self
+                .lower
+                .iter()
+                .flatten()
+                .any(|b| matches!(b.value, BoundValue::Wide(_)))
+            || self
+                .upper
+                .iter()
+                .flatten()
+                .any(|b| matches!(b.value, BoundValue::Wide(_)))
+    }
+
+    /// The narrow `δ₀`; `None` while any bound or point is wide (see
+    /// `has_wide_bound_state`) — the exact variant owns those states.
+    pub fn delta_instantiation(&self) -> Option<Rational64> {
+        if self.has_wide_bound_state() {
+            return None;
+        }
+        self.delta_instantiation_narrow()
+    }
+
+    /// The EXACT `δ₀` (a positive `BigRational`): the largest value in
+    /// `(0, 1]` for which every bound still holds after substituting
+    /// `δ := δ₀`, computed over the EXACT point values (wide points and
+    /// wide rows included — no stale entries).  `None` when a binding
+    /// constraint admits no positive instantiation (a stale or infeasible
+    /// state: publishing any value would fabricate a witness, so the
+    /// caller declines).
+    #[must_use]
+    pub fn delta_instantiation_exact(&self) -> Option<num_rational::BigRational> {
+        use num_rational::BigRational as BR;
+        let mut delta = BR::from(num_bigint::BigInt::from(1));
+        for idx in 0..self.assignment.len() {
+            let assigned = self.point_value_exact(idx as VarId)?;
+            if let Some(bound) = self.lower.get(idx).and_then(Option::as_ref) {
+                // assigned >= lower  =>  (a.real - l.real) + (a.delta - l.delta)·δ >= 0
+                let dr = &assigned.real - &bound.value.real_big();
+                let dd = &assigned.delta - &bound.value.delta_big();
+                if dd.is_negative() {
+                    if !dr.is_positive() {
+                        return None;
+                    }
+                    let limit = dr / -dd;
+                    if limit < delta {
+                        delta = limit;
+                    }
+                }
+            }
+            if let Some(bound) = self.upper.get(idx).and_then(Option::as_ref) {
+                // assigned <= upper  =>  (u.real - a.real) + (u.delta - a.delta)·δ >= 0
+                let dr = bound.value.real_big() - &assigned.real;
+                let dd = bound.value.delta_big() - &assigned.delta;
+                if dd.is_negative() {
+                    if !dr.is_positive() {
+                        return None;
+                    }
+                    let limit = dr / -dd;
+                    if limit < delta {
+                        delta = limit;
+                    }
+                }
+            }
+        }
+        if !delta.is_positive() {
+            return None;
+        }
+        Some(delta)
+    }
+
+    /// The narrow `δ₀` over an all-narrow system (the
+    /// [`Self::delta_instantiation`] wrapper guarantees no wide bounds or
+    /// points exist when this runs; a wide read here would be a contract
+    /// violation, so it declines rather than skips).
+    fn delta_instantiation_narrow(&self) -> Option<Rational64> {
         // Smallest representable positive rational, used as a conservative
         // fallback when an exact ratio overflows `Rational64`.
         let tiny = Rational64::new(1, i64::MAX);
@@ -1498,28 +1707,26 @@ impl Simplex {
         for (idx, assigned) in self.assignment.iter().enumerate() {
             if let Some(bound) = self.lower.get(idx).and_then(Option::as_ref) {
                 // assignment >= lower  =>  (a.real - l.real) + (a.delta - l.delta)·δ >= 0
+                let bval = bound.value.narrow()?;
                 if let (Some(dr), Some(dd)) = (
-                    checked_neg_r64(bound.value.real)
-                        .and_then(|n| checked_add_r64(assigned.real, n)),
-                    checked_neg_r64(bound.value.delta)
-                        .and_then(|n| checked_add_r64(assigned.delta, n)),
+                    checked_neg_r64(bval.real).and_then(|n| checked_add_r64(assigned.real, n)),
+                    checked_neg_r64(bval.delta).and_then(|n| checked_add_r64(assigned.delta, n)),
                 ) {
                     tighten(dr, dd);
                 }
             }
             if let Some(bound) = self.upper.get(idx).and_then(Option::as_ref) {
                 // assignment <= upper  =>  (u.real - a.real) + (u.delta - a.delta)·δ >= 0
+                let bval = bound.value.narrow()?;
                 if let (Some(dr), Some(dd)) = (
-                    checked_neg_r64(assigned.real)
-                        .and_then(|n| checked_add_r64(bound.value.real, n)),
-                    checked_neg_r64(assigned.delta)
-                        .and_then(|n| checked_add_r64(bound.value.delta, n)),
+                    checked_neg_r64(assigned.real).and_then(|n| checked_add_r64(bval.real, n)),
+                    checked_neg_r64(assigned.delta).and_then(|n| checked_add_r64(bval.delta, n)),
                 ) {
                     tighten(dr, dd);
                 }
             }
         }
-        delta
+        Some(delta)
     }
     /// Set a lower bound (x >= value).
     ///
@@ -1549,6 +1756,16 @@ impl Simplex {
     /// propagated bound records every antecedent for later conflict
     /// explanation (see [`Bound::aux_reasons`]).
     fn set_lower_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
+        self.set_lower_value(var, BoundValue::Narrow(value), reasons);
+    }
+    /// Set a lower bound from an EXACT (`BigRational`) delta-rational:
+    /// the value narrows into the fast path when it fits and is stored
+    /// exactly (as `BoundValue::Wide`) when it does not — branch bounds
+    /// at `2^63`, strict bounds hanging off `i64::MIN`, and exact
+    /// propagated bounds all enter through here, so the fixed-width wall
+    /// they used to decline against (`FracVar::Underivable`, the
+    /// `i64::MIN` corner) is gone from the BOUND channel.
+    fn set_lower_value(&mut self, var: VarId, value: BoundValue, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
         let Some((reason, aux_reasons)) = split_reasons(reasons) else {
             return;
@@ -1570,9 +1787,23 @@ impl Simplex {
         self.note_bound_change(idx);
         self.record_crossing(idx);
     }
+    /// Set a lower bound EXACTLY (see `set_lower_value`); the value
+    /// is narrowed when representable.
+    pub fn set_lower_exact(
+        &mut self,
+        var: VarId,
+        value: BigDeltaRational,
+        reasons: SmallVec<[u32; 4]>,
+    ) {
+        self.set_lower_value(var, BoundValue::from_big(value), reasons);
+    }
     /// Set an upper bound directly from a `DeltaRational`; see
     /// [`Self::set_lower_delta`].
     fn set_upper_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
+        self.set_upper_value(var, BoundValue::Narrow(value), reasons);
+    }
+    /// Set an upper bound from a [`BoundValue`]; see `set_lower_value`.
+    fn set_upper_value(&mut self, var: VarId, value: BoundValue, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
         let Some((reason, aux_reasons)) = split_reasons(reasons) else {
             return;
@@ -1593,6 +1824,15 @@ impl Simplex {
         });
         self.note_bound_change(idx);
         self.record_crossing(idx);
+    }
+    /// Set an upper bound EXACTLY (see `set_lower_exact`).
+    pub fn set_upper_exact(
+        &mut self,
+        var: VarId,
+        value: BigDeltaRational,
+        reasons: SmallVec<[u32; 4]>,
+    ) {
+        self.set_upper_value(var, BoundValue::from_big(value), reasons);
     }
     /// Set a strict lower bound (x > value), represented as x >= value + δ.
     pub fn set_strict_lower(&mut self, var: VarId, value: Rational64, reason: u32) {
@@ -1889,6 +2129,84 @@ impl Simplex {
         self.wide_rows.insert(slack, big);
         slack
     }
+
+    /// [`Self::intern_substitute_big`] for a row already given exactly
+    /// (the `i64::MIN`-corner assert entries, whose `-rhs` constant leaves
+    /// `Rational64` width before any substitution starts).
+    fn intern_substitute_big_from(&self, expr: BigLinExpr) -> BigLinExpr {
+        let mut constant = expr.constant;
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
+        let add = |var: VarId,
+                   coef: num_rational::BigRational,
+                   terms: &mut Vec<(VarId, num_rational::BigRational)>| {
+            if coef.is_zero() {
+                return;
+            }
+            match terms.iter_mut().find(|(tv, _)| *tv == var) {
+                Some(slot) => slot.1 += coef,
+                None => terms.push((var, coef)),
+            }
+        };
+        for (var, coef) in &expr.terms {
+            if let Some(basic_expr) = self.tableau.get(var) {
+                constant += coef * big_r64(&basic_expr.constant);
+                for (inner_var, inner_coef) in &basic_expr.terms {
+                    add(*inner_var, coef * big_r64(inner_coef), &mut terms);
+                }
+            } else if let Some(wide) = self.wide_rows.get(var) {
+                // Substitute through another WIDE row exactly — width
+                // propagates, which is fine: the result stays exact.
+                constant += coef * wide.constant.clone();
+                for (inner_var, inner_coef) in &wide.terms {
+                    add(*inner_var, coef * inner_coef, &mut terms);
+                }
+            } else {
+                add(*var, coef.clone(), &mut terms);
+            }
+        }
+        terms.retain(|(_, c)| !c.is_zero());
+        BigLinExpr { terms, constant }
+    }
+
+    /// Intern a row given EXACTLY: the shared rescale-or-capture
+    /// discipline of [`Self::intern_row_reported`]'s overflow arm, exposed
+    /// for callers whose row is wide BEFORE any fixed-width arithmetic
+    /// runs (the `assert_*` entries at `rhs = i64::MIN`, whose `-rhs`
+    /// constant is exactly `+2^63`).  A positive rescale into width gets
+    /// the FULL narrow machinery (reported as
+    /// [`RowInternMode::Rescaled`] — the slack is `form / λ`, so
+    /// integrality is re-derived from the actual row); a row beyond any
+    /// representable scaling is captured exactly in the wide store (its
+    /// zero-bound constraint survives; the wide classification owns the
+    /// verdict).
+    pub(crate) fn intern_row_big_reported(&mut self, expr: BigLinExpr) -> (VarId, RowInternMode) {
+        let substituted = self.intern_substitute_big_from(expr);
+        if let Some(scaled) = Self::scale_big_to_narrow(&substituted) {
+            // The narrow intern runs its own substitution again over the
+            // already-substituted (nonbasic-only) row — a no-op by
+            // construction — plus canonicalization and registration.
+            let (slack, _mode) = self.intern_row_reported(scaled);
+            return (slack, RowInternMode::Rescaled);
+        }
+        for (v, _) in &substituted.terms {
+            self.ensure_var(*v as usize);
+        }
+        let slack = self.new_slack();
+        if slack as usize >= self.basic.len() {
+            self.basic.resize(slack as usize + 1, false);
+        }
+        self.basic[slack as usize] = true;
+        for (v, _) in &substituted.terms {
+            self.column_push_known(*v, slack);
+        }
+        if self.assignment_current
+            && let Some(val) = self.eval_big_expr(&substituted)
+        {
+            self.assignment[slack as usize] = val;
+        }
+        self.wide_rows.insert(slack, substituted);
+        (slack, RowInternMode::Exact)
+    }
     /// Add a constraint: expr >= 0
     pub fn add_ge(&mut self, expr: LinExpr, reason: u32) {
         // expr >= 0  <=>  slack(expr) >= 0.
@@ -1940,7 +2258,7 @@ impl Simplex {
     /// than scanned for later.
     fn record_crossing(&mut self, idx: usize) {
         if let (Some(lo), Some(hi)) = (&self.lower[idx], &self.upper[idx])
-            && lo.value > hi.value
+            && lo.value.cmp_value(&hi.value) == core::cmp::Ordering::Greater
         {
             let mut conflict: Vec<u32> = Vec::new();
             for r in lo.all_reasons().chain(hi.all_reasons()) {
@@ -1969,7 +2287,7 @@ impl Simplex {
     pub fn scan_bound_crossing_conflict(&self) -> Option<Vec<u32>> {
         for i in 0..self.assignment.len() {
             if let (Some(lo), Some(hi)) = (&self.lower[i], &self.upper[i])
-                && lo.value > hi.value
+                && lo.value.cmp_value(&hi.value) == core::cmp::Ordering::Greater
             {
                 // Emit ALL antecedents of both crossing bounds, not just their
                 // primary reasons: a propagated bound is implied by every
@@ -1994,7 +2312,7 @@ impl Simplex {
         self.resource_limit = false;
         for i in 0..self.assignment.len() {
             if let (Some(lo), Some(hi)) = (&self.lower[i], &self.upper[i])
-                && lo.value > hi.value
+                && lo.value.cmp_value(&hi.value) == core::cmp::Ordering::Greater
             {
                 // Emit ALL antecedents of both crossing bounds, not just their
                 // primary reasons: a propagated bound is implied by every
@@ -2098,12 +2416,15 @@ impl Simplex {
                                 Some((real, delta)) => {
                                     let above_upper =
                                         self.upper.get(idx).and_then(|o| o.as_ref()).is_some_and(
-                                            |hi| match real.cmp(&big_r64(&hi.value.real)) {
-                                                core::cmp::Ordering::Equal => {
-                                                    delta > big_r64(&hi.value.delta)
+                                            |hi| {
+                                                let b_real = hi.value.real_big();
+                                                match real.cmp(&b_real) {
+                                                    core::cmp::Ordering::Equal => {
+                                                        delta > hi.value.delta_big()
+                                                    }
+                                                    core::cmp::Ordering::Greater => true,
+                                                    core::cmp::Ordering::Less => false,
                                                 }
-                                                core::cmp::Ordering::Greater => true,
-                                                core::cmp::Ordering::Less => false,
                                             },
                                         );
                                     if above_upper {
@@ -2122,7 +2443,7 @@ impl Simplex {
                                 &wexpr,
                                 &Bound {
                                     kind: bound_kind,
-                                    value: DeltaRational::zero(),
+                                    value: BoundValue::Narrow(DeltaRational::zero()),
                                     reason: 0,
                                     aux_reasons: smallvec::SmallVec::new(),
                                 },
@@ -2218,12 +2539,22 @@ impl Simplex {
             if i < self.basic.len() && self.basic[i] {
                 continue;
             }
-            if let Some(lo) = &self.lower[i] {
-                self.assignment[i] = lo.value;
-            } else if let Some(hi) = &self.upper[i] {
-                self.assignment[i] = hi.value;
-            } else {
-                self.assignment[i] = DeltaRational::zero();
+            // A WIDE bound snaps the non-basic into the wide point store
+            // (exact value, stale `assignment` entry — the row pass below
+            // re-derives dependents exactly); a narrow bound is the
+            // historical fast path.
+            let snap = self.lower[i]
+                .as_ref()
+                .map(|lo| lo.value.clone())
+                .or_else(|| self.upper[i].as_ref().map(|hi| hi.value.clone()));
+            match snap {
+                Some(value) => {
+                    self.snap_point_to(i, &value);
+                }
+                None => {
+                    self.assignment[i] = DeltaRational::zero();
+                    self.wide_points.remove(&(i as VarId));
+                }
             }
         }
         self.update_assignment();
@@ -2321,21 +2652,28 @@ impl Simplex {
         for var in self.tableau.keys() {
             let idx = *var as usize;
             let val = self.assignment[idx];
+            // A WIDE bound's target is not representable as a
+            // `DeltaRational`: the SOI driver (a heuristic) skips that
+            // error — the standard feasibility driver still sees the
+            // violation through the exact comparisons in
+            // `find_violating`.
             if let Some(lo) = &self.lower[idx]
-                && val < lo.value
+                && lo.value.cmp_narrow(&val) == core::cmp::Ordering::Greater
+                && let Some(target) = lo.value.narrow()
             {
                 errors.push(SoiError {
                     var: *var,
                     sigma: 1,
-                    target: lo.value,
+                    target,
                 });
             } else if let Some(hi) = &self.upper[idx]
-                && val > hi.value
+                && hi.value.cmp_narrow(&val) == core::cmp::Ordering::Less
+                && let Some(target) = hi.value.narrow()
             {
                 errors.push(SoiError {
                     var: *var,
                     sigma: -1,
-                    target: hi.value,
+                    target,
                 });
             }
         }
@@ -2403,10 +2741,14 @@ impl Simplex {
             let idx = j as usize;
             let assign = self.assignment[idx];
             let (dir, eligible) = if c > Rational64::zero() {
-                let room = self.lower[idx].as_ref().is_some_and(|lo| assign > lo.value);
+                let room = self.lower[idx]
+                    .as_ref()
+                    .is_some_and(|lo| lo.value.cmp_narrow(&assign) == core::cmp::Ordering::Less);
                 (-1, room)
             } else {
-                let room = self.upper[idx].as_ref().is_some_and(|hi| assign < hi.value);
+                let room = self.upper[idx]
+                    .as_ref()
+                    .is_some_and(|hi| hi.value.cmp_narrow(&assign) == core::cmp::Ordering::Greater);
                 (1, room)
             };
             if !eligible {
@@ -2432,10 +2774,10 @@ impl Simplex {
         let assign = self.assignment[idx];
         if dir > 0 {
             let hi = self.upper[idx].as_ref()?;
-            checked_sub_delta(hi.value, assign)
+            checked_sub_delta(hi.value.narrow()?, assign)
         } else {
             let lo = self.lower[idx].as_ref()?;
-            checked_sub_delta(assign, lo.value)
+            checked_sub_delta(assign, lo.value.narrow()?)
         }
     }
 
@@ -2467,13 +2809,13 @@ impl Simplex {
                     Some(h) => h,
                     None => continue,
                 };
-                checked_sub_delta(hi.value, assign)?
+                checked_sub_delta(hi.value.narrow()?, assign)?
             } else {
                 let lo = match self.lower[idx].as_ref() {
                     Some(l) => l,
                     None => continue,
                 };
-                checked_sub_delta(assign, lo.value)?
+                checked_sub_delta(assign, lo.value.narrow()?)?
             };
             // Divide by |rate| (both components), clamping the negative
             // dust of an already-violated row to zero.
@@ -2805,11 +3147,11 @@ impl Simplex {
             let idx = *var as usize;
             let val = self.assignment[idx];
             let viol = if let Some(lo) = &self.lower[idx]
-                && val < lo.value
+                && lo.value.cmp_narrow(&val) == core::cmp::Ordering::Greater
             {
                 Some(lo.clone())
             } else if let Some(hi) = &self.upper[idx]
-                && val > hi.value
+                && hi.value.cmp_narrow(&val) == core::cmp::Ordering::Less
             {
                 Some(hi.clone())
             } else {
@@ -2892,7 +3234,7 @@ impl Simplex {
     pub(super) fn can_increase(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.upper[idx] {
-            Some(hi) => self.assignment[idx] < hi.value,
+            Some(hi) => hi.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Greater,
             None => true,
         }
     }
@@ -2901,7 +3243,7 @@ impl Simplex {
     pub(super) fn can_decrease(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.lower[idx] {
-            Some(lo) => self.assignment[idx] > lo.value,
+            Some(lo) => lo.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Less,
             None => true,
         }
     }
@@ -2970,6 +3312,7 @@ impl Simplex {
         // over `BigRational` from the start (the wide-driven repair step —
         // without it, a violated wide row whose achievable range overlaps
         // its window could never be repaired).
+        let mut leaving_row_is_wide = false;
         let (new_expr, entering_wide) = if let Some(expr) = self.tableau.get(&basic_var).cloned() {
             let Some(coef) = expr
                 .terms
@@ -3008,6 +3351,19 @@ impl Simplex {
             }
             let entering_big =
                 Self::build_pivot_expr_big_wide(&wexpr, &coef_b, basic_var, nonbasic_var);
+            // WIDE-LEAVING pivot: the leaving basic's `assignment` entry is
+            // stale BY DESIGN (the wide store's value is only exact through
+            // `eval_big_raw`), so the snap delta computed from it is NOT
+            // the variable's true move — delta-propagating that delta into
+            // the substituted rows' entries fabricates their values (the
+            // delta-vs-reeval canary caught it live: `got` accumulated the
+            // stale-based delta while the exact substitution had already
+            // moved the true value).  Every row rewritten by THIS pivot
+            // therefore takes the `was_wide` contract: the delta loop
+            // skips it and the commit recomputes its entry from the new
+            // row exactly — item 43's narrow-back discipline, applied to
+            // the wide-LEAVING side.
+            leaving_row_is_wide = true;
             match Self::narrow_big_lin(&entering_big) {
                 Some(narrow) => (Some(narrow), None),
                 None => (None, Some(entering_big)),
@@ -3100,11 +3456,11 @@ impl Simplex {
                     _ => None, // wide entering row: no narrow fast path
                 };
                 if let Some(fast) = fast {
-                    row_updates.push((var, fast, false));
+                    row_updates.push((var, fast, leaving_row_is_wide));
                 } else {
                     let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
-                        Some(new_row) => row_updates.push((var, new_row, false)),
+                        Some(new_row) => row_updates.push((var, new_row, leaving_row_is_wide)),
                         None => {
                             wide_updates.push((var, exact));
                         }
@@ -3134,27 +3490,45 @@ impl Simplex {
                 let lo = self.lower.get(leaving).and_then(|o| o.as_ref());
                 let hi = self.upper.get(leaving).and_then(|o| o.as_ref());
                 match snap {
-                    SnapBound::Lower => lo.map(|b| b.value).or_else(|| hi.map(|b| b.value)),
-                    SnapBound::Upper => hi.map(|b| b.value).or_else(|| lo.map(|b| b.value)),
-                    SnapBound::LowerPreferred => {
-                        lo.map(|b| b.value).or_else(|| hi.map(|b| b.value))
-                    }
+                    SnapBound::Lower => lo
+                        .map(|b| b.value.clone())
+                        .or_else(|| hi.map(|b| b.value.clone())),
+                    SnapBound::Upper => hi
+                        .map(|b| b.value.clone())
+                        .or_else(|| lo.map(|b| b.value.clone())),
+                    SnapBound::LowerPreferred => lo
+                        .map(|b| b.value.clone())
+                        .or_else(|| hi.map(|b| b.value.clone())),
                 }
             };
             if let Some(v) = snapped {
                 let old = self.assignment[leaving];
-                if v != old {
-                    // Checked: the snap delta feeds the delta propagation,
-                    // and the subtraction itself can leave `i64` width on
-                    // wide searches — refuse to wrap (a wrapped delta would
-                    // corrupt every dependent assignment) and defer to the
-                    // full re-derivation instead.
-                    match checked_sub_delta(v, old) {
-                        Some(d) => snap_delta = Some(d),
-                        None => self.assignment_current = false,
+                // Exact snap: a WIDE target lands in the wide point store
+                // (with the staleness flag — the delta loop below must not
+                // propagate from a fabricated stand-in), a narrow target
+                // is the historical fast path (checked snap delta).
+                match v.narrow() {
+                    Some(vn) => {
+                        if vn != old {
+                            // Checked: the snap delta feeds the delta
+                            // propagation, and the subtraction itself can
+                            // leave `i64` width on wide searches — refuse
+                            // to wrap (a wrapped delta would corrupt every
+                            // dependent assignment) and defer to the full
+                            // re-derivation instead.
+                            match checked_sub_delta(vn, old) {
+                                Some(d) => snap_delta = Some(d),
+                                None => self.assignment_current = false,
+                            }
+                        }
+                        self.assignment[leaving] = vn;
+                        self.wide_points.remove(&(leaving as VarId));
+                    }
+                    None => {
+                        self.wide_points.insert(leaving as VarId, v.to_big());
+                        self.assignment_current = false;
                     }
                 }
-                self.assignment[leaving] = v;
             }
         }
         let entering = nonbasic_var as usize;
@@ -3192,6 +3566,22 @@ impl Simplex {
                     // it from the new row instead. Propagating a delta from
                     // an untrusted base is how the wide-coefficient
                     // false-`unsat` fabricated its violation.
+                    continue;
+                }
+                // A row referencing a WIDE-POINT non-basic propagates from
+                // a stale entry for that term — the same fabrication the
+                // `was_wide` skip guards, on the term side (caught live by
+                // the delta-vs-reeval canary on the rehome regression:
+                // `got` accumulated over the stale entry while `want`'s
+                // exact evaluation read the point).  Skip the incremental
+                // update; the commit's exact recomputation owns the entry.
+                if !self.wide_points.is_empty()
+                    && new_row
+                        .terms
+                        .iter()
+                        .any(|(v, _)| self.wide_points.contains_key(v))
+                {
+                    self.assignment_current = false;
                     continue;
                 }
                 if let Some(coef) = new_row
@@ -3738,9 +4128,17 @@ impl Simplex {
             if vi >= num_vars {
                 return None;
             }
-            let a = &self.assignment[vi];
-            real += big_r64(&a.real) * c;
-            delta += big_r64(&a.delta) * c;
+            // Wide-point terms contribute their EXACT value; the stale
+            // narrow entry is not a stand-in.
+            let (ar, ad) = match self.wide_points.get(v) {
+                Some(w) => (w.real.clone(), w.delta.clone()),
+                None => {
+                    let a = &self.assignment[vi];
+                    (big_r64(&a.real), big_r64(&a.delta))
+                }
+            };
+            real += ar * c;
+            delta += ad * c;
         }
         Some((real, delta))
     }
@@ -3779,13 +4177,13 @@ impl Simplex {
             self.lower
                 .get(vi)
                 .and_then(|b| b.as_ref())
-                .map(|b| End(big_r64(&b.value.real), big_r64(&b.value.delta)))
+                .map(|b| End(b.value.real_big(), b.value.delta_big()))
         };
         let hi_of = |vi: usize| -> Option<End> {
             self.upper
                 .get(vi)
                 .and_then(|b| b.as_ref())
-                .map(|b| End(big_r64(&b.value.real), big_r64(&b.value.delta)))
+                .map(|b| End(b.value.real_big(), b.value.delta_big()))
         };
         let mut min = End(BR::zero(), BR::zero());
         let mut max = End(BR::zero(), BR::zero());
@@ -3871,10 +4269,8 @@ impl Simplex {
         };
         if let Some(hi) = bhi
             && !min_unbounded
-            && cmp_end(
-                &min,
-                &End(big_r64(&hi.value.real), big_r64(&hi.value.delta)),
-            ) == core::cmp::Ordering::Greater
+            && cmp_end(&min, &End(hi.value.real_big(), hi.value.delta_big()))
+                == core::cmp::Ordering::Greater
         {
             // The row cannot go below its minimum, which already exceeds
             // the basic's upper bound.
@@ -3882,10 +4278,8 @@ impl Simplex {
         }
         if let Some(lo) = blo
             && !max_unbounded
-            && cmp_end(
-                &max,
-                &End(big_r64(&lo.value.real), big_r64(&lo.value.delta)),
-            ) == core::cmp::Ordering::Less
+            && cmp_end(&max, &End(lo.value.real_big(), lo.value.delta_big()))
+                == core::cmp::Ordering::Less
         {
             return Some(reasons);
         }
@@ -3894,10 +4288,10 @@ impl Simplex {
 
     fn wide_row_violated(&self, expr: &BigLinExpr, idx: usize) -> Option<bool> {
         let (real, delta) = self.eval_big_raw(expr)?;
-        let cmp_bound = |b: &DeltaRational| -> core::cmp::Ordering {
+        let cmp_bound = |b: &BoundValue| -> core::cmp::Ordering {
             // (real + delta·δ) vs bound — δ ordering only breaks real ties.
-            match real.cmp(&big_r64(&b.real)) {
-                core::cmp::Ordering::Equal => delta.cmp(&big_r64(&b.delta)),
+            match real.cmp(&b.real_big()) {
+                core::cmp::Ordering::Equal => delta.cmp(&b.delta_big()),
                 ord => ord,
             }
         };
@@ -3974,6 +4368,21 @@ impl Simplex {
     /// declines to `None`.
     fn eval_expr(&self, expr: &LinExpr) -> Option<DeltaRational> {
         let num_vars = self.assignment.len();
+        // A term referencing a WIDE-POINT non-basic must contribute its
+        // EXACT value: the narrow entry is stale by design and the checked
+        // fast path would otherwise produce a PLAUSIBLE but wrong value
+        // with no overflow to catch (the strengthened definitional
+        // invariant caught exactly that at the first wide branch).  The
+        // emptiness guard keeps wide-free states on the untouched fast
+        // path.
+        if !self.wide_points.is_empty()
+            && expr
+                .terms
+                .iter()
+                .any(|(v, _)| self.wide_points.contains_key(v))
+        {
+            return self.update_row_exact(expr, num_vars);
+        }
         let mut val = DeltaRational::from_rational(expr.constant);
         for (v, c) in &expr.terms {
             let idx = *v as usize;
@@ -3984,7 +4393,7 @@ impl Simplex {
                 .and_then(|d| checked_add_delta(val, d))
             {
                 Some(next) => val = next,
-                None => return Self::update_row_exact(&self.assignment, expr, num_vars),
+                None => return self.update_row_exact(expr, num_vars),
             }
         }
         Some(val)
@@ -3994,10 +4403,15 @@ impl Simplex {
         let num_vars = self.assignment.len();
         for i in 0..num_vars {
             if !self.basic[i] {
-                if let Some(lo) = &self.lower[i] {
-                    self.assignment[i] = lo.value;
-                } else if let Some(hi) = &self.upper[i] {
-                    self.assignment[i] = hi.value;
+                let snap = self.lower[i]
+                    .as_ref()
+                    .map(|lo| lo.value.clone())
+                    .or_else(|| self.upper[i].as_ref().map(|hi| hi.value.clone()));
+                if let Some(value) = snap {
+                    // Wide snap targets land in the exact point store
+                    // (narrow stand-ins would fabricate); narrow targets
+                    // are the historical fast path.
+                    self.snap_point_to(i, &value);
                 }
             }
         }
@@ -4014,6 +4428,26 @@ impl Simplex {
             let var_idx = *var as usize;
             if var_idx >= num_vars {
                 continue;
+            }
+            // A term referencing a WIDE-POINT non-basic cannot run the
+            // narrow pipeline at all: its stale `assignment` entry would
+            // fabricate the row's value without any overflow to catch.
+            // Straight to the exact path (narrow the final, else migrate).
+            if expr
+                .terms
+                .iter()
+                .any(|(v, _)| self.wide_points.contains_key(v))
+            {
+                match self.update_row_exact(expr, num_vars) {
+                    Some(val) => {
+                        self.assignment[var_idx] = val;
+                        continue 'rows;
+                    }
+                    None => {
+                        wide_migrations.push(*var);
+                        continue 'rows;
+                    }
+                }
             }
             let mut real = expr.constant;
             let mut delta = Rational64::zero();
@@ -4047,7 +4481,7 @@ impl Simplex {
                             // (`BigRational`, cold path) and narrow the
                             // final; only a final that still does not fit
                             // declines the derivation.
-                            match Self::update_row_exact(&self.assignment, expr, num_vars) {
+                            match self.update_row_exact(expr, num_vars) {
                                 Some(val) => {
                                     self.assignment[var_idx] = val;
                                     continue 'rows;
@@ -4070,7 +4504,7 @@ impl Simplex {
                             }
                         }
                     },
-                    _ => match Self::update_row_exact(&self.assignment, expr, num_vars) {
+                    _ => match self.update_row_exact(expr, num_vars) {
                         Some(val) => {
                             self.assignment[var_idx] = val;
                             continue 'rows;
@@ -4139,11 +4573,7 @@ impl Simplex {
     /// Exact (`BigRational`) fallback for one row's assignment value when
     /// the `i64` pipeline overflowed mid-derivation.  `None` = the row's
     /// final value itself does not fit `Rational64` (the honest give-up).
-    fn update_row_exact(
-        assignment: &[DeltaRational],
-        expr: &LinExpr,
-        num_vars: usize,
-    ) -> Option<DeltaRational> {
+    fn update_row_exact(&self, expr: &LinExpr, num_vars: usize) -> Option<DeltaRational> {
         let big = |r: &Rational64| -> num_rational::BigRational {
             num_rational::BigRational::new(
                 num_bigint::BigInt::from(*r.numer()),
@@ -4163,10 +4593,18 @@ impl Simplex {
             if v_idx >= num_vars {
                 return None; // stale ref: no exact value either
             }
-            let a = &assignment[v_idx];
+            // Wide-point terms contribute their EXACT value (the stale
+            // narrow entry is not a stand-in).
+            let (ar, ad) = match self.wide_points.get(v) {
+                Some(w) => (w.real.clone(), w.delta.clone()),
+                None => {
+                    let a = &self.assignment[v_idx];
+                    (big(&a.real), big(&a.delta))
+                }
+            };
             let cb = big(c);
-            real += big(&a.real) * &cb;
-            delta += big(&a.delta) * &cb;
+            real += ar * &cb;
+            delta += ad * &cb;
         }
         Some(DeltaRational {
             real: narrow(&real)?,
@@ -4412,18 +4850,22 @@ impl Simplex {
             if prop.is_lower {
                 let should_update = match &self.lower[idx] {
                     None => true,
-                    Some(existing) => prop.value > existing.value,
+                    Some(existing) => {
+                        prop.value.cmp_value(&existing.value) == core::cmp::Ordering::Greater
+                    }
                 };
                 if should_update {
-                    self.set_lower_delta(prop.var, prop.value, prop.reasons.clone());
+                    self.set_lower_value(prop.var, prop.value.clone(), prop.reasons.clone());
                 }
             } else {
                 let should_update = match &self.upper[idx] {
                     None => true,
-                    Some(existing) => prop.value < existing.value,
+                    Some(existing) => {
+                        prop.value.cmp_value(&existing.value) == core::cmp::Ordering::Less
+                    }
                 };
                 if should_update {
-                    self.set_upper_delta(prop.var, prop.value, prop.reasons.clone());
+                    self.set_upper_value(prop.var, prop.value.clone(), prop.reasons.clone());
                 }
             }
         }
@@ -4444,13 +4886,6 @@ impl Simplex {
         if idx >= self.assignment.len() || reasons.is_empty() {
             return;
         }
-        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
-            use num_traits::ToPrimitive as _;
-            Some(Rational64::new(r.numer().to_i64()?, r.denom().to_i64()?))
-        };
-        let exact = narrow(&real)
-            .zip(narrow(&delta))
-            .map(|(real, delta)| DeltaRational { real, delta });
         let opposite = if lower {
             self.upper.get(idx).and_then(Option::as_ref)
         } else {
@@ -4473,21 +4908,34 @@ impl Simplex {
             self.pending_crossing = Some(conflict);
             return;
         }
-        let stored = match &exact {
-            Some(v) => Some(*v),
-            None if is_int => self.weaken_int_bound(&real, &delta, lower),
-            None => None,
+        // STORAGE: the exact value, narrowed when it fits and WIDE when it
+        // does not — the i64-fit requirement that used to discard (or, for
+        // integer variables, `weaken_int_bound`-decline) derived bounds
+        // beyond width is gone with the widened bound store.  For an
+        // INTEGER variable the integral tightening (`ceil` for lower /
+        // `floor` for upper, shifted by the infinitesimal's sign) is the
+        // EXACT integer consequence of the derived bound, applied in
+        // `BigRational` so branch-scale bounds store exactly.
+        let value = {
+            let v = if is_int {
+                Self::tighten_int_bound_exact(&real, &delta, lower)
+            } else {
+                BigDeltaRational { real, delta }
+            };
+            match v.narrow() {
+                Some(n) => BoundValue::Narrow(n),
+                None => return, // BISECT: old drop behavior
+            }
         };
-        let Some(value) = stored else { return };
         let is_tighter = if lower {
             match &self.lower[idx] {
                 None => true,
-                Some(existing) => value > existing.value,
+                Some(existing) => value.cmp_value(&existing.value) == core::cmp::Ordering::Greater,
             }
         } else {
             match &self.upper[idx] {
                 None => true,
-                Some(existing) => value < existing.value,
+                Some(existing) => value.cmp_value(&existing.value) == core::cmp::Ordering::Less,
             }
         };
         if is_tighter {
@@ -4498,6 +4946,34 @@ impl Simplex {
                 reasons,
             });
         }
+    }
+
+    /// The exact integral tightening of a derived bound for an INTEGER
+    /// variable (the value `weaken_int_bound` computed, without the
+    /// `Rational64`-fit requirement): `ceil` for a lower bound, `floor`
+    /// for an upper (an integral real part shifts by the infinitesimal's
+    /// sign), `delta = 0`.  CROSSING and tightness tests always run on the
+    /// EXACT pre-tightened value; only STORAGE is tightened.
+    fn tighten_int_bound_exact(
+        real: &num_rational::BigRational,
+        delta: &num_rational::BigRational,
+        lower: bool,
+    ) -> BigDeltaRational {
+        let integral = real.fract().is_zero();
+        let n: num_bigint::BigInt = if lower {
+            let mut c = real.ceil().to_integer();
+            if integral && delta > &num_rational::BigRational::zero() {
+                c += 1;
+            }
+            c
+        } else {
+            let mut f = real.floor().to_integer();
+            if integral && delta < &num_rational::BigRational::zero() {
+                f -= 1;
+            }
+            f
+        };
+        BigDeltaRational::real_only(num_rational::BigRational::from(n))
     }
 
     /// Exact (`BigRational`) recomputation of one directional implied bound
@@ -4531,8 +5007,8 @@ impl Simplex {
             };
             let Some(b) = bound else { return None };
             let cb = big(c);
-            real += big(&b.value.real) * &cb;
-            delta += big(&b.value.delta) * &cb;
+            real += b.value.real_big() * &cb;
+            delta += b.value.delta_big() * &cb;
         }
         Some(DeltaRational {
             real: narrow(&real)?,
@@ -4616,8 +5092,8 @@ impl Simplex {
             if bound_is_branch_local(bound) {
                 return None;
             }
-            real += big_r64(&bound.value.real) * c;
-            delta += big_r64(&bound.value.delta) * c;
+            real += bound.value.real_big() * c;
+            delta += bound.value.delta_big() * c;
             reasons.extend(bound.all_reasons());
         }
         Some((real, delta, reasons))
@@ -4702,8 +5178,8 @@ impl Simplex {
         if bound_is_branch_local(b) {
             return None;
         }
-        real += big_r64(&b.value.real);
-        delta += big_r64(&b.value.delta);
+        real += b.value.real_big();
+        delta += b.value.delta_big();
         reasons.extend(b.all_reasons());
         for (var, c) in &wexpr.terms {
             if *var == target {
@@ -4719,44 +5195,13 @@ impl Simplex {
                 return None;
             }
             let neg_c = -c;
-            real += big_r64(&b.value.real) * &neg_c;
-            delta += big_r64(&b.value.delta) * &neg_c;
+            real += b.value.real_big() * &neg_c;
+            delta += b.value.delta_big() * &neg_c;
             reasons.extend(b.all_reasons());
         }
         real /= coef_i;
         delta /= coef_i;
         Some((real, delta, reasons))
-    }
-
-    /// Weaken an exact bound for STORAGE on an integer basic (the two
-    /// `narrow_pair` lessons): `ceil` for lower, `floor` for upper (an
-    /// integral real part shifts by the infinitesimal's sign), `delta = 0`,
-    /// and the result must fit `Rational64`. CROSSING and tightness tests
-    /// always run on the EXACT value; only STORAGE is weakened.
-    fn weaken_int_bound(
-        &self,
-        real: &num_rational::BigRational,
-        delta: &num_rational::BigRational,
-        lower: bool,
-    ) -> Option<DeltaRational> {
-        use num_traits::ToPrimitive as _;
-        let integral = real.fract().is_zero();
-        let n: num_bigint::BigInt = if lower {
-            let mut c = real.ceil().to_integer();
-            if integral && delta > &num_rational::BigRational::zero() {
-                c += 1;
-            }
-            c
-        } else {
-            let mut f = real.floor().to_integer();
-            if integral && delta < &num_rational::BigRational::zero() {
-                f -= 1;
-            }
-            f
-        };
-        Some(DeltaRational::from_rational(Rational64::from_integer(
-            n.to_i64()?,
-        )))
     }
 
     /// Lexicographic `(real, delta)` comparison of an exact big bound
@@ -4767,14 +5212,14 @@ impl Simplex {
         &self,
         real: &num_rational::BigRational,
         delta: &num_rational::BigRational,
-        stored: &DeltaRational,
+        stored: &BoundValue,
     ) -> core::cmp::Ordering {
         use core::cmp::Ordering;
-        let r = real.cmp(&big_r64(&stored.real));
+        let r = real.cmp(&stored.real_big());
         if r != Ordering::Equal {
             return r;
         }
-        delta.cmp(&big_r64(&stored.delta))
+        delta.cmp(&stored.delta_big())
     }
 
     /// Corner-enumeration auditor for one derivation (debug, env-gated by
@@ -4849,8 +5294,8 @@ impl Simplex {
         let mut choose = vec![0u8; others.len()];
         loop {
             for b_bnd in [b_lo, b_hi] {
-                let mut r = big_r64(&b_bnd.value.real);
-                let mut d = big_r64(&b_bnd.value.delta);
+                let mut r = b_bnd.value.real_big();
+                let mut d = b_bnd.value.delta_big();
                 if target.is_none() {
                     // Direction 1: the basic's own bound from the terms.
                     r = wexpr.constant.clone();
@@ -4863,8 +5308,8 @@ impl Simplex {
                             .find(|(v, _)| v == &others[i].0)
                             .map(|(_, c)| c.clone())
                             .unwrap_or_default();
-                        r += big_r64(&x.value.real) * &c;
-                        d += big_r64(&x.value.delta) * &c;
+                        r += x.value.real_big() * &c;
+                        d += x.value.delta_big() * &c;
                     }
                 } else {
                     // Direction 2: x = (b − k − Σ cⱼxⱼ)/cᵢ.
@@ -4877,8 +5322,8 @@ impl Simplex {
                             .find(|(v, _)| v == &others[i].0)
                             .map(|(_, c)| c.clone())
                             .unwrap_or_default();
-                        r -= big_r64(&x.value.real) * &c;
-                        d -= big_r64(&x.value.delta) * &c;
+                        r -= x.value.real_big() * &c;
+                        d -= x.value.delta_big() * &c;
                     }
                     r /= &coef_i;
                     d /= &coef_i;
@@ -4976,7 +5421,14 @@ impl Simplex {
             if lower_done {
                 continue;
             }
-            if Self::delta_acc(&mut lower_sum, &b.value, coef).is_none() {
+            // A WIDE source bound cannot run the narrow accumulation:
+            // straight to the exact retry (which reads bound values
+            // exactly) rather than declining the derivation.
+            let fell_exact = match b.value.narrow() {
+                Some(bn) => Self::delta_acc(&mut lower_sum, &bn, coef).is_none(),
+                None => true,
+            };
+            if fell_exact {
                 lower_sum = self.derive_bound_exact(expr, true)?;
                 lower_done = true;
             }
@@ -4984,13 +5436,16 @@ impl Simplex {
         if can_derive_lower {
             let is_tighter = match &self.lower[idx] {
                 None => true,
-                Some(existing) => lower_sum > existing.value,
+                Some(existing) => {
+                    BoundValue::Narrow(lower_sum).cmp_value(&existing.value)
+                        == core::cmp::Ordering::Greater
+                }
             };
             if is_tighter {
                 return Some(PropagatedBound {
                     var: basic_var,
                     is_lower: true,
-                    value: lower_sum,
+                    value: BoundValue::Narrow(lower_sum),
                     reasons: lower_reasons,
                 });
             }
@@ -5014,7 +5469,11 @@ impl Simplex {
             if upper_done {
                 continue;
             }
-            if Self::delta_acc(&mut upper_sum, &b.value, coef).is_none() {
+            let fell_exact = match b.value.narrow() {
+                Some(bn) => Self::delta_acc(&mut upper_sum, &bn, coef).is_none(),
+                None => true,
+            };
+            if fell_exact {
                 upper_sum = self.derive_bound_exact(expr, false)?;
                 upper_done = true;
             }
@@ -5022,13 +5481,16 @@ impl Simplex {
         if can_derive_upper {
             let is_tighter = match &self.upper[idx] {
                 None => true,
-                Some(existing) => upper_sum < existing.value,
+                Some(existing) => {
+                    BoundValue::Narrow(upper_sum).cmp_value(&existing.value)
+                        == core::cmp::Ordering::Less
+                }
             };
             if is_tighter {
                 return Some(PropagatedBound {
                     var: basic_var,
                     is_lower: false,
-                    value: upper_sum,
+                    value: BoundValue::Narrow(upper_sum),
                     reasons: upper_reasons,
                 });
             }
@@ -5062,19 +5524,23 @@ impl Simplex {
             if prop.is_lower {
                 let should_update = match &self.lower[idx] {
                     None => true,
-                    Some(existing) => prop.value > existing.value,
+                    Some(existing) => {
+                        prop.value.cmp_value(&existing.value) == core::cmp::Ordering::Greater
+                    }
                 };
                 if should_update {
-                    self.set_lower_delta(var, prop.value, prop.reasons.clone());
+                    self.set_lower_value(var, prop.value.clone(), prop.reasons.clone());
                     changed = true;
                 }
             } else {
                 let should_update = match &self.upper[idx] {
                     None => true,
-                    Some(existing) => prop.value < existing.value,
+                    Some(existing) => {
+                        prop.value.cmp_value(&existing.value) == core::cmp::Ordering::Less
+                    }
                 };
                 if should_update {
-                    self.set_upper_delta(var, prop.value, prop.reasons.clone());
+                    self.set_upper_value(var, prop.value.clone(), prop.reasons.clone());
                     changed = true;
                 }
             }
@@ -5105,6 +5571,7 @@ impl Simplex {
         self.upper.clear();
         self.tableau.clear();
         self.wide_rows.clear();
+        self.wide_points.clear();
         self.wide_pending = false;
         self.columns.clear();
         self.row_ids.clear();
@@ -5226,17 +5693,25 @@ impl Simplex {
                     continue;
                 }
                 let val = self.assignment[idx];
-                let lo = self.lower[idx].as_ref().map(|b| b.value);
-                let hi = self.upper[idx].as_ref().map(|b| b.value);
-                let snapped = if lo.is_some_and(|b| val < b) {
+                let lo = self.lower[idx].as_ref().map(|b| b.value.clone());
+                let hi = self.upper[idx].as_ref().map(|b| b.value.clone());
+                let snapped = if lo
+                    .as_ref()
+                    .is_some_and(|b| b.cmp_narrow(&val) == core::cmp::Ordering::Greater)
+                {
                     lo
-                } else if hi.is_some_and(|b| val > b) {
+                } else if hi
+                    .as_ref()
+                    .is_some_and(|b| b.cmp_narrow(&val) == core::cmp::Ordering::Less)
+                {
                     hi
                 } else {
                     continue;
                 };
                 if let Some(v) = snapped {
-                    self.assignment[idx] = v;
+                    // A WIDE target lands in the exact point store (the
+                    // staleness flag below already covers the moved set).
+                    self.snap_point_to(idx, &v);
                     moved = true;
                 }
             }
@@ -5262,11 +5737,41 @@ impl Simplex {
             if self.wide_rows.contains_key(&(i as VarId)) {
                 continue;
             }
-            let lb = self.lower.get(i).and_then(|b| b.as_ref().map(|x| x.value));
-            let ub = self.upper.get(i).and_then(|b| b.as_ref().map(|x| x.value));
+            let lb = self
+                .lower
+                .get(i)
+                .and_then(|b| b.as_ref().map(|x| x.value.clone()));
+            let ub = self
+                .upper
+                .get(i)
+                .and_then(|b| b.as_ref().map(|x| x.value.clone()));
+            // A WIDE POINT's narrow entry is stale BY DESIGN (the exact
+            // value lives in the point store) — the window check runs on
+            // the EXACT value, like the wide-basic loop below.
+            if let Some(w) = self.wide_points.get(&(i as VarId)) {
+                if let Some(lo) = &lb
+                    && lo.cmp_value(&BoundValue::Wide(std::sync::Arc::new(w.clone())))
+                        == core::cmp::Ordering::Greater
+                {
+                    return Some(format!(
+                        "var {i} (wide point) = ({:?}, {:?}) below lower {:?}",
+                        w.real, w.delta, lo
+                    ));
+                }
+                if let Some(hi) = &ub
+                    && hi.cmp_value(&BoundValue::Wide(std::sync::Arc::new(w.clone())))
+                        == core::cmp::Ordering::Less
+                {
+                    return Some(format!(
+                        "var {i} (wide point) = ({:?}, {:?}) above upper {:?}",
+                        w.real, w.delta, hi
+                    ));
+                }
+                continue;
+            }
             let val = self.assignment[i];
             if let Some(lo) = lb
-                && val < lo
+                && lo.cmp_narrow(&val) == core::cmp::Ordering::Greater
             {
                 let (reason, aux) = match &self.lower[i] {
                     Some(b) => (b.reason, b.aux_reasons.clone()),
@@ -5278,7 +5783,7 @@ impl Simplex {
                 ));
             }
             if let Some(hi) = ub
-                && val > hi
+                && hi.cmp_narrow(&val) == core::cmp::Ordering::Less
             {
                 return Some(format!(
                     "var {i} (basic={}, has_row={}) = {val:?} above upper {hi:?}",
@@ -5343,8 +5848,8 @@ impl Simplex {
             }
             // Bounds checks for a WIDE basic read the EXACT row evaluation.
             if let Some((real, delta)) = self.eval_big_raw(wexpr) {
-                let lex = |bnd: &DeltaRational| match real.cmp(&big_r64(&bnd.real)) {
-                    core::cmp::Ordering::Equal => delta.cmp(&big_r64(&bnd.delta)),
+                let lex = |bnd: &BoundValue| match real.cmp(&bnd.real_big()) {
+                    core::cmp::Ordering::Equal => delta.cmp(&bnd.delta_big()),
                     ord => ord,
                 };
                 if let Some(lo) = self.lower.get(bi).and_then(|o| o.as_ref())
@@ -5502,28 +6007,32 @@ impl Simplex {
     pub(super) fn upper_real_at(&self, idx: usize) -> Option<Rational64> {
         self.upper
             .get(idx)
-            .and_then(|b| b.as_ref().map(|b| b.value.real))
+            .and_then(|b| b.as_ref().and_then(|b| b.value.narrow().map(|v| v.real)))
     }
     /// Real part of the lower bound for variable at `idx`, if any.
     #[inline]
     pub(super) fn lower_real_at(&self, idx: usize) -> Option<Rational64> {
         self.lower
             .get(idx)
-            .and_then(|b| b.as_ref().map(|b| b.value.real))
+            .and_then(|b| b.as_ref().and_then(|b| b.value.narrow().map(|v| v.real)))
     }
-    /// Full `DeltaRational` upper bound for variable at `idx`, if any.
+    /// Full narrow `DeltaRational` upper bound for variable at `idx`, if
+    /// any (a wide bound has no narrow form and reads as absent — the
+    /// exact reads are [`Self::point_value_exact`] and the bound's
+    /// [`BoundValue`] accessors).
     #[inline]
     pub(super) fn upper_delta_at(&self, idx: usize) -> Option<DeltaRational> {
         self.upper
             .get(idx)
-            .and_then(|b| b.as_ref().map(|b| b.value))
+            .and_then(|b| b.as_ref().and_then(|b| b.value.narrow()))
     }
-    /// Full `DeltaRational` lower bound for variable at `idx`, if any.
+    /// Full narrow `DeltaRational` lower bound for variable at `idx`, if
+    /// any; see [`Self::upper_delta_at`].
     #[inline]
     pub(super) fn lower_delta_at(&self, idx: usize) -> Option<DeltaRational> {
         self.lower
             .get(idx)
-            .and_then(|b| b.as_ref().map(|b| b.value))
+            .and_then(|b| b.as_ref().and_then(|b| b.value.narrow()))
     }
     /// Overwrite the assignment at `idx` with `val`.
     #[inline]

@@ -66,7 +66,7 @@ impl LiaSolver {
     pub(crate) fn bound_lower(&self, var: VarId) -> Option<(Rational64, u32)> {
         self.simplex
             .get_lower(var)
-            .map(|b| (b.value.real, b.reason))
+            .and_then(|b| Some((b.value.narrow()?.real, b.reason)))
     }
 
     /// The current upper bound on `var`; see [`LiaSolver::bound_lower`], of
@@ -76,7 +76,7 @@ impl LiaSolver {
     pub(crate) fn bound_upper(&self, var: VarId) -> Option<(Rational64, u32)> {
         self.simplex
             .get_upper(var)
-            .map(|b| (b.value.real, b.reason))
+            .and_then(|b| Some((b.value.narrow()?.real, b.reason)))
     }
 
     /// Assert `var >= value` as a *bound*, but only when it is strictly tighter
@@ -97,7 +97,7 @@ impl LiaSolver {
     /// all interchangeable for propagation.
     pub(crate) fn tighten_lower(&mut self, var: VarId, value: Rational64, reason: u32) -> bool {
         let improves = match self.simplex.get_lower(var) {
-            Some(current) => value > current.value.real,
+            Some(current) => current.value.narrow().is_none_or(|c| value > c.real),
             None => true,
         };
         if improves {
@@ -110,7 +110,7 @@ impl LiaSolver {
     /// one in scope; see [`LiaSolver::tighten_lower`].
     pub(crate) fn tighten_upper(&mut self, var: VarId, value: Rational64, reason: u32) -> bool {
         let improves = match self.simplex.get_upper(var) {
-            Some(current) => value < current.value.real,
+            Some(current) => current.value.narrow().is_none_or(|c| value < c.real),
             None => true,
         };
         if improves {

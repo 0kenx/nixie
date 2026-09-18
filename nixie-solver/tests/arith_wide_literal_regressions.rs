@@ -837,6 +837,14 @@ fn rescaled_row_slack_never_drives_false_unsat() {
 /// verdict.  The unsatisfiable twin is equally honest.
 #[test]
 fn i64_min_bound_rows_decline_instead_of_wrapping() {
+    // The wide-LP build (2026-09-18) retired the sticky decline: every
+    // `assert_*` entry whose `-rhs` leaves `Rational64` interns its row
+    // EXACTLY (rescaled into width or captured in the wide store), so the
+    // corner DECIDES where it used to answer honest `unknown`.  The
+    // never-wrong contract this test guarded is STRENGTHENED into exact
+    // verdicts (both z3-certified): the satisfiable side is `sat` (with a
+    // model at `x = i64::MIN`), and the crossed pair refutes `unsat`
+    // through the exact bound comparison.
     use nixie_solver::Context;
     let mut ctx = Context::new();
     let out = ctx
@@ -844,13 +852,14 @@ fn i64_min_bound_rows_decline_instead_of_wrapping() {
             "(set-logic QF_LIA)\n\
              (declare-const x Int)\n\
              (assert (< x -9223372036854775807))\n\
-             (check-sat)\n",
+             (check-sat)\n\
+             (get-value (x))\n",
         )
         .expect("script executes");
     let last = out.last().map(String::as_str).unwrap_or("");
-    assert_ne!(
-        last, "unsat",
-        "x = i64::MIN satisfies the bound (z3: sat); `unsat` is a wrapped-row refutation"
+    assert_eq!(
+        last, "((x -9223372036854775808))",
+        "x = i64::MIN is the unique satisfying point (z3: sat there); any other value violates the bound"
     );
     let mut ctx = Context::new();
     let out = ctx
@@ -863,8 +872,8 @@ fn i64_min_bound_rows_decline_instead_of_wrapping() {
         .expect("script executes");
     let last = out.last().map(String::as_str).unwrap_or("");
     assert_eq!(
-        last, "unknown",
-        "the declined side blocks the refutation: honest `unknown`, never a guess"
+        last, "unsat",
+        "the crossed strict pair at the wall refutes exactly (z3: unsat); a wrapped row used to fabricate this, a decline used to block it"
     );
 }
 
@@ -1069,5 +1078,150 @@ fn equal_pin_endpoint_reasons_cite_their_own_side() {
     assert_eq!(
         last, "sat",
         "the instance is satisfiable (z3: sat); `unsat` is the endpoint reason-side swap"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The wide-LP build (2026-09-18, the exact-arithmetic handoff): the bound
+// store widened to exact values (`BoundValue`), the assert entries' exact
+// row intern retiring the sticky decline, the B&B branch channel widened
+// (`wide_floor_ceil_exact`), and the model-verification evaluator's exact
+// numeric channel (`EvalVal::NumBig`).  The width walls this file's earlier
+// entries documented as honest `unknown`s become decidable.
+// ---------------------------------------------------------------------------
+
+/// The handoff's example case, pinned with its MODEL: `xr < -2^63` over
+/// QF_LRA is satisfiable at any rational below `-2^63` — a value that does
+/// not fit `Rational64`, so the model publication must go through the
+/// EXACT delta-instantiation channel (`value_exact` +
+/// `delta_instantiation_exact`).  The pre-fix behavior was a debug PANIC in
+/// `ArithSolver::value`'s unchecked instantiation sum (a release wrap to a
+/// dishonest `+2^63`-scale witness that the certifier then rejected,
+/// degrading the verdict to `unknown`).
+#[test]
+fn i64_min_real_strict_bound_decides_with_exact_model() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)\n\
+             (declare-const xr Real)\n\
+             (assert (< xr (/ (- 9223372036854775808) 1)))\n\
+             (check-sat)\n\
+             (get-value (xr))\n",
+        )
+        .expect("script executes");
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "any rational below -2^63 satisfies the bound (z3: sat)"
+    );
+    // The published witness must be BELOW -2^63 — the exact instantiation
+    // of the strict bound `-2^63 - δ₀`.  (Validated against z3 by binding
+    // the model as a define-fun and re-solving: z3 agrees `sat`.)
+    let val = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        val.contains("-9223372036854775810") || val.contains("-9223372036854775809"),
+        "the witness must be an exact rational strictly below -2^63, got: {val}"
+    );
+}
+
+/// `x < i64::MIN` over QF_LIA: the `k - 1` tightening cannot run (it would
+/// leave `i64`), so the strict delta path carries the constraint and the
+/// integral model value `-2^63 - 1` publishes through the exact channel.
+#[test]
+fn i64_min_int_strict_bound_publishes_exact_witness() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const xi Int)\n\
+             (assert (< xi (- 9223372036854775808)))\n\
+             (check-sat)\n\
+             (get-value (xi))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"));
+    assert_eq!(
+        out.get(1).map(String::as_str),
+        Some("((xi -9223372036854775809))"),
+        "the least satisfying integer is -2^63 - 1 (z3's model); the raw \
+         real part alone would publish -2^63, violating the strict bound"
+    );
+}
+
+/// The evaluator's boundary negation: `(-x > i64::MAX)` at the honest model
+/// `x = i64::MIN` requires evaluating `-i64::MIN = 2^63`.  The width-limited
+/// channel reported `Unrepresentable`, the gate blocked its own correct
+/// model as nongenuine, and the goal degraded to `unknown`; the exact
+/// numeric channel (`EvalVal::NumBig`) evaluates the comparison and
+/// certifies.
+#[test]
+fn boundary_negation_certifies_the_min_valued_model() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const x Int)\n\
+             (assert (> (* -1 x) 9223372036854775807))\n\
+             (check-sat)\n\
+             (get-value (x))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"));
+    assert_eq!(
+        out.get(1).map(String::as_str),
+        Some("((x -9223372036854775808))"),
+        "x = i64::MIN is the greatest satisfying point (z3: sat there)"
+    );
+}
+
+/// A wide-published model value through the model formatter: the exact
+/// rational is synthesized as a division term, which `get-model` must print
+/// as a VALUE (the `?` placeholder this used to fall through to is not a
+/// value at all).
+#[test]
+fn exact_model_values_print_as_values() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)\n\
+             (declare-const xr Real)\n\
+             (assert (< xr (/ (- 9223372036854775808) 1)))\n\
+             (check-sat)\n\
+             (get-model)\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"));
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        !model.contains('?'),
+        "the model must print a concrete value for xr, got: {model}"
+    );
+}
+
+/// The certification wall slice: `2^62`-scale arithmetic under the gate.
+/// `(>= (+ x x) 0)` at `x = 2^62` evaluates `2^63 >= 0` — the exact fold
+/// certifies the boundary model where the width-limited evaluator conceded
+/// (the `no_certifiable_candidate` class; z3: sat).
+#[test]
+fn boundary_scale_sum_bound_certifies() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const x Int)\n\
+             (assert (= x 4611686018427387904))\n\
+             (assert (>= (+ x x) 0))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "2*(2^62) = 2^63 >= 0 holds exactly (z3: sat)"
     );
 }

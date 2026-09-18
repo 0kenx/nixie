@@ -185,14 +185,22 @@ impl LiaSolver {
             let upper = self.simplex.get_upper(var);
 
             if let (Some(lb), Some(ub)) = (lower, upper) {
-                // For integer variables, we want floor(ub) and ceil(lb)
-                let lb_int = lb.value.real.ceil().to_integer();
-                let ub_int = ub.value.real.floor().to_integer();
+                // For integer variables, we want floor(ub) and ceil(lb).
+                // Exact rounding: a wide bound rounds in `BigInt`, and a
+                // variable whose rounded interval leaves `i64` is left to
+                // the search (the presolve fix is an optimization).
+                use num_traits::ToPrimitive as _;
+                let (lb_int, ub_int) = (
+                    lb.value.real_big().ceil().to_integer(),
+                    ub.value.real_big().floor().to_integer(),
+                );
 
                 // Check if there's exactly one integer in the interval [lb, ub]
-                if lb_int == ub_int {
+                if lb_int == ub_int
+                    && let Some(lb_i64) = lb_int.to_i64()
+                {
                     // Record variable to fix
-                    to_fix.push((var, lb_int, lb.reason, ub.reason));
+                    to_fix.push((var, lb_i64, lb.reason, ub.reason));
                 } else if lb_int > ub_int {
                     // Infeasible: no integer exists in [lb, ub]
                     return Ok(fixed_count); // Return count before infeasibility

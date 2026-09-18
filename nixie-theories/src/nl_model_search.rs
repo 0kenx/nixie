@@ -45,7 +45,7 @@ use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{ToPrimitive, Zero};
 
-use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
+use crate::arithmetic::simplex::{LinExpr, Simplex, VarId, checked_sub_r64};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use crate::ania_ground::{ArrayInterp, eval_assertions_true, eval_bool, eval_int};
@@ -1811,8 +1811,16 @@ impl<'a> Relaxation<'a> {
                     None => continue,
                 };
                 let fval = self.simplex.value(vid);
+                // Range over the NARROW parts only: a wide bound makes the
+                // range unreadable here (the branch heuristic then treats
+                // the variable as unbounded — a heuristic choice, never a
+                // verdict).
                 let range = match (self.simplex.get_lower(vid), self.simplex.get_upper(vid)) {
-                    (Some(lo), Some(hi)) => Some(hi.value.real - lo.value.real),
+                    (Some(lo), Some(hi)) => lo
+                        .value
+                        .narrow()
+                        .and_then(|l| hi.value.narrow().map(|h| (h.real, l.real)))
+                        .and_then(|(h, l)| checked_sub_r64(h, l)),
                     _ => None,
                 };
                 let take = match (&best, range) {

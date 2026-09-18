@@ -14,7 +14,7 @@ use crate::prelude::*;
 use core::cmp::Ordering;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use num_rational::Rational64;
-use num_traits::{One, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
 /// A delta-rational number: represents `real + delta * δ` where δ is infinitesimal
 #[derive(Debug, Clone, Copy, Default)]
@@ -247,6 +247,232 @@ impl MulAssign<Rational64> for DeltaRational {
     fn mul_assign(&mut self, rhs: Rational64) {
         self.real = mul_r64_fast(self.real, rhs);
         self.delta = mul_r64_fast(self.delta, rhs);
+    }
+}
+
+/// An exact, unlimited-width delta-rational (`real + delta·δ`), the wide
+/// counterpart of [`DeltaRational`]: the bound store's value channel for
+/// bounds whose parts leave `Rational64` width (branch bounds at `2^63`,
+/// strict bounds hanging off `i64::MIN`, exact propagated bounds that do
+/// not narrow).
+///
+/// Ordering is lexicographic on `(real, delta)` exactly as [`DeltaRational`]
+/// orders, so a narrow and a wide value of the same number compare equal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BigDeltaRational {
+    /// The real part.
+    pub real: num_rational::BigRational,
+    /// The infinitesimal coefficient.
+    pub delta: num_rational::BigRational,
+}
+
+impl BigDeltaRational {
+    /// Zero.
+    #[must_use]
+    pub fn zero() -> Self {
+        Self {
+            real: num_rational::BigRational::zero(),
+            delta: num_rational::BigRational::zero(),
+        }
+    }
+
+    /// Widen a narrow delta-rational exactly.
+    #[must_use]
+    pub fn from_narrow(d: &DeltaRational) -> Self {
+        Self {
+            real: num_rational::BigRational::new(
+                num_bigint::BigInt::from(*d.real.numer()),
+                num_bigint::BigInt::from(*d.real.denom()),
+            ),
+            delta: num_rational::BigRational::new(
+                num_bigint::BigInt::from(*d.delta.numer()),
+                num_bigint::BigInt::from(*d.delta.denom()),
+            ),
+        }
+    }
+
+    /// A real-only value (zero infinitesimal).
+    #[must_use]
+    pub fn real_only(real: num_rational::BigRational) -> Self {
+        Self {
+            real,
+            delta: num_rational::BigRational::zero(),
+        }
+    }
+
+    /// Narrow into a [`DeltaRational`]; `None` when either part does not
+    /// fit.  Mirrors the workspace's `narrow_rational64` contract: the
+    /// `i64::MIN` numerator is rejected (its negation does not fit, and
+    /// fixed-width consumers negate bound values).
+    #[must_use]
+    pub fn narrow(&self) -> Option<DeltaRational> {
+        let rn = self.real.numer().to_i64()?;
+        let rd = self.real.denom().to_i64()?;
+        let dn = self.delta.numer().to_i64()?;
+        let dd = self.delta.denom().to_i64()?;
+        if rn == i64::MIN || dn == i64::MIN {
+            return None;
+        }
+        Some(DeltaRational {
+            real: Rational64::new(rn, rd),
+            delta: Rational64::new(dn, dd),
+        })
+    }
+
+    /// Lexicographic `(real, delta)` comparison against a narrow value,
+    /// without materializing this value's narrow form.
+    #[must_use]
+    pub fn cmp_narrow(&self, other: &DeltaRational) -> Ordering {
+        let other_real = num_rational::BigRational::new(
+            num_bigint::BigInt::from(*other.real.numer()),
+            num_bigint::BigInt::from(*other.real.denom()),
+        );
+        match self.real.cmp(&other_real) {
+            Ordering::Equal => {
+                let other_delta = num_rational::BigRational::new(
+                    num_bigint::BigInt::from(*other.delta.numer()),
+                    num_bigint::BigInt::from(*other.delta.denom()),
+                );
+                self.delta.cmp(&other_delta)
+            }
+            o => o,
+        }
+    }
+}
+
+impl core::cmp::Ord for BigDeltaRational {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.real.cmp(&other.real) {
+            Ordering::Equal => self.delta.cmp(&other.delta),
+            o => o,
+        }
+    }
+}
+
+impl core::cmp::PartialOrd for BigDeltaRational {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl From<DeltaRational> for BigDeltaRational {
+    fn from(d: DeltaRational) -> Self {
+        Self::from_narrow(&d)
+    }
+}
+
+/// The value of a stored bound: the narrow fast path, or the exact wide
+/// form for values that leave `Rational64` width.
+///
+/// This is the bound channel of the dual-width simplex (the row channel's
+/// counterpart is [`crate::arithmetic::simplex::Simplex`]'s `wide_rows`):
+/// every state reachable with narrow values only executes the exact same
+/// comparisons it always did (the `Narrow`/`Narrow` arms are the old
+/// `DeltaRational` ops), while a wide value makes every consumer either
+/// compare exactly or explicitly decline — never wrap, never guess.
+#[derive(Debug, Clone)]
+pub enum BoundValue {
+    /// The value fits `Rational64` width (the common case).
+    Narrow(DeltaRational),
+    /// The exact value; at least one part leaves `Rational64` width.
+    Wide(std::sync::Arc<BigDeltaRational>),
+}
+
+impl BoundValue {
+    /// The narrow form when one exists (an `i64::MIN` numerator is not
+    /// narrow — see [`BigDeltaRational::narrow`]).
+    #[must_use]
+    pub fn narrow(&self) -> Option<DeltaRational> {
+        match self {
+            BoundValue::Narrow(d) => Some(*d),
+            BoundValue::Wide(w) => w.narrow(),
+        }
+    }
+
+    /// The exact form (widening a narrow value allocates).
+    #[must_use]
+    pub fn to_big(&self) -> BigDeltaRational {
+        match self {
+            BoundValue::Narrow(d) => BigDeltaRational::from_narrow(d),
+            BoundValue::Wide(w) => (**w).clone(),
+        }
+    }
+
+    /// Exact lexicographic comparison against a narrow value.
+    #[must_use]
+    pub fn cmp_narrow(&self, other: &DeltaRational) -> Ordering {
+        match self {
+            BoundValue::Narrow(d) => d.cmp(other),
+            BoundValue::Wide(w) => w.cmp_narrow(other),
+        }
+    }
+
+    /// Exact lexicographic comparison between bound values.
+    #[must_use]
+    pub fn cmp_value(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (BoundValue::Narrow(a), BoundValue::Narrow(b)) => a.cmp(b),
+            (BoundValue::Narrow(a), BoundValue::Wide(b)) => {
+                core::cmp::Ordering::reverse(b.cmp_narrow(a))
+            }
+            (BoundValue::Wide(a), BoundValue::Narrow(b)) => a.cmp_narrow(b),
+            (BoundValue::Wide(a), BoundValue::Wide(b)) => a.cmp(b),
+        }
+    }
+
+    /// Construct from an exact value, narrowing when it fits.
+    #[must_use]
+    pub fn from_big(v: BigDeltaRational) -> Self {
+        match v.narrow() {
+            Some(d) => BoundValue::Narrow(d),
+            None => BoundValue::Wide(std::sync::Arc::new(v)),
+        }
+    }
+
+    /// The exact real part.
+    #[must_use]
+    pub fn real_big(&self) -> num_rational::BigRational {
+        match self {
+            BoundValue::Narrow(d) => num_rational::BigRational::new(
+                num_bigint::BigInt::from(*d.real.numer()),
+                num_bigint::BigInt::from(*d.real.denom()),
+            ),
+            BoundValue::Wide(w) => w.real.clone(),
+        }
+    }
+
+    /// The exact infinitesimal coefficient.
+    #[must_use]
+    pub fn delta_big(&self) -> num_rational::BigRational {
+        match self {
+            BoundValue::Narrow(d) => num_rational::BigRational::new(
+                num_bigint::BigInt::from(*d.delta.numer()),
+                num_bigint::BigInt::from(*d.delta.denom()),
+            ),
+            BoundValue::Wide(w) => w.delta.clone(),
+        }
+    }
+}
+
+impl core::cmp::PartialEq for BoundValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp_value(other) == Ordering::Equal
+    }
+}
+impl core::cmp::Eq for BoundValue {}
+impl core::cmp::Ord for BoundValue {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.cmp_value(other)
+    }
+}
+impl core::cmp::PartialOrd for BoundValue {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(<Self as core::cmp::Ord>::cmp(self, other))
+    }
+}
+impl From<DeltaRational> for BoundValue {
+    fn from(d: DeltaRational) -> Self {
+        BoundValue::Narrow(d)
     }
 }
 

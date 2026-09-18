@@ -28,13 +28,19 @@ pub enum ArithEqualityStatus {
 
 /// If the lower and upper bounds coincide, the variable is *fixed* to that
 /// value; return it.
-fn fixed_value<'a>(
-    lo: Option<&'a super::simplex::Bound>,
-    hi: Option<&'a super::simplex::Bound>,
-) -> Option<&'a super::delta::DeltaRational> {
-    match (lo, hi) {
-        (Some(l), Some(u)) if l.value == u.value => Some(&l.value),
-        _ => None,
+fn fixed_value(
+    lo: Option<&super::simplex::Bound>,
+    hi: Option<&super::simplex::Bound>,
+) -> Option<super::delta::DeltaRational> {
+    // Exact equality (equal wide pairs included); the NARROW form is
+    // returned — a fixed value beyond width has no i64 constant to name
+    // it, and the caller (`fixed_to_const_reason`) is an i64-consumer
+    // optimization that declines.
+    let (l, u) = (lo?, hi?);
+    if l.value == u.value {
+        l.value.narrow()
+    } else {
+        None
     }
 }
 
@@ -79,6 +85,11 @@ struct SlackForm {
     /// The atom whose assertion interned the row.  Only bounds justified by
     /// THIS term may be re-homed (see the sweep's soundness gates).
     reason: TermId,
+    /// The row was interned through the EXACT path (`-rhs` beyond
+    /// `Rational64`, the `i64::MIN` corner): the stranded-bound sweep must
+    /// re-intern through the same exact path, never the narrow one whose
+    /// `add_constant(-rhs)` would wrap to a different row.
+    exact: bool,
 }
 
 /// Arithmetic Theory Solver (LRA/LIA)
@@ -170,7 +181,6 @@ pub struct ArithSolver {
     /// the solver instance's lifetime (like a parse-overflow atom): a
     /// re-asserted atom re-declines, and `reset()` keeps the flag for the
     /// same reason it keeps `int_terms`.
-    unrepresentable_row_assert: bool,
     int_terms: FxHashSet<TermId>,
     /// Per-ATOM tableau-row cache: `(linear form, assertion term) -> slack`.
     ///
@@ -346,11 +356,17 @@ impl Default for ArithSolver {
 /// that is neither readable nor branch-bounded (decline).
 #[derive(Debug)]
 enum FracVar {
-    /// A fractional variable with exact, representable branch bounds
-    /// (floor/ceil of the exact value — from the narrow `DeltaRational`,
-    /// or from the wide store's un-narrowed exact value when the narrowed
-    /// read does not exist).
-    Branch { var: VarId, floor: i64, ceil: i64 },
+    /// A fractional variable with EXACT branch bounds (floor/ceil of the
+    /// exact value — from the narrow `DeltaRational`, or from the wide
+    /// store's un-narrowed exact value).  The bounds are integral
+    /// `BigRational`s: a bound beyond `i64` (the `2^63`-scale class that
+    /// used to hit `Underivable`) stores exactly on the widened bound
+    /// store, so the branch exists wherever the value does.
+    Branch {
+        var: VarId,
+        floor: num_rational::BigRational,
+        ceil: num_rational::BigRational,
+    },
     /// No sound acceptance and no sound branch exist — the search must
     /// decline to `Unknown`.
     Underivable,
@@ -386,7 +402,6 @@ impl ArithSolver {
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
             int_terms: FxHashSet::default(),
-            unrepresentable_row_assert: false,
             bnb_used_reasons: FxHashSet::default(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
@@ -616,6 +631,7 @@ impl ArithSolver {
                 rhs,
                 dir,
                 reason,
+                exact: false,
             },
         );
         self.atom_rows.insert(cache_key, slack);
@@ -763,14 +779,28 @@ impl ArithSolver {
             // strict dirs must not run the equality/inequality normalizer's
             // sign flip (it would reverse a strict bound's direction), so
             // they rebuild exactly `lhs - rhs` like the delta paths did.
-            let fresh = match form.dir {
-                SlackDir::Lt | SlackDir::Gt => {
-                    let key = self.row_key(&form.lhs, form.rhs, false);
-                    self.cached_row_slack_strict(&key, &form.lhs, form.rhs, form.dir, form.reason)
-                }
-                SlackDir::Le | SlackDir::Ge | SlackDir::Eq => {
-                    let key = self.row_key(&form.lhs, form.rhs, form.dir == SlackDir::Eq);
-                    self.cached_row_slack(&key, &form.lhs, form.rhs, form.dir, form.reason)
+            let fresh = if form.exact {
+                // The row was interned EXACTLY (`-rhs` beyond width): the
+                // narrow re-intern below would build `-rhs` with the
+                // UNCHECKED negation and wrap to a different row.  Route
+                // through the same exact path that built it.
+                self.intern_exact_row(&form.lhs, form.rhs, form.dir, form.reason)
+            } else {
+                match form.dir {
+                    SlackDir::Lt | SlackDir::Gt => {
+                        let key = self.row_key(&form.lhs, form.rhs, false);
+                        self.cached_row_slack_strict(
+                            &key,
+                            &form.lhs,
+                            form.rhs,
+                            form.dir,
+                            form.reason,
+                        )
+                    }
+                    SlackDir::Le | SlackDir::Ge | SlackDir::Eq => {
+                        let key = self.row_key(&form.lhs, form.rhs, form.dir == SlackDir::Eq);
+                        self.cached_row_slack(&key, &form.lhs, form.rhs, form.dir, form.reason)
+                    }
                 }
             };
             if fresh == old {
@@ -858,6 +888,7 @@ impl ArithSolver {
                 rhs,
                 dir,
                 reason,
+                exact: false,
             },
         );
         self.atom_rows.insert(cache_key, slack);
@@ -1171,27 +1202,95 @@ impl ArithSolver {
         let lo = self
             .simplex
             .get_lower(var)
-            .map(|b| format!("{:?}", b.value.real));
+            .map(|b| format!("{:?}", b.value.narrow().map(|v| v.real)));
         let hi = self
             .simplex
             .get_upper(var)
-            .map(|b| format!("{:?}", b.value.real));
+            .map(|b| format!("{:?}", b.value.narrow().map(|v| v.real)));
         Some(format!(
             "{t:?}/v{var} val={val:?} lo={lo:?} hi={hi:?} lia_model={}",
             self.lia_model.contains_key(&var)
         ))
     }
 
+    /// The EXACT-intern arm shared by every `assert_*` entry whose `-rhs`
+    /// does not fit `Rational64` (`rhs = i64::MIN`): the row `lhs - rhs`
+    /// is built exactly in `BigRational` and interned through the shared
+    /// rescale-or-capture discipline (`Simplex::intern_row_big_reported`) —
+    /// a positive rescale into width keeps the FULL narrow machinery, a
+    /// row beyond any scaling is captured exactly in the wide store with
+    /// its zero-bound constraint intact.  The slack's `SlackForm` records
+    /// the exact path so the stranded-bound sweep re-interns through it
+    /// (the narrow re-intern's `-rhs` would wrap to a DIFFERENT row — the
+    /// pre-fix release hazard this replaces).  This retires the former
+    /// sticky-decline guard: the constraint is now represented wherever
+    /// width allows and captured exactly otherwise, so no verdict is owed
+    /// to a silent drop.
+    fn intern_exact_row(
+        &mut self,
+        lhs: &[(TermId, Rational64)],
+        rhs: Rational64,
+        dir: SlackDir,
+        reason: TermId,
+    ) -> VarId {
+        let mut big = super::simplex::BigLinExpr {
+            constant: num_rational::BigRational::new(
+                -num_bigint::BigInt::from(*rhs.numer()),
+                num_bigint::BigInt::from(*rhs.denom()),
+            ),
+            terms: Vec::new(),
+        };
+        // The integrality of the REQUESTED form (mirrors
+        // `is_integral_form` over the exact row): every coefficient
+        // integral, every referenced variable integer-valued, and the
+        // constant (`-rhs`) integral.
+        let mut integral_requested = big.constant.denom() == &num_bigint::BigInt::from(1);
+        for &(term, coef) in lhs {
+            if coef.is_zero() {
+                continue;
+            }
+            let var = self.intern(term);
+            if coef.denom() != &1 || !self.int_vars.contains(&var) {
+                integral_requested = false;
+            }
+            let cb = num_rational::BigRational::new(
+                num_bigint::BigInt::from(*coef.numer()),
+                num_bigint::BigInt::from(*coef.denom()),
+            );
+            match big.terms.iter_mut().find(|(v, _)| *v == var) {
+                Some(slot) => slot.1 += cb,
+                None => big.terms.push((var, cb)),
+            }
+        }
+        let reason_id = self.add_reason(reason);
+        let (slack, mode) = self.simplex.intern_row_big_reported(big);
+        if integral_requested && self.intern_keeps_integrality(mode, slack) {
+            self.int_vars.insert(slack);
+        }
+        self.slack_forms.insert(
+            slack,
+            SlackForm {
+                lhs: lhs.to_vec(),
+                rhs,
+                dir,
+                reason,
+                exact: true,
+            },
+        );
+        let _ = reason_id;
+        slack
+    }
+
     /// Assert: lhs <= rhs
     pub fn assert_le(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
-        // `rhs = i64::MIN` that negation does not fit, and the unchecked
-        // form panicked in debug and WRAPPED to a different row in release
-        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
-        // the honest move: the atom stays unconstrained in the tableau and
-        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        // `-rhs` beyond `Rational64` (the `i64::MIN` corner): the row is
+        // interned EXACTLY (rescaled into width or captured in the wide
+        // store) instead of declined — the constraint is represented, not
+        // dropped (the wide-LP build retiring the sticky decline).
         if checked_neg_r64(rhs).is_none() {
-            self.unrepresentable_row_assert = true;
+            let slack = self.intern_exact_row(lhs, rhs, SlackDir::Le, reason);
+            let reason_id = self.add_reason(reason);
+            self.simplex.set_upper(slack, Rational64::zero(), reason_id);
             return;
         }
         let mut expr = LinExpr::new();
@@ -1219,14 +1318,11 @@ impl ArithSolver {
 
     /// Assert: lhs >= rhs
     pub fn assert_ge(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
-        // `rhs = i64::MIN` that negation does not fit, and the unchecked
-        // form panicked in debug and WRAPPED to a different row in release
-        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
-        // the honest move: the atom stays unconstrained in the tableau and
-        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        // `-rhs` beyond `Rational64`: exact intern (see `assert_le`).
         if checked_neg_r64(rhs).is_none() {
-            self.unrepresentable_row_assert = true;
+            let slack = self.intern_exact_row(lhs, rhs, SlackDir::Ge, reason);
+            let reason_id = self.add_reason(reason);
+            self.simplex.set_lower(slack, Rational64::zero(), reason_id);
             return;
         }
         let mut expr = LinExpr::new();
@@ -1258,14 +1354,16 @@ impl ArithSolver {
     ///
     /// Example: 2x + 2y = 7 is infeasible because gcd(2,2) = 2 doesn't divide 7.
     pub fn assert_eq(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
-        // `rhs = i64::MIN` that negation does not fit, and the unchecked
-        // form panicked in debug and WRAPPED to a different row in release
-        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
-        // the honest move: the atom stays unconstrained in the tableau and
-        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        // `-rhs` beyond `Rational64`: exact intern (see `assert_le`).  The
+        // narrow-only GCD/Diophantine bookkeeping below is SKIPPED for the
+        // exact row (its `i64` coefficient/constant reads would wrap);
+        // those feeds are optimizations — the LP refutes the same
+        // constraints through the interned row.
         if checked_neg_r64(rhs).is_none() {
-            self.unrepresentable_row_assert = true;
+            let slack = self.intern_exact_row(lhs, rhs, SlackDir::Eq, reason);
+            let reason_id = self.add_reason(reason);
+            self.simplex.set_lower(slack, Rational64::zero(), reason_id);
+            self.simplex.set_upper(slack, Rational64::zero(), reason_id);
             return;
         }
         // Compute the row key up front: the LIA Diophantine bookkeeping below
@@ -1485,14 +1583,14 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs <= rhs - δ
     /// For LIA, transforms to: lhs <= rhs - 1 (since no integer exists between k and k+1)
     pub fn assert_lt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
-        // `rhs = i64::MIN` that negation does not fit, and the unchecked
-        // form panicked in debug and WRAPPED to a different row in release
-        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
-        // the honest move: the atom stays unconstrained in the tableau and
-        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        // `-rhs` beyond `Rational64`: exact intern (see `assert_le`), with
+        // the STRICT delta bound on the slack (the row-level `∘ 0`
+        // encoding is what carries strictness at any width).
         if checked_neg_r64(rhs).is_none() {
-            self.unrepresentable_row_assert = true;
+            let slack = self.intern_exact_row(lhs, rhs, SlackDir::Lt, reason);
+            let reason_id = self.add_reason(reason);
+            self.simplex
+                .set_strict_upper(slack, Rational64::zero(), reason_id);
             return;
         }
         // For an INTEGRAL row, x < k is equivalent to x <= k - 1
@@ -1549,14 +1647,12 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs >= rhs + δ
     /// For LIA, transforms to: lhs >= rhs + 1 (since no integer exists between k and k+1)
     pub fn assert_gt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
-        // `rhs = i64::MIN` that negation does not fit, and the unchecked
-        // form panicked in debug and WRAPPED to a different row in release
-        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
-        // the honest move: the atom stays unconstrained in the tableau and
-        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        // `-rhs` beyond `Rational64`: exact intern (see `assert_lt`).
         if checked_neg_r64(rhs).is_none() {
-            self.unrepresentable_row_assert = true;
+            let slack = self.intern_exact_row(lhs, rhs, SlackDir::Gt, reason);
+            let reason_id = self.add_reason(reason);
+            self.simplex
+                .set_strict_lower(slack, Rational64::zero(), reason_id);
             return;
         }
         // For an INTEGRAL row, x > k is equivalent to x >= k + 1 (same
@@ -1631,29 +1727,42 @@ impl ArithSolver {
             // - Negative delta means we have a strict upper bound (x < r)
             //   so round down to the previous integer
             // - Zero delta means exact value, round to nearest integer
-            Some(if dval.delta.is_positive() {
+            //
+            // CHECKED: the ±1 shift at the walls (`r = i64::MAX` under a
+            // positive delta, `i64::MIN` under a negative one) leaves
+            // `i64` — the unchecked form wrapped (a fabricated witness at
+            // the OPPOSITE end of the range).  `None` hands publication to
+            // the exact channel (`value_exact`), which rounds in
+            // `BigRational` and publishes the true integer.
+            if dval.delta.is_positive() {
                 // x > r implies x >= ceil(r) for integers
                 // If r is already an integer, we need r + 1
                 let real_val = dval.real;
                 if real_val.is_integer() {
-                    Rational64::from_integer(real_val.to_integer() + 1)
+                    real_val
+                        .to_integer()
+                        .checked_add(1)
+                        .map(Rational64::from_integer)
                 } else {
-                    Rational64::from_integer(real_val.ceil().to_integer())
+                    Some(Rational64::from_integer(real_val.ceil().to_integer()))
                 }
             } else if dval.delta.is_negative() {
                 // x < r implies x <= floor(r) for integers
                 // If r is already an integer, we need r - 1
                 let real_val = dval.real;
                 if real_val.is_integer() {
-                    Rational64::from_integer(real_val.to_integer() - 1)
+                    real_val
+                        .to_integer()
+                        .checked_sub(1)
+                        .map(Rational64::from_integer)
                 } else {
-                    Rational64::from_integer(real_val.floor().to_integer())
+                    Some(Rational64::from_integer(real_val.floor().to_integer()))
                 }
             } else {
                 // No strict bound, just return the value
                 // Round to nearest integer for consistency
-                dval.real
-            })
+                Some(dval.real)
+            }
         } else {
             // For reals, the raw real part is NOT a model: a variable
             // sitting at a strict bound is stored as `r ± δ`, so returning
@@ -1661,12 +1770,23 @@ impl ArithSolver {
             // that created it (e.g. `x > 0` would report `x = 0`).
             // Substitute a concrete positive δ₀ that keeps every bound
             // satisfied (see `Simplex::delta_instantiation`).
+            //
+            // CHECKED (the wide-LP build): the instantiation sum can leave
+            // `i64` width — e.g. a variable resting on the strict bound
+            // `-2^63 - δ` instantiates to `-2^63 - δ₀`, beyond `i64::MIN`.
+            // The unchecked form PANICKED in debug and WRAPPED in release
+            // (a dishonest witness at +2^63 that the model certifier then
+            // rejected, degrading the verdict to `unknown`).  `None` hands
+            // publication to the exact channel (`value_exact`), which
+            // instantiates in `BigRational` and publishes the true value.
             let dval = self.simplex.delta_value(var);
-            Some(if dval.delta.is_zero() {
-                dval.real
+            if dval.delta.is_zero() {
+                Some(dval.real)
             } else {
-                dval.real + dval.delta * self.simplex.delta_instantiation()
-            })
+                let d0 = self.simplex.delta_instantiation()?;
+                let dd = checked_mul_r64(dval.delta, d0)?;
+                checked_add_r64(dval.real, dd)
+            }
         }
     }
 
@@ -1680,19 +1800,49 @@ impl ArithSolver {
     /// has not resolved them — publishing would fabricate integrality).
     pub fn value_exact(&self, term: TermId) -> Option<num_rational::BigRational> {
         let &var = self.term_to_var.get(&term)?;
-        if self.simplex.is_wide_basic(var) {
-            let v = self.simplex.wide_basic_value_exact(var)?;
-            if self.int_vars.contains(&var) && v.denom() != &num_bigint::BigInt::from(1) {
-                return None;
+        // The exact read covers BOTH wide channels: a wide basic's defining
+        // row and a wide point value (a non-basic snapped to a wide
+        // bound).  The δ-instantiation for a value carrying an
+        // infinitesimal substitutes the EXACT `δ₀`
+        // (`delta_instantiation_exact` — the narrow one declines on wide
+        // states), so a published witness satisfies its strict bounds at
+        // any width.
+        let exact = self.simplex.point_value_exact(var)?;
+        if self.int_vars.contains(&var) {
+            // Integer rounding over the exact parts (the `value` rounding
+            // applied in `BigRational` — the ±1 shift at the walls is
+            // representable here), and only INTEGRAL results publish (a
+            // fractional exact means branch-and-bound has not resolved
+            // the variable — publishing would fabricate integrality).
+            let rounded = if exact.delta.is_positive() {
+                if exact.real.fract().is_zero() {
+                    exact.real.clone()
+                        + num_rational::BigRational::from(num_bigint::BigInt::from(1))
+                } else {
+                    exact.real.ceil()
+                }
+            } else if exact.delta.is_negative() {
+                if exact.real.fract().is_zero() {
+                    exact.real.clone()
+                        - num_rational::BigRational::from(num_bigint::BigInt::from(1))
+                } else {
+                    exact.real.floor()
+                }
+            } else {
+                exact.real.clone()
+            };
+            if rounded.fract().is_zero() {
+                Some(rounded)
+            } else {
+                None
             }
-            return Some(v);
+        } else {
+            if exact.delta.is_zero() {
+                return Some(exact.real);
+            }
+            let d0 = self.simplex.delta_instantiation_exact()?;
+            Some(exact.real + exact.delta * d0)
         }
-        self.value(term).map(|v| {
-            num_rational::BigRational::new(
-                num_bigint::BigInt::from(*v.numer()),
-                num_bigint::BigInt::from(*v.denom()),
-            )
-        })
     }
 
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
@@ -1983,24 +2133,28 @@ impl ArithSolver {
             // -5)` with `v2 = 3` read `v1 = 0` and answered `sat` with an
             // invalid witness).  The exact un-narrowed value still yields
             // branch bounds when they fit `i64`.
-            let branch = match self.simplex.delta_value_exact(var) {
-                Some(val) => {
-                    if val.real.is_integer() {
+            // The EXACT read (wide rows, wide points, narrow assignment
+            // alike): a variable is RESOLVED exactly when its value is an
+            // integer — integral real part AND no infinitesimal (an `Int`
+            // variable resting at `r − δ` under a strict bound is NOT at
+            // `r`; reading only the real part snapshot-published `r` as a
+            // model value that violates the very bound — the wall cases
+            // where the `k ± 1` tightening could not run).  Otherwise the
+            // branch bounds are the exact floor/ceil at any width: the
+            // `Underivable` class narrows to "no exact value at all".
+            let branch = match self.simplex.point_value_exact(var) {
+                Some(exact) => {
+                    if exact.real.fract().is_zero() && exact.delta.is_zero() {
                         continue;
                     }
-                    FracVar::Branch {
-                        var,
-                        floor: val.floor(),
-                        ceil: val.ceil(),
-                    }
+                    let (floor, ceil) =
+                        super::simplex::Simplex::floor_ceil_big(&exact.real, &exact.delta);
+                    FracVar::Branch { var, floor, ceil }
                 }
-                None => match self.simplex.wide_floor_ceil_big(var) {
-                    Some((floor, ceil)) => FracVar::Branch { var, floor, ceil },
-                    None => {
-                        underivable = underivable.or(Some(var));
-                        continue;
-                    }
-                },
+                None => {
+                    underivable = underivable.or(Some(var));
+                    continue;
+                }
             };
             let idx = var as usize;
             let lo = self.simplex.lower_real_at(idx);
@@ -2089,7 +2243,46 @@ impl ArithSolver {
         }
         self.lia_model.clear();
         for &var in int_vars {
-            self.lia_model.insert(var, self.simplex.value(var));
+            // The honest NARROW integral value: the exact point value
+            // rounded by the infinitesimal's sign (an `Int` variable at
+            // `r ± δ` models at `r ± 1`), narrowed when representable.
+            // The old body snapshotted the RAW real part — for a variable
+            // resting on a strict bound that published `r` itself, a
+            // witness violating the bound (the `i64::MIN`-corner class
+            // where the `k ± 1` tightening cannot run).  A value beyond
+            // width is left to the exact publication channel
+            // (`value_exact`), never fabricated here.
+            let Some(exact) = self.simplex.point_value_exact(var) else {
+                continue;
+            };
+            let rounded = if exact.delta.is_positive() {
+                if exact.real.fract().is_zero() {
+                    exact.real.clone()
+                        + num_rational::BigRational::from(num_bigint::BigInt::from(1))
+                } else {
+                    exact.real.ceil()
+                }
+            } else if exact.delta.is_negative() {
+                if exact.real.fract().is_zero() {
+                    exact.real.clone()
+                        - num_rational::BigRational::from(num_bigint::BigInt::from(1))
+                } else {
+                    exact.real.floor()
+                }
+            } else {
+                exact.real.clone()
+            };
+            if !rounded.fract().is_zero() {
+                // Fractional exact value: unresolved — do not publish.
+                continue;
+            }
+            use num_traits::ToPrimitive as _;
+            if let (Some(n), Some(d)) = (rounded.numer().to_i64(), rounded.denom().to_i64()) {
+                // `to_i64` already rejects beyond-width values (they stay
+                // unpublished here and publish exactly through
+                // `value_exact`); no clamping, ever.
+                self.lia_model.insert(var, Rational64::new_raw(n, d));
+            }
         }
     }
 
@@ -2566,9 +2759,13 @@ impl ArithSolver {
             let hi = self.simplex.bound_upper_at(j);
             // Which finite bound the non-basic rests at (needed to form the
             // non-negative slack y_j).  Resting at none ⇒ no sound cut.
-            let (at_lower, bound) = if lo.is_some_and(|b| b.value.real == vj) {
+            // A WIDE resting bound has no `i64` algebra for the GMI
+            // formulas below — the cut is declined (an optimization;
+            // branch-and-bound stays complete).
+            let narrow_real = |b: &super::simplex::Bound| b.value.narrow().map(|v| v.real);
+            let (at_lower, bound) = if lo.is_some_and(|b| narrow_real(b) == Some(vj)) {
                 (true, lo)
-            } else if hi.is_some_and(|b| b.value.real == vj) {
+            } else if hi.is_some_and(|b| narrow_real(b) == Some(vj)) {
                 (false, hi)
             } else {
                 return None;
@@ -2603,7 +2800,8 @@ impl ArithSolver {
             let hat_a = if at_lower { a_j } else { -a_j };
             let bar_a = -hat_a;
 
-            let is_int_here = self.int_vars.contains(&xj) && bound.value.real.is_integer();
+            let is_int_here = self.int_vars.contains(&xj)
+                && bound.value.narrow().is_some_and(|b| b.real.is_integer());
             // CHECKED GMI coefficient arithmetic: `fj / f0` (and the
             // siblings below) PANICKED in debug and silently WRAPPED in
             // release on the dillig wide-bound family — and a wrapped
@@ -2649,7 +2847,7 @@ impl ArithSolver {
             // The `γ_j·bound` accumulation is checked for the same reason:
             // a wrapped `rhs` publishes a cut that is not implied by its
             // reasons.
-            let contrib = checked_mul_r64(gamma, bound.value.real)?;
+            let contrib = checked_mul_r64(gamma, bound.value.narrow()?.real)?;
             if at_lower {
                 cut.add_term(xj, -gamma);
                 rhs = checked_add_r64(rhs, contrib)?;
@@ -2740,10 +2938,12 @@ impl ArithSolver {
             }
         };
         for k in [floor, ceil] {
-            let k = Rational64::from_integer(k);
+            let k = super::delta::BigDeltaRational::real_only(k);
             self.simplex.push();
-            self.simplex.set_lower(var, k, BRANCH_REASON);
-            self.simplex.set_upper(var, k, BRANCH_REASON);
+            self.simplex
+                .set_lower_exact(var, k.clone(), smallvec::smallvec![BRANCH_REASON]);
+            self.simplex
+                .set_upper_exact(var, k, smallvec::smallvec![BRANCH_REASON]);
             let feasible =
                 matches!(self.simplex.check(), Ok(())) && !self.simplex.resource_limit_reached();
 
@@ -2762,7 +2962,8 @@ impl ArithSolver {
             /// The node's exact up-branch bound (`ceil` of the exact
             /// fractional value, captured at node creation — see the
             /// unwind loop for why it is not re-read from the assignment).
-            ceil: i64,
+            /// An integral `BigRational`: the exact channel at any width.
+            ceil: num_rational::BigRational,
             up_done: bool,
             saw_unknown: bool,
         }
@@ -2773,16 +2974,21 @@ impl ArithSolver {
         fn take_branch(
             s: &mut ArithSolver,
             var: VarId,
-            bound: i64,
+            bound: num_rational::BigRational,
             upper: bool,
             unknown: &mut bool,
         ) -> bool {
-            let bound = Rational64::from_integer(bound);
+            // The EXACT branch bound (an integral `BigRational`): the
+            // widened store takes it at any width — the `Underivable`
+            // decline exists now only for a value with no exact read.
+            let bound = super::delta::BigDeltaRational::real_only(bound);
             s.simplex.push();
             if upper {
-                s.simplex.set_upper(var, bound, BRANCH_REASON);
+                s.simplex
+                    .set_upper_exact(var, bound, smallvec::smallvec![BRANCH_REASON]);
             } else {
-                s.simplex.set_lower(var, bound, BRANCH_REASON);
+                s.simplex
+                    .set_lower_exact(var, bound, smallvec::smallvec![BRANCH_REASON]);
             }
             match s.simplex.check() {
                 Ok(()) if !s.simplex.resource_limit_reached() => true,
@@ -2836,11 +3042,12 @@ impl ArithSolver {
             let (var, floor_v, ceil_v) = match self.find_fractional_int_var(int_vars) {
                 Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
                 Some(FracVar::Underivable) => {
-                    // An integer variable whose exact value is neither readable
-                    // nor branch-bounded (a wide-basic whose floor/ceil leave
-                    // `i64`): no sound acceptance and no sound branch exist —
-                    // the search declines honestly rather than snapshot a
-                    // fabricated value.
+                    // An integer variable with no honest value AND no exact
+                    // floor/ceil (a wide-basic whose row cannot even be
+                    // evaluated exactly — a stale reference): no sound
+                    // acceptance and no sound branch exist — the search
+                    // declines honestly rather than snapshot a fabricated
+                    // value.
                     for _ in 0..stack.len() {
                         self.simplex.pop();
                     }
@@ -2884,7 +3091,15 @@ impl ArithSolver {
                             // ancestors' siblings; an exhausted tree
                             // answers Unsat).
                             dead_leaf = true;
-                            (0, 0, 0)
+                            (
+                                0,
+                                num_rational::BigRational::from_integer(num_bigint::BigInt::from(
+                                    0,
+                                )),
+                                num_rational::BigRational::from_integer(num_bigint::BigInt::from(
+                                    0,
+                                )),
+                            )
                         }
                     }
                 }
@@ -2901,7 +3116,7 @@ impl ArithSolver {
                     self.simplex.pop();
                     frame.saw_unknown |= matches!(outcome, TheoryResult::Unknown);
                     if !frame.up_done {
-                        let ceil_v = frame.ceil;
+                        let ceil_v = frame.ceil.clone();
                         let mut saw = frame.saw_unknown;
                         if take_branch(self, frame.var, ceil_v, false, &mut saw) {
                             frame.up_done = true;
@@ -2932,7 +3147,7 @@ impl ArithSolver {
                 continue; // descend into the down subtree
             }
             // Branch up: var >= ceil(value).
-            if take_branch(self, var, ceil_v, false, &mut saw_unknown) {
+            if take_branch(self, var, ceil_v.clone(), false, &mut saw_unknown) {
                 stack.push(Node {
                     var,
                     ceil: ceil_v,
@@ -2964,7 +3179,7 @@ impl ArithSolver {
                     // consult the raw assignment entry, which for a
                     // wide-basic variable is only its exact value while
                     // that value narrows — a fabricated re-read otherwise).
-                    let ceil_v = frame.ceil;
+                    let ceil_v = frame.ceil.clone();
                     let mut saw = frame.saw_unknown;
                     if take_branch(self, frame.var, ceil_v, false, &mut saw) {
                         frame.up_done = true;
@@ -3040,11 +3255,6 @@ impl Theory for ArithSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
-        // A declined (unrepresentable) assertion leaves its atom
-        // unconstrained in the tableau: no verdict may rest on it.
-        if self.unrepresentable_row_assert {
-            return Ok(TheoryResult::Unknown);
-        }
         self.lia_model.clear();
         // Slice 6 cadence: the tighten runs at every final-check round (the
         // only place wide rows from earlier rounds exist). A pending
@@ -3208,10 +3418,9 @@ impl Theory for ArithSolver {
         // structural fact (its sort), not search state, and the replay that
         // follows this reset re-interns terms through the sort-blind
         // `assert_*` paths – `intern` consults this registry to re-mark.
-        // `unrepresentable_row_assert` is deliberately KEPT too: the replay
-        // re-asserts the same wide-bound atom and would re-decline, so a
-        // cleared flag would let a later round answer over a tableau that
-        // silently dropped the atom.
+        // (The former sticky `unrepresentable_row_assert` flag lived here
+        // too; the wide-LP build retired it — every `assert_*` entry now
+        // interns its row exactly, so there is no dropped atom to remember.)
         self.var_to_term.clear();
         self.reason_counter = 0;
         self.reasons.clear();
@@ -3360,7 +3569,11 @@ impl ArithSolver {
                 // term_to_var maps TermId → VarId; we stored in var_to_term in order
                 let var = self.term_to_var.get(&term).copied()?;
                 let _ = idx; // suppress warning
-                let dval = self.simplex.delta_value(var);
+                // Wide-aware read: a variable whose honest value does not
+                // narrow (wide basic / wide point) is SKIPPED, never read
+                // from the stale narrow entry — a fabricated `0` would
+                // merge two such variables into a phony equality.
+                let dval = self.simplex.delta_value_exact(var)?;
                 Some((dval, var, term))
             })
             .collect();
@@ -3455,7 +3668,8 @@ impl ArithSolver {
             .iter()
             .filter_map(|&term| {
                 let var = self.term_to_var.get(&term).copied()?;
-                Some((self.simplex.delta_value(var), term))
+                // Wide-aware read (see the shared-equality candidates).
+                Some((self.simplex.delta_value_exact(var)?, term))
             })
             .collect();
         if candidates.len() < 2 {
@@ -3614,11 +3828,19 @@ impl ArithSolver {
                 // needs lower(var): tracker first, then simplex
                 self.prop_get_lower(var)
                     .map(|e| (e.value, e.reason))
-                    .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
+                    .or_else(|| {
+                        self.simplex
+                            .get_lower(var)
+                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                    })
             } else {
                 self.prop_get_upper(var)
                     .map(|e| (e.value, e.reason))
-                    .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
+                    .or_else(|| {
+                        self.simplex
+                            .get_upper(var)
+                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                    })
             };
             let Some((bv, br)) = bound else {
                 lo_ok = false;
@@ -3644,11 +3866,19 @@ impl ArithSolver {
             let bound = if coef.is_positive() {
                 self.prop_get_upper(var)
                     .map(|e| (e.value, e.reason))
-                    .or_else(|| self.simplex.get_upper(var).map(|b| (b.value, b.reason)))
+                    .or_else(|| {
+                        self.simplex
+                            .get_upper(var)
+                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                    })
             } else {
                 self.prop_get_lower(var)
                     .map(|e| (e.value, e.reason))
-                    .or_else(|| self.simplex.get_lower(var).map(|b| (b.value, b.reason)))
+                    .or_else(|| {
+                        self.simplex
+                            .get_lower(var)
+                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                    })
             };
             let Some((bv, br)) = bound else {
                 hi_ok = false;

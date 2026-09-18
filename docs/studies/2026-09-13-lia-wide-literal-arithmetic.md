@@ -2222,3 +2222,104 @@ as of this measurement, empty.
     settled-atom arm and re-measure the 22 blocked survey members (they
     currently keep `unknown` through ≥1 nongenuine width-limit block
     each — the upgrade does not fire on them today either way).
+
+## Continuation 39 (2026-09-18): the wide-LP build landed — the bound channel widened, the sticky declines retired, and the evaluator made exact (items 77–80)
+
+Executed the handoff
+(`docs/studies/2026-09-18-exact-arithmetic-wide-lp-handoff.md`).
+**Survey delta on the fixed seeds (20261000–02 × 600): gap 113 → 46**
+(70 members closed: 68 SAT-side, 2 UNSAT-side; decisive 1 647 → 1 728),
+the perf gate PASS at conflicts 0.857 / decisions 0.906 / wall 0.85, and
+zero verdict disagreements anywhere (6 fresh differential seeds + the
+fixed seeds re-run — every newly-decided verdict agrees with z3).
+
+77. **The bound channel is exact** (`BoundValue` in `delta.rs`): the
+    simplex's `lower`/`upper` stores hold `Narrow(DeltaRational)` or
+    `Wide(Arc<BigDeltaRational>)`, with every consumer comparing exactly
+    (`cmp_value`/`cmp_narrow` — narrow-narrow arms are the old i64 ops, so
+    wide-free states execute the identical fast path; the perf gate's
+    counters confirm bit-level neutrality on its corpus).  `set_*_exact`
+    entries store values at any width; `record_crossing`, the violation
+    scans, the SOI ratio tests, the pop re-snap, the interval refutation
+    and the slice-6 endpoint selectors all read through the exact
+    accessors.  Derived bounds store EXACTLY where they used to weaken for
+    width (`tighten_int_bound_exact` computes the integral tightening in
+    `BigRational`; `weaken_int_bound`'s i64-fit decline is gone).
+78. **The point-value side store** (`wide_points`): a non-basic snapped to
+    a wide bound (branch bounds at `2^63`, the `i64::MIN` corners) parks
+    its exact point there; `assignment[]` holds the stale-by-design entry
+    and the staleness flag defers.  Every exact reader
+    (`point_value_exact`, `eval_big_raw`, `update_row_exact`) consults it,
+    and `eval_expr`'s fast path routes wide-point rows to the exact
+    evaluation — the strengthened definitional invariant caught the first
+    version reading the stale entry (a plausible-but-wrong value with no
+    overflow to catch).  **Two latent defects the widened bounds exposed,
+    fixed at the root**: (a) `note_bound_change` snapped BASIC variables to
+    their bounds, desyncing the entry from its own row (`pop`'s re-snap
+    and `crash_basis` already skipped basics — this site lacked the
+    check); (b) the WIDE-LEAVING pivot delta-propagated from the leaving
+    basic's stale entry into the substituted rows — every row rewritten by
+    a wide-leaving pivot now takes the `was_wide` contract (delta loop
+    skips, commit recomputes exactly), item 43's discipline applied to the
+    leaving side.
+79. **The sticky declines retired** (`intern_exact_row` +
+    `Simplex::intern_row_big_reported`): every `assert_*` entry whose
+    `-rhs` leaves `Rational64` (`rhs = i64::MIN`) interns its row through
+    the shared rescale-or-capture discipline — a positive rescale into
+    width keeps the full narrow machinery, a row beyond any scaling is
+    captured exactly in the wide store.  `unrepresentable_row_assert` is
+    deleted; item 56's regression now pins DECIDABLE verdicts (the
+    satisfiable side `sat` at `x = i64::MIN`, the crossed pair `unsat`,
+    both z3-certified).  The `SlackForm` records the exact path so the
+    stranded-bound rehome re-interns through it (the narrow re-intern's
+    `-rhs` would wrap to a different row).
+80. **The evaluator is exact** (`EvalVal::NumBig` in `model_eval.rs`): the
+    model-verification gate's numeric channel widens — beyond-width folds,
+    negations (`-i64::MIN`), subtractions and comparisons carry the exact
+    `BigRational` instead of reporting `Unrepresentable`, and the `Var`
+    read falls back to `value_exact` for wide-published witnesses.  This
+    closes the item-64/67 nongenuine-block class at its root: the honest
+    boundary-valued model (`x = i64::MIN` under `(-x > i64::MAX)`) now
+    CERTIFIES where the width-limited gate blocked its own correct model
+    as nongenuine and degraded a decidable `sat` to `unknown` (the
+    release-wrap predecessor evaluated such atoms to the WRONG truth
+    value — a false-`sat` hazard).  The handoff's example case and the
+    `i64::MIN` int corner publish exact witnesses (`xr = -2^63 - 2`,
+    `xi = -2^63 - 1`), each validated by binding the model as
+    `define-fun`s and re-solving with z3; `get-model` prints them as
+    values (the `?` placeholder the formatter used to emit for
+    exact-published entries is fixed — arithmetic value terms delegate to
+    the shared printer).  The B&B branch channel is widened end-to-end
+    (`wide_floor_ceil_exact`, `FracVar::Branch` with integral
+    `BigRational` bounds asserted via `set_*_exact`): `find_fractional_int_var`
+    resolves through the exact point read with the HONEST integrality test
+    (integral real part AND no infinitesimal — the raw-real-part read
+    snapshot-published `r` for an `Int` variable resting at `r ± δ`,
+    a witness violating its own strict bound), and
+    `snapshot_lia_model` stores only honest integral narrow values.
+    The model-blocking fixtures that leaned on the width-limit concession
+    are re-scoped to their current-correct contracts (documented in the
+    tests; a deterministic gate-only-refutation fixture is recorded as
+    follow-up — the exact channel certifies or refutes every arithmetic
+    shape the old fixtures used).
+
+**Verification:** release-mode workspace suite 11 955/11 956 (disk
+pressure documented; the 1 failure is the ~8-minute rehome regression at
+nextest's 180 s cap under machine load 46 — verdict verified `sat` via
+the CLI, 8m04s vs the baseline binary's 8m44s on the same input);
+doc tests, clippy `-D warnings`, fmt, rustdoc `-D warnings` clean; Z3
+parity 176/177 Correct, 0 disagreements (z3 4.16.0); wide differential
+3 × 300 + mixed differential 3 × 400 fresh seeds (20261170–75) plus the
+fixed survey seeds 3 × 600 — zero verdict disagreements, zero refuted
+models; debug-panic sweep 177/177 over the parity corpus, zero panics;
+perf gate PASS (conflicts 0.857, decisions 0.906, wall 0.85 vs the
+pinned `f60e26c8` baseline); gap survey on the fixed seeds 113 → 46
+members, 70 closed (68 SAT-side, 2 UNSAT-side).  New regressions in
+`nixie-solver/tests/arith_wide_literal_regressions.rs`
+(`i64_min_real_strict_bound_decides_with_exact_model`,
+`i64_min_int_strict_bound_publishes_exact_witness`,
+`boundary_negation_certifies_the_min_valued_model`,
+`exact_model_values_print_as_values`,
+`boundary_scale_sum_bound_certifies`) plus the re-scoped
+`i64_min_bound_rows_decline_instead_of_wrapping`, the model-blocking
+contracts, and the evaluator's exact-channel pins in `model_eval.rs`.

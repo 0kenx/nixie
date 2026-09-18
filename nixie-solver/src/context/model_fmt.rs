@@ -806,6 +806,24 @@ impl Context {
                     | TermKind::Store(..)
                     | TermKind::StringLit(_)
                     | TermKind::DtConstructor { .. }
+                    // A synthesized exact arithmetic value: the
+                    // wide-publication channel's `(/ numer denom)` term
+                    // (which the constructor folds to `(* numer 1)`-shaped
+                    // products when the denominator is 1, and plain
+                    // numerals for integer sorts).  The shared printer
+                    // renders `Div` by sort (`/` for `Real`, Euclidean
+                    // `div` for `Int`) and the compound arithmetic forms
+                    // as themselves, keeping the printed model
+                    // re-readable as the same value — the `?` placeholder
+                    // this arm used to fall through to is not a value at
+                    // all (the exact-publication build's `get-model` gap:
+                    // `get-value` printed the rational while `get-model`
+                    // printed `?` for the same entry).
+                    | TermKind::Div(..)
+                    | TermKind::Add(..)
+                    | TermKind::Sub(..)
+                    | TermKind::Mul(..)
+                    | TermKind::Neg(..)
                     // A synthesized set value: a canonical
                     // `set.union`-of-`set.singleton` term (or `set.empty`),
                     // which the printer renders as itself — so a printed

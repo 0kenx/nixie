@@ -1089,8 +1089,14 @@ impl<'a> CdclSolver<'a> {
             let mut any: Option<TermId> = None;
             for &(t, _) in factors {
                 let vid = self.var[&t];
-                let lo = self.simplex.get_lower(vid).map(|b| b.value.real);
-                let hi = self.simplex.get_upper(vid).map(|b| b.value.real);
+                let lo = self
+                    .simplex
+                    .get_lower(vid)
+                    .and_then(|b| b.value.narrow().map(|v| v.real));
+                let hi = self
+                    .simplex
+                    .get_upper(vid)
+                    .and_then(|b| b.value.narrow().map(|v| v.real));
                 match (lo, hi) {
                     (Some(lo), Some(hi)) => {
                         let range = hi - lo;
