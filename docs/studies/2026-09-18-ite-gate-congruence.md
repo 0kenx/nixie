@@ -146,3 +146,26 @@ ite-power/` (recorded by the landing).
 4. **Congruence during probing**: kissat's probe→congruence interleave
    derives hyper-binaries that complete half-encoded gates before
    extraction; our extraction only sees complete 4-clause patterns.
+
+## Powered experiment (10 seeds × 30-instance standing corpus, 60 s cap)
+
+`precompile/1fd5b96f/benchmark/ite-power/power.tsv` (600 runs, both-censored
+cells recorded and skipped for further seeds):
+
+- **0 verdict mismatches** over all cells.
+- solved-at-cap: 234 = 234 (unchanged).
+- Conflicts geomean over the 14 instances with paired cells: **0.9915**;
+  per-family seed-averaged: b21 0.941, Iter22 0.964, s38584 0.974, the
+  inert band exactly 1.000, worst cell b22 1.005 (noise).
+- bv_ILA solves in ~100 s on this machine and cap-censors at 60 s in both
+  arms; its evidence remains the deterministic single-trajectory numbers
+  above (405,848 → 302,978 conflicts, verdict-consistent).
+
+The seed-averaged per-family ratios (e.g. b21 0.941 vs the seed-1 0.73)
+are the honest numbers — per-seed spreads on these instances are wide,
+exactly the CDCL-chaos caveat; the aggregate claim is "no regression,
+targeted improvement, soundness-clean", not a headline speedup. The big
+remaining win on this family needs the fold-trigger slice below.
+
+Perf-gate BASELINE re-pinned to this landing (1fd5b96f) — deliberate
+heuristic landing, conflicts moved 0.984 at GATE_SEEDS=10.
