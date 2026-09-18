@@ -52,6 +52,15 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = 'test(pete_cxs_bp_is_unsat_on_every_trajectory)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# The rehome wide-rational blowup canary: known-slow by mechanism (the
+# study quantifies ~1180 s in this profile), `#[ignore]`d out of the
+# default pass. This override sizes the *explicit* `--run-ignored only`
+# run (25x60s) so the guard stays runnable without the 3x60s default
+# terminating it mid-refutation.
+[[profile.default.overrides]]
+filter = 'test(rehome_does_not_fabricate_a_crossing_on_a_referenced_slack)'
+slow-timeout = { period = "60s", terminate-after = 25 }
+
 [[profile.default.overrides]]
 filter = 'package(nixie-cli) and (test(timeout) or test(bench))'
 test-group = 'nixie-cli-subprocess'
