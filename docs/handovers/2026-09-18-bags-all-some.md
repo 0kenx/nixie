@@ -93,3 +93,57 @@ query folding throughout. Still honest parse rejections:
   `cargo fmt -p`/`clippy -p` (a teammate's WIP file fails workspace
   lint), full-suite `-j 8` with standalone re-runs of any load-sensitive
   failure, and pristine-worktree A/B before believing any regression.
+
+---
+
+# CORRECTION (same day, quiet-machine re-verification)
+
+## The SAT "layout-dependent false unsat" is WITHDRAWN — it was a
+## disk-pressure build-corruption artifact
+
+On a quiet machine, the finding does not survive clean builds:
+
+- Fresh, clean-disk builds of `740c16bd` and of current main
+  (`4e05b46e`) answer **`sat`** on `6s299b685_Iter22.cnf` — as does
+  `precompile/13173c88`, and every binary at every commit in and after
+  the window that I could rebuild.
+- Nine deliberate layout perturbations of `740c16bd` (unrelated source
+  edits, `codegen-units=1`, `debuginfo=1`, `opt-level=2`, `panic=abort`,
+  incremental-rebuild cycles in a warmed target) — **all `sat`**.
+- The perf gate on a fresh `4e05b46e` build: **PASS, 1.000× conflicts/
+  decisions, zero verdict mismatches**. Same for `740c16bd`.
+
+The only binaries that ever answered `unsat` were built in target
+directories that had survived the session's disk-full events (/media/data
+at 99–100%). The consistent explanation: a truncated/partial artifact
+written under disk pressure linked into a deterministically-corrupt
+binary; clean rebuilds cure it. The handovers' existing warning ("a
+linker SIGBUS mid-gate means the disk, not the code") understates the
+hazard — **a disk-pressure build can fail silently and yield a
+wrong-verdict binary that passes every per-run determinism check**.
+Rule: never trust — never *report* — a verdict from a binary built while
+the disk was full; rebuild clean and re-run before escalating.
+
+The SAT owner has no layout-UB to hunt on this evidence. (Not proven
+absent — proven *unreproduced* across every reconstruction attempted;
+both manifesting binaries are deleted.)
+
+## The rehome-test timeout on main belongs to `51adf259` (arith owner)
+
+`rehome_does_not_fabricate_a_crossing_on_a_referenced_slack` (added in
+`740c16bd`, where it passes in 7.5 s) times out at 180 s from
+`51adf259` onward — the ±1-divisor identity folds (`builder.rs` +65,
+`rewrite/arith.rs` +10, landed inside the `docs(study)`-prefixed commit)
+— on a fresh target with a clean disk, at `51adf259`, at `3b5c2721`,
+and on current main. My two-point bisection (740c16bd pass → 3b5c2721
+timeout) initially mis-attributed it to my purify fix; the intermediate
+commits tell the real story. The full-suite "1 timed out" seen in
+current runs is exactly this test. It is the arith owner's perf cliff
+(or loop) on their own instance — `xi = 658812288346769706` is the
+known model if they want to profile.
+
+## Quiet-machine clean statements
+
+- Full workspace suite at `4e05b46e`: **11957 tests, 11956 passed**,
+  1 timed out (the rehome test above), 14 skipped.
+- Perf gate at `4e05b46e` (fresh build): **PASS**, 1.000× counters.
