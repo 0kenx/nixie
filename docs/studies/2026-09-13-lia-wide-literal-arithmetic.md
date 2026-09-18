@@ -2134,3 +2134,43 @@ disagreement — no wrong verdict anywhere on the fixed-seed sample either.
 The remaining gap is pure search capacity (item 67's site map governs);
 the wrong-verdict ledger for the arithmetic arc's mixed-fuzz family is,
 as of this measurement, empty.
+
+## Continuation 38 (2026-09-18): item 76 — the non-monotone bound overwrite on content-shared rows, mapped but NOT reproduced (the next session's probe target)
+
+76. **A latent overwrite class, identified by reading while auditing the
+    rehome's declines.**  The audit first: gate-2 declines (the atom's own
+    bound no longer on the stranded slack) are the NORM, not the exception
+    — 3 788 of 3 792 decline events on the item-69 instance read UNTIED
+    (`old_val ≠ form_val` at that instant) — yet 13 fresh mixed seeds ×
+    400 and the fixed-seed survey show no refuted model: the mid-search
+    assignment is routinely stale, so an untied reading is not a dropped
+    constraint, and declines are sound when the remaining live bound is at
+    least as tight as the atom's (a tighter propagated bound SUBSUMES the
+    atom's own).  That soundness rests on `set_upper`/`set_lower` never
+    WEAKENING a live bound — the doc comment says "Monotone", but the
+    bodies OVERWRITE unconditionally.  And the collision is structural:
+    `intern_row_cached` content-addresses by canonical form, so a STRICT
+    atom's delta row (`slack ≤ 0−δ`) and a NON-STRICT atom's row over the
+    same form (`slack ≤ 0`) land on ONE slack — whichever assert runs LAST
+    wins, and a loose-last write erases the strictness (a false-`sat`
+    shape for Real variables: the LP may then sit at exactly the excluded
+    point).
+    * **Not reproduced**: three script-order variants plus the 5 200-instance
+      differential record stay clean — the re-assert cadence (every
+      backtrack re-sends live literals) evidently re-tightens before any
+      model is accepted.  The likely reachability needs a specific
+      decision-level interleaving the SMT-LIB surface cannot order.
+    * **The fix design, and its trap**: the naive "keep the tighter live
+      bound" is UNSOUND as written — a declined weaker write leaves no
+      trail entry, so popping the tighter bound's scope drops the weaker
+      atom's constraint entirely (this is why the code overwrites
+      blindly).  The correct shape is Z3's `lar_solver` bound discipline:
+      a per-variable bound-shadowing stack where each accepted write
+      journals the displaced bound, and an undo re-applies the shadowed
+      one.  Do NOT land a decline without the journal.
+    * Probe entry point for the next session: instrument the
+      `set_upper_delta`/`set_lower_delta` writes for a shared-LinKey var
+      with a STRICT-then-LOOSE order at different decision levels (a
+      `push`/`pop` driver with mixed `lt`/`le` atoms over one Real form
+      is the cheapest controllable shape), then check the model-accept
+      path against the strict atom.
