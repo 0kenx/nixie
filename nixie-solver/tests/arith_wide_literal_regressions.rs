@@ -992,23 +992,13 @@ fn div_by_one_folds_and_the_gcd_refutation_decides() {
 /// The sweep now only re-asserts the ATOM's own zero bound (scale-invariant,
 /// and only for slacks no live row references at all); the instance decides
 /// `sat`.
-/// `#[ignore]`d out of the *default* suite run — NOT deleted — for its
-/// runtime, not its guard: the instance's folded shape (see the study
-/// `docs/studies/2026-09-18-rehome-wide-rational-blowup.md`) drives the
-/// exact-rational simplex into a bignum-GCD churn (>60% of runtime in
-/// `BigUint::gcd` under `num_rational::Ratio::reduce`), ~1180 s in this
-/// profile vs 7.5 s before the ±1-divisor folds unmasked the shape (the
-/// folds themselves are exonerated: the hand-folded instance is equally
-/// slow on the pre-fold binary). The *defect this test guards* — the
-/// item-69 fabricated singleton conflict — stays guarded in the default
-/// suite by the fast two-disjunct core below. Un-ignore when the
-/// wide-literal arithmetic lands fraction-free tableaus or delayed
-/// Ratio normalization (the item-76 design). Run explicitly before any
-/// landing that touches the rehome/wide-literal machinery:
-///
-///   cargo nextest run -p nixie-solver --run-ignored only \
-///     -E 'test(rehome_does_not_fabricate_a_crossing_on_a_referenced_slack)'
-#[ignore = "wide-rational blowup: ~1180s; guarded by the core test; see the 2026-09-18 study"]
+/// UN-IGNORED 2026-09-18: the derivation stamps (row-level incremental
+/// propagation, landed in `010f0e7e`) removed the redundant re-derivation
+/// that made this ~1180 s (see
+/// `docs/studies/2026-09-18-rehome-wide-rational-blowup.md`), and the
+/// checked branch-range subtraction closed the debug-profile overflow the
+/// new trajectory exposed — ~80 s in this profile now. Still slow enough
+/// to deserve its raised budget below.
 #[test]
 fn rehome_does_not_fabricate_a_crossing_on_a_referenced_slack() {
     use nixie_solver::Context;
