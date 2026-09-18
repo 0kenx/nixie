@@ -542,7 +542,7 @@ fn split_reasons(reasons: SmallVec<[u32; 4]>) -> Option<(u32, SmallVec<[u32; 4]>
 /// [`Simplex::wide_rows`]. Same shape as [`LinExpr`]; never narrowed
 /// (that is the point: at least one coefficient or the constant does not
 /// fit `Rational64`).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct BigLinExpr {
     /// Terms: (variable, exact coefficient)
     pub terms: Vec<(VarId, num_rational::BigRational)>,
@@ -588,7 +588,7 @@ pub(crate) enum RowInternMode {
 }
 
 /// A linear expression: sum of (coefficient, variable) pairs + constant
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct LinExpr {
     /// Terms: (variable, coefficient)
     pub terms: SmallVec<[(VarId, Rational64); 4]>,
@@ -905,7 +905,7 @@ pub enum BoundType {
     Equal,
 }
 /// A bound on a variable
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bound {
     /// Bound type
     pub kind: BoundType,
@@ -981,6 +981,27 @@ pub struct Simplex {
     /// literal, and reporting a conflict whose bounds no longer hold would
     /// blame literals that are no longer assigned.
     pending_crossing: Option<Vec<u32>>,
+    /// Per-variable BOUND version: bumped by every bound write (store or
+    /// undo restore) to `var`, so [`Self::propagate_bounds_in`] can skip
+    /// re-deriving rows none of whose variables moved.  A derivation is a
+    /// pure function of its row's contents and the bounds of the variables
+    /// it references (basic included) — unchanged versions guarantee the
+    /// same derivations, and the last derivation at a version already
+    /// stored everything it could tighten.
+    bound_ver: Vec<u64>,
+    /// Monotone structural epoch: bumped by every row insert/remove
+    /// (intern, pivot, wide capture/migration/rescale, reset).  Rows are
+    /// content-replaced, never edited in place (only the `columns` index
+    /// mutates), so the insert/remove sites are the complete bump set.
+    rows_ver: u64,
+    /// Monotone crossing-export epoch: bumped whenever a pending crossing
+    /// is consumed (`bound_crossing_conflict`) or cleared (`pop`).  The
+    /// incremental skip must not suppress a crossing that would re-fire
+    /// at unchanged inputs, so its consumption re-arms every row.
+    cross_ver: u64,
+    /// Last derivation stamp per basic variable (narrow or wide store —
+    /// the key spaces are disjoint): see [`Self::row_stamp`].
+    derive_stamp: FxHashMap<VarId, (u64, u64, u64, usize)>,
     /// Number of original variables
     num_vars: usize,
     /// Number of slack variables
@@ -1101,6 +1122,10 @@ impl Simplex {
             num_vars: 0,
             num_slack: 0,
             pending_crossing: None,
+            bound_ver: Vec::new(),
+            rows_ver: 0,
+            cross_ver: 0,
+            derive_stamp: FxHashMap::default(),
             assignment: Vec::new(),
             lower: Vec::new(),
             upper: Vec::new(),
@@ -1321,6 +1346,7 @@ impl Simplex {
         self.lower.push(None);
         self.upper.push(None);
         self.basic.push(false);
+        self.bound_ver.push(0);
         // Variables are search-global (Z3 `lar_solver` / Dutertre–de Moura):
         // a VarId, once allocated, is never recycled, so a tableau row may
         // reference it at any decision level.  Only BOUNDS are scoped and
@@ -1550,6 +1576,25 @@ impl Simplex {
     /// explanation (see [`Bound::aux_reasons`]).
     fn set_lower_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
+        // Tripwire (item 76's close-out), env-gated (`NIXIE_BOUND_TRIPWIRE=1`):
+        // a WEAKENING write over a live bound silently drops the constraint
+        // the old bound carried (the false-`sat` shape the item mapped).  The
+        // assert form of this probe found two real sites (the rehome's and
+        // `assert_eq`'s weak-side writes - both now guarded structurally)
+        // and one BY-DESIGN site (the GCD witness's crossed window - now on
+        // a fresh var).  It stays as an eprintln probe rather than a
+        // debug_assert because the RAW `set_*` API's contract legitimately
+        // includes loosening (pop-free test scaffolding exercises it); the
+        // production writers are the guarded ones above.
+        if std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok()
+            && let Some(old) = self.lower.get(idx).and_then(Option::as_ref)
+            && value < old.value
+        {
+            eprintln!(
+                "[tripwire weaken-lo v{idx}: {value:?} over live {:?} r={}]",
+                old.value, old.reason
+            );
+        }
         let Some((reason, aux_reasons)) = split_reasons(reasons) else {
             return;
         };
@@ -1574,6 +1619,17 @@ impl Simplex {
     /// [`Self::set_lower_delta`].
     fn set_upper_delta(&mut self, var: VarId, value: DeltaRational, reasons: SmallVec<[u32; 4]>) {
         let idx = var as usize;
+        // Tripwire: see `set_lower_delta` — a strengthening direction for
+        // uppers means the NEW value is GREATER (looser) than the live one.
+        if std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok()
+            && let Some(old) = self.upper.get(idx).and_then(Option::as_ref)
+            && value > old.value
+        {
+            eprintln!(
+                "[tripwire weaken-hi v{idx}: {value:?} over live {:?} r={}]",
+                old.value, old.reason
+            );
+        }
         let Some((reason, aux_reasons)) = split_reasons(reasons) else {
             return;
         };
@@ -1814,6 +1870,7 @@ impl Simplex {
         for (var, coef) in &substituted_expr.terms {
             slack_expr.add_term(*var, *coef);
         }
+        self.rows_ver = self.rows_ver.wrapping_add(1);
         self.tableau.insert(slack, Arc::new(slack_expr));
         if slack as usize >= self.basic.len() {
             self.basic.resize(slack as usize + 1, false);
@@ -1886,6 +1943,7 @@ impl Simplex {
                 }
             }
         }
+        self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.insert(slack, big);
         slack
     }
@@ -1955,7 +2013,14 @@ impl Simplex {
     /// The pending bound-crossing conflict, if the most recent bound
     /// assertions created one (see the `pending_crossing` field).  O(1).
     pub fn bound_crossing_conflict(&mut self) -> Option<Vec<u32>> {
-        self.pending_crossing.take()
+        let taken = self.pending_crossing.take();
+        if taken.is_some() {
+            // Re-arm every row: a crossing that would re-fire at unchanged
+            // inputs must re-fire (the consumer exported it once and may
+            // need it again after the search moves on).
+            self.cross_ver = self.cross_ver.wrapping_add(1);
+        }
+        taken
     }
 
     /// TEMP DIAG (item 51 hunt): peek the pending crossing without consuming.
@@ -3244,13 +3309,16 @@ impl Simplex {
                 self.column_drop_known(*v, basic_var);
             }
         }
+        self.rows_ver = self.rows_ver.wrapping_add(1);
         self.tableau.remove(&basic_var);
+        self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.remove(&basic_var);
         match (new_expr, entering_wide) {
             (Some(new_expr), _) => {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     new_expr.terms.iter().map(|(v, _)| *v).collect();
-                self.tableau.insert(nonbasic_var, Arc::new(new_expr));
+                self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.tableau.insert(nonbasic_var, Arc::new(new_expr));
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
                     // listed it as a row owner; push without the membership
@@ -3265,7 +3333,8 @@ impl Simplex {
                 // propagation skip it; its value is re-derived exactly).
                 let entering_terms: SmallVec<[VarId; 4]> =
                     wide.terms.iter().map(|(v, _)| *v).collect();
-                self.wide_rows.insert(nonbasic_var, wide);
+                self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.wide_rows.insert(nonbasic_var, wide);
                 for v in entering_terms {
                     self.column_push_known(v, nonbasic_var);
                 }
@@ -3321,7 +3390,8 @@ impl Simplex {
                 // cannot list `var` under `v` yet.
                 self.column_push_known(v, var);
             }
-            self.tableau.insert(var, Arc::new(new_row));
+            self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.tableau.insert(var, Arc::new(new_row));
             // A row that narrowed back from the wide store leaves it (the
             // tableau entry is now authoritative) — and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
@@ -3342,7 +3412,8 @@ impl Simplex {
                     }
                 }
             }
-            self.wide_rows.remove(&var);
+            self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.wide_rows.remove(&var);
         }
         // Commit wide updates: same diff-based column maintenance against
         // the previous content (either store), and the assignment goes
@@ -3379,8 +3450,10 @@ impl Simplex {
             for v in added {
                 self.column_push_known(v, var);
             }
-            self.tableau.remove(&var);
-            self.wide_rows.insert(var, new_wide);
+            self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.tableau.remove(&var);
+            self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.wide_rows.insert(var, new_wide);
         }
         self.basic[basic_var as usize] = false;
         self.basic[nonbasic_var as usize] = true;
@@ -4090,6 +4163,7 @@ impl Simplex {
         // wide store (column index already covers both; the slack keeps
         // its bounds; the basic becomes unpivable — the wide semantics).
         for var in wide_migrations {
+            self.rows_ver = self.rows_ver.wrapping_add(1);
             if let Some(expr) = self.tableau.remove(&var) {
                 let big = BigLinExpr {
                     terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
@@ -4235,7 +4309,7 @@ impl Simplex {
     /// - If all x_j have bounds, we can compute bounds for x_i
     /// - If x_i has a bound, we may derive bounds for x_j
     pub fn propagate_bounds(&mut self) {
-        self.propagate_bounds_in(&FxHashSet::default());
+        let _ = self.propagate_bounds_in(&FxHashSet::default());
     }
 
     /// [`Self::propagate_bounds`] with the caller's INTEGER-variable set —
@@ -4243,7 +4317,33 @@ impl Simplex {
     /// `floor` for STORAGE on integer basics only; real basics keep
     /// exact-or-decline. Crossings are tested on the EXACT value and
     /// planted through `pending_crossing` (never on a weakened form).
-    pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) {
+    /// The derivation stamp of one row: `(rows_ver, cross_ver, max bound
+    /// version over the variables the derivation reads, int_vars.len())`.
+    /// A row re-derives only while its stamp CHANGED — every input of its
+    /// derivations (row contents via `rows_ver`, the referenced variables'
+    /// bounds via their versions, the basic's own bound — the basic is
+    /// always among `vars`' maximum when it is bounded, and an unbounded
+    /// basic never derives — the crossing-export contract via `cross_ver`,
+    /// and the integer-weakening regime via the set size) is covered by
+    /// exactly these components.  Value- and trajectory-identical to full
+    /// re-derivation: at an unchanged stamp the last derivation already
+    /// stored everything it could and set every crossing it would set.
+    fn row_stamp(&self, basic: VarId, vars: impl Iterator<Item = VarId>, int_vars: usize) -> (u64, u64, u64, usize) {
+        let mut max_ver = 0u64;
+        let bi = basic as usize;
+        if bi < self.bound_ver.len() {
+            max_ver = self.bound_ver[bi];
+        }
+        for v in vars {
+            let vi = v as usize;
+            if vi < self.bound_ver.len() && self.bound_ver[vi] > max_ver {
+                max_ver = self.bound_ver[vi];
+            }
+        }
+        (self.rows_ver, self.cross_ver, max_ver, int_vars)
+    }
+
+    pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) -> usize {
         self.propagated.clear();
         // NARROW direction-2 is env-gated while under evaluation: solve a
         // narrow row for one of the variables it references (the
@@ -4296,6 +4396,11 @@ impl Simplex {
             })
             .collect();
         for (basic_var, expr) in &narrow_rows {
+            let stamp =
+                self.row_stamp(*basic_var, expr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            if self.derive_stamp.get(basic_var) == Some(&stamp) {
+                continue;
+            }
             let big_expr = BigLinExpr {
                 terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
                 constant: big_r64(&expr.constant),
@@ -4332,11 +4437,18 @@ impl Simplex {
                     );
                 }
             }
+            self.derive_stamp.insert(*basic_var, stamp);
         }
         for (basic_var, expr) in &self.tableau {
+            let stamp =
+                self.row_stamp(*basic_var, expr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            if self.derive_stamp.get(basic_var) == Some(&stamp) {
+                continue;
+            }
             if let Some(bound) = self.derive_basic_bound(*basic_var, expr) {
                 self.propagated.push(bound);
             }
+            self.derive_stamp.insert(*basic_var, stamp);
         }
         let wide: Vec<(VarId, BigLinExpr)> = self
             .wide_rows
@@ -4346,6 +4458,11 @@ impl Simplex {
         for (basic_var, wexpr) in &wide {
             let idx = *basic_var as usize;
             if idx >= self.assignment.len() {
+                continue;
+            }
+            let stamp =
+                self.row_stamp(*basic_var, wexpr.terms.iter().map(|(v, _)| *v), int_vars.len());
+            if self.derive_stamp.get(basic_var) == Some(&stamp) {
                 continue;
             }
             for lower in [true, false] {
@@ -4399,8 +4516,10 @@ impl Simplex {
                     );
                 }
             }
+            self.derive_stamp.insert(*basic_var, stamp);
         }
         let props = self.propagated.clone();
+        let mut applied = 0usize;
         for prop in &props {
             let idx = prop.var as usize;
             if idx >= self.lower.len() {
@@ -4416,6 +4535,7 @@ impl Simplex {
                 };
                 if should_update {
                     self.set_lower_delta(prop.var, prop.value, prop.reasons.clone());
+                    applied += 1;
                 }
             } else {
                 let should_update = match &self.upper[idx] {
@@ -4424,9 +4544,11 @@ impl Simplex {
                 };
                 if should_update {
                     self.set_upper_delta(prop.var, prop.value, prop.reasons.clone());
+                    applied += 1;
                 }
             }
         }
+        applied
     }
 
     /// Shared store/crossing decision for one derived (exact) bound: test
@@ -5040,6 +5162,7 @@ impl Simplex {
     pub fn get_propagated(&self) -> &[PropagatedBound] {
         &self.propagated
     }
+
     /// Clear propagated bounds
     pub fn clear_propagated(&mut self) {
         self.propagated.clear();
@@ -5118,6 +5241,10 @@ impl Simplex {
         self.trail_limits.push(0);
         self.resource_limit = false;
         self.assignment_current = true;
+        self.bound_ver.clear();
+        self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.cross_ver = self.cross_ver.wrapping_add(1);
+        self.derive_stamp.clear();
     }
     /// Current decision-level depth of the bound trail (number of live push
     /// scopes); `0` at the assertion/base level.
@@ -5154,7 +5281,11 @@ impl Simplex {
         // A pending crossing was recorded under the scope being popped: its
         // asserting literals are gone, so blaming them in a later probe would
         // cite literals the SAT core no longer holds assigned.
-        self.pending_crossing = None;
+        if self.pending_crossing.take().is_some() {
+            // Consumption-equivalent: re-arm the derivation (see
+            // `bound_crossing_conflict`).
+            self.cross_ver = self.cross_ver.wrapping_add(1);
+        }
         // Dutertre–de-Moura backtracking contract: ONLY bounds are
         // backtrackable.  Rows are permanent, content-addressed definitions
         // (`intern_row_cached`) – a row without bounds constrains nothing, so
@@ -5198,6 +5329,14 @@ impl Simplex {
                             var
                         }
                     };
+                    // Restoring a bound changes the derivation inputs:
+                    // bump the variable's bound version (the incremental
+                    // skip in `propagate_bounds_in` must not survive a pop).
+                    let vi = var as usize;
+                    if vi >= self.bound_ver.len() {
+                        self.bound_ver.resize(vi + 1, 0);
+                    }
+                    self.bound_ver[vi] = self.bound_ver[vi].wrapping_add(1);
                     if restored.last() != Some(&var) {
                         restored.push(var);
                     }
@@ -5466,6 +5605,10 @@ impl Simplex {
     /// bound window and the delta propagates to exactly the rows in its
     /// column ([`Self::on_nonbasic_bound_change`]).
     fn note_bound_change(&mut self, idx: usize) {
+        if idx >= self.bound_ver.len() {
+            self.bound_ver.resize(idx + 1, 0);
+        }
+        self.bound_ver[idx] = self.bound_ver[idx].wrapping_add(1);
         self.on_nonbasic_bound_change(idx);
     }
     /// Iterate over `(basic_var, row)` pairs in the tableau.

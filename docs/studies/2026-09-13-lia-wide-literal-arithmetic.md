@@ -2222,3 +2222,52 @@ as of this measurement, empty.
     settled-atom arm and re-measure the 22 blocked survey members (they
     currently keep `unknown` through ≥1 nongenuine width-limit block
     each — the upgrade does not fire on them today either way).
+
+### Continuation 39 (2026-09-18): item 76 CLOSED, corrected in flight — the tripwire found the real writers, two guarded, one redesign reverted as unsound-in-effect (item 77)
+
+77. **Item 76's record was half wrong, and closing it properly found real
+    defects.**  The write-level trace (`check-sat-assuming` with atom/bound
+    prints) falsified the "structural collision" claim first: the atom
+    asserts go through `intern_row_reported` (a FRESH slack per
+    (form, reason) — strict and non-strict atoms over one form mint
+    SEPARATE rows), not the content-addressed `intern_row_cached`; the two
+    interning systems are disjoint, so the hypothesized strict/non-strict
+    overwrite cannot happen at the atom level at all.  What IS real: a
+    `debug_assert` tripwire on any WEAKENING live-bound write
+    (`set_{lower,upper}_delta`) fired on 7 tests' paths — reachable
+    weakening writes, benign on every one of those instances but each a
+    silent-constraint-drop away from a false `sat`:
+    * **Writer 1 — `assert_eq`'s weak pin side**: the equality writes
+      `[0,0]` over a slack that can carry a tighter propagated bound;
+      the weak write was rescued only by the sibling tight write's
+      crossing and the trail (a fragile ordering).  FIXED structurally:
+      the weak side is never written (a live tighter bound on the same
+      variable SUBSUMES the pin's zero; a skipped write leaves the
+      crossed pair for the crossing scan).
+    * **Writer 2 — the item-75 rehome's zero-bound re-assert**: same
+      shape on the fresh row.  FIXED the same way.
+    * **Writer 3 — `assert_eq`'s GCD-infeasibility witness** (by design):
+      the crossed `[1,0]` window planted on a live column transiently
+      weakens it.  A "cleaner" redesign (witness on a FRESH variable) was
+      built, passed its unit targets — and FLIPPED the item-69 core back
+      to false `unsat`: with a fresh witness the conflict degrades to a
+      UNIT `¬equality`, which collapses against a unit AXIOM (the empty
+      clause), while the live-column witness's crossing carries the
+      column's live-bound reasons — a RICHER clause the search can
+      satisfy.  **REVERTED, and the lesson recorded: the witness's
+      live-column placement is load-bearing conflict design, not
+      sloppiness.**  The transient weakening stays, guarded by the
+      crossing order (set_lower precedes set_upper).
+    * The tripwire ships as an env-gated probe (`NIXIE_BOUND_TRIPWIRE=1`)
+      rather than a `debug_assert`: the RAW `set_*` API's contract
+      legitimately includes loosening (its own unit test exercises it);
+      the production writers are the guarded ones.
+    * Verification: the 7 tripped tests all pass with the guards (their
+      pre-change passes were benign-luck; now structural); the item-69
+      full/core, item-74 pin, fuzzers, strict-row regressions green;
+      workspace failures identical to the corpus/environment baseline;
+      clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3
+      4.16.0); mixed 5×400 + wide 2×300 fresh seeds clean; debug-panic
+      sweep 177/177; perf gate PASS with the counters IMPROVED
+      (conflicts 0.857, decisions 0.906 vs the f60e26c8 baseline — the
+      weak-side skips remove wasted bound writes).
