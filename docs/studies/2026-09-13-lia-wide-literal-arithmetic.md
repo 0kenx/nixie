@@ -2174,3 +2174,51 @@ as of this measurement, empty.
       `push`/`pop` driver with mixed `lt`/`le` atoms over one Real form
       is the cheapest controllable shape), then check the model-accept
       path against the strict atom.
+
+## Continuation 37 (2026-09-18): the blocking-downgrade design question advanced — the `Genuine` argument's LP-point dependence (item 74)
+
+74. **Item 64's open soundness question, worked to its precise gap.**  The
+    landed scoping upgrades an `Unsat` over assertions+blocks when
+    `model_blocks_nongenuine == 0`, resting on: *a `Genuine` refutation's
+    evaluation "read only assigned model values / committed polarities",
+    so the block's projection (every definite SAT polarity, `Undef`
+    dropped — `refuted_model_projection`) covers every variable the
+    refutation depended on, and every assignment the block excludes
+    provably violates the assertions.*  Reading the evaluator's actual
+    read paths (`model_eval.rs`'s `Var` arm):
+    * the SETTLED-ATOM arm reads committed SAT polarities — genuinely
+      projection-covered ✓;
+    * the numeric-USER-var arm reads `arith.value(term)` — the value at
+      the CURRENT LP POINT, which is a function of the whole candidate
+      (polarities + the tableau's chosen vertex + search state), NOT of
+      the projection alone.  Under one polarity assignment the LP can
+      have several feasible points; a `Genuine`-labeled refutation at one
+      point does not establish that the polarity assignment itself is
+      violating — the block then excludes assignments that may admit a
+      satisfying point, and an all-genuine exhaustion on a SATISFIABLE
+      formula would be a false `unsat`.
+    * The remaining reads are safe-by-channel: unconstrained numerics
+      return `Undetermined` (fail-open, never a refutation), proxies read
+      repair-published model entries, Booleans/BV read the SAT/BV
+      assignment.
+    **The closure conjecture that would still save the upgrade**: a
+    concrete `false` at the theory's own model under committed polarities
+    implies some committed clause is falsified at that point, which the
+    SAT core's Tseitin structure + theory conflicts can themselves refute
+    — the block then records an already-dead polarity assignment and
+    never loses a solution.  If that closure holds, the upgrade is sound;
+    if a constructive counterexample exists (a SAT formula whose search
+    exhausts through all-genuine blocks), the landed scoping is unsound
+    and must tighten `Genuine` to projection-covered reads (settled atoms
+    + committed polarities only).  **Next session's entry points**: (a)
+    the construction test — a satisfiable goal with an under-determined
+    LP whose candidate point violates a value-read conjunct while another
+    point satisfies it (the `or`-of-comparisons shape with free Tseitin
+    polarity is the candidate family); (b) the empirical check — the
+    mixed differential runs blocking-active and has been clean across
+    this session's seven fresh-seed runs, so no such instance has been
+    *found*, but absence-of-evidence at n≈3k is not the proof; (c) the
+    conservative fix if (a) succeeds: restrict `Genuine` to the
+    settled-atom arm and re-measure the 22 blocked survey members (they
+    currently keep `unknown` through ≥1 nongenuine width-limit block
+    each — the upgrade does not fire on them today either way).
