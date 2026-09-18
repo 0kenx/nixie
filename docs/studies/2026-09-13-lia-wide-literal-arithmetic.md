@@ -2008,3 +2008,41 @@ consistent with it end to end.
       an interim read of "main ships red rehome tests" was one commit
       stale — the fix commit landed minutes after the test-build's
       branch point; re-verify the tip before believing a red set.
+
+## Continuation 36 (2026-09-18): the crossed-window fabrication closed — interval derivations decline on inverted pairs (item 73)
+
+73. **The `NIXIE_S6_NDIR2`-only false `unsat` (item 71's second find),
+    root-caused and fixed** (`f60e26c8`).  The final conflict blamed six
+    atoms — **all TRUE at z3's model `xi = 120`** (verified by hand
+    evaluation) — an invalid lemma.  The chain: the general direction-2
+    solve read the crossed (inverted) windows of v19 `[2349/40, 0]` and
+    v63 `[1228, 0]`, and the endpoint selectors' `want_min == a_first`
+    pick silently chose the pair's WRONG side on an inverted pair (a
+    minimum request returns the UPPER bound) — fabricated bounds on
+    v0/v2 that direction-1 then propagated into v19's lower bound,
+    crossing the sound side and exporting the phony conflict.  **The
+    fix**: both pair-swap selectors (`derive_bound_big_parts`'s column
+    walk, `derive_var_bound_big_parts`'s general solve) DECLINE on a
+    strictly inverted pair — the crossed state belongs to the crossing
+    channel (`record_crossing` exports the real conflict), deriving
+    through an empty interval is fabrication, and the vacuous-truth case
+    loses nothing (the crossing fires on its own).  Equal bounds stay
+    valid, so the PINNED default form (lo == hi basics) is unaffected —
+    exactly why the defect was reachable only under the general gate.
+    `derive_basic_bound` deliberately keeps reading stored bounds as-is
+    (sound-input-sound-output; the fabrication site is the pair-swap
+    selectors alone).  Measured: the ndir2 arm's deflection cost HALVED
+    (timeouts 46 → 24, two of the six lost `unsat` verdicts recovered)
+    but still net-worse than the default — **item 71's default-on
+    refutation stands on capacity grounds, now without the soundness
+    hole**.  Regression:
+    `derivation_through_a_crossed_window_declines_instead_of_fabricating`
+    (both selectors).  Verification: workspace release suite 11 929/11
+    946 (15 known corpus-missing + the ~660 s rehome test's 180 s
+    load-cap, passes in isolation); clippy/fmt/rustdoc clean; parity
+    176/177, 0 disagreements (z3 4.16.0); mixed 3×400 + wide 3×300 fresh
+    seeds + the finder seed 20261123 clean; perf gate PASS (counters
+    1.000 bit-identical); panic sweep 177/177.  The survey's standing
+    default numbers on the fixed seeds after this session's three
+    landings: **gap_sat 111, gap_unsat 4, 1 648 decisive** (from 134/7/1
+    626 at the session's start).
