@@ -56,6 +56,7 @@ use crate::interner::Spur;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::SortId;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Result of [`TermManager::prepare_binder_subst`]: the effective
@@ -165,6 +166,26 @@ impl TermManager {
         self.substitute_cached(id, subst, &mut FxHashMap::default())
     }
 
+    /// [`Self::substitute`], except the terms in `keep` resolve to
+    /// themselves **wherever** they occur — a per-call shield used by the
+    /// solver's numeric-argument purifier to keep bag-theory element
+    /// positions on one spelling (see the caller's doc: a proxy minted in
+    /// a later assert split the count spellings across assertions and the
+    /// element-congruence tie died to the same substitution). The keep set
+    /// must contain only binder-free leaves (constants) — a bound variable
+    /// in `keep` would be shielded past its binder's alpha-renaming.
+    pub fn substitute_keeping(
+        &mut self,
+        id: TermId,
+        subst: &FxHashMap<TermId, TermId>,
+        keep: &FxHashSet<TermId>,
+    ) -> TermId {
+        if keep.is_empty() {
+            return self.substitute_cached(id, subst, &mut FxHashMap::default());
+        }
+        self.substitute_cached_keep(id, subst, keep, &mut FxHashMap::default())
+    }
+
     /// Substitute with memoization, using an explicit heap stack instead of
     /// native recursion (see the module doc comment).
     ///
@@ -185,6 +206,19 @@ impl TermManager {
         subst: &FxHashMap<TermId, TermId>,
         cache: &mut FxHashMap<TermId, TermId>,
     ) -> TermId {
+        let keep = FxHashSet::default();
+        self.substitute_cached_keep(id, subst, &keep, cache)
+    }
+
+    /// [`Self::substitute_cached`] with a keep-shield (see
+    /// [`Self::substitute_keeping`]).
+    pub(in crate::ast::manager) fn substitute_cached_keep(
+        &mut self,
+        id: TermId,
+        subst: &FxHashMap<TermId, TermId>,
+        keep: &FxHashSet<TermId>,
+        cache: &mut FxHashMap<TermId, TermId>,
+    ) -> TermId {
         // Fast path matching the entry checks every recursive call used to
         // make: a direct substitution-map hit, or already memoized from a
         // prior call sharing this `cache` (e.g. `SubstitutionBuilder::apply`
@@ -201,14 +235,24 @@ impl TermManager {
         // put back before returning) paired with an owned clone of `subst`
         // (cloned once, up front, so every `SubstContext` -- including ones
         // opened later for binder scopes -- uniformly owns its map).
+        // The keep-shield, applied where it actually binds: `resolved()`
+        // consults the substitution map *before* the cache, so caching an
+        // identity for a shielded leaf would never win. Filtering the kept
+        // keys out of the (cloned) map instead makes every lookup — entry,
+        // rebuild, binder scope (all of which clone this map) — resolve
+        // them to themselves.
+        let mut filtered = subst.clone();
+        if !keep.is_empty() {
+            filtered.retain(|k, _| !keep.contains(k));
+        }
         let mut contexts: Vec<SubstContext> = vec![SubstContext {
-            subst: subst.clone(),
+            subst: filtered,
             cache: core::mem::take(cache),
         }];
         let mut work: Vec<SubstStep> = vec![SubstStep::Expand { id, ctx: 0 }];
 
         while let Some(step) = work.pop() {
-            self.run_substitute_step(step, &mut contexts, &mut work);
+            self.run_substitute_step(step, &mut contexts, &mut work, keep);
         }
 
         // By now `work` is empty, so every step it ever held -- including
@@ -230,10 +274,20 @@ impl TermManager {
         step: SubstStep,
         contexts: &mut Vec<SubstContext>,
         work: &mut Vec<SubstStep>,
+        keep: &FxHashSet<TermId>,
     ) {
         match step {
             SubstStep::Expand { id, ctx } => {
                 if contexts[ctx].resolved(id).is_some() {
+                    return;
+                }
+                // The keep-shield: resolve shielded leaves to themselves
+                // before the substitution map is consulted, so every parent
+                // rebuilds with the original spelling. Sound only for
+                // binder-free leaves (constants), which no binder scope can
+                // shadow — enforced by the caller's construction.
+                if keep.contains(&id) {
+                    contexts[ctx].cache.insert(id, id);
                     return;
                 }
 
