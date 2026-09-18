@@ -2223,7 +2223,56 @@ as of this measurement, empty.
     currently keep `unknown` through ≥1 nongenuine width-limit block
     each — the upgrade does not fire on them today either way).
 
-## Continuation 39 (2026-09-18): the wide-LP build landed — the bound channel widened, the sticky declines retired, and the evaluator made exact (items 77–80)
+### Continuation 39 (2026-09-18): item 76 CLOSED, corrected in flight — the tripwire found the real writers, two guarded, one redesign reverted as unsound-in-effect (item 77)
+
+77. **Item 76's record was half wrong, and closing it properly found real
+    defects.**  The write-level trace (`check-sat-assuming` with atom/bound
+    prints) falsified the "structural collision" claim first: the atom
+    asserts go through `intern_row_reported` (a FRESH slack per
+    (form, reason) — strict and non-strict atoms over one form mint
+    SEPARATE rows), not the content-addressed `intern_row_cached`; the two
+    interning systems are disjoint, so the hypothesized strict/non-strict
+    overwrite cannot happen at the atom level at all.  What IS real: a
+    `debug_assert` tripwire on any WEAKENING live-bound write
+    (`set_{lower,upper}_delta`) fired on 7 tests' paths — reachable
+    weakening writes, benign on every one of those instances but each a
+    silent-constraint-drop away from a false `sat`:
+    * **Writer 1 — `assert_eq`'s weak pin side**: the equality writes
+      `[0,0]` over a slack that can carry a tighter propagated bound;
+      the weak write was rescued only by the sibling tight write's
+      crossing and the trail (a fragile ordering).  FIXED structurally:
+      the weak side is never written (a live tighter bound on the same
+      variable SUBSUMES the pin's zero; a skipped write leaves the
+      crossed pair for the crossing scan).
+    * **Writer 2 — the item-75 rehome's zero-bound re-assert**: same
+      shape on the fresh row.  FIXED the same way.
+    * **Writer 3 — `assert_eq`'s GCD-infeasibility witness** (by design):
+      the crossed `[1,0]` window planted on a live column transiently
+      weakens it.  A "cleaner" redesign (witness on a FRESH variable) was
+      built, passed its unit targets — and FLIPPED the item-69 core back
+      to false `unsat`: with a fresh witness the conflict degrades to a
+      UNIT `¬equality`, which collapses against a unit AXIOM (the empty
+      clause), while the live-column witness's crossing carries the
+      column's live-bound reasons — a RICHER clause the search can
+      satisfy.  **REVERTED, and the lesson recorded: the witness's
+      live-column placement is load-bearing conflict design, not
+      sloppiness.**  The transient weakening stays, guarded by the
+      crossing order (set_lower precedes set_upper).
+    * The tripwire ships as an env-gated probe (`NIXIE_BOUND_TRIPWIRE=1`)
+      rather than a `debug_assert`: the RAW `set_*` API's contract
+      legitimately includes loosening (its own unit test exercises it);
+      the production writers are the guarded ones.
+    * Verification: the 7 tripped tests all pass with the guards (their
+      pre-change passes were benign-luck; now structural); the item-69
+      full/core, item-74 pin, fuzzers, strict-row regressions green;
+      workspace failures identical to the corpus/environment baseline;
+      clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3
+      4.16.0); mixed 5×400 + wide 2×300 fresh seeds clean; debug-panic
+      sweep 177/177; perf gate PASS with the counters IMPROVED
+      (conflicts 0.857, decisions 0.906 vs the f60e26c8 baseline — the
+      weak-side skips remove wasted bound writes).
+
+## Continuation 40 (2026-09-18): the wide-LP build landed — the bound channel widened, the sticky declines retired, and the evaluator made exact (items 81–84)
 
 Executed the handoff
 (`docs/studies/2026-09-18-exact-arithmetic-wide-lp-handoff.md`).
@@ -2233,7 +2282,7 @@ the perf gate PASS at conflicts 0.857 / decisions 0.906 / wall 0.85, and
 zero verdict disagreements anywhere (6 fresh differential seeds + the
 fixed seeds re-run — every newly-decided verdict agrees with z3).
 
-77. **The bound channel is exact** (`BoundValue` in `delta.rs`): the
+81. **The bound channel is exact** (`BoundValue` in `delta.rs`): the
     simplex's `lower`/`upper` stores hold `Narrow(DeltaRational)` or
     `Wide(Arc<BigDeltaRational>)`, with every consumer comparing exactly
     (`cmp_value`/`cmp_narrow` — narrow-narrow arms are the old i64 ops, so
@@ -2245,7 +2294,7 @@ fixed seeds re-run — every newly-decided verdict agrees with z3).
     accessors.  Derived bounds store EXACTLY where they used to weaken for
     width (`tighten_int_bound_exact` computes the integral tightening in
     `BigRational`; `weaken_int_bound`'s i64-fit decline is gone).
-78. **The point-value side store** (`wide_points`): a non-basic snapped to
+82. **The point-value side store** (`wide_points`): a non-basic snapped to
     a wide bound (branch bounds at `2^63`, the `i64::MIN` corners) parks
     its exact point there; `assignment[]` holds the stale-by-design entry
     and the staleness flag defers.  Every exact reader
@@ -2262,7 +2311,7 @@ fixed seeds re-run — every newly-decided verdict agrees with z3).
     a wide-leaving pivot now takes the `was_wide` contract (delta loop
     skips, commit recomputes exactly), item 43's discipline applied to the
     leaving side.
-79. **The sticky declines retired** (`intern_exact_row` +
+83. **The sticky declines retired** (`intern_exact_row` +
     `Simplex::intern_row_big_reported`): every `assert_*` entry whose
     `-rhs` leaves `Rational64` (`rhs = i64::MIN`) interns its row through
     the shared rescale-or-capture discipline — a positive rescale into
@@ -2273,7 +2322,7 @@ fixed seeds re-run — every newly-decided verdict agrees with z3).
     both z3-certified).  The `SlackForm` records the exact path so the
     stranded-bound rehome re-interns through it (the narrow re-intern's
     `-rhs` would wrap to a different row).
-80. **The evaluator is exact** (`EvalVal::NumBig` in `model_eval.rs`): the
+84. **The evaluator is exact** (`EvalVal::NumBig` in `model_eval.rs`): the
     model-verification gate's numeric channel widens — beyond-width folds,
     negations (`-i64::MIN`), subtractions and comparisons carry the exact
     `BigRational` instead of reporting `Unrepresentable`, and the `Var`

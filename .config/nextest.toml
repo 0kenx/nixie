@@ -52,6 +52,14 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 filter = 'test(pete_cxs_bp_is_unsat_on_every_trajectory)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# The rehome wide-rational canary: ~80 s in this profile since the
+# derivation stamps landed (was ~1180 s, then `#[ignore]`d); the default
+# 3x60s terminate would cut it mid-refutation, so it carries its own
+# 4x60s budget in the default pass.
+[[profile.default.overrides]]
+filter = 'test(rehome_does_not_fabricate_a_crossing_on_a_referenced_slack)'
+slow-timeout = { period = "60s", terminate-after = 4 }
+
 [[profile.default.overrides]]
 filter = 'package(nixie-cli) and (test(timeout) or test(bench))'
 test-group = 'nixie-cli-subprocess'

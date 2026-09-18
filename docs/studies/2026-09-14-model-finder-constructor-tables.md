@@ -940,3 +940,115 @@ eval-path frame); flagging it here for the owning arc — a release-run
 of the workspace suite belongs in the verification rotation, or the
 test's stack budget needs release-profile headroom.
 clippy/fmt/doc clean; perf gate PASS (conflicts geomean 1.000).
+
+
+## The unsat-forcing fuzz family (2026-09-17, sixteenth follow-up)
+
+The carried continuation ("the generator skews sat-heavy — the
+unsat-forcing family") is landed: `quant_fuzz.py FAMILY=unsat` generates
+goals that are **unsat by construction**, so the oracle needs no
+comparator — a nixie `sat` is a soundness bug outright, an `unknown` is a
+counted completeness gap, and z3 runs only as a cross-check of the
+generator itself (it must answer unsat; 36/36 on validation).  Six
+families, each targeting different refutation machinery:
+
+| family | shape | stresses |
+|---|---|---|
+| `chain` | `P(c)`, `∀x. P(x)⇒P(f(x))`, `¬P(f^k c)` | instantiation depth |
+| `skolem` | `∀x∃y. Q(x,y)` + `∀xy. ¬Q(x,y)` | two-quantifier logic |
+| `pigeonhole` | finite enumeration + distinct + injective-but-missing `f` | finite-model reasoning |
+| `card` | `|S|≤n` + `n+1` distinct | cardinality |
+| `cycle` | transitivity + irreflexivity + ground cycle | order axioms |
+| `extensional` | set semantics + membership collision | the model finder |
+
+**Standing on current main** (seeds 51–54 × 150, z3 4.16.0 cross-check
+all-unsat): **zero false-sats**; chain/skolem/cycle/card solved
+outright; the completeness gaps are **pigeonhole ~20/30 unknown** and
+**extensional ~6/24 unknown** — the next targets, with by-construction
+reproducers one generator invocation away.
+
+**The negative results (do not retry blind)** — two attempts to close
+the pigeonhole gap by exporting the ground model's committed equality
+values for S-valued applications (`f(c0)=c1`-style facts the model
+readback never records, which is why unowned S-valued functions harvest
+empty entry tables and complete to a constant `else`):
+
+1. **Global export (model-builder)**: introduced **false `sat`s** on the
+   extensional family.  Mechanism, decoded end to end: exported pins on
+   *table-owned* compounds → the entry normalization re-keys them onto
+   completion-minted elements → the minted rows mutate after minting →
+   the row-canonical mint names lie → the (real, pre-existing) duplicate
+   domain-push bug in `mint_fresh_row_element`'s frozen side (no
+   contains-check) bloated the domain (24+ copies, 578 duplicate table
+   entries, 85 KB chains) → the ground-pin branch the certification
+   needed was buried → the aux certified a corrupted body'.  The frozen
+   push's missing contains-check is a real defect (the dedup fix was
+   validated) but landing it alone regresses the set family to
+   `unknown` — the pre-dedup convergence rides on accidental else-reads
+   of vanished mint rows.
+2. **Ownership-gated export (completion, unowned funcs only)**: sound
+   (no false-sats) but inert for the family convergence — and it exposed
+   the deeper design gap: **minted rows vanish at round boundaries**
+   (the harvest rebuilds the observer table from the ground solver
+   alone), and a *static* row memory conflicts with ground-row churn
+   (re-keyed stale pins pollute remembered rows).
+
+Also built and validated but **held back with the revert** (they belong
+to the row-memory session): the completed-model-vs-ground-assertion
+honesty gate on the `Satisfied` path (it correctly downgraded the
+mint-vs-asserted-equality divergence class), and the per-round mint
+check-budget refund.  The next session's map: give minted elements a
+*churn-proof* row source (derive from the frozen structure, not a
+snapshot), then land the dedup + the assertion gate + the export (theory
+layer, EUF representatives) in that order, re-running the unsat family
+and the set pins at each step.
+
+Verification (final landed state — generator only, solver reverted to
+main): random family seeds {41..46}×150 **CLEAN**; unsat family seeds
+{51..54}×150 **CLEAN** (0 false-sats, gaps as measured); family pins
+set16/set9/set19 all `sat`; clippy/fmt clean.
+
+
+## The minted-row memory decoded to the last layer (2026-09-17, seventeenth follow-up — negative result, precise map)
+
+The sixteenth follow-up left the minted-row design gap open ("a
+churn-proof row source").  This session built the row memory
+(`ModelCompleter::fresh_rows` — the mint records its installed row,
+re-injected each round before the harvest) and drove the pollution hunt
+to the last two layers, both real and now precisely understood:
+
+1. **The polarity override**: the loop's own falsifier lemmas mint ground
+   atoms AT minted elements (the encoder internalizes the minted term;
+   the SAT core commits `member(u!4, e0) = true` to satisfy the
+   instance).  The harvest feeds those polarities back, and the
+   completion evaluator's *whole-term assignment lookup* answers
+   `member(u!4, e0)` from them — before any entry is consulted,
+   overriding the remembered row.
+2. **The same-key twin**: even with the assignment keys purged, the
+   harvest (`extract_function_interpretations`, which runs before the
+   purge) had already converted them into observer *entries* whose args
+   coincide exactly with the mint's own — and a key-based retain filter
+   keeps both.  The purge must drop every entry touching a minted
+   element and re-inject the remembered rows after.
+
+With both fixed, the mint's names become honest (the `!bits` suffix
+matches the element's actual row — verified in the row dumps) and the
+minted elements keep their rows across rounds.  The **new** blocker is
+honest convergence pacing: the semantically-correct structures are
+bigger, the nested checks now spend their per-check conflict limits
+(`Err(MaxConflicts)` on the union/intersection/difference checks), and
+the loop dies at the global budget (~26 rounds, 53 k aux conflicts on
+set16) before the witness-axiom instances drive the ground rows apart.
+The old (landed) build converged by riding *dishonest* else-readings of
+vanished rows — smaller structures, cheaper checks.
+
+**The next session's entry point**: with honest rows in place, retune
+the pacing — the aux per-check conflict limit against table size, and
+the refund cadence (the mint-round refund was re-added and helps the
+round count but not the per-check caps).  Do NOT ship the row memory
+without the family pins green; the held-back state is
+`fresh_rows` + the two purges + the refund, all in this worktree's
+history (branch `row-memory`, reverted before landing).
+
+Verification of the reverted state: set family all `sat`; quant_fuzz
+seed 41 × 60 CLEAN.

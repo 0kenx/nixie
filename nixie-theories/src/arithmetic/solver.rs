@@ -816,14 +816,32 @@ impl ArithSolver {
             // Strict atoms re-assert STRICT zero bounds (`slack < 0` /
             // `slack > 0`, the delta encoding) — matching the original
             // assertion exactly, never a weakened `<= 0` / `>= 0`.
-            if want_lower && let Some(id) = lo_atom {
+            // The WEAK side is never written (the item-76 discipline): a
+            // live tighter bound on the fresh row SUBSUMES the atom's own
+            // zero bound (both constrain the same variable), so keeping it
+            // is sound and writing under it would silently drop a
+            // constraint the propagated bound carried.
+            let zero = DeltaRational::from_rational(Rational64::zero());
+            if want_lower
+                && let Some(id) = lo_atom
+                && self
+                    .simplex
+                    .get_lower(fresh)
+                    .is_none_or(|b| b.value <= zero)
+            {
                 match form.dir {
                     SlackDir::Gt => self.simplex.set_strict_lower(fresh, Rational64::zero(), id),
                     _ => self.simplex.set_lower(fresh, Rational64::zero(), id),
                 }
                 moved = true;
             }
-            if want_upper && let Some(id) = hi_atom {
+            if want_upper
+                && let Some(id) = hi_atom
+                && self
+                    .simplex
+                    .get_upper(fresh)
+                    .is_none_or(|b| b.value >= zero)
+            {
                 match form.dir {
                     SlackDir::Lt => self.simplex.set_strict_upper(fresh, Rational64::zero(), id),
                     _ => self.simplex.set_upper(fresh, Rational64::zero(), id),
@@ -1522,8 +1540,26 @@ impl ArithSolver {
         // bounds `slack <= 0` and `slack >= 0` on it.
         let reason_id = self.add_reason(reason);
         let slack = self.cached_row_slack(&lia_key, lhs, rhs, SlackDir::Eq, reason);
-        self.simplex.set_lower(slack, Rational64::zero(), reason_id);
-        self.simplex.set_upper(slack, Rational64::zero(), reason_id);
+        // A pin's WEAK side is never written (the item-76 discipline): a
+        // live tighter bound on either side means the equality CONFLICTS
+        // with it, and the tighter write of the pair has already recorded
+        // that crossing.  Writing the weak side over the live tighter
+        // bound would silently drop a constraint the old bound carried;
+        // a skipped write leaves the crossed pair for the crossing scan.
+        if self
+            .simplex
+            .get_lower(slack)
+            .is_none_or(|b| b.value <= DeltaRational::from_rational(Rational64::zero()))
+        {
+            self.simplex.set_lower(slack, Rational64::zero(), reason_id);
+        }
+        if self
+            .simplex
+            .get_upper(slack)
+            .is_none_or(|b| b.value >= DeltaRational::from_rational(Rational64::zero()))
+        {
+            self.simplex.set_upper(slack, Rational64::zero(), reason_id);
+        }
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
         // constant bound is only sound for propagation when it is a GENUINE
         // `var = constant` (a plain variable directly equated to a numeric
@@ -1562,20 +1598,19 @@ impl ArithSolver {
     /// bounds cheaply.  SOUND: `propagate_bounds` only tightens (monotonic),
     /// with proper antecedent reasons, and is push/pop-scoped.
     pub fn tighten_tableau_bounds(&mut self) {
-        // `propagate_bounds` derives basic-variable bounds from non-basic in one
-        // pass; loop to a fixpoint so chains (x<-y<-z) fully propagate.  Cap
-        // iterations to avoid pathological non-termination on cyclic tightenings.
+        // `propagate_bounds` derives basic-variable bounds from non-basic in
+        // one pass; loop to a fixpoint so chains (x<-y<-z) fully propagate.
+        // Cap iterations to avoid pathological non-termination on cyclic
+        // tightenings.  The change signal is STORES (`applied`), not
+        // derivations: a pass that derives plenty but stores nothing IS the
+        // fixpoint (slice-6 only queues, the application loop stores), and
+        // the old derived-count signal ran one vacuous full derivation pass
+        // past it on every call.
         for _ in 0..16 {
-            let before = self.simplex.num_original_vars();
-            self.simplex.propagate_bounds_in(&self.int_vars);
-            // propagate_bounds does not report whether it changed anything;
-            // use the propagated-vector length as a cheap change signal.  It
-            // clears+repopulates `propagated` each call, so a non-empty result
-            // means at least one derivation fired this pass.
-            if self.simplex.get_propagated().is_empty() {
+            let applied = self.simplex.propagate_bounds_in(&self.int_vars);
+            if applied == 0 {
                 break;
             }
-            let _ = before;
         }
     }
 
@@ -2161,10 +2196,31 @@ impl ArithSolver {
             let hi = self.simplex.upper_real_at(idx);
             match (lo, hi) {
                 (Some(lo), Some(hi)) => {
-                    let range = hi - lo;
-                    if best_range.is_none_or(|r| range < r) {
-                        best_range = Some(range);
-                        best = Some(branch);
+                    // CHECKED subtraction: on wide-literal instances the
+                    // stored bounds straddle ±2^62, the difference leaves
+                    // `i64` (num-rational's `sub` PANICS under
+                    // debug-assertions and WRAPS in release — a wrapped
+                    // range silently misranks the branch variable).  The
+                    // range only RANKS candidates (any branch choice is
+                    // sound), so a non-representable range ranks this
+                    // candidate as worst-of-class instead of guessing: an
+                    // unbounded-vars fallback ordering.  Found by the
+                    // rehome canary's debug run after the derivation
+                    // stamps changed which fractional variable the search
+                    // visits first — the site is trajectory-independent
+                    // (any B&B visit of a straddling pair hits it).
+                    match num_traits::CheckedSub::checked_sub(&hi, &lo) {
+                        Some(range) => {
+                            if best_range.is_none_or(|r| range < r) {
+                                best_range = Some(range);
+                                best = Some(branch);
+                            }
+                        }
+                        None => {
+                            if best.is_none() {
+                                best = Some(branch);
+                            }
+                        }
                     }
                 }
                 _ => {

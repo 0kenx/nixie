@@ -147,3 +147,25 @@ known model if they want to profile.
 - Full workspace suite at `4e05b46e`: **11957 tests, 11956 passed**,
   1 timed out (the rehome test above), 14 skipped.
 - Perf gate at `4e05b46e` (fresh build): **PASS**, 1.000× counters.
+
+## Addendum: the rehome timeout — resolved (`045c99c7`)
+
+The follow-up session answered "did you fix it" properly. The code
+culprit was **not** `51adf259` (docs-only) but the ±1-divisor folds
+(`458a3ba5`, arriving via the `cd0430a5` merge) — and **the folds are
+exonerated**: the hand-folded instance is equally slow (691 s vs 7 s)
+on the pre-fold binary. The verdict stays `sat` throughout; this is a
+pure perf cliff, and the profile convicts the **exact-rational
+simplex** (>60 % of 564 s in `BigUint::gcd` under
+`num_rational::Ratio::reduce`, hot frames `eval_big_raw` /
+`derive_var_bound_big_parts` / `update_assignment`) — the item-76
+machinery. Naive normalization deferral is unsound (`Ratio`'s canonical
+form is load-bearing for `Ord`); the real cure is fraction-free
+tableaus, which is the arith owner's design work.
+
+What landed: the big test `#[ignore]`d with the repo's `pete_cxs_bp`
+precedent (explicit-run recipe + 25×60 s nextest override sized for its
+measured 1157 s; verified passing under that ceiling), the **defect it
+guards stays covered in the default suite** by the 34 s two-disjunct
+core, and the full study + reproducer pair (original vs hand-folded,
+80× apart) in `docs/studies/2026-09-18-rehome-wide-rational-blowup.md`.

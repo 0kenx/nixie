@@ -1001,6 +1001,13 @@ fn div_by_one_folds_and_the_gcd_refutation_decides() {
 /// The sweep now only re-asserts the ATOM's own zero bound (scale-invariant,
 /// and only for slacks no live row references at all); the instance decides
 /// `sat`.
+/// UN-IGNORED 2026-09-18: the derivation stamps (row-level incremental
+/// propagation, landed in `010f0e7e`) removed the redundant re-derivation
+/// that made this ~1180 s (see
+/// `docs/studies/2026-09-18-rehome-wide-rational-blowup.md`), and the
+/// checked branch-range subtraction closed the debug-profile overflow the
+/// new trajectory exposed — ~80 s in this profile now. Still slow enough
+/// to deserve its raised budget below.
 #[test]
 fn rehome_does_not_fabricate_a_crossing_on_a_referenced_slack() {
     use nixie_solver::Context;
