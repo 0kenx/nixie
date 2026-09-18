@@ -2325,11 +2325,15 @@ as of this measurement, empty.
 
 Executed the handoff
 (`docs/studies/2026-09-18-exact-arithmetic-wide-lp-handoff.md`).
-**Survey delta on the fixed seeds (20261000–02 × 600): gap 113 → 46**
-(70 members closed: 68 SAT-side, 2 UNSAT-side; decisive 1 647 → 1 728),
-the perf gate PASS at conflicts 0.857 / decisions 0.906 / wall 0.85, and
-zero verdict disagreements anywhere (6 fresh differential seeds + the
-fixed seeds re-run — every newly-decided verdict agrees with z3).
+**Survey delta on the fixed seeds (20261000–02 × 600): gap 113 → 47**
+(66 members closed on the final merged tree — 68 SAT-side at this
+build's own measurement before the parallel sessions' landings reshaped
+the baseline; decisive 1 647 → 1 730), the perf gate PASS at counters
+1.000/1.000 with wall 0.95 on the final tree (0.857/0.906/0.85 on this
+build alone, pre-merge), and zero verdict disagreements anywhere (8
+fresh differential seeds + the fixed seeds re-run — every newly-decided
+verdict agrees with z3).  Landed as `9ae0a9bf` (merging the derivation
+stamps and the item-78 intern-time holdout).
 
 81. **The bound channel is exact** (`BoundValue` in `delta.rs`): the
     simplex's `lower`/`upper` stores hold `Narrow(DeltaRational)` or
@@ -2401,10 +2405,12 @@ fixed seeds re-run — every newly-decided verdict agrees with z3).
     follow-up — the exact channel certifies or refutes every arithmetic
     shape the old fixtures used).
 
-**Verification:** release-mode workspace suite 11 955/11 956 (disk
-pressure documented; the 1 failure is the ~8-minute rehome regression at
+**Verification:** release-mode workspace suite — 11 970/11 970 on the
+final merged tree (11 955/11 956 on this build alone under disk pressure,
+documented; the 1 failure was the ~8-minute rehome regression at
 nextest's 180 s cap under machine load 46 — verdict verified `sat` via
-the CLI, 8m04s vs the baseline binary's 8m44s on the same input);
+the CLI, 8m04s vs the baseline binary's 8m44s on the same input, and it
+passes in-suite once the machine quiets);
 doc tests, clippy `-D warnings`, fmt, rustdoc `-D warnings` clean; Z3
 parity 176/177 Correct, 0 disagreements (z3 4.16.0); wide differential
 3 × 300 + mixed differential 3 × 400 fresh seeds (20261170–75) plus the
