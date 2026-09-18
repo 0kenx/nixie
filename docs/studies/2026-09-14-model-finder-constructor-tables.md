@@ -1007,3 +1007,48 @@ Verification (final landed state — generator only, solver reverted to
 main): random family seeds {41..46}×150 **CLEAN**; unsat family seeds
 {51..54}×150 **CLEAN** (0 false-sats, gaps as measured); family pins
 set16/set9/set19 all `sat`; clippy/fmt clean.
+
+
+## The minted-row memory decoded to the last layer (2026-09-17, seventeenth follow-up — negative result, precise map)
+
+The sixteenth follow-up left the minted-row design gap open ("a
+churn-proof row source").  This session built the row memory
+(`ModelCompleter::fresh_rows` — the mint records its installed row,
+re-injected each round before the harvest) and drove the pollution hunt
+to the last two layers, both real and now precisely understood:
+
+1. **The polarity override**: the loop's own falsifier lemmas mint ground
+   atoms AT minted elements (the encoder internalizes the minted term;
+   the SAT core commits `member(u!4, e0) = true` to satisfy the
+   instance).  The harvest feeds those polarities back, and the
+   completion evaluator's *whole-term assignment lookup* answers
+   `member(u!4, e0)` from them — before any entry is consulted,
+   overriding the remembered row.
+2. **The same-key twin**: even with the assignment keys purged, the
+   harvest (`extract_function_interpretations`, which runs before the
+   purge) had already converted them into observer *entries* whose args
+   coincide exactly with the mint's own — and a key-based retain filter
+   keeps both.  The purge must drop every entry touching a minted
+   element and re-inject the remembered rows after.
+
+With both fixed, the mint's names become honest (the `!bits` suffix
+matches the element's actual row — verified in the row dumps) and the
+minted elements keep their rows across rounds.  The **new** blocker is
+honest convergence pacing: the semantically-correct structures are
+bigger, the nested checks now spend their per-check conflict limits
+(`Err(MaxConflicts)` on the union/intersection/difference checks), and
+the loop dies at the global budget (~26 rounds, 53 k aux conflicts on
+set16) before the witness-axiom instances drive the ground rows apart.
+The old (landed) build converged by riding *dishonest* else-readings of
+vanished rows — smaller structures, cheaper checks.
+
+**The next session's entry point**: with honest rows in place, retune
+the pacing — the aux per-check conflict limit against table size, and
+the refund cadence (the mint-round refund was re-added and helps the
+round count but not the per-check caps).  Do NOT ship the row memory
+without the family pins green; the held-back state is
+`fresh_rows` + the two purges + the refund, all in this worktree's
+history (branch `row-memory`, reverted before landing).
+
+Verification of the reverted state: set family all `sat`; quant_fuzz
+seed 41 × 60 CLEAN.
