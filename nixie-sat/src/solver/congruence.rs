@@ -507,3 +507,121 @@ impl Solver {
         gates
     }
 }
+
+/// Whether the ternary×binary self-subsuming-resolution cascade runs inside
+/// ELS rounds (kissat `congruencebinaries`; study 2026-09-18-ssr-binaries).
+#[cfg(test)]
+pub(super) fn ssr_binaries_enabled() -> bool {
+    if let Some(v) = crate::test_knobs::ssr_binaries_override() {
+        return v;
+    }
+    std::env::var("NIXIE_SSR_BIN").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+#[cfg(not(test))]
+pub(super) fn ssr_binaries_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SSR_BIN").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+impl Solver {
+    /// kissat `extract_binaries` (congruence.c): one bounded pass of
+    /// self-subsuming resolution of irredundant ternary clauses against the
+    /// binary set, adding each resolvent as a learned binary clause:
+    /// `(a ∨ b ∨ c) ∧ (¬a ∨ b) ⊢ (b ∨ c)`.  The new binaries strengthen the
+    /// implication view (and are what completes partial AND-gate patterns
+    /// `o ↔ a ∧ b`, whose detection needs `o→a` and `o→b`) — on
+    /// `bv_ILA_Piccolo` kissat extracts only ~312 of them in round 1, yet
+    /// they unlock the whole congruence cascade (knockout: 790 k vs 9.5 k
+    /// conflicts).  Resolvents carry the `clause_hyper` provenance flag so
+    /// transitive reduction does not retire consequences that live clauses
+    /// re-derive (the same protection hyper-binaries get).  Sound: every
+    /// addition is a resolution consequence of two live clauses (RUP via
+    /// its parents).  Returns the number of binaries added.
+    pub(super) fn extract_binary_resolvents(&mut self) -> usize {
+        // Snapshot irredundant ternaries first: the loop below mutates the
+        // clause database (additions), and the binary lookups go through
+        // the BIG, whose attach-time registration keeps it current.
+        let mut work: Vec<[Lit; 3]> = Vec::new();
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned || c.lits.len() != 3 {
+                continue;
+            }
+            // Level-0-assigned vars: the clause is satisfied or simplifiable
+            // by the ordinary passes; skip (kissat checks `values[lit]`).
+            if c.lits.iter().any(|&l| self.trail.is_assigned(l.var())) {
+                continue;
+            }
+            work.push([c.lits[0], c.lits[1], c.lits[2]]);
+        }
+        let mut added = 0usize;
+        for [a, b, c] in work {
+            // (¬a∨b) present ⇒ resolve a away, resolvent (b∨c); etc. The
+            // binary clause (¬x ∨ y) is the BIG edge x→y.
+            let (l, k) = if self.has_binary_implication(a, b) || self.has_binary_implication(a, c) {
+                (b, c)
+            } else if self.has_binary_implication(b, a) || self.has_binary_implication(b, c) {
+                (a, c)
+            } else if self.has_binary_implication(c, a) || self.has_binary_implication(c, b) {
+                (a, b)
+            } else {
+                continue;
+            };
+            if l == k.negate() {
+                continue; // tautological resolvent
+            }
+            // Already present?  (l ∨ k) is the BIG edge ¬l→k.
+            if self.has_binary_implication(l.negate(), k) {
+                continue;
+            }
+            self.mark_subsume_lits([l, k].iter());
+            let id = self.clauses.add_learned([l, k]);
+            let lbd = self.compute_lbd(&[l, k]);
+            self.clauses.set_lbd(id, lbd);
+            self.debug_check_learned_clause_lbd(id);
+            // BIG registration happens inside `attach_watchers` for binaries;
+            // the hyper flag exempts the resolvent from transitive reduction
+            // (it is a consequence of the ternary + subsumer binary).
+            self.attach_watchers(id, l, k);
+            self.clause_hyper.resize(id.index() + 1, false);
+            self.clause_hyper[id.index()] = true;
+            added += 1;
+        }
+        added
+    }
+}
+
+/// Study arm: run one pre-search ELS round (SSR cascade + gate congruence +
+/// fold) before the conflict-scheduled elimination (kissat preprocess
+/// order).  Default off; armed by `NIXIE_ELS_PRESEARCH=1`.
+#[cfg(test)]
+pub(super) fn els_presearch_arm_enabled() -> bool {
+    if let Some(v) = crate::test_knobs::els_presearch_override() {
+        return v;
+    }
+    std::env::var("NIXIE_ELS_PRESEARCH").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+#[cfg(not(test))]
+pub(super) fn els_presearch_arm_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        std::env::var("NIXIE_ELS_PRESEARCH")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}

@@ -438,6 +438,8 @@ pub(crate) mod test_knobs {
         static SWEEP: Cell<Option<bool>> = const { Cell::new(None) };
         static SWEEP_NULL: Cell<Option<bool>> = const { Cell::new(None) };
         static DEFINITIONS: Cell<Option<bool>> = const { Cell::new(None) };
+        static SSR_BIN: Cell<Option<bool>> = const { Cell::new(None) };
+        static ELS_PRE: Cell<Option<bool>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set_kitten_sweep(v: Option<bool>) {
@@ -462,6 +464,22 @@ pub(crate) mod test_knobs {
 
     pub(crate) fn kitten_sweep_null_override() -> Option<bool> {
         SWEEP_NULL.with(Cell::get)
+    }
+
+    pub(crate) fn set_ssr_binaries(v: Option<bool>) {
+        SSR_BIN.with(|c| c.set(v));
+    }
+
+    pub(crate) fn ssr_binaries_override() -> Option<bool> {
+        SSR_BIN.with(Cell::get)
+    }
+
+    pub(crate) fn set_els_presearch(v: Option<bool>) {
+        ELS_PRE.with(|c| c.set(v));
+    }
+
+    pub(crate) fn els_presearch_override() -> Option<bool> {
+        ELS_PRE.with(Cell::get)
     }
 }
 
