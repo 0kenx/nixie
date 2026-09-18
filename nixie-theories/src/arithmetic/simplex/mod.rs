@@ -4592,8 +4592,22 @@ impl Simplex {
                     if a.value > b.value {
                         return None;
                     }
-                    let a_first = a.value < b.value;
-                    if want_min == a_first { a } else { b }
+                    // Pick by SIDE on every surviving (well-ordered or
+                    // EQUAL) pair: `lo` IS the lower bound, `hi` IS the
+                    // upper.  On an EQUAL pair - a pin whose sides can
+                    // carry DIFFERENT reason sets (the atom's own assert
+                    // on one side, a propagated bound on the other) - the
+                    // `want_min == a_first` tie-break resolved to the
+                    // OPPOSITE side, so a min derivation cited the
+                    // UPPER's reasons and a max the LOWER's.  The VALUE
+                    // choice is immaterial there; the REASON choice is
+                    // load-bearing: a derived bound must cite the side
+                    // that justifies it, or a later conflict names an
+                    // atom that does not imply the bound it is blamed
+                    // for (item 74's singleton-pair false `unsat`:
+                    // `hi(v) = 0`, justified only by the upper pin's
+                    // atom, was attributed to the lower pin's atom).
+                    if want_min { a } else { b }
                 }
                 (Some(a), None) if want_min => a,
                 (None, Some(b)) if !want_min => b,
@@ -4656,8 +4670,22 @@ impl Simplex {
                     if a.value > b.value {
                         return None;
                     }
-                    let a_first = a.value < b.value;
-                    Some(if want_min == a_first { a } else { b })
+                    // Pick by SIDE on every surviving (well-ordered or
+                    // EQUAL) pair: `lo` IS the lower bound, `hi` IS the
+                    // upper.  On an EQUAL pair - a pin whose sides can
+                    // carry DIFFERENT reason sets (the atom's own assert
+                    // on one side, a propagated bound on the other) - the
+                    // `want_min == a_first` tie-break resolved to the
+                    // OPPOSITE side, so a min derivation cited the
+                    // UPPER's reasons and a max the LOWER's.  The VALUE
+                    // choice is immaterial there; the REASON choice is
+                    // load-bearing: a derived bound must cite the side
+                    // that justifies it, or a later conflict names an
+                    // atom that does not imply the bound it is blamed
+                    // for (item 74's singleton-pair false `unsat`:
+                    // `hi(v) = 0`, justified only by the upper pin's
+                    // atom, was attributed to the lower pin's atom).
+                    Some(if want_min { a } else { b })
                 }
                 // One-sided pairs serve their own direction only (see the
                 // direction-1 `bound` selection): a lone lower is never a

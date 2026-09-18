@@ -61,6 +61,12 @@ enum SlackDir {
     Ge,
     /// `lhs = rhs`: the atom's own bound is `slack = 0`.
     Eq,
+    /// `lhs < rhs` (the delta-encoded strict path of `assert_lt`): the
+    /// atom's own bound is the STRICT `slack < 0`.
+    Lt,
+    /// `lhs > rhs` (the delta-encoded strict path of `assert_gt`): the
+    /// atom's own bound is the STRICT `slack > 0`.
+    Gt,
 }
 
 /// The linear form that interned a row slack, kept for the stranded-bound
@@ -746,15 +752,27 @@ impl ArithSolver {
             let lo_atom = atom_live(self.simplex.get_lower(old));
             let hi_atom = atom_live(self.simplex.get_upper(old));
             let (want_lower, want_upper) = match form.dir {
-                SlackDir::Le => (false, hi_atom.is_some()),
-                SlackDir::Ge => (lo_atom.is_some(), false),
+                SlackDir::Le | SlackDir::Lt => (false, hi_atom.is_some()),
+                SlackDir::Ge | SlackDir::Gt => (lo_atom.is_some(), false),
                 SlackDir::Eq => (lo_atom.is_some(), hi_atom.is_some()),
             };
             if !want_lower && !want_upper {
                 continue; // the atom's own assertion is not live: restore nothing
             }
-            let key = self.row_key(&form.lhs, form.rhs, form.dir == SlackDir::Eq);
-            let fresh = self.cached_row_slack(&key, &form.lhs, form.rhs, form.dir, form.reason);
+            // Re-intern through the SAME path that built the row: the
+            // strict dirs must not run the equality/inequality normalizer's
+            // sign flip (it would reverse a strict bound's direction), so
+            // they rebuild exactly `lhs - rhs` like the delta paths did.
+            let fresh = match form.dir {
+                SlackDir::Lt | SlackDir::Gt => {
+                    let key = self.row_key(&form.lhs, form.rhs, false);
+                    self.cached_row_slack_strict(&key, &form.lhs, form.rhs, form.dir, form.reason)
+                }
+                SlackDir::Le | SlackDir::Ge | SlackDir::Eq => {
+                    let key = self.row_key(&form.lhs, form.rhs, form.dir == SlackDir::Eq);
+                    self.cached_row_slack(&key, &form.lhs, form.rhs, form.dir, form.reason)
+                }
+            };
             if fresh == old {
                 continue;
             }
@@ -765,12 +783,21 @@ impl ArithSolver {
             // `if let`s keep that invariant structural: no arm can fire
             // without the matching live atom reason in hand.
             let mut moved = false;
+            // Strict atoms re-assert STRICT zero bounds (`slack < 0` /
+            // `slack > 0`, the delta encoding) — matching the original
+            // assertion exactly, never a weakened `<= 0` / `>= 0`.
             if want_lower && let Some(id) = lo_atom {
-                self.simplex.set_lower(fresh, Rational64::zero(), id);
+                match form.dir {
+                    SlackDir::Gt => self.simplex.set_strict_lower(fresh, Rational64::zero(), id),
+                    _ => self.simplex.set_lower(fresh, Rational64::zero(), id),
+                }
                 moved = true;
             }
             if want_upper && let Some(id) = hi_atom {
-                self.simplex.set_upper(fresh, Rational64::zero(), id);
+                match form.dir {
+                    SlackDir::Lt => self.simplex.set_strict_upper(fresh, Rational64::zero(), id),
+                    _ => self.simplex.set_upper(fresh, Rational64::zero(), id),
+                }
                 moved = true;
             }
             if moved {
@@ -790,6 +817,7 @@ impl ArithSolver {
         key: &RowKey,
         lhs: &[(TermId, Rational64)],
         rhs: Rational64,
+        dir: SlackDir,
         reason: TermId,
     ) -> VarId {
         let _ = key;
@@ -818,6 +846,20 @@ impl ArithSolver {
         if integral && self.intern_keeps_integrality(mode, slack) {
             self.int_vars.insert(slack);
         }
+        // Recorded for the stranded-bound re-homing sweep like the
+        // non-strict rows: a strict atom's row can be consumed by a pivot
+        // exactly like any other, and its `slack < 0` bound then constrains
+        // a free-floating variable — the constraint is dropped from the
+        // live LP until the sweep re-asserts it.
+        self.slack_forms.insert(
+            slack,
+            SlackForm {
+                lhs: lhs.to_vec(),
+                rhs,
+                dir,
+                reason,
+            },
+        );
         self.atom_rows.insert(cache_key, slack);
         slack
     }
@@ -1495,7 +1537,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack_strict(&key, lhs, rhs, reason);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs, SlackDir::Lt, reason);
         self.simplex
             .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
@@ -1544,7 +1586,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack_strict(&key, lhs, rhs, reason);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs, SlackDir::Gt, reason);
         self.simplex
             .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {

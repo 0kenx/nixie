@@ -1034,3 +1034,40 @@ fn rehome_false_unsat_seed_20261102_core_decides_sat() {
         "the two-disjunct core is satisfiable (z3: sat); `unsat` is the item-69 defect"
     );
 }
+
+/// The seed-20261130 false `unsat` (found by the mixed differential's
+/// fresh seeds one day after item 69 closed; mixed-fuzz instance, z3 `sat`).
+///
+/// Root cause: the slice-6 endpoint selector picked a two-sided bound pair's
+/// side by COMPARING VALUES (`want_min == a_first`).  For an equal pair - a
+/// pin whose two sides can carry DIFFERENT reason sets (the atom's own
+/// assert on one side, a propagated bound on the other) - the tie-break
+/// resolved to the OPPOSITE side: a min derivation cited the UPPER's
+/// reasons and a max derivation the LOWER's.  Here `hi(v) = 0`, justified
+/// only by the `(= 2 (mod (mod 3xi 2) 7))` trichotomy pin, was attributed
+/// to the `(< 2 X)` atom's bound - which implies only `X <= 2` - and the
+/// crossing then exported the PAIR `{(< 2 X), (> 2 X)}` as refuted when the
+/// true refutation needed the equality atom: a learned clause eliminating
+/// the satisfiable region where `X <= 1`.
+///
+/// The selector now picks by SIDE (each side is an independently live
+/// fact), which is sound for crossed windows too.  Shrunk from the raw
+/// instance by delta-debugging on (z3 sat, nixie unsat).
+#[test]
+fn equal_pin_endpoint_reasons_cite_their_own_side() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (and (not (and (or (<= (+ (* 1 xi) (* -2 xi) (* -1 xi)) 4611686018427387904) (< (+ (+ 8 (div (* -2 xi) 5)) (+ (* -2 xi) (+ (* 1 xi) -7))) 7) (>= (+ (* 10 xi) (mod (+ (* 2 xi) (* -2 xi) (* -2 xi)) 1) (+ 93 (+ (* 2 xi) (* -2 xi) -51))) 0)) (and (> (+ (mod (+ (* -1 xi) -4 (* 1 xi)) 4) (* 1 xi) 1) (- (- (div (* 3 xi) 4) 3) 2)) (< (+ (+ (+ (* 1 xi) (* -2 xi)) (+ -3 (* 1 xi) (* 5 xi))) (* 5 xi) (+ (+ (* 10 xi) (* 1 xi)) (+ 85 -3) (* 2 xi))) 0)) (and (> (* -1 xi) 3) (< (+ (div (div (* 2 xi) 4) 1) (div (+ (* -2 xi) (* 2 xi)) 2) (* 10 xi)) (* 5 xi)) (> (- (+ -5 1099511627776 (+ (* 3 xi) (* 1 xi) (* -2 xi))) -2) 3)))) (not (and (not (and (< (mod (* -2 xi) 1) (+ (- 9 3) (* -2 xi) (* 10 xi))) (= (* 5 xi) (div (mod -8 1) 1)) (> (+ (+ 0 (div (* 5 xi) 7)) (+ -84 (* 2 xi)) (mod (+ (* 1 xi) (* 5 xi) 2147483647) 3)) 3))) (> (mod (mod (+ (* -1 xi) (* 3 xi) (* 2 xi)) 2) 7) 0) (<= (mod (+ (+ 59 23) (+ (* 2 xi) (* -1 xi)) (* 10 xi)) 7) -7))) (not (or (not (or (> (* 2 xi) 3) (< (+ (+ 0 (div -2 4)) (+ (+ (* 5 xi) 7) (+ (* 1 xi) 2) (* -2 xi)) (+ (mod (* -2 xi) 5) (* 5 xi))) 18) (> 9 2))) (not (or (<= (+ (div (* 3 xi) 1) (* 10 xi)) (mod (* 3 xi) 1)) (> (+ (+ (- 7 2) (* -2 xi)) (+ (mod -6 4) (* 5 xi) -9)) 1) (> (* 10 xi) 2)))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the instance is satisfiable (z3: sat); `unsat` is the endpoint reason-side swap"
+    );
+}

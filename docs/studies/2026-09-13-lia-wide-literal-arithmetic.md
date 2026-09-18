@@ -2046,3 +2046,76 @@ consistent with it end to end.
     default numbers on the fixed seeds after this session's three
     landings: **gap_sat 111, gap_unsat 4, 1 648 decisive** (from 134/7/1
     626 at the session's start).
+
+## Continuation 37 (2026-09-18): items 74-75 — the EQUAL-pair endpoint reason-side swap (the half of the selector defect item 73's decline left open), and the strict-atom rehome gap closed
+
+74. **The seed-20261130 false `unsat`, found by the next day's fresh
+    differential seeds and decoded to a two-line root cause.**  Shape: the
+    mixed-fuzz div/mod family (`mod (mod 3xi 2) 7` under nested `div`s,
+    2^31/2^40/2^62 constants, two of the surviving conjuncts semantically
+    TAUTOLOGOUS — their atoms still mint the rows that mislead).  z3 `sat`;
+    shrunk by ddmin to `equal_pin_endpoint_reasons_cite_their_own_side`'s
+    bytes.  The decode pipeline was item 69's, reused verbatim: conflict-set
+    polarity printing → ONE unsound pair `{(< 2 X) [F], (> 2 X) [T]}` over
+    `X = mod(mod 3xi 2) 7` (jointly `X ≤ 2 ∧ X < 2` — satisfiable; z3
+    agrees) → write-trace + backtrace on the poisoned bound → the slice-6
+    direction-2 push `hi(v104) = 0 reasons=[72]` where the sound
+    direction-1 derivation carried `reasons=[130]`.
+    * **The mechanism**: `v104 = 2 − X` was PINNED `[0,0]` by two sides
+      with different justifications — the `(< 2 X)` atom's own bound on
+      the lower side, the `(= 2 X)` trichotomy pin's propagation on the
+      upper.  The endpoint selector for two-sided pairs picked the side by
+      COMPARING VALUES (`want_min == (lo.value < hi.value)`): for an EQUAL
+      pair the tie-break resolves to the OPPOSITE side, so the min
+      derivation cited the upper's reasons and the max the lower's.  The
+      value choice is immaterial on an equal pair; the REASON choice is
+      load-bearing — `hi(v104) = 0` (i.e. `X ≥ 2`), justified only by the
+      equality pin, was attributed to the `(< 2 X)` atom (which implies
+      only `X ≤ 2`).  The crossing then exported `{(< 2 X), (> 2 X)}` as
+      refuted when the true refutation needed the equality atom — a
+      learned clause eliminating the satisfiable `X ≤ 1` region.
+    * **The fix** (two sites: `derive_var_bound_big_parts`'s and
+      `derive_bound_big_parts`'s endpoint closures), COMPLEMENTARY to item
+      73's decline: their fix closes the strictly-INVERTED pair (decline —
+      the crossing channel owns it); this one closes the EQUAL pair their
+      entry left as "valid" (value-wise true, reason-wise swapped).  Pick
+      by SIDE — `lo` for a min request, `hi` for a max; with inverted
+      pairs declined first, every surviving pair is well-ordered or equal,
+      and the side pick IS the value pick for the well-ordered case.
+      Revert-checked: the new regression answers `unsat` on the pre-fix
+      tree.
+75. **The strict-atom rehome gap, closed** (the same mechanism's missing
+    half, found by reading while item 74 decoded): `cached_row_slack_strict`
+    never recorded `slack_forms`, so a STRICT atom's row (`assert_lt`/
+    `assert_gt`'s delta path — real-mode and unshifted strict bounds) that
+    lost its defining row to a pivot never got re-homed: its `slack < 0`
+    bound kept constraining a floating variable and the constraint was
+    dropped from the live LP with no restoration — exactly the class the
+    sweep exists to close, silently uncovered since the rehome's
+    introduction.  `SlackDir` now carries `Lt`/`Gt`; the strict interning
+    records its form; the sweep re-interns strict rows through the STRICT
+    path (no normalizer sign flip) and re-asserts the atom's own STRICT
+    zero bound — never a weakened `≤ 0`.  Screened by the wide + mixed
+    differentials at the new default (no verdict movement beyond item 74's
+    fix).
+    * **The load-bearing-restoration question, reframed by measurement**
+      (follow-up to item 71's open thread): at strand time the stranded
+      slacks of the `parity_infeasibility` repro are referenced by 5-9
+      NARROW rows and `old_val == form_val` — the pivot's rewritten row
+      does keep the slack's equation live at that instant.  The
+      restoration's load-bearing effect therefore runs through what the
+      re-assertion FEEDS (the re-check loop's cadence, the
+      `int_equalities` Diophantine feed, B&B's view of the atom), not
+      through raw LP enforcement.  The precise channel stays open, now
+      with the forensics pattern (reason-side tracing) that answered
+      items 69-74 available for it.
+    * Verification for the landing (at main `1fd5b96f` + both fixes): the
+      five arithmetic pins green (the full-instance rehome test at 625 s
+      in isolation, its documented load cap); clippy/fmt/rustdoc clean;
+      parity 176/177 Correct, 0 disagreements (z3 4.16.0); mixed
+      differential 7 × 400 clean (seeds 20261120-22, 20261130-32,
+      20261140-41 + home seed 20261102); wide 3 × 300 clean; debug-panic
+      sweep 177/177 zero panics; perf gate PASS, conflicts/decisions
+      bit-identical 1.000.  The three failures seen at the 740c16bd base
+      (`model_eval` SIGABRT, `si2_b03m`, `bench_679`) were pre-existing
+      there and are fixed by the parallel front's landed work.
