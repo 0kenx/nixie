@@ -933,3 +933,141 @@ fn bnb_dead_leaf_backtracks_instead_of_unwinding_unknown() {
         "xi = 7/11 is not integral (z3: unsat); `unknown` unwinds a repairable leaf"
     );
 }
+
+/// A `div` by a constant 1 over a SYMBOLIC dividend folds to its identity
+/// (`div(t,1)=t`) at construction, removing the term from the div-axiom
+/// feed: this pure-equality LIA goal (`15·xi + 3·zi = -52` once the
+/// `div(-xi,1)` folds) is refutable by the GCD argument alone, but with the
+/// `Div` node present the axiom feed hid the equality's coefficient
+/// structure and the goal answered honest `unknown` (z3: `unsat`).
+///
+/// Found by the gap survey (seed 20261002, instance 567); the ±1-divisor
+/// identity folds recovered 3 of the 7 UNSAT-side members on the fixed
+/// survey seeds (plus 18 SAT-side — the feed was also deflecting searches).
+#[test]
+fn div_by_one_folds_and_the_gcd_refutation_decides() {
+    let mut tm = TermManager::new();
+    let xi = tm.mk_var("xi", tm.sorts.int_sort);
+    let zi = tm.mk_var("zi", tm.sorts.int_sort);
+    let ten = tm.mk_int(10);
+    let five = tm.mk_int(5);
+    let neg_two = tm.mk_int(-2);
+    let three = tm.mk_int(3);
+    let neg_one = tm.mk_int(-1);
+    let one = tm.mk_int(1);
+    let t10 = tm.mk_mul([ten, xi]);
+    let t5 = tm.mk_mul([five, xi]);
+    let tm2 = tm.mk_mul([neg_two, xi]);
+    let t3z = tm.mk_mul([three, zi]);
+    let neg_xi = tm.mk_mul([neg_one, xi]);
+    // (div (* -1 xi) 1): folds to (* -1 xi) at construction.
+    let d1 = tm.mk_div(neg_xi, one);
+    let sum = tm.mk_add([t10, t5, tm2, t3z, d1]);
+    let rhs = tm.mk_int(-52);
+    let claim = tm.mk_eq(sum, rhs);
+    let mut s = Solver::new();
+    s.assert(claim, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
+/// The item-69 false `unsat` (2026-09-18, seed-20261102 mixed-fuzz instance
+/// 17; bytes preserved under `docs/studies/assets/2026-09-18/`).  z3: `sat`;
+/// nixie answered `unsat` from the first commit that had the machinery
+/// (`5c8bf7a8`) through `ee8caf48`.
+///
+/// Root cause (the completion of study item 70's decode): the writer of the
+/// unsound `hi = 7/20` was `rehome_stranded_row_bounds` -> `copy_bounds`.
+/// The sweep re-interned a stranded slack's recorded form and copied the OLD
+/// slack's live bound VALUES onto the fresh row.  After a pivot consumed the
+/// old row, the fresh row renders the form through the *current* tableau -
+/// which resolved it as `(20/7)*old`, a RESCALED multiple of the old slack
+/// itself (the rescale factor item 70 fingered, dropped on exactly one side
+/// by the value copy) - while the old slack's propagated pin said
+/// `old = 7/20`.  The value-for-value copy then asserted `(20/7)*old = 7/20`
+/// un-translated, a constraint nobody derived; it crossed the sound
+/// `old = 7/20` derivation, and the crossing exported a SINGLETON conflict
+/// blaming one Euclidean `div`/`mod` identity axiom - a learned unit
+/// negated axiom that collapsed the search to `unsat`.
+///
+/// The sweep now only re-asserts the ATOM's own zero bound (scale-invariant,
+/// and only for slacks no live row references at all); the instance decides
+/// `sat`.
+#[test]
+fn rehome_does_not_fabricate_a_crossing_on_a_referenced_slack() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (and (not (or (= (mod (* 1 xi) 4) (div (- (+ 60 (* 2 xi) 20) 3) 3)) (not (and (>= (+ (+ (+ 2147483648 (* 3 xi) (* 3 xi)) (+ (* 2 xi) (* -1 xi) 62) (+ -92 (* -2 xi))) (+ (+ -2147483648 -4611686018427387904) (* 2 xi) (mod 5 7))) (mod (* 10 xi) 7)) (>= (mod (- (div (* 1 xi) 7) 2) 5) -6))) (not (or (> (mod (mod (* 3 xi) 5) 5) 71) (> (* 5 xi) 1) (< (+ (+ (+ (* 2 xi) (* 1 xi)) (+ -1 (* -2 xi) (* -1 xi)) (* 10 xi)) (+ (mod (* 2 xi) 1) (- (* 1 xi) 3) (+ 2 -5 6)) (* 10 xi)) (+ (+ (+ (* -2 xi) (* 2 xi)) (mod (* -2 xi) 1) -7) (+ (div (* 3 xi) 7) (+ (* 2 xi) (* 5 xi) (* 3 xi)))))))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the full instance is satisfiable (z3 model xi = 658812288346769706);          `unsat` is the item-69 fabricated singleton-conflict false refutation"
+    );
+}
+
+/// The same defect's TWO-disjunct core - the shape that still answered
+/// `unsat` when the handoff shrank it (D1 alone, D1+C1 and D1+C2 all decided
+/// correctly; the wrongness needed both C1 and C2).  Kept as a second pin so
+/// a future regression in either the stranding gate or the atom-bound
+/// re-assertion trips at the smaller shape too.
+#[test]
+fn rehome_false_unsat_seed_20261102_core_decides_sat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (not (or (= (mod (* 1 xi) 4) (div (- (+ 60 (* 2 xi) 20) 3) 3)) (not (and (>= (+ (+ (+ 2147483648 (* 3 xi) (* 3 xi)) (+ (* 2 xi) (* -1 xi) 62) (+ -92 (* -2 xi))) (+ (+ -2147483648 -4611686018427387904) (* 2 xi) (mod 5 7))) (mod (* 10 xi) 7)) (>= (mod (- (div (* 1 xi) 7) 2) 5) -6))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the two-disjunct core is satisfiable (z3: sat); `unsat` is the item-69 defect"
+    );
+}
+
+/// The seed-20261130 false `unsat` (found by the mixed differential's
+/// fresh seeds one day after item 69 closed; mixed-fuzz instance, z3 `sat`).
+///
+/// Root cause: the slice-6 endpoint selector picked a two-sided bound pair's
+/// side by COMPARING VALUES (`want_min == a_first`).  For an equal pair - a
+/// pin whose two sides can carry DIFFERENT reason sets (the atom's own
+/// assert on one side, a propagated bound on the other) - the tie-break
+/// resolved to the OPPOSITE side: a min derivation cited the UPPER's
+/// reasons and a max derivation the LOWER's.  Here `hi(v) = 0`, justified
+/// only by the `(= 2 (mod (mod 3xi 2) 7))` trichotomy pin, was attributed
+/// to the `(< 2 X)` atom's bound - which implies only `X <= 2` - and the
+/// crossing then exported the PAIR `{(< 2 X), (> 2 X)}` as refuted when the
+/// true refutation needed the equality atom: a learned clause eliminating
+/// the satisfiable region where `X <= 1`.
+///
+/// The selector now picks by SIDE (each side is an independently live
+/// fact), which is sound for crossed windows too.  Shrunk from the raw
+/// instance by delta-debugging on (z3 sat, nixie unsat).
+#[test]
+fn equal_pin_endpoint_reasons_cite_their_own_side() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (assert (and (not (and (or (<= (+ (* 1 xi) (* -2 xi) (* -1 xi)) 4611686018427387904) (< (+ (+ 8 (div (* -2 xi) 5)) (+ (* -2 xi) (+ (* 1 xi) -7))) 7) (>= (+ (* 10 xi) (mod (+ (* 2 xi) (* -2 xi) (* -2 xi)) 1) (+ 93 (+ (* 2 xi) (* -2 xi) -51))) 0)) (and (> (+ (mod (+ (* -1 xi) -4 (* 1 xi)) 4) (* 1 xi) 1) (- (- (div (* 3 xi) 4) 3) 2)) (< (+ (+ (+ (* 1 xi) (* -2 xi)) (+ -3 (* 1 xi) (* 5 xi))) (* 5 xi) (+ (+ (* 10 xi) (* 1 xi)) (+ 85 -3) (* 2 xi))) 0)) (and (> (* -1 xi) 3) (< (+ (div (div (* 2 xi) 4) 1) (div (+ (* -2 xi) (* 2 xi)) 2) (* 10 xi)) (* 5 xi)) (> (- (+ -5 1099511627776 (+ (* 3 xi) (* 1 xi) (* -2 xi))) -2) 3)))) (not (and (not (and (< (mod (* -2 xi) 1) (+ (- 9 3) (* -2 xi) (* 10 xi))) (= (* 5 xi) (div (mod -8 1) 1)) (> (+ (+ 0 (div (* 5 xi) 7)) (+ -84 (* 2 xi)) (mod (+ (* 1 xi) (* 5 xi) 2147483647) 3)) 3))) (> (mod (mod (+ (* -1 xi) (* 3 xi) (* 2 xi)) 2) 7) 0) (<= (mod (+ (+ 59 23) (+ (* 2 xi) (* -1 xi)) (* 10 xi)) 7) -7))) (not (or (not (or (> (* 2 xi) 3) (< (+ (+ 0 (div -2 4)) (+ (+ (* 5 xi) 7) (+ (* 1 xi) 2) (* -2 xi)) (+ (mod (* -2 xi) 5) (* 5 xi))) 18) (> 9 2))) (not (or (<= (+ (div (* 3 xi) 1) (* 10 xi)) (mod (* 3 xi) 1)) (> (+ (+ (- 7 2) (* -2 xi)) (+ (mod -6 4) (* 5 xi) -9)) 1) (> (* 10 xi) 2)))))))\n\
+             (check-sat)\n"
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "the instance is satisfiable (z3: sat); `unsat` is the endpoint reason-side swap"
+    );
+}

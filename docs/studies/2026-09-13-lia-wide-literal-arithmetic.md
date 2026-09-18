@@ -1905,3 +1905,217 @@ the time of this note) removes the copy in favour of re-asserting the
 atom's own `∘ 0` bound with a live reason id, gated on
 `var_referenced_by_any_row`; the decode above (both manifestations) is
 consistent with it end to end.
+
+## Continuation 34 (2026-09-18): item 70 CLOSED — the writer was the rehome's value copy; the sound fix and the gate postmortem (item 71)
+
+71. **The item-69/item-70 false `unsat`, closed at the root and landed.**
+    The "remaining one probe iteration" from item 70 ran
+    (`set_upper_delta` write tracing + `Backtrace::force_capture` on the
+    writer): the planter of `v1112.upper = 7/20` is **`copy_bounds`, called
+    by `rehome_stranded_row_bounds`** — not the slice-6 propagation channel
+    item 70 suspected.  The full chain, decoded end to end:
+    * The stranded slack `v1037` (recorded form `−T74 + 2·T3 − 3·T14`,
+      rhs −78, reason T80) still carried its live PROPAGATED pin
+      `[7/20, 7/20]` (reason 5 = the T77 identity axiom, derived soundly
+      through `v12 = 1 − (20/7)·v1037` with v12 pinned [0,0]).
+    * The rehome re-interned the recorded form; `intern_row_reported`
+      rendered it through the CURRENT tableau, resolving it to the RESCALED
+      multiple `(20/7)·v1037` — item 70's rescale factor, appearing because
+      the rendering substitutes through rows that themselves express the
+      form via the old slack.
+    * `copy_bounds(old, fresh)` then copied the pin's VALUE un-translated:
+      `fresh = 7/20` asserts `(20/7)·v1037 = 7/20` — the 49/400-vs-7/20
+      fabrication nobody derived.  It crossed the sound `lo = 1`
+      derivation, and `record_crossing` exported the singleton conflict
+      blaming T77 alone → learned unit `¬axiom` → false `unsat`.
+    * **The fix** (lands with this entry): the sweep re-interns the
+      recorded form as before, but re-asserts ONLY the ATOM's own `∘ 0`
+      bound (scale-invariant under the positive rescale, so it carries
+      soundly onto ANY rendering) with a reason id already live for that
+      atom — never the old slack's current bound VALUES, which are
+      coordinates of the OLD variable, not of the form.  `copy_bounds` is
+      deleted (zero remaining callers).  `SlackForm` now records the
+      assertion direction (`Le`/`Ge`/`Eq`) so the atom's own bound is
+      reconstructible.  The instance decides `sat` (z3 model
+      `xi = 658812288346769706`; nixie publishes 658812288346769908,
+      hand-verified to satisfy ¬D1 ∧ C1 ∧ C2).
+    * **The gate postmortem** (why `var_referenced_by_any_row` is NOT in
+      the landed fix): the first cut also skipped any slack still
+      referenced by a live row, on the Dutertre–de Moura argument that a
+      pivot's rewritten row keeps the slack's equation live.  That
+      argument is FALSE in this tableau, measured twice: the
+      `parity_infeasibility_four_free_vars` and `bnb_dead_leaf`
+      regressions both flipped wrong (a false `sat` with an invalid model,
+      and a lost `unsat`) with the gate on, and a fresh mixed-fuzz seed
+      (20261120) produced another false `sat` (`fs1`: `(= (mod 3xi 1)
+      (− (div 5xi 1) 2))`, z3 `unsat`) — all three correct again with the
+      gate off.  The restoration is load-bearing even for narrow-referenced
+      slacks; WHY the preserved-equation argument fails (wide-store
+      migration? column substitution? the rehome cadence itself?) is
+      recorded as the next session's probe target, with the `fs1` shape as
+      a reproducer factory.
+    * Regressions: `rehome_does_not_fabricate_a_crossing_on_a_referenced_slack`
+      (full seed-20261102 instance) and
+      `rehome_false_unsat_seed_20261102_core_decides_sat` (the two-disjunct
+      core) in `nixie-solver/tests/arith_wide_literal_regressions.rs`; both
+      answer `unsat` on the pre-fix tree (revert-checked twice).
+    * Verification: workspace 11 942/11 943 (the one failure is the
+      in-flight `model_eval` SIGABRT of the parallel bags/parse session —
+      it fails identically without this change); clippy/fmt/rustdoc clean;
+      parity 176/177 Correct, 0 disagreements (z3 4.16.0); mixed
+      differential 3×400 fresh seeds (20261120–22) + the home seed 20261102
+      all clean; wide differential 3×300 fresh seeds clean; debug-panic
+      sweep 177/177 zero panics; perf gate PASS with conflicts/decisions
+      bit-identical at 1.000 (the rehome path only runs at
+      arithmetic final-check; the gate corpus is SAT-core dominated).
+    * Also resolved: the `(get-unsat-core)`-after-`check-sat` verdict flip
+      observed while shrinking (the CLI's chunked execution walked the
+      broken machinery down a different path) — both forms now agree `sat`.
+    * Housekeeping: probe worktrees `/tmp/x69` (this arc) and `/tmp/x70`
+      are REMOVED (the disk-pressure directive; every probe shape is
+      recorded here and in item 70's addendum).  The parallel session's
+      continuation-33 addendum described the in-flight fix as gated on
+      `var_referenced_by_any_row` — superseded by this entry's postmortem;
+      the landed fix has no reference gate.
+
+## Continuation 35 (2026-09-18): the ±1-divisor identity folds land — 21 survey members back (item 72); item 69/70 closed by the rehome fix
+
+72. **`div`/`mod` by a constant ±1 now folds to its identity at
+    construction** (`cd0430a5`; Z3's `arith_rewriter` policy):
+    `div_euclid(t, 1) = t` (hash-consed identity), `div_euclid(t, -1) =
+    -t`, `rem_euclid(t, ±1) = 0`.  Before, only the both-operands-constant
+    case folded, so a symbolic dividend under a ±1 divisor kept its
+    Div/Mod node and entered the div-axiom feed — hiding linear structure
+    (a pure-equality GCD-obvious LIA goal answered honest `unknown`; z3:
+    `unsat`) and deflecting searches well beyond that class.  Measured on
+    the survey seeds 20261000–02: **gap_sat 134 → 116, gap_unsat 7 → 4**
+    (unsat 576 → 579, all z3-correct), net decisive +13; timeouts 12 → 20
+    (load + trajectory reshuffle on instances that now search instead of
+    declining).  The rewriter's own ±1 rules remain as the second line for
+    raw-interned terms; the rewriter/encode tests now construct their
+    nodes that way / with non-folding divisors.  Verification: workspace
+    release-mode suite 11 924/11 940 — exactly the 15 known pre-existing
+    corpus-missing failures (the debug-mode full-suite link hit
+    `/media/data` at 100% mid-run; release covers the same tests);
+    clippy/fmt/rustdoc clean; parity 176/177, 0 disagreements (z3 4.16.0);
+    mixed 3×400 + wide 3×300 fresh seeds clean; perf gate PASS
+    (conflicts/decisions 1.000 bit-identical); panic sweep 177/177.
+    * Item 69/70's fix landed as `740c16bd` (the rehome never copies bound
+      values across the stranding boundary) and CLOSES the core
+      reproducer (`sat`, matching z3) — verified on the merged tree
+      before this landing (the merge conflict's two appended test blocks
+      both green: 36/36).  A process note for whoever reads the history:
+      an interim read of "main ships red rehome tests" was one commit
+      stale — the fix commit landed minutes after the test-build's
+      branch point; re-verify the tip before believing a red set.
+
+## Continuation 36 (2026-09-18): the crossed-window fabrication closed — interval derivations decline on inverted pairs (item 73)
+
+73. **The `NIXIE_S6_NDIR2`-only false `unsat` (item 71's second find),
+    root-caused and fixed** (`f60e26c8`).  The final conflict blamed six
+    atoms — **all TRUE at z3's model `xi = 120`** (verified by hand
+    evaluation) — an invalid lemma.  The chain: the general direction-2
+    solve read the crossed (inverted) windows of v19 `[2349/40, 0]` and
+    v63 `[1228, 0]`, and the endpoint selectors' `want_min == a_first`
+    pick silently chose the pair's WRONG side on an inverted pair (a
+    minimum request returns the UPPER bound) — fabricated bounds on
+    v0/v2 that direction-1 then propagated into v19's lower bound,
+    crossing the sound side and exporting the phony conflict.  **The
+    fix**: both pair-swap selectors (`derive_bound_big_parts`'s column
+    walk, `derive_var_bound_big_parts`'s general solve) DECLINE on a
+    strictly inverted pair — the crossed state belongs to the crossing
+    channel (`record_crossing` exports the real conflict), deriving
+    through an empty interval is fabrication, and the vacuous-truth case
+    loses nothing (the crossing fires on its own).  Equal bounds stay
+    valid, so the PINNED default form (lo == hi basics) is unaffected —
+    exactly why the defect was reachable only under the general gate.
+    `derive_basic_bound` deliberately keeps reading stored bounds as-is
+    (sound-input-sound-output; the fabrication site is the pair-swap
+    selectors alone).  Measured: the ndir2 arm's deflection cost HALVED
+    (timeouts 46 → 24, two of the six lost `unsat` verdicts recovered)
+    but still net-worse than the default — **item 71's default-on
+    refutation stands on capacity grounds, now without the soundness
+    hole**.  Regression:
+    `derivation_through_a_crossed_window_declines_instead_of_fabricating`
+    (both selectors).  Verification: workspace release suite 11 929/11
+    946 (15 known corpus-missing + the ~660 s rehome test's 180 s
+    load-cap, passes in isolation); clippy/fmt/rustdoc clean; parity
+    176/177, 0 disagreements (z3 4.16.0); mixed 3×400 + wide 3×300 fresh
+    seeds + the finder seed 20261123 clean; perf gate PASS (counters
+    1.000 bit-identical); panic sweep 177/177.  The survey's standing
+    default numbers on the fixed seeds after this session's three
+    landings: **gap_sat 111, gap_unsat 4, 1 648 decisive** (from 134/7/1
+    626 at the session's start).
+
+## Continuation 37 (2026-09-18): items 74-75 — the EQUAL-pair endpoint reason-side swap (the half of the selector defect item 73's decline left open), and the strict-atom rehome gap closed
+
+74. **The seed-20261130 false `unsat`, found by the next day's fresh
+    differential seeds and decoded to a two-line root cause.**  Shape: the
+    mixed-fuzz div/mod family (`mod (mod 3xi 2) 7` under nested `div`s,
+    2^31/2^40/2^62 constants, two of the surviving conjuncts semantically
+    TAUTOLOGOUS — their atoms still mint the rows that mislead).  z3 `sat`;
+    shrunk by ddmin to `equal_pin_endpoint_reasons_cite_their_own_side`'s
+    bytes.  The decode pipeline was item 69's, reused verbatim: conflict-set
+    polarity printing → ONE unsound pair `{(< 2 X) [F], (> 2 X) [T]}` over
+    `X = mod(mod 3xi 2) 7` (jointly `X ≤ 2 ∧ X < 2` — satisfiable; z3
+    agrees) → write-trace + backtrace on the poisoned bound → the slice-6
+    direction-2 push `hi(v104) = 0 reasons=[72]` where the sound
+    direction-1 derivation carried `reasons=[130]`.
+    * **The mechanism**: `v104 = 2 − X` was PINNED `[0,0]` by two sides
+      with different justifications — the `(< 2 X)` atom's own bound on
+      the lower side, the `(= 2 X)` trichotomy pin's propagation on the
+      upper.  The endpoint selector for two-sided pairs picked the side by
+      COMPARING VALUES (`want_min == (lo.value < hi.value)`): for an EQUAL
+      pair the tie-break resolves to the OPPOSITE side, so the min
+      derivation cited the upper's reasons and the max the lower's.  The
+      value choice is immaterial on an equal pair; the REASON choice is
+      load-bearing — `hi(v104) = 0` (i.e. `X ≥ 2`), justified only by the
+      equality pin, was attributed to the `(< 2 X)` atom (which implies
+      only `X ≤ 2`).  The crossing then exported `{(< 2 X), (> 2 X)}` as
+      refuted when the true refutation needed the equality atom — a
+      learned clause eliminating the satisfiable `X ≤ 1` region.
+    * **The fix** (two sites: `derive_var_bound_big_parts`'s and
+      `derive_bound_big_parts`'s endpoint closures), COMPLEMENTARY to item
+      73's decline: their fix closes the strictly-INVERTED pair (decline —
+      the crossing channel owns it); this one closes the EQUAL pair their
+      entry left as "valid" (value-wise true, reason-wise swapped).  Pick
+      by SIDE — `lo` for a min request, `hi` for a max; with inverted
+      pairs declined first, every surviving pair is well-ordered or equal,
+      and the side pick IS the value pick for the well-ordered case.
+      Revert-checked: the new regression answers `unsat` on the pre-fix
+      tree.
+75. **The strict-atom rehome gap, closed** (the same mechanism's missing
+    half, found by reading while item 74 decoded): `cached_row_slack_strict`
+    never recorded `slack_forms`, so a STRICT atom's row (`assert_lt`/
+    `assert_gt`'s delta path — real-mode and unshifted strict bounds) that
+    lost its defining row to a pivot never got re-homed: its `slack < 0`
+    bound kept constraining a floating variable and the constraint was
+    dropped from the live LP with no restoration — exactly the class the
+    sweep exists to close, silently uncovered since the rehome's
+    introduction.  `SlackDir` now carries `Lt`/`Gt`; the strict interning
+    records its form; the sweep re-interns strict rows through the STRICT
+    path (no normalizer sign flip) and re-asserts the atom's own STRICT
+    zero bound — never a weakened `≤ 0`.  Screened by the wide + mixed
+    differentials at the new default (no verdict movement beyond item 74's
+    fix).
+    * **The load-bearing-restoration question, reframed by measurement**
+      (follow-up to item 71's open thread): at strand time the stranded
+      slacks of the `parity_infeasibility` repro are referenced by 5-9
+      NARROW rows and `old_val == form_val` — the pivot's rewritten row
+      does keep the slack's equation live at that instant.  The
+      restoration's load-bearing effect therefore runs through what the
+      re-assertion FEEDS (the re-check loop's cadence, the
+      `int_equalities` Diophantine feed, B&B's view of the atom), not
+      through raw LP enforcement.  The precise channel stays open, now
+      with the forensics pattern (reason-side tracing) that answered
+      items 69-74 available for it.
+    * Verification for the landing (at main `1fd5b96f` + both fixes): the
+      five arithmetic pins green (the full-instance rehome test at 625 s
+      in isolation, its documented load cap); clippy/fmt/rustdoc clean;
+      parity 176/177 Correct, 0 disagreements (z3 4.16.0); mixed
+      differential 7 × 400 clean (seeds 20261120-22, 20261130-32,
+      20261140-41 + home seed 20261102); wide 3 × 300 clean; debug-panic
+      sweep 177/177 zero panics; perf gate PASS, conflicts/decisions
+      bit-identical 1.000.  The three failures seen at the 740c16bd base
+      (`model_eval` SIGABRT, `si2_b03m`, `bench_679`) were pre-existing
+      there and are fixed by the parallel front's landed work.

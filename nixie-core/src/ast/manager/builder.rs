@@ -744,6 +744,26 @@ impl TermManager {
             // asserts for `(div m n)`.
             return self.mk_int(a.div_euclid(&b));
         }
+        // Identity folds for a CONSTANT divisor of ±1 over a symbolic
+        // dividend (Z3's `arith_rewriter` folds these too):
+        // `div_euclid(t, 1) = t` and `div_euclid(t, -1) = -t` — true for
+        // every `t` by the Euclidean defining pair (`t = 1·t + 0` with
+        // `0 ≤ 0 < 1`, resp. `t = (-1)·(-t) + 0`).  Folding removes the
+        // term from the div-axiom feed entirely: an identity needs no
+        // axioms, and a goal whose only nonlinearity was `div(t, 1)`
+        // becomes plainly linear (the gap survey's pure-equality GCD
+        // class: `(= (+ … (div (* -1 xi) 1)) -52)` stayed `unknown` with
+        // the Div node and refutes by GCD once folded).
+        if sort == self.sorts.int_sort
+            && let Some(b) = int_const_of(rhs, self)
+        {
+            if b.is_one() {
+                return lhs;
+            }
+            if b == num_bigint::BigInt::from(-1) {
+                return self.mk_neg(lhs);
+            }
+        }
         if sort == self.sorts.real_sort {
             let a =
                 real_const_of(lhs, self).or_else(|| int_const_of(lhs, self).map(BigRational::from));
@@ -789,6 +809,13 @@ impl TermManager {
             // Euclidean remainder: `0 ≤ r < |n|` by construction, matching
             // the `mod` defining axioms.
             return self.mk_int(a.rem_euclid(&b));
+        }
+        // `rem_euclid(t, ±1) = 0` for every `t` (`0 ≤ 0 < 1`): fold the
+        // term away instead of feeding the mod axioms an identity.
+        if let Some(b) = int_const_of(rhs, self)
+            && (b.is_one() || b == num_bigint::BigInt::from(-1))
+        {
+            return self.mk_int(0);
         }
         self.intern(TermKind::Mod(lhs, rhs), sort)
     }
@@ -1266,6 +1293,52 @@ impl TermManager {
             None => self.sorts.int_sort,
         };
         self.intern(TermKind::BagChoose(bag), sort)
+    }
+
+    /// `(bag.map f b)` — the pointwise image. Only the empty fold happens
+    /// here (`map f ∅ = ∅(codomain)`): the make/⊎ normalizations of
+    /// CVC5's rewriter would mint `f(x)` applications, and for a
+    /// **defined** function that leaks an uninterpreted app the
+    /// definition never constrains — the parser inlines call sites, the
+    /// builder has no defs table, and `count(2, map f (1:2)) = 0` with
+    /// `f = *2` answered `sat` (CVC5: `unsat`) before this was dropped.
+    /// The reduction owns the per-element work with the defs table.
+    ///
+    /// `func` is the function's *name* (a bare symbol is not a term);
+    /// `ret` is the codomain sort: the image bag's element sort.
+    pub fn mk_bag_map(&mut self, func: &str, ret: SortId, bag: TermId) -> TermId {
+        let bag_sort = self.sorts.bag(ret);
+        if self.is_bag_empty(bag) {
+            return self.mk_bag_empty_at(bag_sort);
+        }
+        let func_spur = self.intern_str(func);
+        self.intern(
+            TermKind::BagMap {
+                func: func_spur,
+                ret,
+                bag,
+            },
+            bag_sort,
+        )
+    }
+
+    /// `(bag.filter p b)` — the satisfying sub-bag. As with `bag.map`, only
+    /// the empty fold happens here; the make/⊎ normalizations stay with
+    /// the reduction (which owns the predicate's definition). `pred` is
+    /// the predicate's *name*; the result sort is the operand's own.
+    pub fn mk_bag_filter(&mut self, pred: &str, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return bag;
+        }
+        let bag_sort = self.bag_result_sort(bag);
+        let pred_spur = self.intern_str(pred);
+        self.intern(
+            TermKind::BagFilter {
+                pred: pred_spur,
+                bag,
+            },
+            bag_sort,
+        )
     }
 
     /// `(set.card s)`.
@@ -3505,6 +3578,44 @@ mod arith_folding_tests {
 
     /// Euclidean `div`/`mod` fold exactly, on every sign combination, and a
     /// zero divisor never folds (SMT-LIB: uninterpreted).
+    #[test]
+    /// Identity folds for a constant ±1 divisor over a SYMBOLIC dividend
+    /// (Z3's `arith_rewriter` policy): `div(t, 1) = t`, `div(t, -1) = -t`,
+    /// `mod(t, ±1) = 0`.  Folding removes the term from the div-axiom feed
+    /// entirely — the gap survey's pure-equality GCD class stayed `unknown`
+    /// with the Div node present and refutes by GCD once folded.
+    fn div_mod_by_pm_one_fold_to_identity_over_symbolic_dividend() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let one = m.mk_int(1);
+        let neg_one = m.mk_int(-1);
+        // div(x, 1) = x on hash-consed identity.
+        assert_eq!(m.mk_div(x, one), x);
+        // mod(x, 1) = mod(x, -1) = 0.
+        assert_eq!(int_const_value(m.mk_mod(x, one), &m), Some(BigInt::zero()));
+        assert_eq!(
+            int_const_value(m.mk_mod(x, neg_one), &m),
+            Some(BigInt::zero())
+        );
+        // div(x, -1) = -x: a Neg node over x (not a Div node).
+        let dn = m.mk_div(x, neg_one);
+        match &m.get(dn).expect("term").kind {
+            TermKind::Neg(inner) => assert_eq!(*inner, x),
+            other => panic!("expected Neg(x), got {other:?}"),
+        }
+        // Nested through a sum: the fold composes with arithmetic.
+        let three = m.mk_int(3);
+        let three_x = m.mk_mul([three, x]);
+        let d = m.mk_div(x, one);
+        let summed = m.mk_add([three_x, d]);
+        match &m.get(summed).expect("term").kind {
+            TermKind::Add(args) => {
+                assert!(args.contains(&three_x) && args.contains(&x))
+            }
+            other => panic!("expected Add, got {other:?}"),
+        }
+    }
+
     #[test]
     fn div_mod_fold_euclidean_and_never_on_zero() {
         let mut m = TermManager::new();

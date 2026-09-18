@@ -1180,14 +1180,29 @@ impl Context {
                 let Some(kind) = self.terms.get(t).map(|d| d.kind.clone()) else {
                     continue;
                 };
-                if let nixie_core::ast::TermKind::BagChoose(b) = kind {
-                    if model.get(t).is_none()
-                        && let Some(v) = self.query_choose_value(b, &model)
-                    {
-                        choose_installs.push((t, v));
+                match kind {
+                    nixie_core::ast::TermKind::BagChoose(b) => {
+                        if model.get(t).is_none()
+                            && let Some(v) = self.query_choose_value(b, &model)
+                        {
+                            choose_installs.push((t, v));
+                        }
                     }
-                } else {
-                    stack.extend(nixie_core::ast::traversal::get_children(&kind));
+                    // A query-only map/filter completes from the domain's
+                    // installed value: images/kept-cells folded per cell,
+                    // exactly the semantics the reduction asserts for the
+                    // counted elements.
+                    nixie_core::ast::TermKind::BagMap { .. }
+                    | nixie_core::ast::TermKind::BagFilter { .. } => {
+                        if model.get(t).is_none()
+                            && let Some(v) = self.query_map_filter_value(t, &model)
+                        {
+                            choose_installs.push((t, v));
+                        }
+                    }
+                    _ => {
+                        stack.extend(nixie_core::ast::traversal::get_children(&kind));
+                    }
                 }
             }
         }
@@ -1200,7 +1215,9 @@ impl Context {
             .collect();
         for (t, n) in bag_folds {
             let v = match self.terms.get(t).map(|d| &d.kind) {
-                Some(TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _)) => {
+                Some(
+                    TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _) | TermKind::Eq(_, _),
+                ) => {
                     if n > 0 {
                         self.terms.true_id
                     } else {
@@ -1465,6 +1482,24 @@ impl Context {
                         out.push((t, if n > 0 { 1 } else { 0 }));
                     }
                 }
+                // A bag-sorted equality (the `bag.all`/`bag.some` lowering
+                // lands here, as does any user equality): both sides' cells
+                // resolve from installed/ground values, and the atom folds
+                // to its truth — evaluation of verified objects.
+                TermKind::Eq(a, b) => {
+                    if model.get(t).is_none()
+                        && self.bag_element_sort_of(a).is_some()
+                        && self.bag_element_sort_of(b).is_some()
+                        && let (Some(ca), Some(cb)) = (
+                            self.value_bag_cells(a, model),
+                            self.value_bag_cells(b, model),
+                        )
+                    {
+                        let same = ca.len() == cb.len()
+                            && ca.iter().all(|&(e, n)| self.cell_of(e, &cb) == n);
+                        out.push((t, if same { 1 } else { 0 }));
+                    }
+                }
                 // `bag.subbag a b` from installed values: pointwise ≤ over
                 // the union of the cells (a cell absent from `b` counts 0) —
                 // evaluation of verified objects, the same contract as the
@@ -1562,6 +1597,17 @@ impl Context {
         }
     }
 
+    /// The element sort when `t` is bag-sorted (a sort-check helper for
+    /// the equality fold).
+    fn bag_element_sort_of(&self, t: TermId) -> Option<nixie_core::sort::SortId> {
+        self.terms.get(t).map(|d| d.sort).and_then(|s| {
+            self.terms.sorts.get(s).and_then(|sort| match &sort.kind {
+                nixie_core::SortKind::Bag(e) => Some(*e),
+                _ => None,
+            })
+        })
+    }
+
     /// The multiplicity of `e` among the cells: by term identity first,
     /// then by equal `IntConst` value (two spellings of one number are
     /// one cell).
@@ -1584,6 +1630,88 @@ impl Context {
     /// leaves the choose unspecified; `0` models it for `Int` element
     /// sorts (any value does), and other sorts echo honestly. No installed
     /// value at all (a declined bag) echoes too.
+    /// A query-only `bag.map`/`bag.filter`'s value, from the domain bag's
+    /// installed cells: the images (a `define-fun` body inlined and folded
+    /// per cell, an application resolved through the model's entry) merged
+    /// by value with their multiplicities summed — or the kept cells for a
+    /// filter, where the predicate's truth comes from the same resolution.
+    /// Anything unresolvable echoes honestly.
+    fn query_map_filter_value(
+        &mut self,
+        term: TermId,
+        model: &crate::solver::Model,
+    ) -> Option<TermId> {
+        let kind = self.terms.get(term)?.kind.clone();
+        let (func, bag, ret, is_map) = match kind {
+            TermKind::BagMap { func, ret, bag } => (func, bag, Some(ret), true),
+            TermKind::BagFilter { pred, bag } => (pred, bag, None, false),
+            _ => return None,
+        };
+        let cells = self.value_bag_cells(bag, model)?;
+        let defs = self.solver.bag_fun_defs.clone();
+        let mut out_cells: Vec<(TermId, i64)> = Vec::new();
+        for &(e, n) in &cells {
+            let target = if is_map {
+                self.apply_query_fun(func, e, ret?, &defs, model)?
+            } else {
+                let p = self.apply_query_fun(func, e, self.terms.sorts.bool_sort, &defs, model)?;
+                match self.terms.get(p).map(|d| &d.kind) {
+                    Some(TermKind::True) => e,
+                    Some(TermKind::False) => continue,
+                    // An unresolved truth is not a guess to make.
+                    _ => return None,
+                }
+            };
+            match out_cells.iter_mut().find(|(v, _)| *v == target) {
+                Some((_, m)) => *m += n,
+                None => out_cells.push((target, n)),
+            }
+        }
+        let es = if is_map {
+            ret?
+        } else {
+            self.terms.get(bag)?.sort
+        };
+        let bag_sort = self.terms.sorts.bag(es);
+        let mut acc = self.terms.mk_bag_empty_at(bag_sort);
+        for &(v, n) in &out_cells {
+            let n_term = self.terms.mk_int(BigInt::from(n));
+            let make = self.terms.mk_bag_make(v, n_term);
+            acc = self.terms.mk_bag_union_disjoint(acc, make);
+        }
+        Some(acc)
+    }
+
+    /// The function application `f(x)` for a query-side fold: a defined
+    /// function inlines and folds to a value; a declared one resolves
+    /// through the model's application entry.
+    fn apply_query_fun(
+        &mut self,
+        func: nixie_core::interner::Spur,
+        x: TermId,
+        ret: nixie_core::sort::SortId,
+        defs: &FxHashMap<nixie_core::interner::Spur, (TermId, TermId)>,
+        model: &crate::solver::Model,
+    ) -> Option<TermId> {
+        if let Some(&(param, body)) = defs.get(&func) {
+            let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+            subst.insert(param, x);
+            let sub = self.terms.substitute(body, &subst);
+            return Some(self.terms.simplify(sub));
+        }
+        let name = self.terms.resolve_str(func).to_string();
+        let app = self.terms.mk_apply(&name, [x], ret);
+        match model.get(app) {
+            Some(v) => Some(v),
+            None => {
+                // A ground application the model never valued: fold what
+                // folds, else echo.
+                let folded = self.terms.simplify(app);
+                if folded == app { None } else { Some(folded) }
+            }
+        }
+    }
+
     fn query_choose_value(&mut self, bag: TermId, model: &crate::solver::Model) -> Option<TermId> {
         let cells = self.installed_bag_cells(bag, model)?;
         match cells.first() {

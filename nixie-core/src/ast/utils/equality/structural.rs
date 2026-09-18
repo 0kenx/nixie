@@ -173,6 +173,8 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::BagCard(a)
                     | TermKind::BagSetof(a)
                     | TermKind::BagChoose(a)
+                    | TermKind::BagMap { bag: a, .. }
+                    | TermKind::BagFilter { bag: a, .. }
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)

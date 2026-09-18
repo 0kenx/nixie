@@ -335,14 +335,22 @@ impl Context {
         // the old behavior configured engines from substring matches on
         // the name, so an invented name could partially install a backend
         // (or suppress one) while still being accepted.
-        if crate::solver::logic_contract::lookup(logic).is_err() {
+        //
+        // A `HO_`-prefixed name (CVC5's higher-order spelling — the only
+        // surface under which `cvc5` accepts function symbols as operator
+        // arguments, e.g. `(bag.map f b)`) resolves as its base logic:
+        // nixie has no function sorts, so the prefix carries no extra
+        // restrictions to honor, and rejecting it fenced off
+        // differential scripts both tools could otherwise share.
+        let base_logic = logic.strip_prefix("HO_").unwrap_or(logic);
+        if crate::solver::logic_contract::lookup(base_logic).is_err() {
             return Err(nixie_core::error::NixieError::Unsupported(format!(
                 "set-logic: unknown logic '{logic}'"
             )));
         }
         self.logic_was_set = true;
-        self.logic = Some(logic.to_string());
-        self.solver.set_logic(logic);
+        self.logic = Some(base_logic.to_string());
+        self.solver.set_logic(base_logic);
         self.invalidate_last_check();
         Ok(())
     }
@@ -1650,6 +1658,19 @@ impl Context {
                             .map(|(_, sort_name)| self.parse_sort_name(sort_name))
                             .collect::<Result<_>>()?;
                         self.declare_fun(&name, arg_sorts, sort);
+                        // A *unary* definition is also recorded for
+                        // `bag.map`/`bag.filter`: the reduction inlines the
+                        // body per element (the same substitution the
+                        // parser performs at call sites), so it needs the
+                        // `(parameter, body)` pair. The parameter variable
+                        // is rebuilt by name+sort — hash-consing makes it
+                        // the very variable the parser bound.
+                        if let [(pname, psort), _rest @ ..] = params.as_slice() {
+                            let param_sort = self.parse_sort_name(psort)?;
+                            let param = self.terms.mk_var(pname, param_sort);
+                            let spur = self.terms.intern_str(&name);
+                            self.solver.bag_fun_defs.insert(spur, (param, body));
+                        }
                     }
                 }
                 Command::DeclareDatatype { name, .. } => {

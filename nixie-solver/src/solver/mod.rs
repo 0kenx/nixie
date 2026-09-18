@@ -330,6 +330,13 @@ pub struct Solver {
     /// entries after a `pop` only ever suppress; a re-asserted equality is
     /// user-written and therefore exempt from the suppression.
     pub(super) bag_minted_eq_atoms: FxHashSet<TermId>,
+    /// Unary `define-fun` definitions usable by `bag.map`/`bag.filter`:
+    /// the function's interned name to `(parameter variable, body)`. The
+    /// reduction inlines the body per element — exactly the parser's
+    /// call-site substitution — so its images and the user's `(f x)`
+    /// spellings are the same terms. Definitions are script-global
+    /// (SMT-LIB forbids redefinition), so entries are never removed.
+    pub(super) bag_fun_defs: FxHashMap<nixie_core::interner::Spur, (TermId, TermId)>,
     /// Named assertions for unsat core tracking
     pub(super) named_assertions: Vec<NamedAssertion>,
     /// Assumption literals for unsat core tracking (maps assertion index to assumption var)
@@ -1168,6 +1175,7 @@ impl Solver {
             define_fun_equations: Vec::new(),
             certificate_assertions: Vec::new(),
             bag_minted_eq_atoms: FxHashSet::default(),
+            bag_fun_defs: FxHashMap::default(),
             named_assertions: Vec::new(),
             assumption_vars: FxHashMap::default(),
             model: None,

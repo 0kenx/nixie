@@ -256,6 +256,73 @@ impl Parser<'_> {
         Ok(())
     }
 
+    /// Build `(bag.map f b)` / `(bag.filter p b)` from the parsed head:
+    /// `f`/`p` validated as unary by the parser, the bag operand
+    /// type-checked against the function's domain sort, then handed to the
+    /// manager's normalizing builders.
+    pub(super) fn build_bag_fun(
+        &mut self,
+        op: &str,
+        func: &str,
+        arg_sort: crate::sort::SortId,
+        ret_sort: crate::sort::SortId,
+        bag: TermId,
+    ) -> Result<TermId> {
+        self.check_bag_operand(op, bag)?;
+        let es = self.bag_element_sort(bag).unwrap_or(arg_sort);
+        if es != arg_sort {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("{op}'s function domain does not match the bag's element sort"),
+            });
+        }
+        match op {
+            "bag.map" => Ok(self.manager.mk_bag_map(func, ret_sort, bag)),
+            "bag.filter" => {
+                self.check_bag_predicate(op, ret_sort)?;
+                Ok(self.manager.mk_bag_filter(func, bag))
+            }
+            // `bag.all`/`bag.some` are CVC5's `ALL_FILTER`/`SOME_FILTER`
+            // lowerings, applied at parse time: both are exactly the
+            // filter's extensional equality — `all p b <=> filter p b = b`
+            // (the negated direction's witness is precisely "an element
+            // present in `b` that `p` rejects"), and
+            // `some p b <=> filter p b != empty` (the witness: "an element
+            // satisfying `p` and present"). No new term kinds: the landed
+            // filter machinery decides both.
+            "bag.all" => {
+                self.check_bag_predicate(op, ret_sort)?;
+                let filter = self.manager.mk_bag_filter(func, bag);
+                Ok(self.manager.mk_eq(filter, bag))
+            }
+            "bag.some" => {
+                self.check_bag_predicate(op, ret_sort)?;
+                let filter = self.manager.mk_bag_filter(func, bag);
+                let es = self.bag_element_sort(bag).unwrap_or(arg_sort);
+                let bag_sort = self.manager.sorts.bag(es);
+                let empty = self.manager.mk_bag_empty_at(bag_sort);
+                let same = self.manager.mk_eq(filter, empty);
+                Ok(self.manager.mk_not(same))
+            }
+            _ => Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("internal: unknown bag function operator {op}"),
+            }),
+        }
+    }
+
+    /// A `bag.filter`/`bag.all`/`bag.some` operand must be a *predicate*:
+    /// a unary function whose codomain is `Bool`.
+    fn check_bag_predicate(&self, op: &str, ret_sort: crate::sort::SortId) -> Result<()> {
+        if ret_sort != self.manager.sorts.bool_sort {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("{op} needs a predicate (a function returning Bool)"),
+            });
+        }
+        Ok(())
+    }
+
     /// SMT-LIB sort check: a binary bag operator's operands must be bags of
     /// the *same* element sort.
     fn check_bag_binary(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
@@ -705,11 +772,25 @@ impl Parser<'_> {
                 self.check_bag_operand(op, x)?;
                 self.manager.mk_bag_choose(x)
             }
-            // `bag.map`/`bag.filter`/`bag.all`/`bag.some`/`bag.fold`/
-            // `bag.partition` are honest parse-level rejections in this
-            // slice: they need function handling (see the bags handover's
-            // open chores) and land with their own reduction rules.
-            "bag.map" | "bag.filter" | "bag.all" | "bag.some" | "bag.fold" | "bag.partition" => {
+            // `bag.map`/`bag.filter` never reach here with their function
+            // operand still unparsed — `open_named_head` intercepts the
+            // form and builds it through `build_bag_fun` — but a flattened
+            // `_`-spelling or annotation wrapper could in principle route
+            // here; the honest answer is the same parse-level rejection the
+            // unsupported bag operators get.
+            "bag.map" | "bag.filter" => {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "{op} must be applied as ({op} <unary function> <bag>), with the function as a bare symbol"
+                    ),
+                });
+            }
+            // `bag.fold`/`bag.partition` remain honest parse-level
+            // rejections: `fold` needs a bounded quantifier over skolem
+            // families (CVC5 `bag_reduction.cpp`) and `partition` returns a
+            // tuple of bags.
+            "bag.fold" | "bag.partition" => {
                 return Err(NixieError::ParseError {
                     position: self.lexer.position(),
                     message: format!(

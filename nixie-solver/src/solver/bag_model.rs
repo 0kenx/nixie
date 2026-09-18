@@ -63,6 +63,35 @@ impl Solver {
         for &(b, es) in &survey.bags {
             collect_bag_support(b, es, &mut by_sort, manager);
         }
+        // The map images join the codomain lists — the same collection the
+        // reduction performs, so the model's element universe matches the
+        // identities' and every count readback the reduction constrained
+        // resolves here.
+        for &(_, func, ret, d) in &survey.maps {
+            let Some(des) = bag_element_of(d, manager) else {
+                continue;
+            };
+            let Some(domain) = by_sort.get(&des).cloned() else {
+                continue;
+            };
+            for x in domain {
+                let image = if let Some(&(param, body)) = self.bag_fun_defs.get(&func) {
+                    {
+                        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+                        subst.insert(param, x);
+                        let sub = manager.substitute(body, &subst);
+                        manager.simplify(sub)
+                    }
+                } else {
+                    let name = manager.resolve_str(func).to_string();
+                    manager.mk_apply(&name, [x], ret)
+                };
+                let list = by_sort.entry(ret).or_default();
+                if !list.contains(&image) {
+                    list.push(image);
+                }
+            }
+        }
 
         let int_entry = |t: TermId, manager: &TermManager| -> Option<i64> {
             match manager.get(t).map(|d| &d.kind) {
@@ -466,6 +495,8 @@ struct BagModelSurvey {
     cards: Vec<(TermId, TermId)>,
     /// `bag.choose` terms: `(choose, bag)`.
     chooses: Vec<(TermId, TermId)>,
+    /// `bag.map` terms: `(term, func, ret, domain bag)`.
+    maps: Vec<(TermId, nixie_core::interner::Spur, SortId, TermId)>,
 }
 
 fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
@@ -474,6 +505,7 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
         elements: Vec::new(),
         cards: Vec::new(),
         chooses: Vec::new(),
+        maps: Vec::new(),
     };
     let bag_es = |sort: SortId| -> Option<SortId> {
         manager.sorts.get(sort).and_then(|s| match &s.kind {
@@ -501,6 +533,7 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
             }
             TermKind::BagCard(b) => out.cards.push((t, *b)),
             TermKind::BagChoose(b) => out.chooses.push((t, *b)),
+            TermKind::BagMap { func, ret, bag } => out.maps.push((t, *func, *ret, *bag)),
             _ => {}
         }
         stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
@@ -625,10 +658,15 @@ fn collect_bag_support(
             Some(TermKind::BagSetof(a)) => stack.push(a),
             // An ite bag's support is the union of its branches' (the
             // `Bool` condition contributes none) — mirrors the reduction's
-            // support walk so the two see the same element universe.
+            // support walk so the two see the same element universe. A
+            // map's/filter's support lives in its domain bag; the *images*
+            // are collected by the dedicated pass in `extract_bag_model`.
             Some(TermKind::Ite(_, a, c)) => {
                 stack.push(a);
                 stack.push(c);
+            }
+            Some(TermKind::BagMap { bag, .. }) | Some(TermKind::BagFilter { bag, .. }) => {
+                stack.push(bag);
             }
             _ => {}
         }

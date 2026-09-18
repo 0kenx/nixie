@@ -301,7 +301,9 @@ impl NelsonOppenCombiner {
             | TermKind::BagCount(_, _)
             | TermKind::BagCard(_)
             | TermKind::BagSetof(_)
-            | TermKind::BagChoose(_) => TermTheory::Set,
+            | TermKind::BagChoose(_)
+            | TermKind::BagMap { .. }
+            | TermKind::BagFilter { .. } => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

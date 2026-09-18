@@ -721,6 +721,16 @@ fn rebuild(
             let s = sub(s);
             manager.mk_bag_choose(s)
         }
+        TermKind::BagMap { func, ret, bag } => {
+            let bag = sub(bag);
+            let name = manager.resolve_str(func).to_string();
+            manager.mk_bag_map(&name, ret, bag)
+        }
+        TermKind::BagFilter { pred, bag } => {
+            let bag = sub(bag);
+            let name = manager.resolve_str(pred).to_string();
+            manager.mk_bag_filter(&name, bag)
+        }
         TermKind::SetUniv(sort) => manager.mk_set_univ_at(sort),
         TermKind::SetComplement(s) => {
             let s = sub(s);

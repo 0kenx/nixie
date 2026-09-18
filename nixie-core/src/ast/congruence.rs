@@ -31,6 +31,10 @@ enum OpKey {
     Plain(Discriminant<TermKind>),
     /// Uninterpreted function application `f(...)`.
     Func(Spur),
+    /// `bag.map f b`: the function symbol plus its codomain sort.
+    BagMapOp(Spur, crate::sort::SortId),
+    /// `bag.filter p b`: the predicate symbol.
+    BagFilterOp(Spur),
     /// Datatype constructor application.
     Constructor(Spur),
     /// Datatype tester `is-C`.
@@ -218,6 +222,11 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         },
 
         TermKind::Apply { func, .. } => OpKey::Func(*func),
+        // `bag.map`/`bag.filter` are function symbols in an argument
+        // position: their identity is the symbol (plus `bag.map`'s
+        // codomain, which is part of the term's type).
+        TermKind::BagMap { func, ret, .. } => OpKey::BagMapOp(*func, *ret),
+        TermKind::BagFilter { pred, .. } => OpKey::BagFilterOp(*pred),
         TermKind::DtConstructor { constructor, .. } => OpKey::Constructor(*constructor),
         TermKind::DtTester { constructor, .. } => OpKey::Tester(*constructor),
         TermKind::DtSelector { selector, .. } => OpKey::Selector(*selector),

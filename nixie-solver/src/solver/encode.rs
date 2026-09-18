@@ -160,6 +160,52 @@ pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Ve
     out
 }
 
+/// Substitute the purifier's proxy map over `term`, **shielding the
+/// element arguments of `bag.count`/`bag.member`/`bag.make`**.
+///
+/// The numeric-argument purifier proxies constants globally, and a proxy
+/// minted in a *later* assert split the count spellings: earlier asserts
+/// kept `count(2, b)`, later ones got `count(proxy, b)` — two arithmetic
+/// columns with no tie, because the reduction's element-congruence axiom
+/// (the only tie; counts are columns, not EUF applications — set member
+/// atoms get congruence from the closure, counts do not) was itself
+/// rewritten by the same substitution into the tautology
+/// `proxy = proxy => count(proxy,b) = count(proxy,b)` and folded away.
+/// With element positions never rewritten, every assert spells a bag's
+/// counts the same way and no tie is needed. The keep set is exactly the
+/// (binder-free, ground) element terms of the bag constructors and
+/// probes in `term` — the shield's soundness contract.
+fn substitute_keeping_bag_elements(
+    root: TermId,
+    map: &FxHashMap<TermId, TermId>,
+    manager: &mut TermManager,
+) -> TermId {
+    if map.is_empty() {
+        return root;
+    }
+    let mut keep: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack = vec![root];
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        let Some(data) = manager.get(t) else { continue };
+        match &data.kind {
+            TermKind::BagCount(e, b) | TermKind::BagMember(e, b) => {
+                keep.insert(*e);
+                stack.push(*b);
+            }
+            TermKind::BagMake(e, n) => {
+                keep.insert(*e);
+                stack.push(*n);
+            }
+            _ => stack.extend(nixie_core::ast::traversal::get_children(&data.kind)),
+        }
+    }
+    manager.substitute_keeping(root, map, &keep)
+}
+
 impl Solver {
     pub(super) fn get_or_create_var(&mut self, term: TermId) -> Var {
         if let Some(&var) = self.term_to_var.get(&term) {
@@ -1218,10 +1264,12 @@ impl Solver {
             // a witness per minted atom ballooned the element list until
             // three-assert fuzz shapes went from instant to unfinishable.
             let bag_user_eq_atoms = self.bag_user_eq_atoms(term, manager);
+            let bag_fun_defs = self.bag_fun_defs.clone();
             let bag_reduction = super::bag_theory::reduce(
                 &roots,
                 &bag_user_eq_atoms,
                 &mut self.bag_minted_eq_atoms,
+                &bag_fun_defs,
                 manager,
             );
             if bag_reduction.incomplete {
@@ -2973,7 +3021,9 @@ impl Solver {
     ///
     /// Kinds already interned as shared arith terms by `track_theory_vars`
     /// (Var, Apply, Select, Ite, Div, Mod, DtSelector) are left in place; only
-    /// constants and arithmetic compounds are abstracted.
+    /// constants and arithmetic compounds are abstracted. The substitution
+    /// itself is shielded for bag element positions — see
+    /// [`substitute_keeping_bag_elements`].
     pub(super) fn purify_numeric_uf_args(
         &mut self,
         term: TermId,
@@ -3118,7 +3168,7 @@ impl Solver {
         for (arg, v) in &map {
             side.push(manager.mk_eq(*v, *arg));
         }
-        let rewritten = manager.substitute(term, &map);
+        let rewritten = substitute_keeping_bag_elements(term, &map, manager);
         // Record the arg->proxy map so `(get-value ((f 3)))` can resolve the
         // original application to its purified twin's model value (pr30).
         self.numarg_proxies.extend(map);
@@ -3446,8 +3496,9 @@ impl Solver {
             // `bag.choose` is element-sorted, so a well-typed formula never
             // reaches here (a literal is expected); the arm exists so the
             // encoder stays exhaustive, and keeps the honesty gate up the
-            // same way the bag compounds' arm does.
-            TermKind::BagChoose(_) => {
+            // same way the bag compounds' arm does. `bag.map`/`bag.filter`
+            // are bag compounds of the same kind as the arm above.
+            TermKind::BagChoose(_) | TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

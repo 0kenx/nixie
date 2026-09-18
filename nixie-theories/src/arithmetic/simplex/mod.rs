@@ -4579,8 +4579,35 @@ impl Simplex {
             // used as a supremum endpoint derived a phony `−3−ε` upper).
             let bound = match (lo, hi) {
                 (Some(a), Some(b)) => {
-                    let a_first = a.value < b.value;
-                    if want_min == a_first { a } else { b }
+                    // A STRICTLY INVERTED pair (lower > upper) is a crossed
+                    // window: the variable's bound set is contradictory
+                    // under the current atoms, and the crossing channel
+                    // owns that state (`record_crossing` exports the
+                    // conflict).  Deriving through an EMPTY interval
+                    // fabricates a bound whose endpoint is the pair's
+                    // WRONG side (the `want_min == a_first` pick swaps
+                    // min/max exactly when the pair is inverted) — a bound
+                    // no antecedent implies.  Decline; the vacuous-truth
+                    // case loses nothing (the crossing fires on its own).
+                    if a.value > b.value {
+                        return None;
+                    }
+                    // Pick by SIDE on every surviving (well-ordered or
+                    // EQUAL) pair: `lo` IS the lower bound, `hi` IS the
+                    // upper.  On an EQUAL pair - a pin whose sides can
+                    // carry DIFFERENT reason sets (the atom's own assert
+                    // on one side, a propagated bound on the other) - the
+                    // `want_min == a_first` tie-break resolved to the
+                    // OPPOSITE side, so a min derivation cited the
+                    // UPPER's reasons and a max the LOWER's.  The VALUE
+                    // choice is immaterial there; the REASON choice is
+                    // load-bearing: a derived bound must cite the side
+                    // that justifies it, or a later conflict names an
+                    // atom that does not imply the bound it is blamed
+                    // for (item 74's singleton-pair false `unsat`:
+                    // `hi(v) = 0`, justified only by the upper pin's
+                    // atom, was attributed to the lower pin's atom).
+                    if want_min { a } else { b }
                 }
                 (Some(a), None) if want_min => a,
                 (None, Some(b)) if !want_min => b,
@@ -4637,8 +4664,28 @@ impl Simplex {
             let want_min = if want_inf { s_positive } else { !s_positive };
             match (lo, hi) {
                 (Some(a), Some(b)) => {
-                    let a_first = a.value < b.value;
-                    Some(if want_min == a_first { a } else { b })
+                    // Crossed window: decline (see the direction-1
+                    // selection for the full argument) — the crossing
+                    // channel owns the contradictory state.
+                    if a.value > b.value {
+                        return None;
+                    }
+                    // Pick by SIDE on every surviving (well-ordered or
+                    // EQUAL) pair: `lo` IS the lower bound, `hi` IS the
+                    // upper.  On an EQUAL pair - a pin whose sides can
+                    // carry DIFFERENT reason sets (the atom's own assert
+                    // on one side, a propagated bound on the other) - the
+                    // `want_min == a_first` tie-break resolved to the
+                    // OPPOSITE side, so a min derivation cited the
+                    // UPPER's reasons and a max the LOWER's.  The VALUE
+                    // choice is immaterial there; the REASON choice is
+                    // load-bearing: a derived bound must cite the side
+                    // that justifies it, or a later conflict names an
+                    // atom that does not imply the bound it is blamed
+                    // for (item 74's singleton-pair false `unsat`:
+                    // `hi(v) = 0`, justified only by the upper pin's
+                    // atom, was attributed to the lower pin's atom).
+                    Some(if want_min { a } else { b })
                 }
                 // One-sided pairs serve their own direction only (see the
                 // direction-1 `bound` selection): a lone lower is never a
@@ -5361,20 +5408,6 @@ impl Simplex {
     /// `to`, trailed at the CURRENT scope like a fresh assertion.  Used to
     /// re-home a constraint whose original slack lost its defining row (see
     /// `ArithSolver::rehome_stranded_row_bounds`).
-    pub fn copy_bounds(&mut self, from: VarId, to: VarId) {
-        let fi = from as usize;
-        let lo = self.lower.get(fi).and_then(|b| b.as_ref().cloned());
-        let hi = self.upper.get(fi).and_then(|b| b.as_ref().cloned());
-        if let Some(b) = lo {
-            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
-            self.set_lower_delta(to, b.value, reasons);
-        }
-        if let Some(b) = hi {
-            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
-            self.set_upper_delta(to, b.value, reasons);
-        }
-    }
-
     /// Whether `var` carries any bound at all.
     pub fn has_any_bound(&self, var: VarId) -> bool {
         let i = var as usize;

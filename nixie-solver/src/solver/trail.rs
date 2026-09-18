@@ -349,6 +349,8 @@ impl super::Solver {
             // is user-written and exempt, so a stale entry cannot change
             // a verdict (see the field's doc on `Solver`).
             bag_minted_eq_atoms: _,
+            // PERSISTED: definitions are script-global (see the field doc).
+            bag_fun_defs: _,
             ff_terms_unconstrained: _, // SNAPSHOT
             has_array_ops: _,          // SNAPSHOT
             array_theory: _,           // SCOPED: snapshot/`pop` via `array_theory_scope`

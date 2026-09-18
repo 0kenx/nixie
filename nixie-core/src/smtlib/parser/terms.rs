@@ -181,6 +181,15 @@ enum Head {
     DtSelector { name: String, sort: SortId },
     /// An application of a symbol declared by `declare-fun`.
     DeclaredFun { name: String, ret: SortId },
+    /// `bag.map`/`bag.filter`: the head carries the (bare, unary) function
+    /// symbol plus its signature, parsed like the fp operators' rounding
+    /// mode — a function name is not a term in this surface.
+    BagFun {
+        op: String,
+        func: String,
+        arg_sort: SortId,
+        ret_sort: SortId,
+    },
     /// The Bool-sorted uninterpreted-application fallback.
     GenericApply(String),
 }
@@ -751,6 +760,17 @@ impl Parser<'_> {
                 _ => Err(self.operand_mismatch(&op, args.len())),
             },
             Head::FpRounded { op, rm } => self.build_fp_rounded(&op, rm, args),
+            Head::BagFun {
+                op,
+                func,
+                arg_sort,
+                ret_sort,
+            } => {
+                let [bag] = args else {
+                    return Err(self.operand_mismatch(&op, args.len()));
+                };
+                self.build_bag_fun(&op, &func, arg_sort, ret_sort, *bag)
+            }
             Head::Indexed { name, indices } => {
                 if let Some(term) = self.build_indexed_op(&name, &indices, args)? {
                     return Ok(term);
@@ -1038,6 +1058,53 @@ impl Parser<'_> {
         self.open_named_head(op)
     }
 
+    /// The bare unary function symbol of `(bag.map f b)` / `(bag.filter p
+    /// b)`: its name and signature, resolved against the declared and
+    /// defined function tables. A name that is not a *unary* function is a
+    /// parse error the surface mandates reporting (there are no lambdas or
+    /// function sorts to carry any other spelling).
+    fn parse_bag_fun_operand(&mut self, op: &str) -> Result<(String, SortId, SortId)> {
+        let name = self.expect_symbol()?;
+        if let Some(def) = self.function_defs.get(&name) {
+            if def.param_vars.len() != 1 {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "{op} needs a unary function; {name} takes {} arguments",
+                        def.param_vars.len()
+                    ),
+                });
+            }
+            let arg_sort = self
+                .manager
+                .get(def.param_vars[0])
+                .map(|d| d.sort)
+                .unwrap_or(self.manager.sorts.int_sort);
+            let ret_sort = self
+                .manager
+                .get(def.body)
+                .map(|d| d.sort)
+                .unwrap_or(self.manager.sorts.int_sort);
+            return Ok((name, arg_sort, ret_sort));
+        }
+        if let Some((arg_sorts, ret)) = self.functions.get(&name).cloned() {
+            if arg_sorts.len() != 1 {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "{op} needs a unary function; {name} takes {} arguments",
+                        arg_sorts.len()
+                    ),
+                });
+            }
+            return Ok((name, arg_sorts[0], ret));
+        }
+        Err(NixieError::ParseError {
+            position: self.lexer.position(),
+            message: format!("{op} needs a declared or defined unary function; {name} is neither"),
+        })
+    }
+
     /// Head of the form `((as name Sort) ...)` or `((_ name i ...) ...)`.
     fn open_sexpr_head(&mut self) -> Result<Opened> {
         let qualifier = self.expect_symbol()?;
@@ -1281,6 +1348,24 @@ impl Parser<'_> {
                 let rm = self.parse_rounding_mode_operand()?;
                 return Ok(Opened::Frame(Frame::op(
                     Head::FpRounded { op, rm },
+                    Plan::Fixed(1),
+                )));
+            }
+            // `bag.map f b` / `bag.filter p b`: the function operand is a
+            // bare unary function symbol, parsed here the way the fp
+            // operators parse their rounding mode — a function name is not
+            // a term in this surface (no lambdas, no function sorts), so
+            // the generic operand path would reject it before the operator
+            // ever saw it.
+            "bag.map" | "bag.filter" | "bag.all" | "bag.some" => {
+                let (func, arg_sort, ret_sort) = self.parse_bag_fun_operand(&op)?;
+                return Ok(Opened::Frame(Frame::op(
+                    Head::BagFun {
+                        op,
+                        func,
+                        arg_sort,
+                        ret_sort,
+                    },
                     Plan::Fixed(1),
                 )));
             }

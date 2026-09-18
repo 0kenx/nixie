@@ -126,6 +126,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::BagCard(a)
         | TermKind::BagSetof(a)
         | TermKind::BagChoose(a)
+        | TermKind::BagMap { bag: a, .. }
+        | TermKind::BagFilter { bag: a, .. }
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }

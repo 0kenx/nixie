@@ -197,8 +197,13 @@ fn skolem_candidate_walk_preserves_remaining_previously_covered_connectives() {
     let add_t = manager.mk_add(vec![sk_apply, one]); // Add
     let sub_t = manager.mk_sub(add_t, one); // Sub
     let mul_t = manager.mk_mul(vec![sub_t, one]); // Mul
-    let div_t = manager.mk_div(mul_t, one); // Div
-    let mod_t = manager.mk_mod(div_t, one); // Mod
+    // Divisors 2 and 3: a constant ±1 divisor folds away at construction
+    // (the builder's identity fold), so it can no longer produce the
+    // Div/Mod nodes this walk-coverage test exists to exercise.
+    let two = manager.mk_int(2);
+    let three = manager.mk_int(3);
+    let div_t = manager.mk_div(mul_t, two); // Div
+    let mod_t = manager.mk_mod(div_t, three); // Mod
 
     let lt_t = manager.mk_lt(mod_t, one); // Lt
     let le_t = manager.mk_le(mod_t, one); // Le
