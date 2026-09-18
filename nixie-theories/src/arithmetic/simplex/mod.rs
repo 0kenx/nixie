@@ -1001,7 +1001,7 @@ pub struct Simplex {
     cross_ver: u64,
     /// Last derivation stamp per basic variable (narrow or wide store —
     /// the key spaces are disjoint): see [`Self::row_stamp`].
-    derive_stamp: FxHashMap<VarId, (u64, u64, u64, usize)>,
+    derive_stamp: FxHashMap<(VarId, u8), (u64, u64, u64, usize)>,
     /// Number of original variables
     num_vars: usize,
     /// Number of slack variables
@@ -2006,7 +2006,7 @@ impl Simplex {
                     conflict.push(r);
                 }
             }
-            self.pending_crossing = Some(conflict);
+            self.pending_crossing.get_or_insert(conflict);
         }
     }
 
@@ -4334,18 +4334,18 @@ impl Simplex {
         vars: impl Iterator<Item = VarId>,
         int_vars: usize,
     ) -> (u64, u64, u64, usize) {
-        let mut max_ver = 0u64;
+        let mut sum_ver = 0u64;
         let bi = basic as usize;
         if bi < self.bound_ver.len() {
-            max_ver = self.bound_ver[bi];
+            sum_ver = sum_ver.wrapping_add(self.bound_ver[bi]);
         }
         for v in vars {
             let vi = v as usize;
-            if vi < self.bound_ver.len() && self.bound_ver[vi] > max_ver {
-                max_ver = self.bound_ver[vi];
+            if vi < self.bound_ver.len() {
+                sum_ver = sum_ver.wrapping_add(self.bound_ver[vi]);
             }
         }
-        (self.rows_ver, self.cross_ver, max_ver, int_vars)
+        (self.rows_ver, self.cross_ver, sum_ver, int_vars)
     }
 
     /// Propagate implied bounds through the tableau (see the module and
@@ -4409,7 +4409,7 @@ impl Simplex {
                 expr.terms.iter().map(|(v, _)| *v),
                 int_vars.len(),
             );
-            if self.derive_stamp.get(basic_var) == Some(&stamp) {
+            if self.derive_stamp.get(&(*basic_var, 0)) == Some(&stamp) {
                 continue;
             }
             let big_expr = BigLinExpr {
@@ -4448,7 +4448,7 @@ impl Simplex {
                     );
                 }
             }
-            self.derive_stamp.insert(*basic_var, stamp);
+            self.derive_stamp.insert((*basic_var, 0), stamp);
         }
         for (basic_var, expr) in &self.tableau {
             let stamp = self.row_stamp(
@@ -4456,13 +4456,13 @@ impl Simplex {
                 expr.terms.iter().map(|(v, _)| *v),
                 int_vars.len(),
             );
-            if self.derive_stamp.get(basic_var) == Some(&stamp) {
+            if self.derive_stamp.get(&(*basic_var, 1)) == Some(&stamp) {
                 continue;
             }
             if let Some(bound) = self.derive_basic_bound(*basic_var, expr) {
                 self.propagated.push(bound);
             }
-            self.derive_stamp.insert(*basic_var, stamp);
+            self.derive_stamp.insert((*basic_var, 1), stamp);
         }
         let wide: Vec<(VarId, BigLinExpr)> = self
             .wide_rows
@@ -4479,9 +4479,7 @@ impl Simplex {
                 wexpr.terms.iter().map(|(v, _)| *v),
                 int_vars.len(),
             );
-            if self.derive_stamp.get(basic_var) == Some(&stamp) {
-                continue;
-            }
+            if self.derive_stamp.get(&(*basic_var, 2)) == Some(&stamp) {}
             for lower in [true, false] {
                 let Some((real, delta, reasons)) =
                     self.derive_bound_big_parts(&wexpr.constant, &wexpr.terms, lower)
@@ -4533,7 +4531,7 @@ impl Simplex {
                     );
                 }
             }
-            self.derive_stamp.insert(*basic_var, stamp);
+            self.derive_stamp.insert((*basic_var, 2), stamp);
         }
         let props = self.propagated.clone();
         let mut applied = 0usize;
@@ -4609,7 +4607,16 @@ impl Simplex {
                     conflict.push(r);
                 }
             }
-            self.pending_crossing = Some(conflict);
+            // First-writer-wins: every plant site is a GENUINE crossing of
+            // the current bound state (sound to export whichever fires), so
+            // keeping the FIRST makes the exported conflict a deterministic
+            // function of the input state — invariant under the derivation
+            // stamps' skipping (a last-writer-wins slot made the winner
+            // depend on which unchanged-input rows re-derived, coupling the
+            // conflict choice to the caching and breaking trajectory
+            // identity; measured: the rehome original's store sequence
+            // diverged at 21 354 exactly here).
+            self.pending_crossing.get_or_insert(conflict);
             return;
         }
         let stored = match &exact {
