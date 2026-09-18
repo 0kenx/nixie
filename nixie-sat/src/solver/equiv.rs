@@ -166,7 +166,19 @@ impl Solver {
         // early-out below used to skip it, which is why congruence was gated
         // off under inprocessing in 169217e – leaving unbacked edges in the
         // BIG through the search on the no-equivalence path).
+        // Ternary×binary SSR cascade (kissat `extract_binaries`): derive the
+        // resolvent binaries BEFORE gate detection so completed AND-gate
+        // patterns (`o ↔ a ∧ b` needs `o→a`, `o→b`) enter the closure the
+        // same round — on the bv_ILA class these few binaries unlock the
+        // whole congruence cascade (study 2026-09-18-ssr-binaries).
         let mut big_augmented = false;
+        if super::congruence::ssr_binaries_enabled() && self.destructive_preprocessing_safe() {
+            let added = self.extract_binary_resolvents();
+            #[cfg(feature = "std")]
+            if added > 0 && super::learn::inproc_round_trace_enabled() {
+                eprintln!("ssr_binaries: extracted {added} resolvent binaries");
+            }
+        }
         if self.config.enable_gate_congruence {
             self.augment_big_with_gate_congruence();
             big_augmented = true;

@@ -28,6 +28,8 @@ mod eager_sub_tests;
 #[cfg(test)]
 mod otfs_tests;
 mod search_ext;
+#[cfg(test)]
+mod ssr_binaries_tests;
 mod subsume;
 mod sweep;
 mod transred;
@@ -4498,6 +4500,42 @@ impl Solver {
         if self.trivially_unsat {
             self.drat_emit_empty(None);
             return SolverResult::Unsat;
+        }
+
+        // Study arm (2026-09-18-ssr-binaries): ONE pre-search ELS round
+        // (ternary×binary SSR cascade + gate congruence + fold) BEFORE the
+        // conflict-scheduled elimination, mirroring kissat's preprocess
+        // order (congruence+substitute first, elimination after).  The
+        // default schedule runs elimination first, and on gate-dense
+        // formulas the 36M-resolution BVE pass destroys the gate structure
+        // the congruence cascade feeds on (129K gates before elim, 4K
+        // after on the bv_ILA anatomy).  Env-gated for the A/B; all the
+        // round's own soundness gates apply.
+        if !self.did_equiv_subst
+            && congruence::els_presearch_arm_enabled()
+            && self.destructive_preprocessing_safe()
+        {
+            self.did_equiv_subst = true;
+            // Bounded fixpoint (kissat's closure shape): each round's fold
+            // rewrites clauses onto representatives, completing further gate
+            // patterns for the next round's detection.
+            for _ in 0..8 {
+                let subst_before = self.stats.substitutions;
+                let orig_before = self.clauses.num_original();
+                if self.substitute_equivalent_literals_round() == equiv::SubstOutcome::Unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                if self.trivially_unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                if self.stats.substitutions == subst_before
+                    && self.clauses.num_original() == orig_before
+                {
+                    break;
+                }
+            }
         }
 
         // ===== CDCL search =====
