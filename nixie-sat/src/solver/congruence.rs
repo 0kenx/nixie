@@ -313,7 +313,7 @@ impl Solver {
                 );
             }
             let prev = std::fs::read_to_string(&path).unwrap_or_default();
-            let _ = std::fs::write(&path, prev + &format!("classes {n}\n{out}"));
+            let _ = std::fs::write(&path, format!("{prev}classes {n}\n{out}"));
         }
         for members in classes.values() {
             if members.len() < 2 {

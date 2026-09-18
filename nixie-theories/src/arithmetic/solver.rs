@@ -1,6 +1,6 @@
 //! Arithmetic Theory Solver
 
-use super::delta::DeltaRational;
+use super::delta::{BoundValue, DeltaRational};
 use super::nla::checked_neg_r64;
 use super::simplex::{
     Bound, LinExpr, RowInternMode, Simplex, SimplexOptStatus, VarId, checked_add_r64,
@@ -827,7 +827,7 @@ impl ArithSolver {
                 && self
                     .simplex
                     .get_lower(fresh)
-                    .is_none_or(|b| b.value <= zero)
+                    .is_none_or(|b| BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Less)
             {
                 match form.dir {
                     SlackDir::Gt => self.simplex.set_strict_lower(fresh, Rational64::zero(), id),
@@ -840,7 +840,7 @@ impl ArithSolver {
                 && self
                     .simplex
                     .get_upper(fresh)
-                    .is_none_or(|b| b.value >= zero)
+                    .is_none_or(|b| BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Greater)
             {
                 match form.dir {
                     SlackDir::Lt => self.simplex.set_strict_upper(fresh, Rational64::zero(), id),
@@ -1549,14 +1549,20 @@ impl ArithSolver {
         if self
             .simplex
             .get_lower(slack)
-            .is_none_or(|b| b.value <= DeltaRational::from_rational(Rational64::zero()))
+            .is_none_or(|b| {
+                BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
+                    != core::cmp::Ordering::Less
+            })
         {
             self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         }
         if self
             .simplex
             .get_upper(slack)
-            .is_none_or(|b| b.value >= DeltaRational::from_rational(Rational64::zero()))
+            .is_none_or(|b| {
+                BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
+                    != core::cmp::Ordering::Greater
+            })
         {
             self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         }
