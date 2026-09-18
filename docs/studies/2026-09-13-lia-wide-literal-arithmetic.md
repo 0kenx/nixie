@@ -2271,3 +2271,52 @@ as of this measurement, empty.
       sweep 177/177; perf gate PASS with the counters IMPROVED
       (conflicts 0.857, decisions 0.906 vs the f60e26c8 baseline — the
       weak-side skips remove wasted bound writes).
+
+## Continuation 40 (2026-09-18): item 78 — the width wall's intern-time holdout closed (the S1/S2 survey slice), the capacity campaign's first landing
+
+78. **The gap survey re-measured at `010f0e7e` (121 members, all honest
+    `unknown`) and attributed by decline-site probes** (env-gated prints
+    at the statement-position `Unknown` returns and the bare
+    `resource_limit = true` sites): S1 (37 members) and S2 (52) — the
+    two INTERN-time "the row's exact value does not fit the assignment
+    vector" declines — dominated, ahead of the B&B budget/underivable
+    pair A2/A3 (24/26) and the wide-repair decline S3 (16).  The irony:
+    `update_assignment`'s re-derivation path had ALREADY adopted item
+    28's migration discipline for exactly this shape (an unrepresentable
+    row migrates to the wide store, its meaning survives exactly, the
+    convergence classification owns the verdict) — the intern path was
+    the last holdout, still setting the GLOBAL `resource_limit` and
+    declining every mid-check intern of a wide-valued row.
+    * **The fix**: S1/S2 now set only the staleness flag
+      (`assignment_current = false`).  The next derivation routes through
+      `crash_basis`/`update_assignment`, which migrates such rows to the
+      wide store; the convergence-point classification evaluates them
+      exactly (`wide_row_violated`, `BigRational`); the mid-check
+      consumers' staleness guards already refuse stale vectors.  The
+      check() entry-time `resource_limit = false` reset stays the
+      channel-owner.
+    * **Measured**: the survey on the fixed seeds moves 121 → **114
+      members (7 recovered, every new verdict agreeing with z3)**; the
+      S1/S2 sites vanish from the attribution, leaving A3 (26), A2 (24),
+      S3 (16) — the B&B/repair slices that are the campaign's next
+      targets.  Soundness screens: the 1 800-instance fixed-seed sample +
+      5 fresh mixed seeds × 400 + 3 wide seeds × 300, zero disagreements,
+      zero refuted models; parity 176/177 Correct, 0 disagreements (z3
+      4.16.0); perf gate PASS, counters bit-identical 1.000 (the S1/S2
+      path never fires on the gate corpus); debug-panic sweep 177/177;
+      workspace failures identical to the corpus/environment baseline;
+      clippy/fmt/rustdoc clean (one undocumented signature that had
+      ridden in on a merge between verification and landing is documented
+      in this commit).
+    * Build note: parity for this landing ran on a worktree at
+      `010f0e7e` + the patch — the just-landed XOR-congruence commit
+      (`ce42f335`) breaks the plain workspace build
+      (`congruence.rs:316`'s `prev + &format!(...)` — `String +
+      &String` has no std impl), so the full-build gates cannot run at
+      merged HEAD until its owner repairs it (reported here; their
+      in-flight tree presumably carries the fix).
+    * Regression watch, reported for the SAT-congruence owner: the
+      `equal_pin_endpoint_reasons_cite_their_own_side` pin (~3.5 s at its
+      `d75fa881` landing) times out at 165 s on committed `570d8ad5`
+      BOTH with and without this change — a capacity deflection from the
+      `ce42f335`/merge window, not from the S1/S2 slice.

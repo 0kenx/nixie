@@ -1897,7 +1897,16 @@ impl Simplex {
             if let Some(val) = self.eval_expr(row) {
                 self.assignment[slack as usize] = val;
             } else {
-                self.resource_limit = true;
+                // The interned row's value does not fit the assignment
+                // vector.  Item 28's migration discipline applies here too
+                // (the intern path was the last holdout): the row's meaning
+                // survives exactly, the staleness flag routes the next
+                // derivation through `crash_basis`/`update_assignment`,
+                // which MIGRATES such a row to the wide store, and the
+                // convergence classification owns the verdict.  Setting the
+                // global `resource_limit` here (the old behavior) declined
+                // every mid-check intern of a wide-valued row — the S1
+                // slice of the gap survey (~37 members at 010f0e7e).
                 self.assignment_current = false;
             }
         }
@@ -1935,10 +1944,16 @@ impl Simplex {
             match self.eval_big_expr(&big) {
                 Some(val) => self.assignment[slack as usize] = val,
                 None => {
-                    // The exact VALUE of the row does not fit: the
-                    // assignment vector cannot hold it, so no feasibility
-                    // verdict may rest on it.
-                    self.resource_limit = true;
+                    // The exact VALUE of the row does not fit the
+                    // assignment vector.  The row is ALREADY in the wide
+                    // store — its meaning survives exactly, its stored
+                    // assignment entry is stale on purpose (the wide store
+                    // never maintained it), and the convergence
+                    // classification evaluates it exactly.  Only the
+                    // staleness flag is needed; the global `resource_limit`
+                    // here declined every mid-check intern of a wide row —
+                    // the S2 slice of the gap survey (~52 members at
+                    // 010f0e7e), the survey's single largest decline site.
                     self.assignment_current = false;
                 }
             }
@@ -4348,8 +4363,10 @@ impl Simplex {
         (self.rows_ver, self.cross_ver, sum_ver, int_vars)
     }
 
-    /// Propagate implied bounds through the tableau (see the module and
-    /// [`Self::tighten_snapshot`]-adjacent derivation-stamp docs). Returns
+    /// Propagate implied bounds through the tableau (see the module docs
+    /// and the derivation-stamp fields).  One slice-6 propagation pass
+    /// over the narrow and wide rows (see the `tighten_tableau_bounds`
+    /// caller for the fixpoint loop and the soundness gates).  Returns
     /// the number of bounds STORED this pass — the fixpoint signal.
     pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) -> usize {
         self.propagated.clear();
