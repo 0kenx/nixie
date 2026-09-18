@@ -1052,3 +1052,41 @@ history (branch `row-memory`, reverted before landing).
 
 Verification of the reverted state: set family all `sat`; quant_fuzz
 seed 41 × 60 CLEAN.
+
+
+## Honest rows do not converge at any budget — the architecture verdict (2026-09-17, eighteenth follow-up — closing the line)
+
+The seventeenth follow-up's map said "retune the pacing".  Measured: it
+is not pacing.  With the held-back pieces re-applied (row memory, both
+pollution purges, the frozen-side dedup, the mint-round refund) and the
+global conflict budget raised **10×** (50k → 500k), the set family still
+answers `unknown` — set16 runs 99 rounds, 150 s, the union/intersection/
+difference checks `Sat` 59–73 times each, and the row dumps show the
+mechanism: the structure accumulates dozens of honest minted rows while
+the **ground rows churn every round** (each churn mints genuinely-new
+target rows; each Elem-domain growth re-names old ones through the
+row-point fingerprint), so the closure never reaches a fixed point.
+The per-check `Err(MaxConflicts)` caps are a symptom, not the disease.
+
+**The architectural verdict**: the landed (dishonest) build converges
+*because* minted rows vanish at round boundaries and read as a stable
+all-false row — a small stable core the tables close over.  Honest rows
+make convergence require **row stability**, and the harvest-rebuild
+architecture cannot provide it: the completed model is re-derived from a
+freshly-re-modelled ground solver every round, and the SAT core's free
+bits (the member rows) flip freely between rounds with nothing to make
+the falsifier-driven refinement monotone.
+
+**The next design is z3's, not a tune**: the model as THE search object
+— a single persistent structure across rounds (proto-model), refined in
+place by the falsifier instances, with the ground solver as the
+lemma engine rather than the structure's source of truth.  That is the
+`mbqi` rewrite this line has been circling; everything decoded so far
+(the row algebra, the mint, the pollution channels, the freeze) ports
+onto it directly.  Until then, the landed build's behavior is the
+correct shipping point: the family converges, the unsat-forcing battery
+is clean, and the sixteenth's false-`sat` mechanism (export-driven pin
+pollution) is understood and avoided.
+
+Verification of the reverted state: set family all `sat`; quant_fuzz
+seed 42 × 60 CLEAN.
