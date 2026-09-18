@@ -1357,7 +1357,7 @@ impl Parser<'_> {
             // a term in this surface (no lambdas, no function sorts), so
             // the generic operand path would reject it before the operator
             // ever saw it.
-            "bag.map" | "bag.filter" => {
+            "bag.map" | "bag.filter" | "bag.all" | "bag.some" => {
                 let (func, arg_sort, ret_sort) = self.parse_bag_fun_operand(&op)?;
                 return Ok(Opened::Frame(Frame::op(
                     Head::BagFun {

@@ -1498,3 +1498,93 @@ fn count_spellings_survive_late_purification() {
         );
     }
 }
+
+/// `bag.all`/`bag.some` — CVC5's `ALL_FILTER`/`SOME_FILTER` lowerings,
+/// applied at parse time: `all p b ⇔ filter p b = b` and
+/// `some p b ⇔ filter p b ≠ ∅`. The extensionality witnesses make both
+/// directions exact.
+#[test]
+fn all_and_some_lower_through_the_filter() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (check-sat)\n\
+             (get-value ((bag.all p (bag.union_disjoint (bag 2 1) (bag 3 1)))\n\
+                         (bag.all p (bag.union_disjoint (bag 2 1) (bag 1 1)))\n\
+                         (bag.some p (as bag.empty (Bag Int)))\n\
+                         (bag.some p (bag.union_disjoint (bag 1 1) (bag 0 2)))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    // The queries echo their lowered spelling (the lowering is parse-time,
+    // like any macro) but fold to their truth.
+    assert!(
+        joined.contains("(bag.filter p (bag.union_disjoint (bag 2 1) (bag 3 1)))) true)"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("(bag.filter p (bag.union_disjoint (bag 2 1) (bag 1 1)))) false)"),
+        "{joined}"
+    );
+    // `some p empty` folds entirely at parse, so the query echoes
+    // `(false false)`; some over {1, 0:2} folds to false.
+    assert!(joined.contains("(false false)"), "{joined}");
+
+    // The verdict directions.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (assert (not (bag.all p (bag.union_disjoint (bag 2 1) (bag 1 1)))))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (assert (not (bag.all p (bag.union_disjoint (bag 2 1) (bag 3 1)))))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun p ((x Int)) Bool (> x 1))\n\
+             (assert (bag.some p (as bag.empty (Bag Int))))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // The declared-predicate shape that exposed the purifier split: the
+    // element-congruence tie is what makes this refute.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (declare-fun p (Int) Bool)\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= (bag.count 2 b) 1))\n\
+             (assert (not (bag.some p b)))\n\
+             (assert (p 2))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // A non-predicate function is a sort error.
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (define-fun f ((x Int)) Int (+ x 1))\n\
+         (declare-const b (Bag Int))\n\
+         (assert (bag.all f b))\n\
+         (check-sat)\n",
+    );
+    assert!(
+        out.is_err(),
+        "bag.all needs a predicate, not an Int function"
+    );
+}

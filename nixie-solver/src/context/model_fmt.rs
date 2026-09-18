@@ -1215,7 +1215,9 @@ impl Context {
             .collect();
         for (t, n) in bag_folds {
             let v = match self.terms.get(t).map(|d| &d.kind) {
-                Some(TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _)) => {
+                Some(
+                    TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _) | TermKind::Eq(_, _),
+                ) => {
                     if n > 0 {
                         self.terms.true_id
                     } else {
@@ -1480,6 +1482,24 @@ impl Context {
                         out.push((t, if n > 0 { 1 } else { 0 }));
                     }
                 }
+                // A bag-sorted equality (the `bag.all`/`bag.some` lowering
+                // lands here, as does any user equality): both sides' cells
+                // resolve from installed/ground values, and the atom folds
+                // to its truth — evaluation of verified objects.
+                TermKind::Eq(a, b) => {
+                    if model.get(t).is_none()
+                        && self.bag_element_sort_of(a).is_some()
+                        && self.bag_element_sort_of(b).is_some()
+                        && let (Some(ca), Some(cb)) = (
+                            self.value_bag_cells(a, model),
+                            self.value_bag_cells(b, model),
+                        )
+                    {
+                        let same = ca.len() == cb.len()
+                            && ca.iter().all(|&(e, n)| self.cell_of(e, &cb) == n);
+                        out.push((t, if same { 1 } else { 0 }));
+                    }
+                }
                 // `bag.subbag a b` from installed values: pointwise ≤ over
                 // the union of the cells (a cell absent from `b` counts 0) —
                 // evaluation of verified objects, the same contract as the
@@ -1575,6 +1595,17 @@ impl Context {
             Some(nixie_core::ast::TermKind::IntConst(n)) => num_traits::ToPrimitive::to_i64(n),
             _ => None,
         }
+    }
+
+    /// The element sort when `t` is bag-sorted (a sort-check helper for
+    /// the equality fold).
+    fn bag_element_sort_of(&self, t: TermId) -> Option<nixie_core::sort::SortId> {
+        self.terms.get(t).map(|d| d.sort).and_then(|s| {
+            self.terms.sorts.get(s).and_then(|sort| match &sort.kind {
+                nixie_core::SortKind::Bag(e) => Some(*e),
+                _ => None,
+            })
+        })
     }
 
     /// The multiplicity of `e` among the cells: by term identity first,
