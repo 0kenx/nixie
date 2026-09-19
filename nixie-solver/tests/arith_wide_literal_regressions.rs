@@ -1414,13 +1414,12 @@ fn bnb_leaf_rescan_rejects_post_resolve_fractional_vertex() {
              (check-sat)\n",
         )
         .expect("script executes");
-    assert_ne!(
+    assert_eq!(
         out.first().map(String::as_str),
-        Some("sat"),
+        Some("unsat"),
         "the goal is unsatisfiable (mod(−2y+2^62, 4) is always 0 or 2, never > 2); \
-         `sat` here is a published model violating its own assertion"
+         `sat` here is a published model violating its own assertion, and the \
+         parity refutation `2y + 4q = 2^62 − 3` is decidable through the \
+         widened Hermite solve (MAG_BOUND_SOLVE)"
     );
-    // The honest verdict for this build; if a future Diophantine reach
-    // closes the wide-constant parity class, `unsat` is also correct —
-    // the pin is never-`sat`.
 }
