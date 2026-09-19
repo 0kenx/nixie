@@ -54,9 +54,16 @@ the study wins. Landed as `7ab21fb5` (binary
 3. **The model-blocking retry-succeeds fixture** stays open — 12
    hand shapes tried, all preempted by repairs/theories (study §E);
    the honest options are recorded there.
-4. The wide-constant parity refutation (`2y + 4q = 2^62 − 3` — the
-   Diophantine layer declines at `2^62`) would close the new
-   regressions from `unknown` to `unsat`; capacity, not soundness.
+4. ~~The wide-constant parity refutation~~ — **DONE the same day**
+   (`33cb9418`, merged to main as `37ab63b1`): the Hermite solve widened
+   to the full `i64` input domain (`MAG_BOUND_SOLVE`, checked Euclid
+   updates); the reproducer answers the exact `unsat`, the fixed-seed
+   survey drops **150 → 104** (the 46 closed are the UNSAT-side parity
+   class, 31 → 3), timeouts 12 → 7.  The residual 104 is now purely the
+   **SAT-side beyond-width witness frontier** (101 wall-literal members)
+   — model construction, not refutation.  That is the campaign's next
+   target, alongside the parallel session's S3 interval-refutation work
+   (their item 87).
 
 ## Process notes from this landing
 

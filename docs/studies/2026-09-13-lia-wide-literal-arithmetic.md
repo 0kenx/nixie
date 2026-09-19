@@ -2611,3 +2611,36 @@ before choosing a slice).  Landed as `bf9f5b71`.
       downgrade in the CDCL Sat arm, J5 = `arith_abstracted_big_const`
       uncertified, E4 = the fractional parse arm, plus the statement-
       position Unknown returns the previous sessions used.
+
+## Continuation 43 (2026-09-19): item 87 — the wide-row interval refutation's sign; the S3 residual's dominant mechanism closed
+
+87. **`wide_row_refuted_by_bounds` accumulated negative-coefficient terms
+    with a FLIPPED sign**: the endpoint choice folds the sign (for `c < 0`
+    the minimum sits at `hi`), so the contribution is `+ c·hi`, but the
+    accumulation ran `acc(..., -1)` — subtracting it, computing a range
+    wider than the truth by `2·c·hi` per negative term.  Conservative in
+    the safe direction only (the widened range can only FAIL to refute),
+    so no verdict was ever wrong — but valid refutations were missed, the
+    wide-repair step then found every direction blocked at its bound
+    (NOCOL — the repair-eligibility rule was NEVER the design problem),
+    and the check declined LP-infeasible states to `unknown`.
+    * **Found by re-attributing the 110 members at `bf9f5b71`** (the
+      rebased tree includes the parallel sessions' MBQI/bags landings;
+      the S3 tag led 45 of 110).  The NOCOL dump showed every term
+      blocked AND the row's current value already at its true minimum —
+      the interval refutation should have fired; reading its range
+      accumulation found the sign.  Landed as `d542bd56`.
+    * **Measured**: survey 110 → **91** (19 recovered: 16 sat + 3 unsat,
+      every new verdict agreeing with z3; the recovered `xi = 9` model
+      on the pinned instance z3-validated by binding and re-solving).
+      Differentials 3 fresh mixed ×400 + 3 fresh wide ×300 clean; parity
+      176/177 (z3 4.16.0); perf gate vs `bf9f5b71` counters 1.000/1.000;
+      debug panic sweep 0; the arith crates' suite green except the
+      documented corpus-missing class.  Regression:
+      `wide_row_interval_refutation_sign` (the fuzz instance verbatim).
+    * **The residual 91's shape** (for the next session): A2 B&B budgets
+      with Q1/Q2 int-eq companions remain the largest named slice, plus
+      the probe-silent ~49 (timeouts and the J-class solver-level
+      declines — J17/J5 float shapes still exist beyond item 86's
+      publication fixes).  Re-attribute before choosing: the probes are
+      session-local (see item 86's site names).

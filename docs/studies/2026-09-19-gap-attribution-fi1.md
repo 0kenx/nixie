@@ -298,3 +298,43 @@ as the pre-SHAPES record.
 * The survey and the two fuzzers run 3-way parallel per seed comfortably
   on 20 cores alongside other agents' builds (~6 min per 600-instance
   seed).
+
+## H. The wide-constant Hermite widening — the parity refutation restored end-to-end (the successor handoff's item 4)
+
+The false-`sat` fix (G) left the exact reproducer an honest `unknown`:
+the parity refutation `2y + 4q = 2^62 − 3` is *decidable*, but the
+Diophantine layer's Hermite solve refused the system — `MAG_BOUND =
+2^40` rejected the `i64`-range `IntEquation` constants at the first
+substitution, so every wide-constant equality system was a `GiveUp`
+degrading z3's `unsat` to `unknown`.
+
+**The widening** (`lia/hnf.rs`): the blanket `2^40` is split by role.
+`try_compute` keeps it (its outputs are `i64` matrices; test-only today).
+`solve_integer_eq_system` runs under `MAG_BOUND_SOLVE = 2^63 − 1` — the
+full `IntEquation` input domain — with the Euclid pair updates made
+CHECKED (`checked_mul`/`checked_add`; the old unchecked form was
+justified *by* the `2^40` bound, and that justification is now local to
+each operation), and the substitution/consistency/witness accumulators
+checked-only (exact within `i128`; a true overflow trips to `GiveUp`,
+never a wrap). Entries leaving the bound still trip honestly (the
+runaway-growth test pins the chained-Euclid shape), and out-of-bound
+INITIAL entries are now simply computed exactly — a divisibility-
+decidable row answers even with huge literals, strictly better than the
+blanket refusal.
+
+**Measured**: the exact reproducer answers `unsat` (z3 agrees); its
+satisfiable twins (`2^62 ± 1`) stay `sat`. The fixed-seed survey drops
+**150 → 104 members** — the 46 closed are almost entirely the UNSAT-side
+parity class (31 → 3); the residual 104 is 101 SAT-side wall-literal
+members, the beyond-width *witness* frontier (model construction, not
+refutation) plus 3 stragglers. Timeouts 12 → 7. Gate PASS at counters
+1.000/1.000 (wall 1.02); parity 100 % (z3 4.16.0); suite 12 009/12 009;
+wide+mixed 3 × 300/400 fresh seeds (20262140–45) zero disagreements;
+debug-panic sweep clean.
+
+Unit pins: `solve_wide_constant_parity_refutes` (the `2^62` system,
+infeasible core names the identity row), `solve_full_i64_domain_inputs`
+(`i64::MIN`-range inputs; wide witnesses stay `Feasible` — the CALLER
+narrows through `i64::try_from`), `solve_runaway_growth_still_gives_up`
+(growth past `2^63` trips; the same shape a size class down decides).
+The e2e regression re-pinned from never-`sat` to the exact `unsat`.
