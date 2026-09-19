@@ -87,3 +87,34 @@ The solved-count gap is *not* general slowness — on the both-solved
 set the conflict ratio's median is **1.0**.  The gap is concentrated,
 mechanism-attributed, and each mechanism has a named owner route
 above.  Re-run `bench/smt_perf/run_perf.sh` after any of them lands.
+
+## Follow-up (same day): the deep-encoding class's fix built — and the second pathology it uncovers
+
+The deep-split rescue is implemented (`solver/deep_split.rs`, **default
+off**, `NIXIE_DEEP_SPLIT=1` to enable, OnceLock-cached — never a
+per-assert `getenv`): a too-deep assertion is split into shallow,
+equi-satisfiable pieces by lifting deep subterms to fresh constants
+(`dsplit!<term-id>`) with defining equations; every piece passes the
+depth guard; the walk is fully iterative; a 601-deep chain splits into
+`BATCH`-bounded pieces (unit-pinned, with the boundary bug that
+motivated the `ACCEPT ≠ BATCH` distinction found and fixed on the way:
+a cut at depth ≥ BATCH leaves the top piece BATCH+2 deep, and re-cutting
+*that* fires no candidate — its children are exactly BATCH-high).
+
+**Why it is off**: it currently buys no verdict.  The unlocked search
+then hits a *second*, independent pathology — the arithmetic layer's
+**pivot storm on wide equality chains**: a trivially-sat 600-var
+synthetic (an asserted-true Bool selecting through the chain) searches
+past 20 s with zero SAT conflicts, profiled (dev build) as
+`pivot` / `find_violating` / `slice_contains` — thousands of
+conflict-free simplex pivots over the split's eq rows.  Every nec-smt
+instance re-measured with the split on: all still `unknown` (now
+searched rather than refused — honest, but 0.2 s → 20 s of wall to hear
+it).  This second pathology is the same shape the standing table's
+*timeouts* carry (CAV/SMPT: conflict-free arith grinding), which
+strengthens the attribution: **the arith arc's eq-chain handling owns
+both**; the deep-split flips on with that fix.
+
+The default path is behavior-identical (the gate returns before any
+work; 5167/5167 incl. both new unit tests, parity 176/1/0, fuzz spots
+CLEAN, clippy/fmt clean).

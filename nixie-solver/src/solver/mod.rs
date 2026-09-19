@@ -5449,6 +5449,7 @@ pub(crate) fn freeze_collapse_enabled() -> bool {
 mod branch_priority;
 mod bv_elim_uncnstr;
 mod bv_preprocess;
+mod deep_split;
 mod dispatch_pure_bv;
 mod fp_hybrid;
 #[cfg(test)]
