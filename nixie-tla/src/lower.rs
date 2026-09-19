@@ -556,6 +556,143 @@ impl<'a> Lowerer<'a> {
         self
     }
 
+    /// The `Bags` standard-module vocabulary, desugared to the module's own
+    /// definitions (`Bags.tla`, tla2tools) as kernel nodes — the same macro
+    /// expansion TLA+ itself gives these operators. What desugars here
+    /// evaluates and encodes through the ordinary function machinery,
+    /// because a bag IS a function whose range is the positive naturals:
+    ///
+    /// ```text
+    /// SetToBag(S)   == [e ∈ S |-> 1]
+    /// BagToSet(B)   == DOMAIN B
+    /// BagIn(e, B)   == e ∈ DOMAIN B
+    /// CopiesIn(e,B) == IF e ∈ DOMAIN B THEN B[e] ELSE 0
+    /// B1 (+) B2     == [e ∈ DOMAIN B1 ∪ DOMAIN B2 |->
+    ///                    CopiesIn(e,B1) + CopiesIn(e,B2)]
+    /// B1 (-) B2     == [e ∈ {d ∈ DOMAIN B1 : B1[d] − CopiesIn(d,B2) > 0} |->
+    ///                    B1[e] − CopiesIn(e,B2)]
+    ///                 (the module writes a `LET B == …` and filters its
+    ///                  positive part; `B[d] > 0` there is exactly
+    ///                  `B1[d] − CopiesIn(d,B2) > 0` on `DOMAIN B1`, so
+    ///                  this is the same function without the local)
+    /// B1 ⊑ B2       == (∀ e ∈ DOMAIN B1 : e ∈ DOMAIN B2)
+    ///                 ∧ (∀ e ∈ DOMAIN B1 : B1[e] ≤ B2[e])
+    /// ```
+    ///
+    /// The operators whose definitions need `CHOOSE` or recursion
+    /// (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`, `BagOfAll`)
+    /// deliberately do **not** desugar — they stay opaque and are declined
+    /// by name downstream rather than approximated.
+    fn bag_desugar(&mut self, name: &str, args: &[KeraRef]) -> Option<KeraRef> {
+        // `IF e ∈ DOMAIN b THEN b[e] ELSE 0` over a shared operand pair.
+        let copies_in = |_this: &mut Self, e: &KeraRef, b: &KeraRef| -> KeraRef {
+            let dom = Kera::Domain(Rc::clone(b)).rc();
+            Kera::Ite(
+                Kera::In(Rc::clone(e), dom).rc(),
+                Kera::FunApp(Rc::clone(b), Rc::clone(e)).rc(),
+                Kera::Int("0".into()).rc(),
+            )
+            .rc()
+        };
+        let int0 = || Kera::Int("0".into()).rc();
+        let int1 = || Kera::Int("1".into()).rc();
+        match (name, args.len()) {
+            ("SetToBag", 1) => Some(
+                Kera::FunDef {
+                    var: self.fresh_name("bag_e"),
+                    set: Rc::clone(&args[0]),
+                    body: int1(),
+                }
+                .rc(),
+            ),
+            ("BagToSet", 1) => Some(Kera::Domain(Rc::clone(&args[0])).rc()),
+            ("BagIn", 2) => {
+                Some(Kera::In(Rc::clone(&args[0]), Kera::Domain(Rc::clone(&args[1])).rc()).rc())
+            }
+            ("CopiesIn", 2) => Some(copies_in(self, &args[0], &args[1])),
+            // `B1 (+) B2`.
+            ("\\oplus", 2) => {
+                let var = self.fresh_name("bag_e");
+                let e = Kera::Var(var.clone()).rc();
+                let dom = Kera::SetBin(
+                    SetOp::Union,
+                    Kera::Domain(Rc::clone(&args[0])).rc(),
+                    Kera::Domain(Rc::clone(&args[1])).rc(),
+                )
+                .rc();
+                let sum = Kera::Arith(
+                    ArithOp::Add,
+                    copies_in(self, &e, &args[0]),
+                    copies_in(self, &e, &args[1]),
+                )
+                .rc();
+                Some(
+                    Kera::FunDef {
+                        var,
+                        set: dom,
+                        body: sum,
+                    }
+                    .rc(),
+                )
+            }
+            // `B1 (-) B2`, on the filtered positive part.
+            ("\\ominus", 2) => {
+                let dvar = self.fresh_name("bag_d");
+                let d = Kera::Var(dvar.clone()).rc();
+                let diff_d = Kera::Arith(
+                    ArithOp::Sub,
+                    Kera::FunApp(Rc::clone(&args[0]), Rc::clone(&d)).rc(),
+                    copies_in(self, &d, &args[1]),
+                )
+                .rc();
+                let positive = Kera::Filter {
+                    var: dvar,
+                    set: Kera::Domain(Rc::clone(&args[0])).rc(),
+                    pred: Kera::Cmp(CmpOp::Gt, diff_d, int0()).rc(),
+                }
+                .rc();
+                let var = self.fresh_name("bag_e");
+                let e = Kera::Var(var.clone()).rc();
+                let body = Kera::Arith(
+                    ArithOp::Sub,
+                    Kera::FunApp(Rc::clone(&args[0]), Rc::clone(&e)).rc(),
+                    copies_in(self, &e, &args[1]),
+                )
+                .rc();
+                Some(
+                    Kera::FunDef {
+                        var,
+                        set: positive,
+                        body,
+                    }
+                    .rc(),
+                )
+            }
+            // `B1 \sqsubseteq B2`.
+            ("\\sqsubseteq", 2) => {
+                let var = self.fresh_name("bag_e");
+                let e = Kera::Var(var.clone()).rc();
+                let in_dom2 = Kera::In(Rc::clone(&e), Kera::Domain(Rc::clone(&args[1])).rc()).rc();
+                let ordered = Kera::Cmp(
+                    CmpOp::Le,
+                    Kera::FunApp(Rc::clone(&args[0]), Rc::clone(&e)).rc(),
+                    Kera::FunApp(Rc::clone(&args[1]), Rc::clone(&e)).rc(),
+                )
+                .rc();
+                let body = Kera::And(vec![in_dom2, ordered]).rc();
+                Some(
+                    Kera::Forall {
+                        var,
+                        set: Kera::Domain(Rc::clone(&args[0])).rc(),
+                        body,
+                    }
+                    .rc(),
+                )
+            }
+            _ => None,
+        }
+    }
+
     /// Override the total work budget, in steps of the lowering walk.
     #[must_use]
     pub fn with_step_budget(mut self, n: usize) -> Self {
@@ -979,6 +1116,17 @@ fn builtin_constant(name: &str) -> Option<KeraRef> {
         "TRUE" => Some(Kera::Bool(true).rc()),
         "FALSE" => Some(Kera::Bool(false).rc()),
         "BOOLEAN" => Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc()),
+        // The nullary `Bags` operator lowers to its definition —
+        // `SetToBag({})` is `[e \in {} |-> 1]` — so every consumer sees
+        // the same function it would see for the spelled-out form.
+        "EmptyBag" => Some(
+            Kera::FunDef {
+                var: Name("bag_e#0".into()),
+                set: Kera::SetEnum(Vec::new()).rc(),
+                body: Kera::Int("1".into()).rc(),
+            }
+            .rc(),
+        ),
         _ => None,
     }
 }
@@ -2022,7 +2170,13 @@ impl<'a> Lowerer<'a> {
                 let Some(id) = head.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
                 };
-                Kera::Opaque(Name(id.name.clone()), kids).rc()
+                // The `Bags` standard-module vocabulary desugars to the
+                // module's own definitions before anything else sees it.
+                if let Some(k) = self.bag_desugar(&id.name, &kids) {
+                    k
+                } else {
+                    Kera::Opaque(Name(id.name.clone()), kids).rc()
+                }
             }
             // `A \X B \X C` is a *ternary* product in TLA+ — a set of
             // 3-tuples — not `(A \X B) \X C`, which is a set of pairs whose
@@ -2052,7 +2206,14 @@ impl<'a> Lowerer<'a> {
                 "'" => Kera::Prime(take(0)?).rc(),
                 other => Kera::Opaque(Name(other.to_string()), vec![take(0)?]).rc(),
             },
-            ExprKind::Infix { op, .. } => build_infix(op, take(0)?, take(1)?, span)?,
+            ExprKind::Infix { op, .. } => {
+                let (a, b) = (take(0)?, take(1)?);
+                if let Some(k) = self.bag_desugar(op, &[Rc::clone(&a), Rc::clone(&b)]) {
+                    k
+                } else {
+                    build_infix(op, a, b, span)?
+                }
+            }
             ExprKind::Quant { kind, .. } => {
                 let names = self.take_binder_names(span);
                 let body = kids.last().cloned().ok_or_else(|| {

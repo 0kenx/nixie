@@ -1483,6 +1483,14 @@ impl Inference {
         let arity = args.len();
         let a = |s: &mut Self| s.fresh();
         let out = match (name, arity) {
+            // ---- Bags ----
+            // (the nullary constant first; the rest of the vocabulary lives
+            // with the sequences/sets rules above)
+            ("EmptyBag", 0) => {
+                let e = self.fresh()?;
+                let int = self.int_ty()?;
+                self.mk(Ty::Fun(e, int))?
+            }
             ("Len", 1) => {
                 let e = a(self)?;
                 let seq = self.mk(Ty::Seq(e))?;
@@ -1558,6 +1566,87 @@ impl Inference {
                 let s = self.set_of(e)?;
                 self.unify(args[0], s)?;
                 self.int_ty()?
+            }
+            // ---- Bags ----
+            // The surface type of a bag is the function the standard module
+            // defines it as (`Fun(τ, Int)`), so a bag flows anywhere a
+            // Nat-valued function can and `b[e]` typechecks. The encoder
+            // may represent bag-typed terms differently — that is its
+            // business, not the spec checker's.
+            ("SetToBag", 1) => {
+                let e = a(self)?;
+                let s = self.set_of(e)?;
+                self.unify(args[0], s)?;
+                let int = self.int_ty()?;
+                self.mk(Ty::Fun(e, int))?
+            }
+            ("BagToSet", 1) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.set_of(e)?
+            }
+            ("IsABag", 1) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.bool_ty()?
+            }
+            ("BagIn", 2) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], e)?;
+                self.unify(args[1], f)?;
+                self.bool_ty()?
+            }
+            ("CopiesIn", 2) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], e)?;
+                self.unify(args[1], f)?;
+                self.int_ty()?
+            }
+            ("\\oplus", 2) | ("\\ominus", 2) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.unify(args[1], f)?;
+                f
+            }
+            ("\\sqsubseteq", 2) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.unify(args[1], f)?;
+                self.bool_ty()?
+            }
+            ("BagUnion", 1) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                let set_of_bags = self.set_of(f)?;
+                self.unify(args[0], set_of_bags)?;
+                f
+            }
+            ("BagCardinality", 1) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.int_ty()?
+            }
+            ("SubBag", 1) => {
+                let e = a(self)?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(e, int))?;
+                self.unify(args[0], f)?;
+                self.set_of(f)?
             }
             ("IsFiniteSet", 1) => {
                 let e = a(self)?;

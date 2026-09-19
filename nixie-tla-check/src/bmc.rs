@@ -1017,8 +1017,14 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         // function is here for a third: its sort has to be known *before* its
         // body is encoded, and the body is the only thing that would otherwise
         // reveal it.
+        // A function definition joins them: over an *empty* domain it has
+        // no entry to take a sort from — the `Bags` module's `EmptyBag`
+        // (`[e \in {} |-> 1]`) is exactly this shape.
         if matches!(t.as_ref(), Kera::SetEnum(xs) | Kera::Tuple(xs) if xs.is_empty())
-            || matches!(t.as_ref(), Kera::Tuple(_) | Kera::RecFun { .. })
+            || matches!(
+                t.as_ref(),
+                Kera::Tuple(_) | Kera::RecFun { .. } | Kera::FunDef { .. }
+            )
         {
             out.push(t.clone());
         }

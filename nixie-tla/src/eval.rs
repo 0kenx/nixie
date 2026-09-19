@@ -792,6 +792,241 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
         },
         ("IsFiniteSet", 1) => Ok(Value::Bool(matches!(arg(0)?, Value::Set(_)))),
 
+        // ---- Bags ----
+        // The standard module's own representation is normative here: a bag
+        // IS a function whose range is the positive naturals (`Bags.tla`),
+        // so every operator below is the module's definition evaluated over
+        // `Value`'s function shapes (`Fun`, and the tuple/record functions).
+        // Nothing introduces a separate bag value — two equal functions are
+        // the same bag, and the probe comparison against TLC depends on
+        // exactly that.
+        ("IsABag", 1) => Ok(Value::Bool(match arg(0)? {
+            f @ (Value::Fun(_) | Value::Tuple(_) | Value::Record(_)) => Value::function_entries(f)
+                .is_some_and(|entries| {
+                    entries
+                        .into_iter()
+                        .all(|(_, v)| matches!(v, Value::Int(n) if n > 0))
+                }),
+            _ => false,
+        })),
+        ("BagToSet", 1) => {
+            let f = arg(0)?;
+            let Some(entries) = Value::function_entries(f) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "a function (a bag)".into(),
+                    found: f.kind().into(),
+                });
+            };
+            // `BagToSet(B) == DOMAIN B` — the domain, exactly; a non-bag
+            // function's zero-valued entries are in its domain too.
+            Ok(Value::Set(entries.into_iter().map(|(k, _)| k).collect()))
+        }
+        ("SetToBag", 1) => match arg(0)? {
+            Value::Set(s) => Ok(Value::fun(
+                s.iter().map(|e| (e.clone(), Value::Int(1))).collect(),
+            )),
+            other => Err(EvalErrorKind::Type {
+                expected: "a set".into(),
+                found: other.kind().into(),
+            }),
+        },
+        ("EmptyBag", 0) => Ok(Value::fun(BTreeMap::new())),
+        ("BagIn", 2) => {
+            let f = arg(1)?;
+            let Some(entries) = Value::function_entries(f) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "a function (a bag)".into(),
+                    found: f.kind().into(),
+                });
+            };
+            let needle = arg(0)?.clone();
+            Ok(Value::Bool(entries.into_iter().any(|(k, _)| k == needle)))
+        }
+        ("CopiesIn", 2) => {
+            let f = arg(1)?;
+            let Some(entries) = Value::function_entries(f) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "a function (a bag)".into(),
+                    found: f.kind().into(),
+                });
+            };
+            let needle = arg(0)?.clone();
+            Ok(entries
+                .into_iter()
+                .find(|(k, _)| *k == needle)
+                .map(|(_, v)| v)
+                .unwrap_or(Value::Int(0)))
+        }
+        // `B1 (+) B2`: domain is the union, value the sum with 0 defaults.
+        // For genuine bags the result has no zero entries; a non-bag
+        // function's zeros are carried exactly as the definition writes
+        // them (the entry stays in the domain).
+        ("\\oplus", 2) => {
+            let (a, b) = (arg(0)?, arg(1)?);
+            let (Some(ea), Some(eb)) = (Value::function_entries(a), Value::function_entries(b))
+            else {
+                return Err(EvalErrorKind::Type {
+                    expected: "functions (bags)".into(),
+                    found: "a non-function".into(),
+                });
+            };
+            let mut merged: BTreeMap<Value, Value> = ea.into_iter().collect();
+            for (k, v) in eb {
+                let add = |x: &Value, y: &Value| -> Value {
+                    match (x, y) {
+                        (Value::Int(m), Value::Int(n)) => Value::Int(m + n),
+                        _ => Value::Int(0),
+                    }
+                };
+                let entry = match merged.remove(&k) {
+                    Some(v0) => add(&v0, &v),
+                    None => add(&Value::Int(0), &v),
+                };
+                merged.insert(k, entry);
+            }
+            Ok(Value::fun(merged))
+        }
+        // `B1 (-) B2`: subtract per element, then keep only the positive
+        // entries — the definition's `{d \in DOMAIN B : B[d] > 0}` filter.
+        ("\\ominus", 2) => {
+            let (a, b) = (arg(0)?, arg(1)?);
+            let (Some(ea), Some(eb)) = (Value::function_entries(a), Value::function_entries(b))
+            else {
+                return Err(EvalErrorKind::Type {
+                    expected: "functions (bags)".into(),
+                    found: "a non-function".into(),
+                });
+            };
+            let eb_map: BTreeMap<Value, Value> = eb.into_iter().collect();
+            let mut out = BTreeMap::new();
+            for (k, v) in ea {
+                let sub = match eb_map.get(&k) {
+                    Some(Value::Int(n)) => match v {
+                        Value::Int(m) => Value::Int(m - n),
+                        other => other,
+                    },
+                    _ => v,
+                };
+                if let Value::Int(n) = sub
+                    && n > 0
+                {
+                    out.insert(k, sub);
+                }
+            }
+            Ok(Value::fun(out))
+        }
+        // `B1 \sqsubseteq B2`: domains order and pointwise values order.
+        ("\\sqsubseteq", 2) => {
+            let (a, b) = (arg(0)?, arg(1)?);
+            let (Some(ea), Some(eb)) = (Value::function_entries(a), Value::function_entries(b))
+            else {
+                return Err(EvalErrorKind::Type {
+                    expected: "functions (bags)".into(),
+                    found: "a non-function".into(),
+                });
+            };
+            let eb_map: BTreeMap<Value, Value> = eb.into_iter().collect();
+            let ea: BTreeMap<Value, Value> = ea.into_iter().collect();
+            let ok = ea.iter().all(|(k, v)| {
+                eb_map.get(k).is_some_and(|w| match (v, w) {
+                    (Value::Int(m), Value::Int(n)) => *m <= *n,
+                    _ => false,
+                })
+            });
+            Ok(Value::Bool(ok))
+        }
+        // `BagUnion(S)`: the bag union of a SET of bags.
+        ("BagUnion", 1) => match arg(0)? {
+            Value::Set(bags) => {
+                let mut acc = BTreeMap::new();
+                for bag in bags {
+                    let Some(entries) = Value::function_entries(bag) else {
+                        return Err(EvalErrorKind::Type {
+                            expected: "a set of bags".into(),
+                            found: "a non-function element".into(),
+                        });
+                    };
+                    for (k, v) in entries {
+                        let merged = match (acc.remove(&k), v) {
+                            (Some(Value::Int(m)), Value::Int(n)) => Value::Int(m + n),
+                            (None, Value::Int(n)) => Value::Int(n),
+                            (other, v) => {
+                                let _ = other;
+                                v
+                            }
+                        };
+                        acc.insert(k, merged);
+                    }
+                }
+                Ok(Value::fun(acc))
+            }
+            other => Err(EvalErrorKind::Type {
+                expected: "a set of bags".into(),
+                found: other.kind().into(),
+            }),
+        },
+        // `BagCardinality(B) == Sum(B)`: the total number of copies.
+        ("BagCardinality", 1) => {
+            let f = arg(0)?;
+            let Some(entries) = Value::function_entries(f) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "a function (a bag)".into(),
+                    found: f.kind().into(),
+                });
+            };
+            let mut total: i128 = 0;
+            for (_, v) in entries {
+                let Value::Int(n) = v else {
+                    return Err(EvalErrorKind::Type {
+                        expected: "a Nat-valued bag".into(),
+                        found: v.kind().into(),
+                    });
+                };
+                total += n;
+            }
+            Ok(Value::Int(total))
+        }
+        // `SubBag(B)`: the set of all subbags — every choice of a positive
+        // multiplicity per element of every subset of the domain. The
+        // product is bounded by the evaluator's set-size limit like any
+        // other enumeration.
+        ("SubBag", 1) => {
+            let f = arg(0)?;
+            let Some(entries) = Value::function_entries(f) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "a function (a bag)".into(),
+                    found: f.kind().into(),
+                });
+            };
+            let mut bags: Vec<Value> = vec![Value::fun(BTreeMap::new())];
+            for (k, v) in entries {
+                let Value::Int(n) = v else {
+                    return Err(EvalErrorKind::Type {
+                        expected: "a Nat-valued bag".into(),
+                        found: v.kind().into(),
+                    });
+                };
+                let copies = usize::try_from(n).unwrap_or(0).min(i128::MAX as usize);
+                let mut next = Vec::with_capacity(bags.len() * (copies + 1));
+                for bag in &bags {
+                    // The accumulator's spelling may be the tuple function —
+                    // read it through the function view and rebuild through
+                    // the normalising constructor, like every other arm.
+                    let m: BTreeMap<Value, Value> = Value::function_entries(bag)
+                        .map(|entries| entries.into_iter().collect())
+                        .unwrap_or_default();
+                    for i in 1..=copies {
+                        let mut m2 = m.clone();
+                        m2.insert(k.clone(), Value::Int(i as i128));
+                        next.push(Value::fun(m2));
+                    }
+                    next.push(bag.clone());
+                }
+                bags = next;
+            }
+            Ok(Value::Set(bags.into_iter().collect()))
+        }
+
         // ---- TLC ----
         // `d :> e` is the one-element function, `f @@ g` merges two with the
         // left winning on a shared key.
