@@ -44,9 +44,13 @@ done
 sort -u -o "$work/files.txt" "$work/files.txt"
 echo "corpus: $(wc -l < "$work/files.txt") files"
 
+# Honor CARGO_TARGET_DIR: the shared target/ on a full disk cannot host a
+# link step (SIGBUS), and a relocated build must be the binary that runs —
+# the hardcoded target/ path would silently pick a stale one.
+TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
 cargo build --release -p nixie-tla --example evalcov || exit 2
 NIXIE_TLA_LIB="$COMMUNITY" xargs -a "$work/files.txt" \
-  "$repo/target/release/examples/evalcov" --probe-dir "$work/probes"
+  "$TARGET_DIR/release/examples/evalcov" --probe-dir "$work/probes"
 
 ls "$work"/probes/*.expected > "$work/probelist.txt" 2>/dev/null || {
   echo "no probes generated" >&2; exit 2; }

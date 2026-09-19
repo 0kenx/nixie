@@ -897,3 +897,111 @@ fn a_definition_that_is_not_well_founded_is_reported() {
 fn a_plain_function_definition_still_works() {
     assert_eq!(eval("f[k \\in 1..3] == k * 10\nA == f[2]"), "20");
 }
+
+// ===== Bags =====
+// Each case is the standard module's own definition (`Bags.tla`, read from
+// tla2tools 1.7.4) evaluated over the function representation — a bag IS a
+// function whose range is the positive naturals, so `SetToBag({1,2})`
+// prints as the function `[e ∈ {1,2} |-> 1]` and equals it structurally.
+
+#[test]
+fn bags_set_to_bag_and_back() {
+    // SetToBag(S) == [e ∈ S |-> 1]; BagToSet(B) == DOMAIN B.
+    // A bag whose domain is exactly 1..n prints as the sequence spelling —
+    // the same function value, the same way TLC prints it.
+    assert_eq!(eval("A == SetToBag({1, 2})"), "<<1, 1>>");
+    assert_eq!(eval("A == SetToBag({2, 5})"), "(2 :> 1 @@ 5 :> 1)");
+    assert_eq!(eval("A == BagToSet(SetToBag({1, 2}))"), "{1, 2}");
+    assert_eq!(eval("A == BagToSet(EmptyBag)"), "{}");
+}
+
+#[test]
+fn bags_is_a_bag_reads_the_range() {
+    assert_eq!(eval("A == IsABag(SetToBag({1}))"), "TRUE");
+    // A function with a zero entry is not a bag: the range must be positive.
+    assert_eq!(eval("A == IsABag([e ∈ {1} |-> 0])"), "FALSE");
+    // A tuple of positive integers is a function, hence a bag.
+    assert_eq!(eval("A == IsABag(<<2, 5>>)"), "TRUE");
+    assert_eq!(eval("A == IsABag(42)"), "FALSE");
+}
+
+#[test]
+fn bags_union_sums_and_difference_keeps_positive() {
+    // B1 (+) B2: domain union, values summed with 0 defaults.
+    assert_eq!(
+        eval("A == SetToBag({1}) (+) [e ∈ {1, 2} |-> 3]"),
+        "<<4, 3>>"
+    );
+    // B1 (-) B2: subtract, then keep only the positive entries.
+    assert_eq!(
+        eval("A == [e ∈ {1, 2, 3} |-> 3] (-) [e ∈ {1, 3} |-> 5]"),
+        "(2 :> 3)"
+    );
+}
+
+#[test]
+fn bags_copies_in_and_membership() {
+    assert_eq!(eval("A == CopiesIn(2, [e ∈ {1, 2} |-> 3])"), "3");
+    assert_eq!(eval("A == CopiesIn(7, [e ∈ {1, 2} |-> 3])"), "0");
+    assert_eq!(eval("A == BagIn(2, [e ∈ {1, 2} |-> 3])"), "TRUE");
+    assert_eq!(eval("A == BagIn(7, [e ∈ {1, 2} |-> 3])"), "FALSE");
+}
+
+#[test]
+fn bags_cardinality_and_subbag_order() {
+    assert_eq!(eval("A == BagCardinality([e ∈ {1, 2} |-> 3])"), "6");
+    assert_eq!(eval("A == BagCardinality(EmptyBag)"), "0");
+    assert_eq!(
+        eval("A == SetToBag({1}) \\sqsubseteq [e ∈ {1, 2} |-> 2]"),
+        "TRUE"
+    );
+    // A missing element breaks the domain inclusion.
+    assert_eq!(
+        eval("A == [e ∈ {1} |-> 1] \\sqsubseteq SetToBag({2})"),
+        "FALSE"
+    );
+    // Too few copies breaks the pointwise order.
+    assert_eq!(
+        eval("A == [e ∈ {1} |-> 5] \\sqsubseteq [e ∈ {1} |-> 4]"),
+        "FALSE"
+    );
+}
+
+#[test]
+fn bags_union_of_a_set_of_bags() {
+    // BagUnion takes a SET of bags — one operator, per Bags.tla.
+    assert_eq!(
+        eval("A == BagUnion({SetToBag({1}), [e ∈ {1, 2} |-> 2]})"),
+        "<<3, 2>>"
+    );
+    // Off-1..n keys keep the function spelling.
+    assert_eq!(
+        eval("A == BagUnion({[e ∈ {7} |-> 2], [e ∈ {7, 9} |-> 3]})"),
+        "(7 :> 5 @@ 9 :> 3)"
+    );
+}
+
+#[test]
+fn bags_subbag_enumerates_all() {
+    // SubBag(B): every bag bounded by B — for [1 |-> 2] that is the empty
+    // bag, one copy, two copies: three subbags.
+    // (The 1..n-domain subbags print in the sequence spelling, like TLC.)
+    assert_eq!(eval("A == SubBag([e ∈ {1} |-> 2])"), "{<<>>, <<1>>, <<2>>}");
+    assert_eq!(
+        eval("A == SubBag([e ∈ {7} |-> 2])"),
+        "{<<>>, (7 :> 1), (7 :> 2)}"
+    );
+    // The empty subbag is included even when B is empty.
+    assert_eq!(eval("A == SubBag(EmptyBag)"), "{<<>>}");
+}
+
+#[test]
+fn bags_equality_is_function_equality() {
+    // Two spellings of one bag value are equal — the representation is the
+    // function, nothing else.
+    assert_eq!(eval("A == SetToBag({1, 2}) = [x ∈ {2, 1} |-> 1]"), "TRUE");
+    assert_eq!(
+        eval("A == (SetToBag({1}) (+) SetToBag({1})) = [x ∈ {1} |-> 2]"),
+        "TRUE"
+    );
+}

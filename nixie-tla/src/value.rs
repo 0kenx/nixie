@@ -46,6 +46,28 @@ impl Value {
         Self::Set(items.into_iter().collect())
     }
 
+    /// The `(key, value)` entries of any **function-shaped** value — `Fun`,
+    /// and the tuple and record functions — in key order. TLA+ has one
+    /// function type and three literal spellings for it, and a bag *is* a
+    /// function (`Bags.tla`), so the bag operators read their operand
+    /// through this view. `None` for values that are not functions.
+    pub fn function_entries(v: &Value) -> Option<Vec<(Value, Value)>> {
+        match v {
+            Value::Fun(m) => Some(m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            Value::Tuple(xs) => Some(
+                (1..=xs.len())
+                    .map(|i| (Value::Int(i as i128), xs[i - 1].clone()))
+                    .collect(),
+            ),
+            Value::Record(m) => Some(
+                m.iter()
+                    .map(|(k, v)| (Value::Str(k.clone()), v.clone()))
+                    .collect(),
+            ),
+            _ => None,
+        }
+    }
+
     /// A function value, normalised.
     ///
     /// **A tuple *is* a function on `1..n` in TLA+** — there is no separate

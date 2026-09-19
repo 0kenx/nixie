@@ -40,7 +40,23 @@ def rint():
     if kind < 0.55: return random.randint(-9, 9)
     if kind < 0.8:  return random.randint(-100, 100)
     if kind < 0.92: return random.choice([2**31 - 1, 2**31, 2**62, 2**62 + 1, 2**63 - 1])
-    return random.choice([-(2**31), -(2**62), 2**40, -(2**40)])
+    return random.choice([-(2**31), -(2**62), 2**40, -(2**40),
+                          # the wall vocabulary (the wide-LP build's exact
+                          # channels): i64::MIN/MAX and the first integers
+                          # beyond the width
+                          -(2**63), 2**63, -(2**63) - 1, 2**63 + 1])
+
+# Strict bounds at the i64 walls, Int vs Real rows (the boundary-literal
+# SHAPES the hand regressions cover; emitted here so fresh seeds hunt
+# them — `< -2^63` forces a beyond-width witness, the `i64::MIN` corner
+# exercises the assert-time negation).
+WALLS = [-(2**63), -(2**63) + 1, 2**63 - 1, 2**63, 2**63 + 1]
+
+def wall_atom(int_pool, real_pool):
+    pool = int_pool if (real_pool and random.random() < 0.6) or not real_pool else real_pool
+    v = random.choice(pool)
+    op = random.choice(["<", "<=", ">", ">=", "="])
+    return f"({op} {v} {random.choice(WALLS)})"
 
 def rreal():
     k = random.random()
@@ -84,6 +100,10 @@ def arith_expr(int_pool, real_pool, depth=0):
     return f"(- {a} {b})", pure
 
 def atom(int_pool, real_pool):
+    # The boundary-literal shapes get their own arm so they appear at a
+    # steady rate regardless of the expression depth distribution.
+    if int_pool and random.random() < 0.1:
+        return wall_atom(int_pool, real_pool)
     a, _ = arith_expr(int_pool, real_pool)
     if random.random() < 0.75:
         b, _ = arith_expr(int_pool, real_pool) if random.random() < 0.4 else (
@@ -136,6 +156,11 @@ def run(binary, path, extra=None):
     lines = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("Processing")]
     if not lines: return "none", None
     verdict = lines[0]
+    # z3's QF_LRA front end rejects some wide/wall literals (the same
+    # comparator trap `wide_fuzz.py` documents): an error line is
+    # NON-EVIDENCE, never a verdict to disagree with.
+    if verdict.startswith("(error"):
+        return "z3err", None
     model = None
     if extra == "model" and verdict == "sat" and len(lines) > 1:
         model = "\n".join(lines[1:])

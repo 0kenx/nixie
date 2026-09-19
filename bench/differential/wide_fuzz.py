@@ -33,6 +33,37 @@ def r64():
         2**64 + 13, 1267650600228229401496703205653,
     ])
 
+# The wall constants (the wide-LP build's exact channels): the i64::MIN
+# corner (whose row needs the constant +2^63), i64::MAX, and the first
+# integers BEYOND the width — the strict bounds at these walls are the
+# shapes the hand-regressions cover (`i64_min_*`, `boundary_*`); emitting
+# them here lets fresh seeds hunt them continuously.
+WALLS = [
+    -9223372036854775808, -9223372036854775807, 9223372036854775807,
+    9223372036854775808, -9223372036854775809,
+]
+
+def wall_atom(nvars):
+    """A strict or weak bound at an i64 wall, on a random variable.
+
+    Strict bounds just past the walls (`< i64::MIN`, `> i64::MAX`) force
+    beyond-width witnesses (the exact model-publication channel); the
+    corners themselves exercise the `-rhs`/negation wrap class at
+    assert time and the exact bound store.
+    """
+    v = f"v{random.randrange(nvars)}"
+    op = random.choice(["<", "<=", ">", ">=", "="])
+    return f"(assert ({op} {v} {random.choice(WALLS)}))"
+
+def neg_corner_atom(nvars):
+    """A spelled negation corner: `(- 0 i64::MIN)`-shaped constants under
+    a comparison — z3's QF_LRA front end ERRORS on these literals (the
+    comparator trap in the header); the no-logic mode decides them."""
+    v = f"v{random.randrange(nvars)}"
+    c = random.choice([9223372036854775808, 9223372036854775807, 4611686018427387905])
+    op = random.choice(["<", ">", "<=", ">="])
+    return f"(assert ({op} {v} (- 0 {c})))"
+
 def gen():
     sort = random.choice(["Real", "Int"])
     logic = {"Real": "QF_LRA", "Int": "QF_LIA"}[sort]
@@ -47,14 +78,29 @@ def gen():
         op = random.choice(["=", ">", "<", ">=", "<="])
         lhs = terms[0] if len(terms) == 1 else "(+ " + " ".join(terms) + ")"
         L.append(f"(assert ({op} {lhs} {rhs}))")
+    # Strict bounds at the i64 walls (the boundary-literal SHAPES: real
+    # vs int rows at `< -2^63` / `> i64::MAX`, the `i64::MIN` corners).
+    if random.random() < 0.25:
+        L.append(wall_atom(nvars))
+    if random.random() < 0.15:
+        L.append(neg_corner_atom(nvars))
     # Nested Boolean structure over div/mod — the f1 shape (fourth
-    # revision; keep it).
+    # revision; keep it).  WELL-SORTED: `mod`/`div` take Int operands —
+    # on a Real-only problem the same nesting is emitted with real `/`
+    # (the pre-existing spelling put `mod` on Real vars, which both
+    # solvers reject at parse and every such instance was wasted yield).
     if random.random() < 0.3:
         a, b = (random.randrange(nvars) for _ in range(2))
-        L.append(
-            f"(assert (and (not (and (> (mod (* 3 v{a}) 7) 2) (<= (div (* -1 v{b}) 4) 1))) "
-            f"(> (+ (mod (div -3 7) 4) (mod -5 5)) 2)))"
-        )
+        if sort == "Int":
+            L.append(
+                f"(assert (and (not (and (> (mod (* 3 v{a}) 7) 2) (<= (div (* -1 v{b}) 4) 1))) "
+                f"(> (+ (mod (div -3 7) 4) (mod -5 5)) 2)))"
+            )
+        else:
+            L.append(
+                f"(assert (and (not (and (> (/ (* 3 v{a}) 7) 2) (<= (/ (* -1 v{b}) 4) 1))) "
+                f"(> (+ (/ (- 0 3) 7) (/ (- 0 5) 5)) 2)))"
+            )
     if random.random() < 0.7:
         for i in random.sample(range(nvars), random.randint(1, nvars)):
             L.append(f"(assert (= v{i} {random.randint(-3, 3)}))")

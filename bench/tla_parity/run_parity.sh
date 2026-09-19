@@ -50,6 +50,9 @@ fi
 echo "corpus:  $n files"
 
 javac -cp "$JAR" -d "$work" "$here/LevelDump.java" || exit 2
+# Honor CARGO_TARGET_DIR (full shared target/ = SIGBUS at link; the
+# hardcoded path would also silently run a stale binary).
+TARGET_DIR="${CARGO_TARGET_DIR:-$repo/target}"
 cargo build --release -p nixie-tla-syntax --example tlaparity || exit 2
 
 cat > "$work/one.sh" <<'INNER'
@@ -77,7 +80,7 @@ export JAR TLALIB WORK="$work" OUTDIR="$work/parts"
 xargs -a "$work/files.txt" -P "${TLA_PARITY_JOBS:-10}" -I{} "$work/one.sh" {}
 cat "$work"/parts/*.txt > "$work/sany.txt"
 
-"$repo/target/release/examples/tlaparity" "$work/files.txt" "$work/sany.txt"
+"$TARGET_DIR/release/examples/tlaparity" "$work/files.txt" "$work/sany.txt"
 rc=$?
 echo
 echo "artifacts: $work"

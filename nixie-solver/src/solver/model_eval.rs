@@ -548,6 +548,138 @@ impl Frame {
 ///
 /// `values` holds exactly the operands the frame collected, in order; the
 /// driver only reaches here once every one of them produced a value.
+/// A linear-evaluation value: the narrow `Rational64` fast path,
+/// widening exactly on overflow.  The bare `Rational64` folds this
+/// helper used to perform WRAPPED silently on `2^63`-scale arguments
+/// (the wrap class the main evaluator's exact channel retired,
+/// items 81–84); a wrapped candidate value could pair arguments as
+/// "equal-valued" that are not (or split a genuinely equal pair),
+/// feeding the congruence-blocker a wrong candidate.  The
+/// checked-then-exact discipline mirrors `combine_eager`: overflow
+/// is not unverifiable — the exact value is computable.
+#[derive(Clone, Debug)]
+enum LinVal {
+    Narrow(num_rational::Rational64),
+    Wide(num_rational::BigRational),
+}
+
+impl LinVal {
+    fn from_narrow(r: num_rational::Rational64) -> Self {
+        LinVal::Narrow(r)
+    }
+    fn to_big(&self) -> num_rational::BigRational {
+        match self {
+            LinVal::Narrow(r) => num_rational::BigRational::new(
+                num_bigint::BigInt::from(*r.numer()),
+                num_bigint::BigInt::from(*r.denom()),
+            ),
+            LinVal::Wide(b) => b.clone(),
+        }
+    }
+    fn add(self, other: &LinVal) -> LinVal {
+        if let (LinVal::Narrow(a), LinVal::Narrow(b)) = (&self, other)
+            && let Some(sum) = a.checked_add(b)
+        {
+            return LinVal::Narrow(sum);
+        }
+        LinVal::Wide(self.to_big() + other.to_big())
+    }
+    fn sub(self, other: &LinVal) -> LinVal {
+        if let (LinVal::Narrow(a), LinVal::Narrow(b)) = (&self, other)
+            && let Some(d) = a.checked_sub(b)
+        {
+            return LinVal::Narrow(d);
+        }
+        LinVal::Wide(self.to_big() - other.to_big())
+    }
+    fn neg(self) -> LinVal {
+        match self {
+            // `-i64::MIN` is the one overflow negation (the
+            // numerator negation of an already-reduced ratio keeps
+            // it reduced; `combine_eager`'s Neg arm is the same
+            // reasoning).
+            LinVal::Narrow(r) => match r.numer().checked_neg() {
+                Some(numer) => LinVal::Narrow(num_rational::Rational64::new_raw(numer, *r.denom())),
+                None => LinVal::Wide(-self.to_big()),
+            },
+            LinVal::Wide(b) => LinVal::Wide(-b),
+        }
+    }
+    fn mul(self, other: &LinVal) -> LinVal {
+        if let (LinVal::Narrow(a), LinVal::Narrow(b)) = (&self, other)
+            && let Some(p) = a.checked_mul(b)
+        {
+            return LinVal::Narrow(p);
+        }
+        LinVal::Wide(self.to_big() * other.to_big())
+    }
+}
+
+impl PartialEq for LinVal {
+    /// Exact comparison — a narrow/wide pair compares through the
+    /// big view (width differences must never decide equality).
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LinVal::Narrow(a), LinVal::Narrow(b)) => a == b,
+            _ => self.to_big() == other.to_big(),
+        }
+    }
+}
+
+fn eval_linear(
+    term: TermId,
+    arith: &nixie_theories::arithmetic::ArithSolver,
+    manager: &TermManager,
+    depth: u32,
+) -> Option<LinVal> {
+    if depth > 64 {
+        return None;
+    }
+    let node = manager.get(term)?;
+    match &node.kind {
+        TermKind::IntConst(n) => match n.to_i64() {
+            Some(i) => Some(LinVal::from_narrow(num_rational::Rational64::from_integer(
+                i,
+            ))),
+            // A `BigInt` constant that leaves `i64` is still an
+            // exact value (the wide-constant class this arc maps).
+            None => Some(LinVal::Wide(num_rational::BigRational::from(
+                num_bigint::BigInt::clone(n),
+            ))),
+        },
+        TermKind::RealConst(r) => Some(LinVal::from_narrow(*r)),
+        // `arith.value` reads the (exact-aware) tableau value;
+        // beyond-width witnesses come back absent here, which the
+        // caller treats as "cannot pair" — fail-open, never a
+        // fabricated candidate.
+        TermKind::Var(_) => arith.value(term).map(LinVal::from_narrow),
+        TermKind::Add(args) => {
+            let mut acc = LinVal::from_narrow(num_rational::Rational64::from_integer(0));
+            for &a in args {
+                acc = acc.add(&eval_linear(a, arith, manager, depth + 1)?);
+            }
+            Some(acc)
+        }
+        TermKind::Sub(a, b) => Some(
+            eval_linear(*a, arith, manager, depth + 1)?.sub(&eval_linear(
+                *b,
+                arith,
+                manager,
+                depth + 1,
+            )?),
+        ),
+        TermKind::Neg(a) => Some(eval_linear(*a, arith, manager, depth + 1)?.neg()),
+        TermKind::Mul(args) => {
+            let mut acc = LinVal::from_narrow(num_rational::Rational64::from_integer(1));
+            for &a in args {
+                acc = acc.mul(&eval_linear(a, arith, manager, depth + 1)?);
+            }
+            Some(acc)
+        }
+        _ => None,
+    }
+}
+
 fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
     use num_rational::BigRational;
     /// Exact subtraction / negation on values that may be beyond width.
@@ -850,46 +982,7 @@ impl Solver {
     /// `ArithSolver::value` directly (integer-sorted applications inside
     /// arithmetic contexts are interned as tableau variables).
     fn congruence_gap_splits(&self, manager: &TermManager) -> Vec<(TermId, TermId)> {
-        use num_rational::Rational64;
-        use num_traits::ToPrimitive;
         const MAX_PAIRS: usize = 4096;
-
-        fn eval_linear(
-            term: TermId,
-            arith: &nixie_theories::arithmetic::ArithSolver,
-            manager: &TermManager,
-            depth: u32,
-        ) -> Option<Rational64> {
-            if depth > 64 {
-                return None;
-            }
-            let node = manager.get(term)?;
-            match &node.kind {
-                TermKind::IntConst(n) => n.to_i64().map(Rational64::from_integer),
-                TermKind::RealConst(r) => Some(*r),
-                TermKind::Var(_) => arith.value(term),
-                TermKind::Add(args) => {
-                    let mut acc = Rational64::from_integer(0);
-                    for &a in args {
-                        acc += eval_linear(a, arith, manager, depth + 1)?;
-                    }
-                    Some(acc)
-                }
-                TermKind::Sub(a, b) => Some(
-                    eval_linear(*a, arith, manager, depth + 1)?
-                        - eval_linear(*b, arith, manager, depth + 1)?,
-                ),
-                TermKind::Neg(a) => Some(-eval_linear(*a, arith, manager, depth + 1)?),
-                TermKind::Mul(args) => {
-                    let mut acc = Rational64::from_integer(1);
-                    for &a in args {
-                        acc *= eval_linear(a, arith, manager, depth + 1)?;
-                    }
-                    Some(acc)
-                }
-                _ => None,
-            }
-        }
 
         let apps = self.euf.app_nodes();
         if apps.len() < 2 {
@@ -2196,6 +2289,74 @@ mod tests {
             EvalOutcome::Value(EvalVal::NumBig(_))
         ));
         assert!(gate_refuses(&manager, assertion));
+    }
+
+    /// `eval_linear` (the congruence-equality candidate helper) evaluates
+    /// `2^62 + 2^62`, `2^63 · 2` and `-2^63 - 1` EXACTLY.  Its old bare
+    /// `Rational64` folds wrapped here (`2^62 + 2^62 → i64::MIN`), so the
+    /// congruence blocker could pair (or split) applications on fabricated
+    /// values — the last unchecked narrow-accumulation site in the
+    /// evaluator's periphery (the handoff's item, closed by the
+    /// checked-then-exact `LinVal` channel mirroring `combine_eager`).
+    #[test]
+    fn eval_linear_folds_exact_beyond_narrow_width() {
+        use super::{LinVal, eval_linear};
+        use num_bigint::BigInt;
+        use num_rational::BigRational;
+        let mut manager = TermManager::new();
+        let arith = nixie_theories::arithmetic::ArithSolver::new(true);
+
+        // `2^62 + 2^62` — the addition that used to wrap.
+        let half = manager.mk_int(1i64 << 62);
+        let sum = unfolded(
+            TermKind::Add(SmallVec::from_iter([half, half])),
+            &mut manager,
+        );
+        let want = LinVal::Wide(BigRational::from(BigInt::from(1i64) << 63));
+        assert_eq!(eval_linear(sum, &arith, &manager, 0).as_ref(), Some(&want));
+
+        // `(2^62 + 2^62) · 2` — exact multiplication past every width.
+        let two = manager.mk_int(2);
+        let prod = unfolded(TermKind::Mul(SmallVec::from_iter([sum, two])), &mut manager);
+        let want2 = LinVal::Wide(BigRational::from(BigInt::from(1i64) << 64));
+        assert_eq!(
+            eval_linear(prod, &arith, &manager, 0).as_ref(),
+            Some(&want2)
+        );
+
+        // `-(2^63) - 1` — negation of the wrapped corner, then an exact
+        // subtraction; the narrow `-i64::MIN` used to wrap back to itself.
+        let one = manager.mk_int(1);
+        let neg = unfolded(TermKind::Neg(sum), &mut manager);
+        let diff = unfolded(TermKind::Sub(neg, one), &mut manager);
+        let want3 = LinVal::Wide(BigRational::from(
+            BigInt::from(-1i64 << 63) - BigInt::from(1),
+        ));
+        assert_eq!(
+            eval_linear(diff, &arith, &manager, 0).as_ref(),
+            Some(&want3)
+        );
+
+        // A wide `IntConst` leaf is an exact value (never `None`, never
+        // truncated).
+        let wide_leaf = unfolded(TermKind::IntConst(BigInt::from(1i64) << 63), &mut manager);
+        assert_eq!(
+            eval_linear(wide_leaf, &arith, &manager, 0).as_ref(),
+            Some(&LinVal::Wide(BigRational::from(BigInt::from(1i64) << 63)))
+        );
+
+        // Exact comparison across the width boundary: `Wide(2^63) ==
+        // Narrow(2^63)`... unrepresentable in narrow; instead check that
+        // `Wide(2^63 + 1) != Wide(2^63 - 1)` and that a narrow/wide pair
+        // with equal VALUES compares equal (`Narrow(2) == Wide(2)`).
+        assert_ne!(
+            LinVal::Narrow(2.into()),
+            LinVal::Wide(BigRational::from(BigInt::from(3)))
+        );
+        assert_eq!(
+            LinVal::Narrow(2.into()),
+            LinVal::Wide(BigRational::from(BigInt::from(2)))
+        );
     }
 
     /// The same overflow under an assertion the model **satisfies**.

@@ -768,9 +768,7 @@ fn process_single_file(
             {
                 sat.set_rng_seed(seed);
             }
-            for _ in 0..flat.num_vars {
-                sat.new_var();
-            }
+            sat.new_vars_bulk(flat.num_vars);
             let deadline = if args.timeout > 0 {
                 std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
             } else {
@@ -792,24 +790,26 @@ fn process_single_file(
             // sequence the `Vec<Vec<i32>>` path produced.
             let mut verdict = None;
             let mut clause: Vec<i32> = Vec::new();
+            // Reused literal buffer: one allocation for the whole load
+            // instead of a fresh `Vec` per clause (25M transient allocs on
+            // the big normalised instances were pure allocator churn).
+            let mut lits: Vec<nixie_sat::Lit> = Vec::new();
             for &lit in &flat.lits {
                 if lit == 0 {
                     if clause.is_empty() {
                         verdict = Some("unsat");
                         break;
                     }
-                    let lits: Vec<nixie_sat::Lit> = clause
-                        .iter()
-                        .map(|&l| {
-                            let v = nixie_sat::Var(l.unsigned_abs() - 1);
-                            if l > 0 {
-                                nixie_sat::Lit::pos(v)
-                            } else {
-                                nixie_sat::Lit::neg(v)
-                            }
-                        })
-                        .collect();
-                    sat.add_clause(lits);
+                    lits.clear();
+                    lits.extend(clause.iter().map(|&l| {
+                        let v = nixie_sat::Var(l.unsigned_abs() - 1);
+                        if l > 0 {
+                            nixie_sat::Lit::pos(v)
+                        } else {
+                            nixie_sat::Lit::neg(v)
+                        }
+                    }));
+                    sat.add_clause(lits.iter().copied());
                     clause.clear();
                 } else {
                     clause.push(lit);

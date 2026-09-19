@@ -117,3 +117,37 @@ approximation: the authoritative source is the `.cfg`, and until that is parsed
 the numbers describe the specifications the convention happens to match, not
 the corpus as a whole. `with an Init/Next/Inv triple` is reported separately
 for exactly that reason.
+
+## Bags (2026-09-19)
+
+The `Bags` standard-module vocabulary (`SetToBag`, `EmptyBag`, `BagToSet`,
+`BagIn`, `CopiesIn`, `(+)`, `(-)`, `\sqsubseteq`) lowers to the module's own
+definitions (`Bags.tla`) as kernel function expressions — a bag *is* a
+function whose range is the positive naturals, which is also exactly how the
+evaluator and TLC represent one. What that means for BMC:
+
+| shape | status |
+|---|---|
+| ground construction (`SetToBag({1,2})`, `EmptyBag` in `Init`) | encodes |
+| symbolic reads (`CopiesIn(e, token)`, `BagIn(e, token)`, `token[e]`) | encodes |
+| ground algebra in invariants (`(+)`, `(-)`, `\sqsubseteq` over ground bags) | encodes |
+| **updates** of a state bag (`token' = token (-) SetToBag({e})`) | **declines** — a function definition over `DOMAIN token`, a symbolic domain with no candidate list |
+| quantifiers over `DOMAIN` of a symbolic bag | **declines** — same wall |
+
+Both declines name the enumerable-domain wall and are counted, never
+approximated. Closing them needs a lambda-shaped function encoding (or a
+native bridge onto the solver's `Bag` sort, which is the cross-layer design
+the front-end document reserves for later): the update writes a function
+whose domain is itself symbolic, which the enumeration-based `FunDef`
+encoding cannot serve.
+
+The remaining vocabulary (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`,
+`BagOfAll`) is TLC-exact in the *evaluator* (semantic parity covers it) and
+stays opaque to the encoder — their definitions need `CHOOSE` or recursion,
+and are declined by name.
+
+Corpus reality check: bag usage in `tlaplus-examples` + Apalache is thin —
+7 files mention the vocabulary, 1 has the Init/Next/Inv triple (`Nano.tla`,
+blocked on PlusCal lowering, not on bags). TLA+-lowered specs are therefore
+not yet a bag-theory workload at any useful scale; the bag-theory corpus
+question stays open on the solver side (see the bags handovers).

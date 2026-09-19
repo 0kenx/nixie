@@ -1232,3 +1232,64 @@ fn boundary_scale_sum_bound_certifies() {
         "2*(2^62) = 2^63 >= 0 holds exactly (z3: sat)"
     );
 }
+
+/// The B&B leaf's re-solve-vs-scan vertex mismatch (2026-09-19, found by
+/// the boundary-literal SHAPES in the mixed differential, seed 20262113
+/// instance 41): `mod(−2y + 2^62, 4) > 2` is UNSATISFIABLE — the
+/// expression is always 0 or 2 — but the branch-and-bound leaf accepted a
+/// model.  Mechanism: `find_fractional_int_var` scanned the *crude*
+/// post-pop point and found every integer variable integral; the leaf's
+/// feasibility `check()` then re-optimized onto a DIFFERENT vertex where
+/// `q = (div (−2y + 2^62) 4)` sits at `(2^62−1)/4` — fractional — and the
+/// snapshot published that vertex as a model, which the gate's
+/// settled-atom arm had no chance against (the mod atom's committed
+/// polarity is exactly what the bad feed justified).  The fix re-scans
+/// integrality AT the re-solved vertex (`try_eq_incumbent`'s discipline);
+/// the verdict is the honest `unknown` (z3: `unsat` — the parity refutation
+/// `2y + 4q = 2^62 − 3` is beyond this build's wide-constant Diophantine
+/// reach), never a `sat` with a fractional-vertex model.
+#[test]
+fn bnb_leaf_rescan_rejects_post_resolve_fractional_vertex() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const yi Int)\n\
+             (assert (> (mod (+ (* -2 yi) 4611686018427387904) 4) 2))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_ne!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "the goal is unsatisfiable (mod(−2y+2^62, 4) is always 0 or 2, never > 2); \
+         `sat` here is a published model violating its own assertion"
+    );
+    // The honest verdict for this build; if a future Diophantine reach
+    // closes the wide-constant parity class, `unsat` is also correct —
+    // the pin is never-`sat`.
+}
+
+/// The same shape with the variable bounded small: the search must not
+/// lean on unboundedness to dodge the fractional vertex (z3: `unsat`;
+/// found in the same differential run).
+#[test]
+fn bnb_leaf_rescan_holds_under_bounded_variable() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const yi Int)\n\
+             (assert (> (mod (+ (* -2 yi) 4611686018427387904) 4) 2))\n\
+             (assert (<= yi 100))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_ne!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "bounded twin of the same unsatisfiable goal"
+    );
+}
