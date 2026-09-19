@@ -607,7 +607,7 @@ mod tests {
             (declare-fun x () (_ BitVec 8))
             (declare-fun r () Real)
             (declare-fun n () Int)
-            (assert (ite p x x))
+            (assert (= (ite p x x) x))
             (assert (= x (_ bv7 8)))
             (assert (> r 0))
             (assert (< (to_real n) 2.5))

@@ -23,7 +23,19 @@
 //! a ⊑ b                  ⇔ ∀x. count(x,a) ≤ count(x,b)
 //! a = b                  ⇔ ∀x. count(x,a) = count(x,b)
 //! |b|                    = Σ_x count(x,b) + slack(b)
+//! fold(f, t, ∅)          = t
+//! fold(f, t, (y:n))      = f(y, f(y, … f(y, t) …))   (n applications)
+//! fold(f, t, ite(c,a,b)) = ite(c, fold(f,t,a), fold(f,t,b))
 //! ```
+//!
+//! `bag.fold` (`f : (-> T1 T2 T2)`, element first) unrolls a ground
+//! multiset (`∅`, `(bag y n)` with numeral `n`, `⊎`, under ites) into its
+//! finite application chain; a multiset with several element spellings
+//! needs the exchange law `f(e1, f(e2, a)) = f(e2, f(e1, a))` proved by
+//! AC-canonicalization first (CVC5's skolem reduction answers opaque
+//! domains through a bounded quantifier this eager reduction cannot
+//! compile; a fold it cannot pin stays free — sound for `unsat` — and the
+//! model pass certifies or degrades the `sat` side; see `extract_bag_model`).
 //!
 //! Per (element, bag) pair the reduction mints the count term — an `Int`
 //! the arithmetic solver owns — and states the identity as an equation.
@@ -41,6 +53,22 @@ use crate::prelude::*;
 use nixie_core::interner::Spur;
 use nixie_core::{SortId, TermId, TermKind, TermManager};
 
+/// A `define-fun` recorded for the bag fun operators (`bag.map`,
+/// `bag.filter`, `bag.fold`): the bound parameter variables in declaration
+/// order plus the body, so the reduction can inline the body per
+/// element/accumulator exactly as the parser substitutes at call sites.
+/// The parser's arity checks guarantee `bag.map`/`filter` only ever see a
+/// one-parameter def and `bag.fold` a two-parameter one; the appliers
+/// nevertheless fall back to an `Apply` on an arity mismatch rather than
+/// silently mis-substituting.
+#[derive(Clone, Debug)]
+pub(crate) struct BagFunDef {
+    /// The definition's parameter variables, in declaration order.
+    pub params: Vec<TermId>,
+    /// The definition's body.
+    pub body: TermId,
+}
+
 /// The result of reducing a formula's bag constraints.
 #[derive(Default)]
 pub(crate) struct Reduction {
@@ -49,6 +77,17 @@ pub(crate) struct Reduction {
     /// Whether a construct outside this reduction was seen, so the caller
     /// must keep the honesty gate raised.
     pub incomplete: bool,
+    /// Fold terms this pass could not pin to an unrolled chain, with the
+    /// reason. The caller records them: they stay free (sound for `unsat`,
+    /// since asserting nothing only weakens the constraints) and the
+    /// *model* pass certifies any `sat` resting on them — synthesizing a
+    /// domain-declined fold's faithful value from its bag's assembled
+    /// cells and degrading on contradiction, while an order-sensitive
+    /// fold (no proved exchange law over several element spellings)
+    /// degrades unconditionally — exhibiting one enumeration order would
+    /// disagree with the reference's fixed order half the time. See
+    /// `extract_bag_model`.
+    pub declined_folds: Vec<(TermId, FoldDecline)>,
 }
 
 /// What the survey found, keyed by nothing yet: the reduction groups by
@@ -74,6 +113,8 @@ struct Survey {
     maps: Vec<(TermId, Spur, SortId, TermId)>,
     /// `bag.filter` terms: `(term, pred, bag)`.
     filters: Vec<(TermId, Spur, TermId)>,
+    /// `bag.fold` terms: `(term, func, init, bag)`.
+    folds: Vec<(TermId, Spur, TermId, TermId)>,
     /// Equalities between bag-sorted terms (the extensionality inputs).
     bag_equalities: Vec<(TermId, TermId, TermId)>,
 }
@@ -89,6 +130,7 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
         chooses: Vec::new(),
         maps: Vec::new(),
         filters: Vec::new(),
+        folds: Vec::new(),
         bag_equalities: Vec::new(),
     };
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
@@ -129,6 +171,9 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
                 out.maps.push((t, *func, *ret, *bag));
             }
             TermKind::BagFilter { pred, bag } => out.filters.push((t, *pred, *bag)),
+            TermKind::BagFold { func, init, bag } => {
+                out.folds.push((t, *func, *init, *bag));
+            }
             TermKind::Eq(a, b) => {
                 let a_bag = manager.get(*a).map(|d| d.sort).and_then(bag_es);
                 let b_bag = manager.get(*b).map(|d| d.sort).and_then(bag_es);
@@ -262,17 +307,450 @@ fn bag_apply_fun(
     func: Spur,
     x: TermId,
     ret: SortId,
-    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
     manager: &mut TermManager,
 ) -> TermId {
-    if let Some(&(param, body)) = fun_defs.get(&func) {
+    if let Some(def) = fun_defs.get(&func)
+        && def.params.len() == 1
+    {
         let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
-        subst.insert(param, x);
-        let sub = manager.substitute(body, &subst);
+        subst.insert(def.params[0], x);
+        let sub = manager.substitute(def.body, &subst);
         return manager.simplify(sub);
     }
     let name = manager.resolve_str(func).to_string();
     manager.mk_apply(&name, [x], ret)
+}
+
+/// The binary application `f(e, acc)` of a `bag.fold` operand — the same
+/// inlining discipline as [`bag_apply_fun`], with the element bound to the
+/// first parameter and the accumulator to the second (CVC5's argument
+/// order). An arity mismatch (impossible through the parser's checks, but
+/// never silently mis-substituted) falls back to an `Apply`.
+fn bag_apply_fun2(
+    func: Spur,
+    e: TermId,
+    acc: TermId,
+    ret: SortId,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
+    manager: &mut TermManager,
+) -> TermId {
+    if let Some(def) = fun_defs.get(&func)
+        && def.params.len() == 2
+    {
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        subst.insert(def.params[0], e);
+        subst.insert(def.params[1], acc);
+        let sub = manager.substitute(def.body, &subst);
+        return manager.simplify(sub);
+    }
+    let name = manager.resolve_str(func).to_string();
+    manager.mk_apply(&name, [e, acc], ret)
+}
+
+/// AC-canonical form for the exchange check: flatten nested operands of
+/// the associative-commutative families a combining function is likely to
+/// build through (`+`, `*`, `and`, `or`) and sort them by `TermId`;
+/// everything else stays structural. Flattening and permuting AC operands
+/// preserve the value, so **equal canonical forms are a proof of semantic
+/// equality** — the check never asserts the canonical form itself, so a
+/// missed simplification only declines, never a wrong accept. Iterative
+/// post-order with a per-call memo.
+fn ac_canonical(
+    t: TermId,
+    memo: &mut FxHashMap<TermId, TermId>,
+    manager: &mut TermManager,
+) -> TermId {
+    if let Some(&v) = memo.get(&t) {
+        return v;
+    }
+    // Post-order: canonicalize children, then rebuild.
+    let mut stack: Vec<TermId> = vec![t];
+    while let Some(cur) = stack.pop() {
+        if memo.contains_key(&cur) {
+            continue;
+        }
+        let Some(data) = manager.get(cur) else {
+            return cur;
+        };
+        let kind = data.kind.clone();
+        let is_ac = matches!(
+            kind,
+            TermKind::Add(_) | TermKind::Mul(_) | TermKind::And(_) | TermKind::Or(_)
+        );
+        let children: Vec<TermId> = nixie_core::ast::traversal::get_children(&kind).to_vec();
+        if children.is_empty()
+            || memo.contains_key(&children[0]) && children.iter().all(|c| memo.contains_key(c))
+        {
+            // Ready to combine (also covers leaves).
+            let rebuilt = if is_ac {
+                // Flatten: pull the same-family children's operands in.
+                let mut flat: Vec<TermId> = Vec::new();
+                let mut all_flat = true;
+                for &c in &children {
+                    if let Some(cd) = manager.get(c)
+                        && core::mem::discriminant(&cd.kind) == core::mem::discriminant(&kind)
+                    {
+                        match &cd.kind {
+                            TermKind::Add(args)
+                            | TermKind::Mul(args)
+                            | TermKind::And(args)
+                            | TermKind::Or(args) => flat.extend(args.iter().copied()),
+                            _ => unreachable!("discriminant-checked above"),
+                        }
+                    } else {
+                        all_flat = false;
+                        flat.push(memo.get(&c).copied().unwrap_or(c));
+                    }
+                }
+                let _ = all_flat;
+                flat.sort_by_key(|&a| a.0);
+                match &kind {
+                    TermKind::Add(_) => manager.mk_add(flat),
+                    TermKind::Mul(_) => manager.mk_mul(flat),
+                    TermKind::And(_) => manager.mk_and(flat),
+                    TermKind::Or(_) => manager.mk_or(flat),
+                    _ => unreachable!("is_ac-checked above"),
+                }
+            } else {
+                // Structural rebuild through the substitution-safe builders
+                // is unnecessary here: a non-AC node's identity is its kind
+                // and children, so re-interning the same kind canon-children
+                // happens via `substitute`-free path — simply return the
+                // node when its children are unchanged, else rebuild by
+                // substitution (the memo maps child → canon child).
+                let changed = children.iter().any(|&c| memo.get(&c) != Some(&c));
+                if changed {
+                    let subst: FxHashMap<TermId, TermId> = children
+                        .iter()
+                        .filter_map(|&c| memo.get(&c).map(|&v| (c, v)))
+                        .collect();
+                    manager.substitute(cur, &subst)
+                } else {
+                    cur
+                }
+            };
+            memo.insert(cur, rebuilt);
+        } else {
+            stack.push(cur);
+            for &c in children.iter().rev() {
+                if !memo.contains_key(&c) {
+                    stack.push(c);
+                }
+            }
+        }
+    }
+    memo.get(&t).copied().unwrap_or(t)
+}
+
+/// Whether a fold's combining function provably satisfies the **exchange
+/// law** `f(e1, f(e2, a)) = f(e2, f(e1, a))` — the exact property that
+/// makes a fold over a multiset independent of the enumeration order
+/// (adjacent transpositions generate every permutation, and the law holds
+/// for arbitrary `a`, so it applies at every nesting depth). Proved the
+/// only sound way available here: both sides built over fresh variables
+/// and compared after AC-canonicalization — an equality the canonicalizer
+/// proves is a semantic equality (flatten+sort preserve values), so an
+/// accepted fold is order-insensitive for *every* instantiation. A
+/// `declare-fun` symbol has no body and never passes; the caller then
+/// declines unless the multiset has a single element spelling (all orders
+/// give the same chain).
+fn fold_fun_exchange_law(
+    func: Spur,
+    elem_sort: SortId,
+    acc_sort: SortId,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
+    manager: &mut TermManager,
+) -> bool {
+    let Some(def) = fun_defs.get(&func) else {
+        return false;
+    };
+    if def.params.len() != 2 {
+        return false;
+    }
+    let e1 = manager.mk_var("@fold_xchg_e1", elem_sort);
+    let e2 = manager.mk_var("@fold_xchg_e2", elem_sort);
+    let a = manager.mk_var("@fold_xchg_a", acc_sort);
+    let app = |e: TermId, acc: TermId, manager: &mut TermManager| {
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        subst.insert(def.params[0], e);
+        subst.insert(def.params[1], acc);
+        let sub = manager.substitute(def.body, &subst);
+        manager.simplify(sub)
+    };
+    let lhs = app(e1, app(e2, a, manager), manager);
+    let rhs = app(e2, app(e1, a, manager), manager);
+    let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
+    let clhs = ac_canonical(lhs, &mut memo, manager);
+    let crhs = ac_canonical(rhs, &mut memo, manager);
+    clhs == crhs
+}
+
+/// Budget on the unrolled application chain: every copy contributes one
+/// `f` application, and a `(bag y n)` with a large numeral is a real
+/// computation the eager reduction must not explode into. Beyond the
+/// budget the fold is declined (honest `incomplete`), like an oversized
+/// element list.
+const MAX_FOLD_APPLICATIONS: u64 = 64;
+
+/// The faithful value of a declined fold in a finished model: fold the
+/// *bag's assembled value* (the `bag.union_disjoint` of `(bag v n)` cells
+/// the model pass installed) exactly as the semantics say — `f(v, ·)`
+/// applied `n` times per cell, cells in the assembled order, starting from
+/// the initial value (itself resolved through the model first). The chain
+/// is built with the same inlining applier as the reduction and folded
+/// ground; the result is a **value term** (no variable or application
+/// anywhere) or `None` — a chain that did not fold (a `declare-fun`
+//  combinator, an unresolved accumulator) cannot certify a model.
+pub(crate) fn fold_faithful_value(
+    func: Spur,
+    init: TermId,
+    bag: TermId,
+    ret: SortId,
+    model: &super::types::Model,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
+    manager: &mut TermManager,
+) -> Option<TermId> {
+    let value = model.get(bag)?;
+    // Resolve the initial accumulator to a value first: a free `init`
+    // variable's model entry (or the arithmetic word for an Int one).
+    let init_value = match manager.get(init).map(|d| &d.kind) {
+        Some(TermKind::IntConst(_)) => Some(init),
+        _ => model.get(init).filter(|&v| v != init),
+    };
+    let mut acc = init_value?;
+    // Walk the assembled cells: `a ⊎ (bag v n)` right-associatively, the
+    // shape the model pass assembles.
+    let mut applications: u64 = 0;
+    let mut stack: Vec<TermId> = vec![value];
+    while let Some(t) = stack.pop() {
+        match manager.get(t).map(|d| d.kind.clone()) {
+            Some(TermKind::BagEmpty(_)) => {}
+            Some(TermKind::BagMake(v, n)) => {
+                let Some(TermKind::IntConst(k)) = manager.get(n).map(|d| &d.kind) else {
+                    return None;
+                };
+                let copies = num_traits::ToPrimitive::to_u64(k)?;
+                applications = applications.checked_add(copies)?;
+                if applications > MAX_FOLD_APPLICATIONS {
+                    return None;
+                }
+                for _ in 0..copies {
+                    acc = bag_apply_fun2(func, v, acc, ret, fun_defs, manager);
+                }
+            }
+            Some(TermKind::BagUnionDisjoint(a, c)) => {
+                // Right operand folds second, matching the assembled
+                // left-to-right cell order.
+                stack.push(a);
+                stack.push(c);
+            }
+            _ => return None,
+        }
+    }
+    // A `Var`/`Apply` anywhere in the chain means the value did not fold.
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    let mut walk: Vec<TermId> = vec![acc];
+    while let Some(t) = walk.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        let data = manager.get(t)?;
+        match &data.kind {
+            TermKind::Var(_) | TermKind::Apply { .. } => return None,
+            TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::StringLit(_)
+            | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
+            | TermKind::FpLit { .. }
+            | TermKind::True
+            | TermKind::False => {}
+            _ => {
+                walk.extend(nixie_core::ast::traversal::get_children(&data.kind));
+            }
+        }
+    }
+    Some(acc)
+}
+
+/// The outcome of trying to define a fold term.
+enum FoldDef {
+    /// `fold(f, t, b) = chain`, the unrolled application chain.
+    Defined(TermId),
+    /// A shape this reduction cannot pin. The two reasons matter to the
+    /// model pass: an **unrollable** domain (opaque bag, symbolic
+    /// multiplicity, budget) still admits a faithful model value folded
+    /// from the assembled cells, while an **order-sensitive** fold (a
+    /// multi-element multiset under a function whose exchange law could
+    /// not be proved) has *no* order-independent value at all — CVC5's
+    /// rewriter answers these through one fixed internal order, and
+    /// exhibiting any particular order here would disagree with it half
+    /// the time. An order-sensitive fold therefore degrades unconditionally.
+    Declined(FoldDecline),
+}
+
+/// Why a fold could not be unrolled.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FoldDecline {
+    /// The value depends on the enumeration order (no proved exchange
+    /// law over a multiset with several element spellings).
+    OrderSensitive,
+    /// The domain could not be unrolled (opaque node, symbolic or
+    /// oversized multiplicity, an operator the multiset walk refuses).
+    Unrollable,
+}
+
+/// The ground multiset of a bag: `(element spelling, copies)` pairs, in
+/// structural left-to-right order. Syntactically equal elements merge by
+/// adding copies (a `⊎` of two `(bag x n)` spellings is `x` taken `n+m`
+/// times); distinct spellings of one value stay separate entries, which
+/// is exactly right for a fold — each *copy* contributes one application,
+/// whatever its spelling. Multiplicities must be nonnegative numerals
+/// (`(bag y n)` with symbolic `n` cannot be unrolled), and a negative or
+/// zero numeral contributes nothing (matching the count identity's
+/// `ite(e = y ∧ n ≥ 1, n, 0)`). Iterative: the compound DAG is
+/// user-shaped, the same discipline as [`bag_is_closed`].
+fn bag_ground_multiset(
+    b: TermId,
+    out: &mut Vec<(TermId, u64)>,
+    budget: &mut u64,
+    manager: &TermManager,
+) -> bool {
+    let mut stack: Vec<TermId> = vec![b];
+    while let Some(t) = stack.pop() {
+        match manager.get(t).map(|d| d.kind.clone()) {
+            Some(TermKind::BagEmpty(_)) => {}
+            Some(TermKind::BagMake(y, n)) => {
+                let Some(TermKind::IntConst(k)) = manager.get(n).map(|d| &d.kind) else {
+                    return false;
+                };
+                let Some(copies) = num_traits::ToPrimitive::to_u64(k) else {
+                    return false;
+                };
+                if copies == 0 {
+                    continue;
+                }
+                if copies > *budget {
+                    return false;
+                }
+                *budget -= copies;
+                match out.iter_mut().find(|(e, _)| *e == y) {
+                    Some((_, m)) => *m += copies,
+                    None => out.push((y, copies)),
+                }
+            }
+            // Left-to-right order: the right operand is pushed first so
+            // the left pops (and unrolls) first.
+            Some(TermKind::BagUnionDisjoint(a, c)) => {
+                stack.push(c);
+                stack.push(a);
+            }
+            // Anything else — an opaque node, an operator whose pointwise
+            // geometry needs element *values* to merge (union_max, inter,
+            // differences), a map/filter image, a nested ite — is
+            // honestly refused.
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Define a fold by unrolling. `fold(f, t, ite(c, a, b))` is
+/// `ite(c, fold(f, t, a), fold(f, t, b))` — exact, the same branch-picking
+/// identity the count and cardinality rules take — and a non-ite bag's
+/// ground multiset unrolls into the finite chain
+/// `f(e, f(e, … f(e, t) …))` in structural order. A multiset with two or
+/// more distinct element spellings needs the exchange law proved first
+/// (see [`fold_fun_exchange_law`]); without it the fold's value depends on
+/// the enumeration order, which no eager ground encoding may guess —
+/// CVC5's own rewriter commits to one order for these shapes, but its
+/// reduction semantics leaves the order existential, and the honest
+/// answer here is `Declined`. Iterative bottom-up: the ite tree is walked
+/// with an explicit stack and rebuilt from the leaves' unrolled values,
+/// the same no-native-recursion discipline as the rest of the file.
+fn fold_definition(
+    func: Spur,
+    init: TermId,
+    bag: TermId,
+    ret: SortId,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
+    manager: &mut TermManager,
+) -> FoldDef {
+    // Unroll one ite-free bag (`None` + the reason when it must decline).
+    let unroll_leaf = |bag: TermId, manager: &mut TermManager| -> Result<TermId, FoldDecline> {
+        let mut items: Vec<(TermId, u64)> = Vec::new();
+        let mut budget = MAX_FOLD_APPLICATIONS;
+        if !bag_ground_multiset(bag, &mut items, &mut budget, manager) {
+            return Err(FoldDecline::Unrollable);
+        }
+        let distinct = items
+            .iter()
+            .map(|(e, _)| *e)
+            .collect::<FxHashSet<_>>()
+            .len();
+        if distinct >= 2
+            && !fold_fun_exchange_law(
+                func,
+                bag_element_of(bag, manager).unwrap_or(ret),
+                ret,
+                fun_defs,
+                manager,
+            )
+        {
+            // The value would depend on the enumeration order: refuse
+            // to exhibit one (CVC5 answers through a fixed internal
+            // order; matching it is not possible, so the honest answer
+            // is a degraded `Unknown`, never a picked-side verdict).
+            return Err(FoldDecline::OrderSensitive);
+        }
+        let mut acc = init;
+        for &(e, copies) in &items {
+            for _ in 0..copies {
+                acc = bag_apply_fun2(func, e, acc, ret, fun_defs, manager);
+            }
+        }
+        Ok(manager.simplify(acc))
+    };
+    // Post-order rebuild of the ite tree: each node's value is assembled
+    // once both children have theirs (the re-push discipline).
+    let mut vals: FxHashMap<TermId, TermId> = FxHashMap::default();
+    let mut stack: Vec<TermId> = vec![bag];
+    while let Some(t) = stack.pop() {
+        if vals.contains_key(&t) {
+            continue;
+        }
+        if let Some(TermKind::Ite(c, a, b)) = manager.get(t).map(|d| d.kind.clone()) {
+            match (vals.get(&a), vals.get(&b)) {
+                (Some(x), Some(y)) => {
+                    let picked = manager.mk_ite(c, *x, *y);
+                    vals.insert(t, picked);
+                }
+                _ => {
+                    stack.push(t);
+                    stack.push(b);
+                    stack.push(a);
+                }
+            }
+        } else {
+            match unroll_leaf(t, manager) {
+                Ok(v) => {
+                    vals.insert(t, v);
+                }
+                // An ite branch that declines carries its reason up: an
+                // order-sensitive branch makes the whole fold
+                // order-sensitive (some branch's value depends on the
+                // order, so the ite does too).
+                Err(reason) => return FoldDef::Declined(reason),
+            }
+        }
+    }
+    match vals.get(&bag) {
+        Some(&v) => FoldDef::Defined(v),
+        // The bag itself was missing (an unknown term): the conservative
+        // domain refusal.
+        None => FoldDef::Declined(FoldDecline::Unrollable),
+    }
 }
 
 fn count_definition(
@@ -280,7 +758,7 @@ fn count_definition(
     b: TermId,
     zero: TermId,
     by_sort: &FxHashMap<SortId, Vec<TermId>>,
-    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
     extra_axioms: &mut Vec<TermId>,
     manager: &mut TermManager,
 ) -> CountDef {
@@ -445,7 +923,7 @@ pub(crate) fn reduce(
     roots: &[TermId],
     user_eq_atoms: &FxHashSet<TermId>,
     minted_eq_atoms: &mut FxHashSet<TermId>,
-    fun_defs: &FxHashMap<Spur, (TermId, TermId)>,
+    fun_defs: &FxHashMap<Spur, BagFunDef>,
     manager: &mut TermManager,
 ) -> Reduction {
     let mut out = Reduction::default();
@@ -590,6 +1068,57 @@ pub(crate) fn reduce(
         };
         if !by_sort.entry(es).or_default().contains(&choose) {
             by_sort.entry(es).or_default().push(choose);
+        }
+    }
+
+    // ---- bag.fold ----
+    // Each fold is pinned to its unrolled application chain when its
+    // domain bag is a ground multiset (`∅`/`(bag y n)` with numeral
+    // `n`/`⊎`, under ites) and — when the multiset has two or more
+    // distinct element spellings — the combining function provably
+    // satisfies the exchange law. Along every surveyed bag-equality
+    // atom `(a = b)` the two folds are tied (`atom → fold(a) = fold(b)`),
+    // so a fold over an opaque bag pinned to a closed compound by
+    // extensionality takes the closed value: the tie is guarded by the
+    // atom, hence valid whatever its truth, and the minted fold terms
+    // (stable under hash-consing) join the unroll work-list. Anything
+    // the work-list cannot pin raises the honesty gate: the fold term
+    // stays free, so a `Sat` resting on it degrades to `Unknown`, while
+    // every *other* axiom stays valid and any `Unsat` remains sound
+    // (asserting nothing about the fold only weakened the constraints).
+    let mut fold_work: Vec<(TermId, Spur, TermId, TermId)> = s.folds.clone();
+    for &(atom, a, b) in &s.bag_equalities {
+        for &(_, func, init, bag) in &s.folds {
+            if bag != a && bag != b {
+                continue;
+            }
+            let name = manager.resolve_str(func).to_string();
+            let fa = manager.mk_bag_fold(&name, init, a);
+            let fb = manager.mk_bag_fold(&name, init, b);
+            let agree = manager.mk_eq(fa, fb);
+            out.axioms.push(manager.mk_implies(atom, agree));
+            fold_work.push((fa, func, init, a));
+            fold_work.push((fb, func, init, b));
+        }
+    }
+    for &(term, func, init, bag) in &fold_work {
+        let ret = manager
+            .get(term)
+            .map(|d| d.sort)
+            .unwrap_or(manager.sorts.int_sort);
+        match fold_definition(func, init, bag, ret, fun_defs, manager) {
+            FoldDef::Defined(chain) => {
+                let eq = manager.mk_eq(term, chain);
+                out.axioms.push(eq);
+            }
+            FoldDef::Declined(reason) => {
+                // Not `incomplete`: a free fold keeps every `unsat` sound
+                // (the constraint set only got weaker) and the model pass
+                // certifies the `sat` side — folding each declined bag's
+                // assembled value and degrading on contradiction, or
+                // degrading an order-sensitive fold outright.
+                out.declined_folds.push((term, reason));
+            }
         }
     }
 
@@ -1091,5 +1620,6 @@ pub(crate) fn reduce(
     Reduction {
         axioms: out.axioms,
         incomplete: out.incomplete,
+        declined_folds: out.declined_folds,
     }
 }

@@ -1708,13 +1708,15 @@ impl Context {
         func: nixie_core::interner::Spur,
         x: TermId,
         ret: nixie_core::sort::SortId,
-        defs: &FxHashMap<nixie_core::interner::Spur, (TermId, TermId)>,
+        defs: &FxHashMap<nixie_core::interner::Spur, crate::solver::bag_theory::BagFunDef>,
         model: &crate::solver::Model,
     ) -> Option<TermId> {
-        if let Some(&(param, body)) = defs.get(&func) {
+        if let Some(def) = defs.get(&func)
+            && def.params.len() == 1
+        {
             let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
-            subst.insert(param, x);
-            let sub = self.terms.substitute(body, &subst);
+            subst.insert(def.params[0], x);
+            let sub = self.terms.substitute(def.body, &subst);
             return Some(self.terms.simplify(sub));
         }
         let name = self.terms.resolve_str(func).to_string();

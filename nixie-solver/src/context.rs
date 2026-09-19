@@ -1658,18 +1658,29 @@ impl Context {
                             .map(|(_, sort_name)| self.parse_sort_name(sort_name))
                             .collect::<Result<_>>()?;
                         self.declare_fun(&name, arg_sorts, sort);
-                        // A *unary* definition is also recorded for
-                        // `bag.map`/`bag.filter`: the reduction inlines the
-                        // body per element (the same substitution the
-                        // parser performs at call sites), so it needs the
-                        // `(parameter, body)` pair. The parameter variable
-                        // is rebuilt by name+sort — hash-consing makes it
-                        // the very variable the parser bound.
-                        if let [(pname, psort), _rest @ ..] = params.as_slice() {
-                            let param_sort = self.parse_sort_name(psort)?;
-                            let param = self.terms.mk_var(pname, param_sort);
+                        // A definition is also recorded for the bag fun
+                        // operators (`bag.map`/`bag.filter` need unary,
+                        // `bag.fold` binary): the reduction inlines the
+                        // body per element/accumulator (the same
+                        // substitution the parser performs at call sites),
+                        // so it needs the full `(parameters, body)` pair.
+                        // The parameter variables are rebuilt by
+                        // name+sort — hash-consing makes them the very
+                        // variables the parser bound.
+                        if !params.is_empty() {
+                            let mut param_vars: Vec<TermId> = Vec::with_capacity(params.len());
+                            for (pname, psort) in params.iter() {
+                                let param_sort = self.parse_sort_name(psort)?;
+                                param_vars.push(self.terms.mk_var(pname, param_sort));
+                            }
                             let spur = self.terms.intern_str(&name);
-                            self.solver.bag_fun_defs.insert(spur, (param, body));
+                            self.solver.bag_fun_defs.insert(
+                                spur,
+                                crate::solver::bag_theory::BagFunDef {
+                                    params: param_vars,
+                                    body,
+                                },
+                            );
                         }
                     }
                 }

@@ -633,8 +633,6 @@ impl EqualityPropagator {
             | TermKind::BagCard(_)
             | TermKind::BagSetof(_)
             | TermKind::BagChoose(_)
-            | TermKind::BagMap { .. }
-            | TermKind::BagFilter { .. }
             | TermKind::Select(_, _)
             | TermKind::Store(_, _, _)
             | TermKind::StrConcat(_, _)
@@ -680,6 +678,35 @@ impl EqualityPropagator {
             | TermKind::FfMul(_)
             | TermKind::FfNeg(_)
             | TermKind::FfBitsum(_) => plain(kind),
+
+            // ---- The bag fun operators: the carried function symbol (and,
+            // for `bag.map`, the codomain it fixes) are part of the
+            // operator, exactly like `Apply`'s name. Without these arms,
+            // `map f b` and `map g b` shared one identity (symbol `None`)
+            // and equal domains would congruence-identify two different
+            // images — a false equality the EUF layer would then commit.
+            TermKind::BagMap { func, ret, .. } => {
+                CongruenceShape::Operator(OperatorIdentity {
+                    discriminant: core::mem::discriminant(kind),
+                    symbol: Some(*func),
+                    rounding: None,
+                    params: (ret.0, 0),
+                })
+            }
+            TermKind::BagFilter { pred, .. } => {
+                CongruenceShape::Operator(OperatorIdentity {
+                    discriminant: core::mem::discriminant(kind),
+                    symbol: Some(*pred),
+                    rounding: None,
+                    params: (0, 0),
+                })
+            }
+            TermKind::BagFold { func, .. } => CongruenceShape::Operator(OperatorIdentity {
+                discriminant: core::mem::discriminant(kind),
+                symbol: Some(*func),
+                rounding: None,
+                params: (0, 0),
+            }),
 
             // ---- Indexed bit-vector operator: the bounds are part of the
             // operator, not arguments.

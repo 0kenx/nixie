@@ -1275,6 +1275,9 @@ impl Solver {
             if bag_reduction.incomplete {
                 self.set_terms_unconstrained = true;
             }
+            for (fold, reason) in bag_reduction.declined_folds {
+                self.bag_declined_folds.insert(fold, reason);
+            }
             parts.extend(bag_reduction.axioms);
             if parts.len() > 1 {
                 term = manager.mk_and(parts);
@@ -3500,6 +3503,17 @@ impl Solver {
             // are bag compounds of the same kind as the arm above.
             TermKind::BagChoose(_) | TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
                 self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
+            // `bag.fold` in atom position (a `Bool` accumulator): an opaque
+            // Boolean to the SAT layer whose defining equation — the
+            // unrolled chain, or nothing when declined — the reduction
+            // conjoined onto the assertion, exactly the `bag.member`
+            // contract. The gate is NOT raised here: a declined fold
+            // already raised it at the reduction, and a defined fold is
+            // fully constrained by its equation.
+            TermKind::BagFold { .. } => {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }

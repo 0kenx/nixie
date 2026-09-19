@@ -480,6 +480,12 @@ impl Solver {
             | TermKind::BagMap { bag: a, .. }
             | TermKind::BagFilter { bag: a, .. }
             | TermKind::BvNot(a) => push(*a),
+            // A fold's initial accumulator and domain bag are its guard
+            // subterms.
+            TermKind::BagFold { init, bag, .. } => {
+                push(*init);
+                push(*bag);
+            }
             TermKind::SetUnion(a, b)
             | TermKind::SetInter(a, b)
             | TermKind::SetMinus(a, b)

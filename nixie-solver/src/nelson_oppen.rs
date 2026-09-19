@@ -303,7 +303,12 @@ impl NelsonOppenCombiner {
             | TermKind::BagSetof(_)
             | TermKind::BagChoose(_)
             | TermKind::BagMap { .. }
-            | TermKind::BagFilter { .. } => TermTheory::Set,
+            | TermKind::BagFilter { .. }
+            // A fold is accumulator-sorted, not bag-sorted, but it is the
+            // bag reduction's term exactly as `bag.card` (an `Int`-sorted
+            // bag compound) is: its defining equation is conjoined by the
+            // same eager pass.
+            | TermKind::BagFold { .. } => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

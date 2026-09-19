@@ -331,6 +331,26 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                         stack.push((*a, b, env.clone()));
                     }
 
+                    // `bag.fold f t b`: the function symbol is part of the
+                    // identity; init and bag compare as children.
+                    TermKind::BagFold {
+                        func: f1,
+                        init: i1,
+                        bag: b1,
+                    } => {
+                        if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
+                            return false;
+                        }
+                        let Some((f2, i2, b2)) = shape::fold_args(&rt.kind) else {
+                            return false;
+                        };
+                        if *f1 != f2 {
+                            return false;
+                        }
+                        stack.push((*i1, i2, env.clone()));
+                        stack.push((*b1, b2, env.clone()));
+                    }
+
                     TermKind::FpSqrt(rm1, a) | TermKind::FpRoundToIntegral(rm1, a) => {
                         if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
                             return false;

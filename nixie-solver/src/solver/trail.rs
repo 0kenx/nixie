@@ -349,6 +349,10 @@ impl super::Solver {
             // is user-written and exempt, so a stale entry cannot change
             // a verdict (see the field's doc on `Solver`).
             bag_minted_eq_atoms: _,
+            // PERSISTED: declined-fold ids survive pops — the model pass
+            // skips ids no longer in the assertions, so a stale entry
+            // cannot degrade a later `sat` (see the field's doc).
+            bag_declined_folds: _,
             // PERSISTED: definitions are script-global (see the field doc).
             bag_fun_defs: _,
             ff_terms_unconstrained: _, // SNAPSHOT

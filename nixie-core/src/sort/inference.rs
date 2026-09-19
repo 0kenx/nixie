@@ -184,6 +184,16 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
                 Err(NixieError::Internal("Bag operand not found".to_string()))
             }
         }
+        // `bag.fold f t b` returns the accumulator's sort — `t`'s own.
+        TermKind::BagFold { init, .. } => {
+            if let Some(t) = manager.get(*init) {
+                Ok(t.sort)
+            } else {
+                Err(NixieError::Internal(
+                    "Fold initial value not found".to_string(),
+                ))
+            }
+        }
         // `bag.choose` returns an element of the bag it chooses from
         // (the set.choose arm, over `SortKind::Bag`).
         TermKind::BagChoose(bag) => {

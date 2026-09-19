@@ -35,6 +35,8 @@ enum OpKey {
     BagMapOp(Spur, crate::sort::SortId),
     /// `bag.filter p b`: the predicate symbol.
     BagFilterOp(Spur),
+    /// `bag.fold f t b`: the function symbol.
+    BagFoldOp(Spur),
     /// Datatype constructor application.
     Constructor(Spur),
     /// Datatype tester `is-C`.
@@ -227,6 +229,7 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         // codomain, which is part of the term's type).
         TermKind::BagMap { func, ret, .. } => OpKey::BagMapOp(*func, *ret),
         TermKind::BagFilter { pred, .. } => OpKey::BagFilterOp(*pred),
+        TermKind::BagFold { func, .. } => OpKey::BagFoldOp(*func),
         TermKind::DtConstructor { constructor, .. } => OpKey::Constructor(*constructor),
         TermKind::DtTester { constructor, .. } => OpKey::Tester(*constructor),
         TermKind::DtSelector { selector, .. } => OpKey::Selector(*selector),

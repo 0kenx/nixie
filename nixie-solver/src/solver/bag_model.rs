@@ -75,13 +75,13 @@ impl Solver {
                 continue;
             };
             for x in domain {
-                let image = if let Some(&(param, body)) = self.bag_fun_defs.get(&func) {
-                    {
-                        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
-                        subst.insert(param, x);
-                        let sub = manager.substitute(body, &subst);
-                        manager.simplify(sub)
-                    }
+                let image = if let Some(def) = self.bag_fun_defs.get(&func)
+                    && def.params.len() == 1
+                {
+                    let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+                    subst.insert(def.params[0], x);
+                    let sub = manager.substitute(def.body, &subst);
+                    manager.simplify(sub)
                 } else {
                     let name = manager.resolve_str(func).to_string();
                     manager.mk_apply(&name, [x], ret)
@@ -128,6 +128,27 @@ impl Solver {
             }
             v
         };
+
+        // ---- the fold readbacks ----
+        // A defined fold's equation pinned it to its unrolled chain, an
+        // arithmetic/string term like any other; the value the tableau
+        // (or its purification proxy) holds is the fold's value, read back
+        // so `(get-value ((bag.fold …)))` answers with it instead of
+        // echoing. Int-sorted accumulators only — a `String` accumulator's
+        // value has no tableau column, and the echo is the honest answer
+        // there.
+        for &(fold, _, _, _) in &survey.folds {
+            if model.get(fold).is_some() || self.bag_declined_folds.contains_key(&fold) {
+                continue;
+            }
+            if manager.get(fold).map(|d| d.sort) != Some(manager.sorts.int_sort) {
+                continue;
+            }
+            if let Some(n) = count_value(fold, model, &self.arith, &self.arith_purify, manager) {
+                let n_term = manager.mk_int(num_bigint::BigInt::from(n));
+                model.set(fold, n_term);
+            }
+        }
 
         // ---- value the choose elements ----
         // A choose's value must satisfy its count constraints over every
@@ -482,6 +503,106 @@ impl Solver {
                 }
             }
         }
+        // ---- the declined folds: faithful synthesis + certification ----
+        // A fold the reduction could not unroll stayed *free*: every
+        // `unsat` is sound (nothing was asserted about it), but a `sat`
+        // model is only genuine if the fold's exhibited value is the true
+        // fold of its bag's assembled value. Synthesize that faithful
+        // value from the cells; an assertion that contradicts it (or a
+        // fold whose value cannot be computed at all) degrades the
+        // verdict — the gate is read after this pass, inside `check`.
+        let declined: Vec<(TermId, nixie_core::interner::Spur, TermId, TermId)> = survey
+            .folds
+            .iter()
+            .copied()
+            .filter(|&(t, _, _, _)| self.bag_declined_folds.contains_key(&t))
+            .collect();
+        if !declined.is_empty() {
+            let fun_defs = self.bag_fun_defs.clone();
+            let mut unresolvable = false;
+            for &(fold, func, init, bag) in &declined {
+                let ret = manager
+                    .get(fold)
+                    .map(|d| d.sort)
+                    .unwrap_or(manager.sorts.int_sort);
+                match self.bag_declined_folds.get(&fold) {
+                    // An order-sensitive fold has no order-independent
+                    // value; exhibiting one enumeration's chain would pin a
+                    // side the reference implementation does not take, so
+                    // the verdict degrades without trying.
+                    Some(super::bag_theory::FoldDecline::OrderSensitive) => {
+                        unresolvable = true;
+                    }
+                    Some(super::bag_theory::FoldDecline::Unrollable) => {
+                        match super::bag_theory::fold_faithful_value(
+                            func, init, bag, ret, model, &fun_defs, manager,
+                        ) {
+                            Some(v) => {
+                                model.set(fold, v);
+                            }
+                            None => unresolvable = true,
+                        }
+                    }
+                    None => {}
+                }
+            }
+            // Certification: every assertion that mentions a declined fold
+            // must evaluate true under the finished model (the faithful
+            // values are installed, so a formula that forced a different
+            // fold value evaluates false here). `Undetermined` is benign —
+            // the evaluator's own philosophy: the purified formula's
+            // satisfaction is the search's guarantee; this check exists
+            // only for the fold terms that guarantee does not cover.
+            let mut mentions: Vec<TermId> = Vec::new();
+            let mut roots: Vec<TermId> = self.assertions.clone();
+            roots.extend(self.certificate_assertions.iter().copied());
+            let mut seen_assert: FxHashSet<TermId> = FxHashSet::default();
+            for &root in &roots {
+                if !seen_assert.insert(root) {
+                    continue;
+                }
+                let mut stack: Vec<TermId> = vec![root];
+                let mut seen: FxHashSet<TermId> = FxHashSet::default();
+                while let Some(t) = stack.pop() {
+                    if !seen.insert(t) {
+                        continue;
+                    }
+                    if self.bag_declined_folds.contains_key(&t) {
+                        mentions.push(root);
+                        break;
+                    }
+                    if let Some(data) = manager.get(t) {
+                        stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+                    }
+                }
+            }
+            let mut contradicted = false;
+            for &root in &mentions {
+                if let super::model_eval::EvalOutcome::Value(super::EvalVal::Bool(false)) =
+                    self.eval_in_model_outcome(root, model, manager, 0)
+                {
+                    contradicted = true;
+                }
+            }
+            if std::env::var_os("NIXIE_DEBUG_BAGFOLD").is_some() {
+                eprintln!(
+                    "[bagfold] declined={} unresolvable={unresolvable} contradicted={contradicted} mentions={}",
+                    declined.len(),
+                    mentions.len()
+                );
+                for &(fold, _, _, bag) in &declined {
+                    eprintln!(
+                        "[bagfold] fold={:?} bag_model={:?} faithful={:?}",
+                        fold,
+                        model.get(bag).map(|v| v.0),
+                        model.get(fold).map(|v| v.0)
+                    );
+                }
+            }
+            if unresolvable || contradicted {
+                self.set_terms_unconstrained = true;
+            }
+        }
     }
 }
 
@@ -497,6 +618,8 @@ struct BagModelSurvey {
     chooses: Vec<(TermId, TermId)>,
     /// `bag.map` terms: `(term, func, ret, domain bag)`.
     maps: Vec<(TermId, nixie_core::interner::Spur, SortId, TermId)>,
+    /// `bag.fold` terms: `(term, func, init, bag)`.
+    folds: Vec<(TermId, nixie_core::interner::Spur, TermId, TermId)>,
 }
 
 fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
@@ -506,6 +629,7 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
         cards: Vec::new(),
         chooses: Vec::new(),
         maps: Vec::new(),
+        folds: Vec::new(),
     };
     let bag_es = |sort: SortId| -> Option<SortId> {
         manager.sorts.get(sort).and_then(|s| match &s.kind {
@@ -534,6 +658,9 @@ fn bag_model_survey(roots: &[TermId], manager: &TermManager) -> BagModelSurvey {
             TermKind::BagCard(b) => out.cards.push((t, *b)),
             TermKind::BagChoose(b) => out.chooses.push((t, *b)),
             TermKind::BagMap { func, ret, bag } => out.maps.push((t, *func, *ret, *bag)),
+            TermKind::BagFold { func, init, bag } => {
+                out.folds.push((t, *func, *init, *bag));
+            }
             _ => {}
         }
         stack.extend(nixie_core::ast::traversal::get_children(&data.kind));

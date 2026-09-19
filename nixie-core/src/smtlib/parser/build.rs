@@ -311,6 +311,39 @@ impl Parser<'_> {
         }
     }
 
+    /// Build `(bag.fold f t b)` from the parsed head: `f` validated as
+    /// binary `(-> T1 T2 T2)` by the parser, the initial value checked
+    /// against `f`'s codomain, and the bag operand against `f`'s element
+    /// domain — CVC5's `BAG_FOLD` type rule in full.
+    pub(super) fn build_bag_fold(
+        &mut self,
+        func: &str,
+        elem_sort: crate::sort::SortId,
+        acc_sort: crate::sort::SortId,
+        init: TermId,
+        bag: TermId,
+    ) -> Result<TermId> {
+        self.check_bag_operand("bag.fold", bag)?;
+        let es = self.bag_element_sort(bag).unwrap_or(elem_sort);
+        if es != elem_sort {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: "bag.fold's function domain does not match the bag's element sort"
+                    .to_string(),
+            });
+        }
+        let init_sort = self.manager.get(init).map(|d| d.sort).unwrap_or(acc_sort);
+        if init_sort != acc_sort {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "bag.fold's initial value must have the accumulator sort {acc_sort:?}"
+                ),
+            });
+        }
+        Ok(self.manager.mk_bag_fold(func, init, bag))
+    }
+
     /// A `bag.filter`/`bag.all`/`bag.some` operand must be a *predicate*:
     /// a unary function whose codomain is `Bool`.
     fn check_bag_predicate(&self, op: &str, ret_sort: crate::sort::SortId) -> Result<()> {
@@ -786,16 +819,25 @@ impl Parser<'_> {
                     ),
                 });
             }
-            // `bag.fold`/`bag.partition` remain honest parse-level
-            // rejections: `fold` needs a bounded quantifier over skolem
-            // families (CVC5 `bag_reduction.cpp`) and `partition` returns a
-            // tuple of bags.
-            "bag.fold" | "bag.partition" => {
+            // `bag.fold` normally reaches the solver through
+            // `open_named_head`'s interception (like `bag.map` above); a
+            // flattened or wrapped spelling that routes here gets the same
+            // honest rejection. `bag.partition` stays an honest parse-level
+            // rejection: its result is a *tuple of bags*, a sort family
+            // this surface does not build (see
+            // `docs/handovers/2026-09-19-next-session.md`).
+            "bag.fold" => {
                 return Err(NixieError::ParseError {
                     position: self.lexer.position(),
-                    message: format!(
-                        "{op} is not supported yet (the bag theory slice landed without it)"
-                    ),
+                    message: "bag.fold must be applied as (bag.fold <binary function> <init> <bag>), with the function as a bare symbol"
+                        .to_string(),
+                });
+            }
+            "bag.partition" => {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: "bag.partition is not supported (its result is a tuple of bags, a sort family this surface does not build)"
+                        .to_string(),
                 });
             }
             // `(str.is_digit s)` holds iff `s` is a single-character string

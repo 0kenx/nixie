@@ -445,6 +445,15 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *bag, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            TermKind::BagFold { func, init, bag } => {
+                let _ = write!(w, "(bag.fold ");
+                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(w, " ");
+                self.write_term(w, *init, indent, depth + 1);
+                let _ = write!(w, " ");
+                self.write_term(w, *bag, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }

@@ -266,8 +266,10 @@ fn combine_complexity(
             | TermKind::FfNeg(a),
         ) => 2 + get(*a),
         // `bag.map`/`bag.filter` carry a function symbol (and `map` its
-        // codomain) — one node beyond the plain unary shape.
+        // codomain) — one node beyond the plain unary shape. A fold adds
+        // the initial accumulator child on top.
         Some(TermKind::BagMap { bag: a, .. } | TermKind::BagFilter { bag: a, .. }) => 3 + get(*a),
+        Some(TermKind::BagFold { init, bag, .. }) => 3 + get(*init) + get(*bag),
 
         Some(TermKind::BvExtract { arg, .. }) => 2 + get(*arg),
 

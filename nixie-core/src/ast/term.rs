@@ -653,6 +653,33 @@ pub enum TermKind {
         /// The bag.
         bag: TermId,
     },
+    /// `(bag.fold f t b)` — fold `f` over the elements of `b` with
+    /// multiplicity, starting from `t` (CVC5 `BAG_FOLD`): the function has
+    /// type `(-> T1 T2 T2)` and takes its **element first, accumulator
+    /// second** (`combine_i = f(elements_i, combine_{i-1})`, exactly
+    /// CVC5's `reduceFoldOperator` and `evaluateBagFold`), so
+    /// `fold(f, t, (bag y n)) = f(y, f(y, … f(y, t) …))` with `n`
+    /// applications. Carries the function's name symbol, the initial
+    /// accumulator, and the domain bag; the result sort is `init`'s.
+    ///
+    /// The reduction unrolls a ground multiset (built from `∅`,
+    /// `(bag y n)` with numeral `n`, `⊎` and bag-shaped `ite`) into that
+    /// finite application chain, the way `bag.map` inlines its body per
+    /// element. A fold is only *order-insensitive* when the combining
+    /// function satisfies the exchange law `f(e1, f(e2, a)) =
+    /// f(e2, f(e1, a))` (commutativity+associativity imply it); the
+    /// reduction proves the law by simplification before unrolling a
+    /// multiset with two or more distinct element spellings, and declines
+    /// (`incomplete`) anything it cannot unroll — a free fold term with
+    /// the honesty gate raised, never a guessed value.
+    BagFold {
+        /// The function's interned name (binary: element, accumulator).
+        func: Spur,
+        /// The initial accumulator value.
+        init: TermId,
+        /// The domain bag.
+        bag: TermId,
+    },
 }
 
 /// A case in a match expression.

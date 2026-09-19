@@ -1341,6 +1341,32 @@ impl TermManager {
         )
     }
 
+    /// `(bag.fold f t b)` — `f : (-> T1 T2 T2)` folded over `b`'s elements
+    /// with multiplicity, starting from `t` (CVC5 `BAG_FOLD`; element
+    /// first, accumulator second). The result sort is the initial value's
+    /// own. Only the empty fold happens here — `fold(f, t, ∅) = t` under
+    /// every semantics — because the make/⊎/ite unrollings need the
+    /// function's *body*, which only the solver's reduction (with the
+    /// `define-fun` table) can inline.
+    pub fn mk_bag_fold(&mut self, func: &str, init: TermId, bag: TermId) -> TermId {
+        if self.is_bag_empty(bag) {
+            return init;
+        }
+        let ret = self
+            .get(init)
+            .map(|d| d.sort)
+            .unwrap_or(self.sorts.int_sort);
+        let func_spur = self.intern_str(func);
+        self.intern(
+            TermKind::BagFold {
+                func: func_spur,
+                init,
+                bag,
+            },
+            ret,
+        )
+    }
+
     /// `(set.card s)`.
     pub fn mk_set_card(&mut self, set: TermId) -> TermId {
         let sort = self.sorts.int_sort;

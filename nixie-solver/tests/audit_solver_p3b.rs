@@ -160,3 +160,29 @@ fn check_sat_assuming_preserves_model_for_get_value() {
         out[1]
     );
 }
+
+#[test]
+fn assert_requires_bool_sort() {
+    // SMT-LIB: `assert`'s operand is Bool-sorted; Z3 and CVC5 reject a
+    // non-Boolean operand at parse ("argument of assert is not Boolean" /
+    // "Expected term with sort Bool"). Before this check the Tseitin
+    // encoder minted a free Boolean for the Int term and answered `sat`
+    // to a script the standard rejects.
+    for bad in [
+        "(set-logic ALL)\n(declare-const x Int)\n(assert x)\n(check-sat)\n",
+        "(set-logic ALL)\n(assert 5)\n(check-sat)\n",
+        "(set-logic ALL)\n(declare-const s String)\n(assert (! s :named n))\n(check-sat)\n",
+    ] {
+        let mut ctx = nixie_solver::Context::new();
+        let out = ctx.execute_script(bad);
+        assert!(out.is_err(), "non-Bool assert must be a parse error: {bad}");
+    }
+    // A Bool operand keeps working, including named.
+    let mut ctx = nixie_solver::Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic ALL)\n(declare-const b Bool)\n(assert (! b :named n))\n(assert (not b))\n(check-sat)\n",
+        )
+        .expect("script runs");
+    assert!(out.iter().any(|l| l.trim() == "unsat"));
+}

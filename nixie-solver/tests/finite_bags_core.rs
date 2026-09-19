@@ -698,7 +698,41 @@ fn unsupported_bag_ops_reject_honestly() {
     );
     assert!(
         out.is_err(),
-        "bag.fold is a parse-level rejection in this slice"
+        "bag.fold with a non-binary function is a parse error"
+    );
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-fun h (Int Bool) Int)\n\
+         (assert (= (bag.fold h 0 (bag x 1)) 0))\n",
+    );
+    assert!(
+        out.is_err(),
+        "bag.fold's function must be (-> T1 T2 T2): a second argument sort \
+         that differs from the codomain is a parse error"
+    );
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-fun k (Int Int) Int)\n\
+         (assert (= (bag.fold k true (bag x 1)) 0))\n",
+    );
+    assert!(
+        out.is_err(),
+        "bag.fold's initial value must have the accumulator sort"
+    );
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-fun k (Real Real) Real)\n\
+         (assert (= (bag.fold k 0.0 (bag x 1)) 0.0))\n",
+    );
+    assert!(
+        out.is_err(),
+        "bag.fold's function domain must match the bag's element sort"
     );
 }
 
@@ -1586,5 +1620,289 @@ fn all_and_some_lower_through_the_filter() {
     assert!(
         out.is_err(),
         "bag.all needs a predicate, not an Int function"
+    );
+}
+
+// ===== bag.fold =====
+// The reference is CVC5's `BAG_FOLD` (element first, accumulator second:
+// `combine_i = f(elements_i, combine_{i-1})` in `reduceFoldOperator`,
+// `evaluateBagFold` in `bags_utils.cpp`). The reduction unrolls a ground
+// multiset (`∅`/`(bag y n)` with numeral `n`/`⊎`, under ites) into the
+// finite application chain, proving the exchange law
+// `f(e1, f(e2, a)) = f(e2, f(e1, a))` by simplification before unrolling
+// a multiset with several element spellings; everything else declines
+// honestly (`Unknown` on `sat`, sound on `unsat`).
+
+#[test]
+fn fold_over_ground_multiset_is_the_application_chain() {
+    // fold(plus, 1, (10:2) ⊎ (5:3)) = 1 + 10 + 10 + 5 + 5 + 5 = 36.
+    let script = |expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (assert (= (bag.fold plus 1 \
+                (bag.union_disjoint (bag 10 2) (bag 5 3))) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    assert_eq!(solve_smt(&script("36")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("35")), SolverResult::Unsat);
+}
+
+#[test]
+fn fold_element_first_accumulator_second() {
+    // CVC5's argument order is observable with a non-symmetric function
+    // over ONE element spelling (order-insensitive): f(e, a) = 2e - a.
+    // fold(f, 0, (3:2)) = f(3, f(3, 0)) = 2·3 − (2·3 − 0) = 0; the
+    // swapped reading (accumulator first) would give 0 − 3 = −3, then
+    // −3 − 3 = −6.
+    let script = |expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int) (a Int)) Int (- (* 2 x) a))\n\
+             (assert (= (bag.fold f 0 (bag 3 2)) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    assert_eq!(solve_smt(&script("0")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("-6")), SolverResult::Unsat);
+    assert_eq!(solve_smt(&script("6")), SolverResult::Unsat);
+}
+
+#[test]
+fn fold_over_empty_is_the_initial_value() {
+    let script = |init: &str, expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (assert (= (bag.fold plus {init} (as bag.empty (Bag Int))) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    assert_eq!(solve_smt(&script("7", "7")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("7", "8")), SolverResult::Unsat);
+}
+
+#[test]
+fn fold_multiplicity_copies_each_application() {
+    // (bag 4 3) folds to f(4, f(4, f(4, t))) — three applications, not
+    // one: plus/4/0 gives 12. A zero multiplicity is the empty bag.
+    let script = |expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (assert (= (bag.fold plus 0 (bag 4 3)) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    assert_eq!(solve_smt(&script("12")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("4")), SolverResult::Unsat);
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (assert (= (bag.fold plus 5 (bag 4 0)) 5))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+#[test]
+fn fold_over_ite_takes_the_branch() {
+    // fold(f, t, ite(c, a, b)) = ite(c, fold_a, fold_b) — the branch-picking
+    // identity the count and cardinality rules take.
+    let script = |expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const x Int)\n\
+             (assert (> x 0))\n\
+             (assert (= (bag.fold plus 0 (ite (> x 1) (bag 1 2) (bag 5 3))) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    // x > 1 picks (1:2): fold = 2. x = 1 picks (5:3): fold = 15. Both
+    // branches are reachable, so only the disjunction is forced.
+    assert_eq!(solve_smt(&script("2")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("3")), SolverResult::Unsat);
+}
+
+#[test]
+fn fold_declines_order_sensitive_functions() {
+    // sub is not exchange-law: fold(sub, 0, {1,2}) depends on the
+    // enumeration order, which the eager reduction must not guess. The
+    // honest answer is Unknown — never a fixed-order verdict.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun sub ((x Int) (a Int)) Int (- x a))\n\
+             (assert (= (bag.fold sub 0 (bag.union_disjoint (bag 1 1) (bag 2 1))) 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unknown
+    );
+    // A declined fold is free, but never incoherent: pinning it to two
+    // values still refutes (the constraint set only got weaker).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun sub ((x Int) (a Int)) Int (- x a))\n\
+             (declare-const v Int)\n\
+             (assert (= v (bag.fold sub 0 (bag.union_disjoint (bag 1 1) (bag 2 1)))))\n\
+             (assert (= v 0))\n\
+             (assert (= v 1))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+}
+
+#[test]
+fn fold_declines_opaque_and_symbolic_domains() {
+    // An opaque bag's support is unknown: CVC5 answers these through the
+    // bounded-quantifier skolem scheme; the eager reduction declines.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const A (Bag Int))\n\
+             (assert (= (bag.fold plus 1 A) 10))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unknown
+    );
+    // A symbolic multiplicity cannot be unrolled into finitely many
+    // applications.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const y Int)\n\
+             (declare-const n Int)\n\
+             (assert (= (bag.fold plus 0 (bag y n)) (* y n)))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unknown
+    );
+}
+
+#[test]
+fn fold_proves_exchange_law_cross_sort() {
+    // Cross-sort accumulator: f : (-> String Int Int) counts elements.
+    // The exchange law is proved by AC-canonicalization, so the
+    // multi-element fold unrolls even though element sort ≠ accumulator
+    // sort (the law's fresh witnesses are String-sorted, the chain Int).
+    let script = |expected: &str| {
+        format!(
+            "(set-logic ALL)\n\
+             (define-fun count1 ((s String) (a Int)) Int (+ 1 a))\n\
+             (assert (= (bag.fold count1 0 \
+                (bag.union_disjoint (bag \"ab\" 2) (bag \"abc\" 1))) {expected}))\n\
+             (check-sat)\n"
+        )
+    };
+    assert_eq!(solve_smt(&script("3")), SolverResult::Sat);
+    assert_eq!(solve_smt(&script("2")), SolverResult::Unsat);
+}
+
+#[test]
+fn fold_interacts_with_the_rest_of_the_theory() {
+    // The fold's domain bag joins the survey like any bag-sorted subterm:
+    // its counts, membership and cardinality all constrain the same
+    // arithmetic the fold equation lands in.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 2 3) (bag 4 1))))\n\
+             (assert (= (bag.fold plus 0 b) 10))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const b (Bag Int))\n\
+             (assert (= b (bag.union_disjoint (bag 2 3) (bag 4 1))))\n\
+             (assert (= (bag.fold plus 0 b) 9))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Unsat
+    );
+    // Symbolic elements are fine: the chain applies f to the element
+    // *term*, whatever the model later says it equals.
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const x Int)\n\
+             (assert (= x 5))\n\
+             (assert (= (bag.fold plus 0 (bag x 2)) 10))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
+    );
+}
+
+#[test]
+fn fold_value_answers_in_the_model() {
+    // The defining equation pins the fold term like any other
+    // arithmetic-owned compound, so a model can read it back.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (declare-const s Int)\n\
+             (assert (= (bag.fold plus 1 (bag 10 2)) s))\n\
+             (check-sat)\n\
+             (get-value (s))\n",
+        )
+        .expect("script runs");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("((s 21))"),
+        "the fold's defining equation pins s = 1 + 10 + 10; got: {joined}"
+    );
+    // The fold term itself reads back from the tableau, not as an echo.
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (define-fun plus ((x Int) (y Int)) Int (+ x y))\n\
+             (assert (= (bag.fold plus 1 (bag 10 2)) 21))\n\
+             (check-sat)\n\
+             (get-value ((bag.fold plus 1 (bag 10 2))))\n",
+        )
+        .expect("script runs");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("((bag.fold plus 1 (bag 10 2)) 21)"),
+        "the fold reads back its chain value; got: {joined}"
+    );
+}
+
+#[test]
+fn map_under_different_functions_is_not_congruence_identified() {
+    // The EUF congruence identity must carry the function symbol: before
+    // it did, `map f b` and `map g b` shared one operator identity over
+    // the same domain, so equal domains congruence-identified two
+    // different images — a false equality the layer would then commit
+    // (and a script pinning the two images differently would refute
+    // through it: a false `unsat`).
+    assert_eq!(
+        solve_smt(
+            "(set-logic ALL)\n\
+             (define-fun f ((x Int)) Int x)\n\
+             (define-fun g ((x Int)) Int (+ x 1))\n\
+             (assert (= (bag.count 1 (bag.map f (bag 1 2))) 2))\n\
+             (assert (= (bag.count 1 (bag.map g (bag 1 2))) 0))\n\
+             (check-sat)\n",
+        ),
+        SolverResult::Sat
     );
 }

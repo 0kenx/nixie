@@ -172,6 +172,11 @@ fn hash_visit(
             pred.hash(hasher);
             stack.push(HashTask::Visit(*bag));
         }
+        TermKind::BagFold { func, init, bag } => {
+            func.hash(hasher);
+            stack.push(HashTask::Visit(*init));
+            stack.push(HashTask::Visit(*bag));
+        }
 
         TermKind::BvExtract { high, low, arg } => {
             high.hash(hasher);
