@@ -3451,6 +3451,13 @@ impl Solver {
         self.clauses.reserve_slots(n.min(1 << 27));
     }
 
+    /// Pre-reserve arena backing bytes for a bulk load (header-driven
+    /// literal count; allocation shape only, bounded against inflated
+    /// headers - untouched pages cost no RSS).
+    pub fn reserve_clause_bytes(&mut self, bytes: usize) {
+        self.clauses.reserve_arena_bytes(bytes.min(1 << 34));
+    }
+
     /// Begin a bulk clause load with deferred BIG materialization.
     ///
     /// While this latch is set, binary clauses attach WITHOUT their BIG
