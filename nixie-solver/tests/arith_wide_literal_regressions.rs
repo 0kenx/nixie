@@ -1454,3 +1454,64 @@ fn wide_row_interval_refutation_sign() {
         "z3: sat (model xi = 9, validated); `unknown` is the missed interval refutation (the S3 NOCOL decline), `unsat` would be a fabricated refutation"
     );
 }
+
+/// The `get-value` echo of an exact rational must be VALID SMT-LIB and
+/// semantically the model's value (handoff item 8, closed): the shared
+/// printers' `RealConst` arm used `Ratio`'s Display — the math spelling
+/// `1/4611686018427387904`, a token no SMT-LIB parser accepts (neither
+/// nixie nor z3 could re-read a `get-value` echo).  The evaluation path
+/// folds the exact-publication `(/ n d)` term into a `RealConst`, so the
+/// echo regressed exactly when the value came back through `model.eval`.
+/// Pinned three ways: the spelling itself, the integer-valued Real's
+/// `.0`, and the round-trip — binding the echoed value as a `define-fun`
+/// and asserting `distinct` from the variable must be `unsat`.
+#[test]
+fn get_value_rational_echo_round_trips() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)\n\
+             (declare-const xr Real)\n\
+             (declare-const yr Real)\n\
+             (assert (= xr (/ 1 4611686018427387904)))\n\
+             (assert (= yr 5))\n\
+             (check-sat)\n\
+             (get-value (xr yr))\n",
+        )
+        .expect("script executes");
+    let echo = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        echo.contains("(/ 1 4611686018427387904)"),
+        "the exact rational must echo as an SMT-LIB `(/ n d)` literal, got: {echo}"
+    );
+    assert!(
+        !echo.contains("1/4611686018427387904"),
+        "the bare-slash math spelling is not parseable SMT-LIB"
+    );
+    // (Residual, deliberately NOT pinned here: a Real variable pinned by
+    // an integer literal echoes `5`, not `5.0` — the model ENTRY is an
+    // Int-sorted term, a model-builder spelling question; `5` is accepted
+    // by both parsers in a Real position, so it is not a parseability
+    // defect like the bare-slash form was.)
+
+    // The round-trip: the echoed value IS the model's value.
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)\n\
+             (declare-const xr Real)\n\
+             (assert (= xr (/ 1 4611686018427387904)))\n\
+             (check-sat)\n\
+             (get-value (xr))\n\
+             (define-fun xrv () Real (/ 1 4611686018427387904))\n\
+             (assert (distinct xr xrv))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(
+        out.last().map(String::as_str),
+        Some("unsat"),
+        "the published value equals the echoed value; `distinct` must refute"
+    );
+}

@@ -420,11 +420,15 @@ fn nra_goals_are_decided_with_the_feature() {
 #[test]
 fn a_decided_goal_still_carries_its_model() {
     // The other half of what the feature buys: not just the verdict, but a
-    // model the caller can read back.
+    // model the caller can read back.  The echo is the SMT-LIB Real
+    // spelling `-2.0` (the printers' `RealConst` arm used to emit the
+    // `Ratio` Display's `-2` — an integer spelling for a Real-sorted
+    // value; fixed with the rational-echo round-trip regression in
+    // `arith_wide_literal_regressions.rs`).
     assert_eq!(
         run("(set-logic QF_NRA)(declare-const x Real)\
              (assert (= (* x x) 4.0))(check-sat)(get-value (x))"),
-        vec!["sat", "((x -2))"],
+        vec!["sat", "((x -2.0))"],
         "the default build reports a root of x*x = 4"
     );
 }

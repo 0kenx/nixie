@@ -443,3 +443,88 @@ fn presets_agree_with_the_module_constant() {
     assert!(!minimal.enable_model_blocking);
     assert_eq!(minimal.max_model_blocking_rounds, 0);
 }
+
+// ---------------------------------------------------------------------
+// The loop-mechanics fixture (the documented unit debt, closed as the
+// white-box option — study §E of 2026-09-19-gap-attribution-fi1.md)
+// ---------------------------------------------------------------------
+
+/// Drive the block-retry loop's MECHANICS deterministically: after a
+/// certified `Sat`, exclude that candidate through the very API the gate
+/// loop uses (`block_refuted_model_and_rebase`), and require the next
+/// `check` to recover — the goal has a second model, so the retry must
+/// find it and certify, with the counter at one and the blocked
+/// assignment excluded from the recovery.
+///
+/// What this deliberately does NOT pin (documented in the study): the
+/// REACHABILITY of a gate-refuted-first-candidate — no small goal has one
+/// on the current tree (twelve shapes tried; the repairs preempt every
+/// small collision), so the production loop's *entry* stays covered by
+/// the mixed fuzz.  What it pins is everything downstream of that entry:
+/// the block excludes an assignment (not the goal), the rebase leaves a
+/// solvable state, the retry certifies, and the budget accounting is
+/// exact.
+#[test]
+fn block_retry_loop_mechanics_recover_after_direct_block() {
+    let mut solver = solver_with(SolverConfig::default());
+    let mut manager = TermManager::new();
+    // Two certifiable models: x ∈ {1, 2}, asserted inside a user scope so
+    // the trailing `pop` genuinely retracts (a base-level pop retracts
+    // nothing — the block would have landed at level 0).
+    solver.push();
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let one = manager.mk_int(1);
+    let two = manager.mk_int(2);
+    let eq1 = manager.mk_eq(x, one);
+    let eq2 = manager.mk_eq(x, two);
+    let choice = manager.mk_or(vec![eq1, eq2]);
+    solver.assert(choice, &mut manager);
+
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    fn model_int_value(
+        m: &crate::solver::Model,
+        var: TermId,
+        manager: &TermManager,
+    ) -> Option<num_bigint::BigInt> {
+        m.get(var).and_then(|v| {
+            manager
+                .get(v)
+                .map(|t| t.kind.clone())
+                .and_then(|k| match k {
+                    nixie_core::ast::TermKind::IntConst(n) => Some(n.clone()),
+                    _ => None,
+                })
+        })
+    }
+    let first = solver.model.clone().expect("first Sat carries a model");
+    let first_x =
+        model_int_value(&first, x, &manager).expect("the model pins x to an integer constant");
+
+    // The gate-loop step, driven directly: exclude exactly this candidate.
+    assert!(
+        solver.block_refuted_model_and_rebase(),
+        "the candidate's projection names mapped variables; the block must land"
+    );
+    assert_eq!(solver.model_blocking_active, 1);
+    assert_eq!(solver.statistics.model_blocking_clauses, 1);
+
+    // The retry: still satisfiable (the other disjunct), still `Sat` with
+    // a model — the blocking clause restricted the search, not the goal.
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+    let second = solver.model.clone().expect("the retry certifies a model");
+    let second_x = model_int_value(&second, x, &manager)
+        .expect("the retry model pins x to an integer constant");
+    assert_ne!(
+        first_x, second_x,
+        "the blocked assignment must stay excluded; the retry finds the OTHER model"
+    );
+
+    // Budget honesty: the paid block is counted once, and a `pop` to the
+    // base scope retracts the clauses (the snapshot-scoped counter).
+    solver.pop();
+    assert_eq!(solver.model_blocking_active, 0);
+    assert!(
+        !solver.blocking_clauses_present(),
+        "after the pop the database is unrestricted again"
+    );
+}
