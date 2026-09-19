@@ -87,3 +87,28 @@ The solved-count gap is *not* general slowness — on the both-solved
 set the conflict ratio's median is **1.0**.  The gap is concentrated,
 mechanism-attributed, and each mechanism has a named owner route
 above.  Re-run `bench/smt_perf/run_perf.sh` after any of them lands.
+
+## Addendum (2026-09-19, later session): route 1 DE-PRIORITIZED by probe — the depth lift converts the unknowns into timeouts
+
+The deep-encoding fix route (the iterative encoder, ~970 lines) was
+probed before committing to it: a throwaway build with
+`ENCODE_DEPTH_LIMIT = 8192` (8× the deepest member's chain; no crash,
+no stack overflow in release) on the nec-smt `large` class —
+**every member TIMED OUT at 60 s** (bftpd_login, int_from_list,
+getoption_group, checkpass, checkpass_pwd, getoption_user …; z3:
+unsat/sat, mostly sub-second).  The instant `unknown` is not masking a
+decidable problem the encoder alone can reach: once encoded, the
+search grinds — z3 decides these at **0 conflicts** (its preprocessor
+folds the ite/`=` spines outright), and nixie has no equivalent folder.
+
+**Consequence for the route map:** converting the encoder (or a
+flattening pre-pass) without a search-side folding pass is
+table-neutral at best (instant `unknown` → 60 s timeout is strictly
+worse wall-wise) and moves zero verdicts.  The route's true shape is
+TWO-SIDED: (a) an iterative/shallow encoding AND (b) a preprocessing
+folder for ite/`=` value-chains (z3's `smt2parser` + rewriter folds
+them before search; the SOM/structural-rewrite route on the BV side is
+the same family).  Neither side alone pays.  Do not start the 970-line
+conversion expecting the 9 members — probe (b) first: a chain-folding
+simplifier on let-chained ite spines is the cheaper half and is
+independently valuable.
