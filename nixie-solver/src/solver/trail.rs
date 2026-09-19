@@ -208,6 +208,8 @@ impl super::Solver {
             // way).
             has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
             // `true` after pop only keeps the lazy route.
+            has_set_or_bag_terms: _, // NOT trailed: monotonic survey gate; a
+            // stale `true` after pop only keeps the slow, exact path.
             bv_preprocess_at_count: _, // NOT trailed: a stale value only
             // re-runs an idempotent (implied-clause) pass.
             bv_preprocess_cache: _, // NOT trailed: `push`/`pop` clear it, so

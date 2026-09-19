@@ -11,6 +11,13 @@ pub(super) struct UserState {
     manager: UserPropagatorManager,
     literals: FxHashMap<TermId, Lit>,
     watches: Vec<(TermId, Lit)>,
+    /// SAT variable -> its watch entry. One entry per variable decodes both
+    /// polarities (a watch `(term, lit)` answers literal `lit` from the
+    /// fixed value of `term` and literal `!lit` from its negation), so this
+    /// index is exactly equivalent to scanning `watches` — which was
+    /// O(watches) per justification literal of every consequence, quadratic
+    /// for models registering thousands of watches (graph constraints).
+    by_var: FxHashMap<nixie_sat::Var, (TermId, Lit)>,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
     pub(super) closed: bool,
@@ -111,14 +118,21 @@ impl Solver {
             return Err(CpError("user propagator watches must be Boolean terms"));
         }
         self.invalidate_results();
+        // Dedup through a hash set: the previous linear scan made
+        // registration O(watches^2), which dominated solving for models
+        // registering thousands of watches (graph constraints). The
+        // resulting watch list is identical.
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        seen.reserve(watches.len());
         for &term in watches {
             let lit = self.encode(term, tm);
             self.sat.freeze_theory_vars([lit.var()]);
             self.user_state.literals.insert(term, lit);
             let negation = tm.mk_not(term);
             self.user_state.literals.insert(negation, !lit);
-            if !self.user_state.watches.iter().any(|&(t, _)| t == term) {
+            if seen.insert(term) {
                 self.user_state.watches.push((term, lit));
+                self.user_state.by_var.insert(lit.var(), (term, lit));
             }
             self.user_state.manager.watch_term(term);
         }
@@ -254,15 +268,11 @@ impl<'a, T: TheoryCallback> UserCallback<'a, T> {
     }
 
     fn truth(&self, literal: Lit) -> Option<bool> {
-        self.state.watches.iter().find_map(|&(term, lit)| {
-            if lit.var() != literal.var() {
-                return None;
-            }
-            self.state
-                .manager
-                .get_fixed_value(term)
-                .map(|value| (value == self.true_term) == (lit == literal))
-        })
+        let &(term, lit) = self.state.by_var.get(&literal.var())?;
+        self.state
+            .manager
+            .get_fixed_value(term)
+            .map(|value| (value == self.true_term) == (lit == literal))
     }
 
     fn consequences(&mut self) -> TheoryCheckResult {
