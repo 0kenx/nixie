@@ -837,6 +837,7 @@ mod tests {
 #[derive(Debug, Default)]
 pub struct FlatCnf {
     pub num_vars: usize,
+    pub num_clauses: usize,
     pub lits: Vec<i32>,
 }
 
@@ -954,6 +955,10 @@ impl FlatCnf {
                 num_clauses_expected, clauses_found
             ));
         }
-        Ok(Self { num_vars, lits })
+        Ok(Self {
+            num_vars,
+            num_clauses: clauses_found,
+            lits,
+        })
     }
 }

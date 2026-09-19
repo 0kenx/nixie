@@ -52,3 +52,26 @@ interleaved runs (the box's contention inflated both arms' sys to
    (the `DimacsParser::parse_reader` path already does this; the fast
    path does not — it only covers binary/BIG edges, but those are 78 %
    of the hwmcc anatomy).
+
+## Addendum: the header-driven reserves land (and deferred-BIG does not)
+
+`FlatCnf` now carries `num_clauses`; the fast path calls the existing
+`reserve_clause_slots` plus a new `reserve_clause_bytes` (arena backing
+sized from the flat stream's exact literal count: `4·lits + 16·clauses`),
+removing the arena's doubling traffic (~600 MB grown ≈ 1.2 GB moved on
+the 25M-clause class).  Bit-identical by construction — the gate reads
+counters 1.000 against the pin; conflicts/decisions identical on the
+spot set; 1318 tests, clippy/fmt clean, parity 177/0/1.
+
+`begin_deferred_big`/`finish_deferred_big` around the fast path measured
+**net-negative on the binary-heavy hwmcc anatomy** (9.5 → 10.6 s over
+three interleaved pairs: the exact-size CSR materialization over ~38 M
+deferred edges costs more than incremental attach saves at that scale)
+and neutral on the normalised class — dropped.  The `DimacsParser` path
+keeps its pair (worker-class measured wins there).
+
+Measured (interleaved, load-contended): `14.normalised` 39–46 s →
+29–38 s; the load wall is now dominated by the per-literal
+`Vec<Watcher>` churn — the CSR-watches-primary slice — plus the file
+I/O gap to kissat's mmap (0.85 s vs 9.5 s on hwmcc remains after these
+fixes; most of that is the same watch-list churn, not read()).

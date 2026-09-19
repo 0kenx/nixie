@@ -905,7 +905,10 @@ fn count_definition(
 /// Budget on the ground element list per sort: the identities are
 /// |elements| × |bags| equations, and the set theory's counting cap
 /// (`MAX_COUNT_ELEMENTS`) bounds the same product for the same reason.
-const MAX_BAG_ELEMENTS: usize = 24;
+/// Env-overridable and reported on firing — see [`super::caps`].
+fn max_bag_elements() -> usize {
+    super::caps::cap("bag_elements", 24)
+}
 
 /// Reduce the bag constraints of `roots` to arithmetic over `bag.count`.
 ///
@@ -1131,7 +1134,9 @@ pub(crate) fn reduce(
         let Some(elems) = by_sort.get(&es) else {
             continue;
         };
-        if elems.len() > MAX_BAG_ELEMENTS {
+        let cap = max_bag_elements();
+        if elems.len() > cap {
+            super::caps::report_fired("bag_elements", elems.len(), cap);
             out.incomplete = true;
             continue;
         }
@@ -1214,7 +1219,9 @@ pub(crate) fn reduce(
     // which EUF commits when a derivation exists. `bag.card` rides the
     // same pairs — without it, `x = 0 ∧ |f x| = 2 ∧ |f 0| = 5` had the
     // same hole through the slack columns.
-    const MAX_BAG_PAIRS: usize = 128;
+    fn max_bag_pairs() -> usize {
+        super::caps::cap("bag_pairs", 128)
+    }
     let mut bag_pairs = 0usize;
     'outer: for (i, &(a, esa)) in s.bags.iter().enumerate() {
         for &(b, esb) in s.bags.iter().skip(i + 1) {
@@ -1243,7 +1250,9 @@ pub(crate) fn reduce(
             if !eligible(a) || !eligible(b) {
                 continue;
             }
-            if bag_pairs >= MAX_BAG_PAIRS {
+            let cap = max_bag_pairs();
+            if bag_pairs >= cap {
+                super::caps::report_fired("bag_pairs", bag_pairs, cap);
                 out.incomplete = true;
                 break 'outer;
             }
