@@ -12,7 +12,10 @@ side had no standing perf reference at all.
   sort` order) of the in-repo `smt-lib/non-incremental` extracts — the
   same files every run; the slices are recorded in the snapshot.
 - **Budget**: a per-instance wall *cap* (10 s default, bounding only —
-  wall is never a metric).
+  wall is never a metric).  (nixie's `--conflict-limit` is now enforced
+  end to end — it used to bind only theory conflicts, a facade on
+  bit-blasted goals — but the harness keeps wall caps so both solvers
+  run under an identical, comparable budget shape.)
 - **Metric**: each solver's own deterministic conflict counters
   (`--stats` / `-st`).  Counter *levels* are not comparable across
   solvers; **solved-within-cap counts** are the cross-solver datum, and

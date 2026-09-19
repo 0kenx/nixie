@@ -95,15 +95,55 @@ fn pigeonhole_script(holes: usize) -> String {
 // keys `Context::set_option` actually recognises (`max-conflicts`/
 // `max-decisions`) instead of the never-recognised `conflict-limit`/
 // `decision-limit`, which is the CLI-side bug this package owns and fixes.
-// Empirically (verified manually against a hard pigeonhole instance and
-// `(get-option :max-conflicts)`) the *value* now reaches `SolverConfig`
-// correctly, but `nixie-solver`'s CDCL(T) search does not actually consult it
-// for plain-Boolean problems: an explicit `--conflict-limit 1` produces the
-// exact same result and wall-clock time as no limit at all on a hard
-// pigeonhole-principle instance that isn't owned by this package, so the two
-// tests below check the CLI-level contract (the value is threaded through
-// under the right key), not full end-to-end search enforcement -- that gap
-// lives in `nixie-solver`, outside `sweep-frontends`' owned files.
+// The end-to-end enforcement gap this note used to document (the budget
+// reached `SolverConfig` but the CDCL(T) search consulted it only at
+// `check` entry and on theory conflicts, so SAT-core-conflict goals --
+// bit-blasted, plain-Boolean -- never saw it) is closed in
+// `nixie-solver`: the general path threads the remaining allowance into
+// the SAT core's own budget before every solve; exhaustion returns
+// `unknown`, never a verdict.  `conflict_limit_binds_end_to_end_...`
+// below pins it.
+// The end-to-end enforcement the NOTE above documented as missing: the
+// budget used to reach `SolverConfig` but was consulted only at `check`
+// entry and on *theory* conflicts, so a goal that spends its conflicts
+// in the SAT core (any bit-blasted or plain-Boolean goal) never saw it
+// -- `--conflict-limit 1` behaved exactly like no limit.  The general
+// path now threads the remaining allowance into the SAT core's own
+// budget before every solve; exhaustion returns `unknown`, never a
+// verdict.
+#[test]
+fn conflict_limit_binds_end_to_end_on_sat_core_conflicts() {
+    // Hard enough to need real search (>1 conflict), small enough to
+    // solve fast unlimited: PHP(5 into 4).
+    let script = write_temp_smt2("conflict_limit_binds", &pigeonhole_script(4));
+
+    let output = Command::new(nixie_bin())
+        .args(["--conflict-limit", "1", "--quiet", script.to_str().unwrap()])
+        .output()
+        .expect("failed to execute nixie");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().ends_with("unknown"),
+        "--conflict-limit 1 must stop the SAT-core search with `unknown` \
+         (the budget now reaches the SAT core's own conflict budget; \
+         previously it never bound outside theory conflicts); got:\n{stdout}"
+    );
+
+    // And an unlimited run of the same goal still decides it (the budget
+    // is a *stop*, not a weakened verdict).
+    let output2 = Command::new(nixie_bin())
+        .args(["--quiet", script.to_str().unwrap()])
+        .output()
+        .expect("failed to execute nixie");
+    let _ = fs::remove_file(&script);
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    assert!(
+        stdout2.trim().ends_with("unsat"),
+        "the same goal unlimited must still decide `unsat`; got:\n{stdout2}"
+    );
+}
+
 #[test]
 fn conflict_limit_is_recorded_under_the_recognised_option_key() {
     let script = write_temp_smt2(

@@ -3069,6 +3069,13 @@ impl Solver {
             // SAT core's delta in so `:statistics` and the verdict-cache
             // tests keep the same contract with no manager attached.
             let props_before = self.sat.stats().propagations;
+            // The SAT-core conflict budget (see the general path's twin
+            // note): this path's conflicts are all SAT-core conflicts.
+            if self.config.max_conflicts > 0 {
+                let spent = self.sat.stats().conflicts;
+                self.sat
+                    .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
+            }
             match self.sat.solve() {
                 SatResult::Unsat => {
                     self.statistics.propagations +=
@@ -3224,6 +3231,24 @@ impl Solver {
             if crate::solver::freeze_collapse_enabled() {
                 let vars: Vec<_> = self.var_to_constraint.keys().copied().collect();
                 self.sat.freeze_theory_vars(vars);
+            }
+            // The SAT-core conflict budget (`config.max_conflicts`, the
+            // CLI's `--conflict-limit` and `check_with_limits`' per-check
+            // cap): the budget used to be enforced only at `check` entry
+            // and on *theory* conflicts inside the callbacks — a
+            // bit-blasted pure-BV goal spends its conflicts in the SAT
+            // core (theory conflicts ≈ 0), so the limit was a facade
+            // there (measured: `--conflict-limit 100` on a 1507-conflict
+            // QF_BV instance returned `unsat` untouched).  Set the core's
+            // own budget to the remaining allowance before every solve —
+            // the MBQI loop re-enters `solve_with_theory` per round, and
+            // the core's cumulative counter is the honest remaining-work
+            // base.  The core returns `Unknown` on exhaustion, which maps
+            // to `Unknown` below (a budget stop is never a verdict).
+            if self.config.max_conflicts > 0 {
+                let spent = self.sat.stats().conflicts;
+                self.sat
+                    .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
             }
             let sat_result = if self.user_state.active() {
                 let mut callback = user_propagation::UserCallback::new(
@@ -4686,6 +4711,13 @@ impl Solver {
             }
         }
 
+        // The SAT-core conflict budget (see the general path's twin
+        // note): `check_sat_only`'s conflicts are all SAT-core conflicts.
+        if self.config.max_conflicts > 0 {
+            let spent = self.sat.stats().conflicts;
+            self.sat
+                .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
+        }
         let raw_result = match self.sat.solve() {
             SatResult::Sat => {
                 self.build_model(manager);
