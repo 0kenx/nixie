@@ -338,3 +338,37 @@ infeasible core names the identity row), `solve_full_i64_domain_inputs`
 narrows through `i64::try_from`), `solve_runaway_growth_still_gives_up`
 (growth past `2^63` trips; the same shape a size class down decides).
 The e2e regression re-pinned from never-`sat` to the exact `unsat`.
+
+## I. The cosmetic tail closed: the `RealConst` echo spelling, and the model-blocking unit debt (2026-09-19, later landing `153b1e1c`)
+
+**The spelling.** The original handoff's item 8 turned out to be a
+*parseability* defect, not cosmetics: the shared printers' `RealConst`
+arm emitted `Ratio`'s Display — `1/4611686018427387904` — a token
+neither nixie nor z3 accepts, so a `get-value` echo of an exact rational
+(the publication channel's `(/ n d)` term folded back to a `RealConst`
+by `model.eval` + simplify) could not be re-read by anything.  The arm
+now spells `n.0` for integer-valued Reals and `(/ n d)` otherwise
+(`model_fmt::format_value`'s existing convention, now in one place
+semantically).  One collateral pin updated: the NRA root echo `-2`
+becomes the sort-correct `-2.0`.  Regression
+`get_value_rational_echo_round_trips` pins the spelling AND the semantic
+round-trip (bind the echo as a `define-fun`, assert `distinct` ⇒
+`unsat`).  Residual documented in-test: a Real pinned by an *integer*
+literal echoes the integer spelling (`5`, parseable in a Real position)
+— a model-entry sort question in the model builder, not a parseability
+defect.
+
+**The fixture debt (§E) closed as the white-box option.**
+`block_retry_loop_mechanics_recover_after_direct_block` drives
+`block_refuted_model_and_rebase` directly after a certified `Sat` and
+pins the loop's mechanics: the block excludes an assignment (not the
+goal), the rebase leaves a solvable state, the retry certifies the
+OTHER model, and the snapshot-scoped counter pops to zero inside a user
+scope (a base-level block retracts nothing — documented in the test).
+The *reachability* of a gate-refuted-first candidate stays fuzz-covered:
+twelve natural shapes are all preempted by repairs/theories (§E), so the
+production entry path has no small deterministic goal on this tree.
+
+Verification: suite 12 012/12 012; parity 100 % (z3 4.16.0); gate PASS;
+fresh differentials 20262160–65 (background hunt) + 20262170–72 zero
+disagreements; debug-panic sweep clean.  Binary `precompile/e7a1cc44/`.

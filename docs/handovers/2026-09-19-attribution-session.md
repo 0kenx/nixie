@@ -51,9 +51,15 @@ the study wins. Landed as `7ab21fb5` (binary
    pop-exact under LIFO; the journal's job is keep-the-tighter-live
    without losing the displaced bound's reason set. Do NOT land a
    decline without it.
-3. **The model-blocking retry-succeeds fixture** stays open — 12
-   hand shapes tried, all preempted by repairs/theories (study §E);
-   the honest options are recorded there.
+3. ~~The model-blocking retry-succeeds fixture~~ — **closed** as the
+   white-box option (`153b1e1c`): the loop's mechanics are pinned by
+   driving `block_refuted_model_and_rebase` directly (block excludes an
+   assignment, rebase leaves a solvable state, retry certifies the other
+   model, counter pops scoped); the *reachability* of a refuted-first
+   candidate stays fuzz-covered (no small deterministic goal exists on
+   this tree).  The handoff's item 8 (exact-value spelling) closed with
+   it: `get-value` echoes of exact rationals re-parse (the `RealConst`
+   printer arm's `1/n` math spelling was readable by nothing).
 4. ~~The wide-constant parity refutation~~ — **DONE the same day**
    (`33cb9418`, merged to main as `37ab63b1`): the Hermite solve widened
    to the full `i64` input domain (`MAG_BOUND_SOLVE`, checked Euclid
