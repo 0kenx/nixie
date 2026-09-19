@@ -2644,3 +2644,51 @@ before choosing a slice).  Landed as `bf9f5b71`.
       declines — J17/J5 float shapes still exist beyond item 86's
       publication fixes).  Re-attribute before choosing: the probes are
       session-local (see item 86's site names).
+
+## Continuation 44 (2026-09-19): item 88 — the J5 class decoded: the theory's Sat carries an unresolved integer; no code landed (the map, the sketch, and a zero-delta hole)
+
+88. **The 91-member residual re-attributed at `d542bd56`: J5 leads with
+    61** (the big-const certification gate), A2+Q 27, S3 residual 1,
+    J17 ×2, J21 ×1.  The J5 slice is NOT a certification defect — decoded
+    to the root on `gap_s20261000_i101`:
+    * The theory hands the solver a `Sat` whose model contains an
+      integer variable the theory CANNOT VALUE — `value` and
+      `value_exact` both `None` while `point_value_exact` is `Some`
+      (FRACTIONAL): a wide-basic integer resting at a fractional exact
+      value the narrow channel cannot narrow.  The model builder then
+      publishes the SORT DEFAULT (`0`) for it, the (exact, Euclidean,
+      `BigInt`) certifier correctly refutes the candidate (`verify
+      FALSE` — e.g. `xi = 0` against its own committed atom
+      `(> (- (* 3 xi) 2) -11)` reading true), and the gate downgrades to
+      `unknown`.  The pins are NOT implicated: the same shape would fail
+      over any default.
+    * **Why that is not the blocking loop's problem**: the model-
+      refutation gate (which blocks and re-solves, J17's route) runs
+      inside the search loop; the big-const gate runs AFTER the search
+      returns `Sat` — the bad candidate exits before the blocker ever
+      sees it.
+    * **The next session's entry points**: (1) why the search's `Sat`
+      carries an unresolved integer — the B&B's acceptance paths
+      (`snapshot_lia_model`'s `else { continue }` SKIPS unresolvable int
+      vars without blocking; `find_fractional_int_var` scans `int_vars`
+      — check whether the variable is IN that set: an unmarked Int
+      term is treated as continuous and never branched), and (2) the
+      model builder's default-for-value-less (model_builder's `0`
+      completion) should NOT fire for a variable the theory declines —
+      omit it and let the evaluator's unset-atom arm speak.  Probes:
+      the THEORY-VALUES dump at the J5 site (`value`/`value_exact` per
+      assertion var) is the fastest discriminator; the certifier's own
+      arms print via the `[cert: ...]` probe set (real-declined /
+      prepare-None / combos / verify-FALSE / exhausted / unsupported).
+    * **A zero-delta hole found and NOT landed**: the search loop's
+      terminal `Sat` return (after blocking/repair rounds — the site
+      just above "Build partial model for MBQI" in `check_core`) exits
+      MODEL-LESS when the repair rounds cleared the first candidate's
+      model: `self.model.is_none() → build_model` before returning is
+      the sketch.  Measured: recovers none of the 61 (all candidates
+      genuinely bad), so it landed nowhere — but a user `get-model`
+      after that path would print "no model available"; worth bundling
+      with the real fix above.
+    * Soundness screens this session: the 91-member screen and 6 fresh
+      differential seeds (3 mixed ×400 + 3 wide ×300) at the sign-fix
+      build, zero wrong verdicts, zero refuted models.

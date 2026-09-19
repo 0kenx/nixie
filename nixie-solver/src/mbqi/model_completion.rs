@@ -116,6 +116,15 @@ pub struct CompletedModel {
     /// semantic-domain collapse would otherwise erase from every
     /// engine's candidate space.
     pub compound_values: Vec<(TermId, TermId)>,
+    /// Whether the assertion gate's materialization has armed the
+    /// literal-binding channel (the goal's asserted-equality semantics
+    /// are load-bearing — a persistent violation fired the pin
+    /// adoption).  The odometer's compound points join only then: on
+    /// goals whose equalities the row algebra honors alone, the
+    /// compound-tuple instances are semantically redundant but
+    /// syntactically fresh keys — the productive-spin shape (measured
+    /// on set9/set19: `sat` -> `unknown`).
+    pub literal_channel_armed: bool,
     /// The structure version (see `ModelCompleter`): a *monotone* number
     /// assigned by the completer, identical across rounds exactly when the
     /// completed structure is semantically unchanged.  The model checker's
@@ -144,6 +153,7 @@ impl CompletedModel {
             table_domains: FxHashMap::default(),
             semantic_domains: FxHashMap::default(),
             compound_values: Vec::new(),
+            literal_channel_armed: false,
             version: 0,
             generation: 0,
         }

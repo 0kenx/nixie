@@ -828,6 +828,46 @@ impl ModelChecker {
                             .unwrap_or_else(|| inst_sets.get(&sort).cloned().unwrap_or_default())
                     })
                     .collect();
+                // The literal-binding channel's odometer points (armed
+                // table mode only): the goal's own assertion-mentioned
+                // compounds — the *self-representative* ones, the terms
+                // the structure has not collapsed — join the frozen
+                // domain as candidate bindings.  The table confinement
+                // exists to stop mining *fresh ground* points (the
+                // chase); these are the goal's fixed terms, and the
+                // refutation side needs the instance at the literal
+                // tuple — `(w, (union a b), b)` — which the
+                // semantic-domain collapse erases from every collapsed
+                // view (the extensional family's residual).  Arming
+                // rides the assertion gate's materialization (a
+                // persistent equality violation — the goal's equality
+                // semantics are load-bearing): on goals whose
+                // equalities the row algebra honors alone, the
+                // compound-tuple instances are semantically redundant
+                // but syntactically fresh keys — the productive-spin
+                // shape (measured on set9/set19: `sat` -> `unknown`).
+                let sets: Vec<Vec<TermId>> = if model.literal_channel_armed {
+                    sets.into_iter()
+                        .enumerate()
+                        .map(|(i, mut set)| {
+                            let sort = skolem_terms[i].1;
+                            for &(compound, value) in &model.compound_values {
+                                if compound != value {
+                                    continue; // self-pairs only
+                                }
+                                if manager.get(compound).is_some_and(|n| n.sort == sort)
+                                    && !set.contains(&compound)
+                                    && set.len() < 12
+                                {
+                                    set.push(compound);
+                                }
+                            }
+                            set
+                        })
+                        .collect()
+                } else {
+                    sets
+                };
                 if sets.iter().any(|s| s.is_empty()) {
                     // Some bound variable has no candidate values at all:
                     // nothing sensible to instantiate with.

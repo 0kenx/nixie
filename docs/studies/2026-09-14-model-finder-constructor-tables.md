@@ -1333,6 +1333,73 @@ point of `g` must agree with that entry*.
   every check past budget (`unknown`).  The mining-only channel is
   the safe form — landed.
 
+
+## The literal-binding channel closes the extensional family — the fuzz target is fully met (2026-09-19, twenty-first follow-up)
+
+The twentieth's specified composed-consistency work landed in a
+different, simpler shape — in the *odometer*, not the evaluator — and
+with it the extensional family closes: **the unsat-forcing fuzz
+battery now solves 150/150 on every seed** (seeds 51–54 × 150: zero
+`unknown` anywhere).  Both of the handover's named gaps (pigeonhole,
+extensional) are closed; the set family stays `sat`; z3 still times
+out on set19.
+
+### What landed
+
+**The literal-binding channel, final form.**  The falsifier mining's
+odometer (table mode) gains the goal's assertion-mentioned compounds
+as candidate bindings — the terms the semantic-domain collapse erases
+from every collapsed view.  Two gates make it safe:
+
+* **Self-pairs only** (`compound == value`): a *merged* pair's
+  compound folds to its representative (an asserted-equality
+  consequence), so mining it emits the representative's instance under
+  a different substitution key — semantically redundant, syntactically
+  fresh forever (the productive-spin shape; measured on set16/set9:
+  `sat` -> `unknown`).
+* **Armed by the gate's materialization** (`literal_channel_armed`):
+  the compound points join only after the assertion gate's
+  persistent-violation signal fired the asserted-equality pin adoption
+  — the goal's equality semantics are *load-bearing*, exactly the
+  extensional shape.  On goals whose equalities the row algebra honors
+  alone (set9/set19), the compound-tuple instances are pure spin
+  (measured: `sat` -> `unknown` unarmed).
+
+With the channel armed, the extensional middle shape
+(`a = difference(union(a b), b)` with both memberships) walks: the
+structural gate detects the violated equality → the materialization
+lands the pin (`difference(a,b) -> a` after normalization) → the aux
+falsifies the difference axiom → the mining, binding the *literal*
+compound `union(a b)` (a self-pair odometer point), verifies the
+falsity under the structure (the Bool-equality fold of the twentieth)
+→ the instance at the literal tuple `(w, (union a b), b)` → the
+ground solver refutes through the asserted equality → `unsat`.
+
+### Negative results (this session's, do not retry blind)
+
+* **The resolved-entry probe** (a structural-mode pre-lookup chasing
+  *assignments* for an application's args): the resolution needs the
+  args' *entries*, not their assignments — the pin lives as an entry,
+  and the probe missed it.  The correct move was not to answer
+  applications early at all but to give the odometer the literal
+  points.
+* **Structural mining** (the compound-arg skip in the falsifier
+  verification walk): closes nothing the odometer channel does not
+  (ext2 closes without it) and regresses set16 (`sat` -> `unknown`).
+  Dropped.
+* **Unarmed or merged-pair compound odometer points**: the spin shapes
+  above.  The two gates are load-bearing.
+
+### Verification
+
+quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat
+**150/150 on every seed** — the battery's first fully-solved state;
+set family all `sat`; workspace nixie-solver + nixie-core
+**4902/4902**; parity **176 Correct / 1 Inconclusive / 0 wrong**
+(z3 4.16.0); clippy/fmt/doc clean; perf gate **PASS** (conflicts/
+decisions 1.000, wall 0.96).  New pin:
+`extensional_hidden_difference_key_refutes`.
+
 ### Verification
 
 quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat **CLEAN**

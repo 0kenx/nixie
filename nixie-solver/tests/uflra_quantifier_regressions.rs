@@ -316,6 +316,44 @@ fn set16_family_is_never_wrong() {
     );
 }
 
+/// The extensional family's middle dressing — the shape that stayed
+/// `unknown` after the persistent-model rewrite (the handover's second
+/// named gap): the collision's difference key hidden one application
+/// deeper (`a = difference(union(a b), b)`), where the refutation needs
+/// the literal-tuple instance at `(w, (union a b), b)` — erased from
+/// every engine's candidate space by the semantic-domain collapse until
+/// the literal-binding channel (the assertion gate's materialization
+/// arming the mining's compound points) landed.  z3 refutes; so must we.
+#[test]
+fn extensional_hidden_difference_key_refutes() {
+    let output = run_bounded(
+        r#"
+        (set-logic UFLRA)
+        (declare-sort Elem 0) (declare-sort Set 0)
+        (declare-fun M (Elem Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (declare-fun difference (Set Set) Set)
+        (declare-fun union (Set Set) Set)
+        (declare-fun a () Set) (declare-fun b () Set)
+        (declare-fun w () Elem)
+        (assert (forall ((x Elem) (s1 Set) (s2 Set)) (= (M x (difference s1 s2)) (and (M x s1) (not (M x s2))))))
+        (assert (forall ((x Elem) (s1 Set) (s2 Set)) (= (M x (union s1 s2)) (or (M x s1) (M x s2)))))
+        (assert (forall ((s1 Set) (s2 Set)) (=> (forall ((x Elem)) (=> (M x s1) (M x s2))) (subset s1 s2))))
+        (assert (= a (difference (union a b) b)))
+        (assert (M w a))
+        (assert (M w b))
+        (assert (forall ((x Elem)) (=> (M x a) (M x a))))
+        (check-sat)
+    "#,
+        60_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "unsat",
+        "the literal-binding channel closes the extensional family (z3: unsat); got {status}"
+    );
+}
+
 /// The pigeonhole family's canonical shape (quant_fuzz `unsat` family,
 /// ~20/30 unknown before the EUF-representative export landed): the
 /// enumeration axiom covers the sort, `distinct` fixes the cardinality,
