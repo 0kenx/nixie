@@ -2795,3 +2795,49 @@ snap-delta update agreed with exact evaluation at every pivot.
 The obligation stands as stated (a reviewed boundary argument plus this
 evidence — not a mechanized proof); the canary is now a tripwire a
 corpus run, a differential, or a user can actually hear.
+
+## Continuation 47 (2026-09-19): item 91 — the div/mod leaf-acceptance class decoded ONE LAYER DEEPER: wide-row explosion + constraint detachment (mapped, not fixed)
+
+91. **The ~40-member "div/mod leaf-acceptance" residual decoded on
+    `gap_s20261000_i423`** (the J5 gate's `verify FALSE` on an otherwise
+    honest model): the failing conjunct is the equality
+    `5·yi + mod(3yi−8,5) + 2·xi = 4611686018427387905`; the candidate
+    violates it by exactly 34 (the theory's mod slack would have to be 34,
+    outside `[0,4]`).  The div/mod axioms are COMPLETE and correct (the
+    div/mod pair's values check out exactly); the atom is committed
+    `True`; `assert_eq` fires; **and yet no tableau row enforces the
+    constraint**:
+    * The `atom_rows` cache maps the atom to slack `v301`, whose CURRENT
+      row is `v301 = v6` — the pivot chain reduced C3's row to a single
+      trivially-zero variable, DETACHING it from `(yi, mod, xi)`.  The
+      tableau is internally consistent the whole way (no violated
+      basics, no rows referencing basics, the debug definitional
+      invariant passes) — the row's FORM no longer means C3.
+    * **The zoo it happened in**: `wide_rows` holds ~150 NEAR-DUPLICATE
+      rows at this gate — the same linear form under different slack ids
+      (v239 ≡ v264 ≡ v249 ≡ …; v289 ≡ v288 ≡ v296 ≡ …).  The narrow
+      channel is content-addressed (`intern_row_cached`); the WIDE
+      channel (`intern_row_big_reported` → `intern_wide_row`) is NOT —
+      every rebuild round (MBQI/blocking rebases re-assert the atoms)
+      mints FRESH wide rows for the same content, and the wide-repair
+      pivots then churn between the duplicates.  A constraint detached
+      in that churn is the prime suspect for the C3 corruption (and the
+      duplication alone is a serious capacity defect: every wide
+      classification pass iterates all of them).
+    * **Entry points for the fix session**: (1) content-address the wide
+      intern (a `wide_row_key` map, mirroring `intern_row_cached` —
+      this alone kills the 150×); (2) re-verify the atom-row equivalence
+      after wide pivots (a debug-mode canary: for every
+      `atom_rows` entry, the slack's row must still ENTAIL the key's
+      linear form over the current basis — the definitional invariant
+      does NOT check this); (3) the probes used here:
+      `debug_atom_row(reason)` (cache key vs current row),
+      `debug_rows_with_column` / `debug_wide_rows_with_column` (the
+      zoo), and the certifier's `[cert-false]` + `INTERP`
+      (`manager.resolve_str`) for the failing conjunct under the
+      published values.
+    * Reproducer: the instance verbatim (bytes in the survey corpus;
+      seed 20261000, index 423); pre-fix verdict `unknown`, z3 `sat`.
+    * No code landed this item — the two defects named above are real
+      but the fix touches the wide-pivot core and must land with its
+      own battery; nothing here should land unverified.
