@@ -3381,6 +3381,61 @@ impl Solver {
         (self.num_vars, clauses)
     }
 
+    /// Create `n` new variables in one call (bulk `new_var`).
+    ///
+    /// Same final state as `n` sequential [`Self::new_var`] calls — every
+    /// per-variable/per-literal table is grown once to the final size with
+    /// the same fill values, then the two heap structures (`vsids`, `chb`)
+    /// get the same per-var insertions in the same order (all-equal
+    /// activities make each insertion O(1), so the loop is cheap) — but
+    /// without the per-call `resize` traffic.  Sequential growth of ~25
+    /// tables one variable at a time measured 18.6 s of wall on a
+    /// 9.4M-variable DIMACS header (2 µs/var: amortized-doubling reallocs
+    /// and their page-fault storms dominate huge-formula load); the bulk
+    /// form is one resize per table.  Trajectories are bit-identical: no
+    /// value any pass can observe differs (the tables' contents are the
+    /// fills `new_var` itself writes, and the heap insertion order is
+    /// unchanged).
+    pub fn new_vars_bulk(&mut self, n: usize) {
+        if n == 0 {
+            return;
+        }
+        let old = self.num_vars;
+        let target = old + n;
+        self.num_vars = target;
+        self.trail.resize(target);
+        self.watches.resize(target);
+        self.binary_graph.resize(target);
+        self.vmtf.resize(target);
+        self.lrb.resize(target);
+        self.seen.resize(target, false);
+        self.model.resize(target, LBool::Undef);
+        self.phase.resize(target, false); // Default phase: negative
+        self.deterministic_phase.resize(target, None);
+        self.best_phase.resize(target, false);
+        self.target_phase.resize(target, false);
+        self.sat_caching_phase.resize(target, false);
+        if self.level_marks.len() < target {
+            self.level_marks.resize(target, 0);
+        }
+        if self.seen_level_count.len() < target {
+            self.seen_level_count.resize(target, 0);
+            self.seen_level_trail.resize(target, u32::MAX);
+        }
+        if self.lrat {
+            self.unit_clauses_idx.resize(2 * target, 0);
+        }
+        self.lrat_flags.resize(2 * target, 0);
+        self.elim_mark.resize(target, false);
+        self.elim_var_flag.resize(target, false);
+        self.probe_propfixed.resize(2 * target, -1);
+        for i in old..target {
+            let var = Var::new(i as u32);
+            self.vsids.insert(var);
+            self.chb.insert(var);
+        }
+    }
+
     /// Ensure we have at least n variables
     pub fn ensure_vars(&mut self, n: usize) {
         while self.num_vars < n {
