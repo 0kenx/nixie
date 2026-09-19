@@ -1390,6 +1390,43 @@ ground solver refutes through the asserted equality → `unsat`.
 * **Unarmed or merged-pair compound odometer points**: the spin shapes
   above.  The two gates are load-bearing.
 
+
+## The constructor-tables matched null measured — the content is load-bearing where the closure discipline is (2026-09-19, twenty-second follow-up)
+
+The AGENTS.md formality outstanding since the endgame handover is
+closed: `NIXIE_CT_NULL=<seed>` (in-tree, env-gated, off by default)
+runs the constructor-tables unit's *machinery* bit-identically — the
+tuple walk, row computation, miss recording, mint, caps, entry counts
+— with the **semantic content** removed: where the treatment's row
+match finds the entry's result element, the null picks a seeded
+element of the universe instead.  Same physical work, same magnitude,
+same code path; only the selection content differs.
+
+**Measured** (verdicts + the deterministic aux-conflict counter,
+10 null seeds on set19, 5 on set9 — the treatment's cells are
+deterministic):
+
+| cell | treatment | null band | verdict |
+|---|---|---|---|
+| set9 | `sat`, 225 conflicts | 5/5 `sat`, 22–194 conflicts | the null is *cheaper*; the selection content carries no verdict value here |
+| set19 | `sat`, 550 conflicts | **7/10 `sat`**, 3/10 `unknown`, 91–324 conflicts | **the content buys 30% completeness** |
+
+The honest reading: the row-match content is load-bearing exactly
+where the structure needs *closure discipline* — set19's full
+row-closure growth, where content-free entries strand the
+certification.  On set9 the persistent architecture's repair channels
+(invalidation, the blocking clauses, the gate) absorb content-free
+choices and still converge — cheaper, because wrong entries are
+repaired faster than the algebra closes.  The treatment is kept
+everywhere: a 100%-vs-70% verdict gap on the family's hardest member
+is the content's value; the row-match also remains what makes entries
+defensible by construction (an interpretation-semantics property the
+fuzzers verify, not a conflicts measurement).
+
+This is a measurement knob, not shipping behavior — the default path
+is unchanged (family pins, both fuzz families, spot batteries re-run
+clean).
+
 ### Verification
 
 quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat

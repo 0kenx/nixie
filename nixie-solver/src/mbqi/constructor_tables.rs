@@ -1027,6 +1027,11 @@ fn compute_one(
     let null_seed: Option<u64> = std::env::var("NIXIE_MINT_NULL")
         .ok()
         .and_then(|s| s.parse().ok());
+    // The constructor-tables unit's matched null (see the choice site
+    // below): read once per table, never per tuple.
+    let null_seed_ct: Option<u64> = std::env::var("NIXIE_CT_NULL")
+        .ok()
+        .and_then(|s| s.parse().ok());
     'tuples: loop {
         if walked >= MAX_TABLE_TUPLES {
             break;
@@ -1082,7 +1087,19 @@ fn compute_one(
             // level (an instance at the semantic tuple `(union(a,a), b)`
             // mentions `union(union(a,a), b)` — the chase again, one level
             // deeper).  Constants anchor it.
-            if let Some((z, _)) = universe
+            //
+            // **Matched null** (`NIXIE_CT_NULL=<seed>`, the constructor-
+            // tables unit's AGENTS.md formality): the same machinery —
+            // tuple walk, row computation, miss recording, mint, caps,
+            // entry counts — with the *semantic content* removed: when
+            // the treatment's row match finds a candidate, the null
+            // picks the result element by a seeded pick of the universe
+            // instead.  If the unit's convergence value lives in the row
+            // algebra (the design claim: entries chosen by row matching
+            // close the definitional axioms by construction), the null
+            // must not converge; a ratio ~1 would say the content
+            // carries nothing the machinery does not.
+            let matched = universe
                 .iter()
                 .zip(rows.iter())
                 .find(|(z, row)| {
@@ -1096,11 +1113,24 @@ fn compute_one(
                         .iter()
                         .zip(rows.iter())
                         .find(|(_, row)| **row == target)
-                })
-            {
+                });
+            if let Some((z, _)) = matched {
+                let result = match null_seed_ct {
+                    Some(seed) => {
+                        let mut state = seed
+                            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                            .wrapping_add(walked as u64)
+                            .max(1);
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        universe[(state as usize) % universe.len()]
+                    }
+                    None => *z,
+                };
                 entries.push(FunctionEntry {
                     args: tuple,
-                    result: *z,
+                    result,
                 });
             }
             // No existing element has the target row: GROW the completed
