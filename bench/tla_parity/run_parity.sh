@@ -15,6 +15,14 @@
 # Usage: bench/tla_parity/run_parity.sh [corpus-dir ...]
 set -u
 
+# `--help` must not become a corpus path (it once did: "corpus: 0 files"
+# that looked like a missing corpus and cost a session a wrong conclusion).
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  echo "usage: $0 [corpus-dir ...]   (default: tlaplus-examples + apalache)"
+  exit 0
+fi
+
+
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 work="${TLA_PARITY_WORK:-$(mktemp -d)}"
