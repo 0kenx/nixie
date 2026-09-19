@@ -36,10 +36,13 @@ exit 0 — the next session won't repeat the misdiagnosis).
 3. **The lambda-shaped function encoding or `Bag`-sort bridge** — the
    two honest declines in TLA+ bag BMC (state-bag updates,
    `DOMAIN`-quantifiers). Design-sized; only worth it with a workload.
-4. **`structurally_equal`/`alpha_equivalent` conservatively return
-   `false` for two `BagMap`/`BagFilter` terms** (noted in the fold
-   handover; `BagFold` has a correct dedicated arm). Optimization-loss
-   only, never unsound — a tidy small fix if someone is in those files.
+4. ~~`structurally_equal`/`alpha_equivalent` conservative `false` for
+   `BagMap`/`BagFilter`~~ — **closed** (`5193b526`, merged `5f6577d7`):
+   both walks now mirror `bag.fold`'s discipline (the function/predicate
+   symbol — plus the codomain sort for map — is part of the identity, the
+   bag compares as a child); pinned by
+   `bag_map_and_filter_shape_equality`.  Verified: suite 12 014/12 014,
+   parity 100 % (z3 4.16.0), gate PASS, fresh differentials clean.
 5. **Bag deep-shape perf** — stays closed (see item 3 above) unless a
    corpus appears.
 
