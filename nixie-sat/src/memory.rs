@@ -506,6 +506,15 @@ impl ClauseArena {
         }
     }
 
+    /// Pre-reserve `bytes` of backing storage (bulk-load shape only;
+    /// untouched pages cost no RSS).  Doubling growth of the ~600 MB a
+    /// 25M-clause load needs moves ~1.2 GB through `memmove` plus the
+    /// realloc fault storm - one exact reservation from the header-driven
+    /// literal count removes it.
+    pub(crate) fn reserve_bytes(&mut self, bytes: usize) {
+        self.buffer.reserve(bytes.div_ceil(ALIGN));
+    }
+
     fn ensure_capacity(&mut self, end: usize) {
         let need_words = end.div_ceil(ALIGN);
         if need_words > self.buffer.len() {

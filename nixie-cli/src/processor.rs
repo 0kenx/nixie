@@ -769,6 +769,16 @@ fn process_single_file(
                 sat.set_rng_seed(seed);
             }
             sat.new_vars_bulk(flat.num_vars);
+            // Bulk-load shape: reserve the id slots and the arena backing
+            // from the header counts (the flat stream's exact literal
+            // total sizes the arena without guessing), and defer the BIG
+            // edges to one exact-size materialization at the end - the
+            // same pair `DimacsParser::parse_reader` uses.  Allocation
+            // shape only; trajectories are bit-identical.
+            sat.reserve_clause_slots(flat.num_clauses);
+            sat.reserve_clause_bytes(
+                flat.lits.len().saturating_mul(4) + flat.num_clauses.saturating_mul(16),
+            );
             let deadline = if args.timeout > 0 {
                 std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
             } else {

@@ -814,6 +814,12 @@ impl ClauseDatabase {
         self.refs.reserve(n);
     }
 
+    /// Pre-reserve arena backing bytes for a bulk load (header-driven;
+    /// allocation shape only).
+    pub fn reserve_arena_bytes(&mut self, bytes: usize) {
+        self.arena.reserve_bytes(bytes);
+    }
+
     /// Iterate over all non-deleted clause IDs, in id (allocation) order –
     /// the same order the previous `Vec<Clause>` index walked.
     pub fn iter_ids(&self) -> impl Iterator<Item = ClauseId> + '_ {
