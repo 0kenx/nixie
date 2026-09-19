@@ -69,6 +69,7 @@ perf.data.old
 
 # Prebuilt solver binaries cached per commit SHA (see AGENTS.md →
 # "Git: precompile binary cache"); never commit binaries
+/precompile
 /precompile/
 
 # Rustc ICE dumps

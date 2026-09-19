@@ -85,3 +85,13 @@ the study wins. Landed as `7ab21fb5` (binary
 * `gap_survey.py`'s stderr capture + `NIXIE_GAP_PROBE=1` on any binary
   reproduces the attribution table in one run — keep the tags' output
   stable if touching decline sites.
+* **The precompile cache incident (2026-09-19, late)**: a worktree's
+  `precompile` convenience SYMLINK was swept up by `git add -A` (the
+  dir-only `/precompile/` ignore pattern does not match a symlink) and
+  the landing replaced the primary's real cache directory with a broken
+  self-symlink — most cached binaries were lost.  Repaired: `.gitignore`
+  now ignores both forms; the gate BASELINE `1710e125` was rebuilt into
+  the cache (throwaway worktree, deleted after) and verified by a PASS;
+  the tip binary `e7fbd8fb` is cached.  Older entries are gone — rebuild
+  on demand per the AGENTS.md convention, and never symlink `precompile`
+  into a worktree (bind the gate's `GATE_BASELINE` or copy instead).
