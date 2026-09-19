@@ -141,3 +141,35 @@ churn re-hashing the 100 k-node chain per level).  The fixpoint design
 from the previous addendum stands, but step zero is profiling
 `simplify` on this one file — the mechanism found there decides whether
 the fix is memoization (cheap) or a re-architecture (own session).
+
+### Step zero, executed (2026-09-19, third session): the "simplify timeout" decomposed — a PRINTER blowup over a real fold gap
+
+Two corrections to the previous addendum, both proven by profile and
+oracle:
+
+1. **The 90 s `(simplify …)` timeout is not the simplify pass — it is
+   the PRINTER.**  `perf` on the small member (`int_from_list/prp-3-21`,
+   12.5 KB): 35 % `BigInt::to_radix_le` + 10 % `BigInt::Display` + the
+   rest in `Printer::write_term_at_depth`/`write_str`/`RawVec` growth.
+   The pass is memoized and iterative (`query/simplify.rs`) and
+   finishes; the RESULT, unfolded for printing as a tree, explodes: the
+   goal DAG's let-bound values have heavy fan-out (one variable
+   referenced 44×, the next 31×, 23×, … — compounding multiplicatively
+   through the chain), and the printer re-prints each subtree per
+   reference.  SMT-LIB printers conventionally re-share with `let`
+   (z3's does); nixie's prints the raw tree — valid, exponentially
+   verbose on shared terms.  A `let`-sharing printer is an independent,
+   contained improvement.
+2. **The fold gap is real but narrower than "missing ite/cmp rules":
+   nixie HAS the local rules** (the `Ite`/comparison arms fold constant
+   conditions) **yet the chain does not collapse**, while z3's *plain*
+   `simplify` tactic reduces both the small and the 724 KB members to
+   `false` — and `solve-eqs` / `elim-uncnstr` alone do NOT (they leave
+   residuals), so the collapsing power is in the core rewrite set
+   proper.  The owning session's next probe: parameter-sweep
+   `(apply (using-params simplify …))` and diff the folded intermediates
+   to name the exact rule family (candidates by shape: equality
+   congruence through folded constants, `ite`-chain selection
+   tightening, `and`/`or` absorption after argument collapse), then
+   port into `query/simplify.rs` — whose memoized bottom-up driver is
+   already the right harness for a rule addition.
