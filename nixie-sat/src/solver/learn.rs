@@ -3408,7 +3408,7 @@ impl Solver {
         // positive in kissat on the worker class.  Budgeted by the round's
         // effort window (kissat `factoreffort=50‰`, floored at
         // `mineffort`); delayed per `factordelay` inside the pass.
-        if self.factor_enabled() {
+        if self.factor_enabled() && super::factor::factor_mid_rounds_enabled() {
             introduced_now +=
                 self.factor_pass(self.inproc_rounds_done + 1, self.inproc_budgets.window);
         } else if self.config.enable_mid_andgate {
