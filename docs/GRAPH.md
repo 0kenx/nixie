@@ -42,7 +42,10 @@ any non-constant Boolean term of your own via `add_edge` (a conjunction, an
 arithmetic equality, ...). The edge is present in the graph exactly when its
 term is true in the model. Parallel edges (several terms for one ordered
 pair) and self-loops are allowed; the same term cannot name two edges or a
-graph atom.
+graph atom within one model. Atoms minted by `new_edge`/`reach`/`acyclic`
+carry a per-model salt, so several models over one term manager never
+silently share atoms through name interning; passing the *same* user term
+to two models deliberately aliases those edges.
 
 `reach(g, u, v)` reifies **reachability**: it is true iff some directed path
 of **length ≥ 1** over present edges leads from `u` to `v`. **Zero-length
