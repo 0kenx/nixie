@@ -173,3 +173,34 @@ oracle:
    tightening, `and`/`or` absorption after argument collapse), then
    port into `query/simplify.rs` — whose memoized bottom-up driver is
    already the right harness for a rule addition.
+
+### Step zero, closed (fourth session): the residual's exact shape, the cheap rule measured insufficient, the real algorithm named
+
+The folded residual of the small member, dumped structurally
+(nodes=662; the printer blowup hides it from text output):
+`And[Not c₁, Not c₂, Not c₃, (= IntConst(400) (Ite(c₄, 88, <chain>))]` —
+and the `Not`s' atoms do NOT match the top ite's condition by
+identity: the conditions nest inside `or`/`not` layers (z3's own
+`ctx-simplify` residual exposes the same: `(not (or (= i844 (+ 1 0))
+(= 22 18)))` — a constant-eq-constant `22 = 18` sitting unreduced
+inside the nesting).
+
+An And-arm conjunction-context prune (one-level atom-polarity map +
+ite branch rewrite, budgeted) was implemented and measured:
+**662 → 652 nodes** — the mechanism is real but one level of context
+is far too shallow; the conditions need recursive case-literal
+collection through the nesting.  Reverted rather than landed blind (no
+consumer benefit at 10 nodes).
+
+**The route's final shape**: a genuine `ctx-simplify`-style pass —
+collect condition literals recursively through `and`/`or`/`not`,
+case-split prune ite branches under them, iterate — is the algorithm
+that closes the class (z3's PLAIN `simplify` tactic does close it to
+`false`, while `solve-eqs`, `elim-uncnstr`, and `ctx-simplify` alone
+each leave residuals — so z3's plain simplify carries strictly more
+than any one of those; isolating its plugin set via
+`(apply (using-params simplify :…))` sweeps is the owning session's
+first probe).  Sizing: the pass is self-contained in
+`query/simplify.rs`'s harness (memoized driver already correct), an
+own-session project — with the printer's let-sharing fix as its
+companion (any folded-but-large result still cannot be printed).
