@@ -110,3 +110,72 @@ per clause, solve, then evaluate every original clause against
 `model_value`; on violation print the clause, its vars'
 `var_eliminated`, and the enclosing ext-stack entries mentioning each
 var (split on `u32::MAX` sentinels; entry = `[witness, lits…]`).
+
+## Addendum 2 (2026-09-18, the probe path): the 3-clause unsat core and the resolvent's lifecycle — this is verdict-level, not reconstruction-level
+
+Following the "more violations = better probe" line: the witness-once
+variant's 1,619 violated clauses (vs the stock walk's 1) exposed the
+*whole* broken obligation set, and every one of its 61,281 unsatisfied
+entries had `witval=false` (52,546 skipped by the rule + 8,735
+repaired-then-flipped-back).  That enabled the decisive experiment:
+
+**The consistency instance.**  Fix every never-eliminated variable to
+the search's own model value (units), add one clause per extension
+entry, hand to kissat: **UNSATISFIABLE**.  No consistent extension
+exists — the folded formula's model does not extend to the original.
+The search answered `sat` on a formula that *lost a constraint*: the
+wrongness is equisatisfiability-level, not walk-level.
+
+**The minimal unsat core (3 entry-clauses + the search's units):**
+
+1. `(¬100 ∨ ¬2990 ∨ ¬2382)` — retired at 100's BVE elimination (witness −100)
+2. `(100 ∨ ¬15955)` — the violated original clause itself (witness +100)
+3. `(132 ∨ 15956 ∨ 15955 ∨ ¬2366)` — retired at 15955's elimination (witness 15955)
+
+Derivation: the units fix 132=F, 15956=F, 2366=T, 2990=T, 2382=T → (3)
+forces 15955=T → (2) forces 100=T → (1) forces 100=F.  Contradiction.
+
+**The resolvent's lifecycle (watchdog-traced by clause id).**  The
+soundness hinge is the resolvent of (1),(2) on 100:
+`R = (¬2990 ∨ ¬2382 ∨ ¬15955)`.
+
+- R **ADDED** by BVE as `ClauseId(260971)` at 100's elimination ✓
+- R **shrunk** to `(¬2990 ∨ ¬15955)` (self-subsumption dropped ¬2382 —
+  sound strengthening; the shrunken clause *implies* R) ✓
+- 260971 **dedup-retired** (identical to live twin `213141` — the twin
+  carries the constraint) ✓
+- `213141` **retired via the fold's unit path**: ¬2990 became
+  level-0-false, so `(¬2990 ∨ ¬15955)` reduced to the unit `¬15955`
+  and was consumed — *sound in isolation* (the unit implies the clause)
+- **No obligation containing {2990, 2382, 15955} or any subsumer of R
+  exists anywhere on the stack** (verified: zero entries contain all
+  three vars; zero clauses in the consistency dump subsume R).
+
+Yet the obligations above ((3) in particular) contradict the unit
+`¬15955` under the search's own fixed values — i.e. the elimination
+chain, each step locally plausible, collectively dropped R's
+constraint: the folded formula became strictly weaker and
+*satisfiable*, the original is not.  b21 is UNSAT; the dedup
+trajectory is only the generator — the base build carries the same
+mechanism and is separated from a false `sat` by trajectory luck.
+
+**Next session's entry point** (in measured order):
+1. Audit the **shrink** of 260971 (which pass dropped ¬2382, with what
+   justification clause — the shrink logs justifications for DRAT;
+   replay them) and the **15955 elimination group** (entries 576406+
+   in the trace): its resolvents should entail core entry (3)'s
+   complement under the units — they don't; find which retired clause
+   of 15955's group never received an obligation (the `213141`
+   consumption path is the prime suspect: a clause consumed as a unit
+   during the FOLD — between eliminations — while its *obligation
+   duties* toward the extension stack had already been assumed by the
+   elimination that retired its ancestors).
+2. Repro: `model_check` harness + b21 + seed 1 + the dedup retire (the
+   on-demand generator); the consistency-instance dumper and the
+   triple watchdog are in the worktree patch set (not landed — the
+   accessors `debug_ext_stack_and_model` + the `NIXIE_WATCH_TRIPLE`
+   watchdogs; re-add per this addendum's recipe).
+3. The stock build's fixpoint wrapper (landed) remains correct as far
+   as it goes — this addendum supersedes the "reconstruction bug"
+   framing: the walk cannot repair an obligation set that is
+   unsatisfiable by construction.

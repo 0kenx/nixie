@@ -902,3 +902,149 @@ fn network_policy_scenario() {
 
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
+
+/// Defense-in-depth for the empty-cut defect (see the focused unit test in
+/// nixie-theories): after any branch that leaves both parallel source edges
+/// false, the solver must still be able to find a cycle by re-enabling one
+/// of them. A buggy unconditional `¬reach(u,u)` clause would flip this sat
+/// to a false unsat.
+#[test]
+fn cycle_through_parallel_edge_stays_reachable_after_cut_learning() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let a = model.add_vertex(g).unwrap();
+    let b = model.add_vertex(g).unwrap();
+    let e0 = model.new_edge(g, a, b, &mut tm).unwrap();
+    let e1 = model.new_edge(g, a, b, &mut tm).unwrap();
+    let e2 = model.new_edge(g, b, a, &mut tm).unwrap();
+    let r_aa = model.reach(g, a, a, &mut tm).unwrap();
+    let mut solver = Solver::new();
+    solver.register_graph(model, &mut tm).unwrap();
+    // Force the search through states where both parallel edges are false
+    // (the empty-cut trigger), then demand the cycle anyway.
+    let not_both = {
+        let ne0 = tm.mk_not(e0);
+        let ne1 = tm.mk_not(e1);
+        tm.mk_or([ne0, ne1])
+    };
+    solver.assert(not_both, &mut tm);
+    solver.assert(e2, &mut tm);
+    solver.assert(r_aa, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+    // Reachability uses length-≥1 paths: the cycle is e_i ∧ e2.
+    assert!(model_bool(&solver, e0, &tm) != model_bool(&solver, e1, &tm));
+}
+
+/// Assumption-scoped checks interact correctly with graph atoms.
+#[test]
+fn assumptions_scoped_checks() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let a = model.add_vertex(g).unwrap();
+    let b = model.add_vertex(g).unwrap();
+    let e = model.new_edge(g, a, b, &mut tm).unwrap();
+    let r = model.reach(g, a, b, &mut tm).unwrap();
+    let mut solver = Solver::new();
+    solver.register_graph(model, &mut tm).unwrap();
+    // No assumptions: sat with the edge either way.
+    assert_eq!(
+        solver.check_with_assumptions(&[], &mut tm),
+        SolverResult::Sat
+    );
+    // Assuming ¬edge makes reachability false, so reach is unsat...
+    let not_e = tm.mk_not(e);
+    assert_eq!(
+        solver.check_with_assumptions(&[not_e, r], &mut tm),
+        SolverResult::Unsat
+    );
+    // ...and assuming the edge satisfies it.
+    assert_eq!(
+        solver.check_with_assumptions(&[e, r], &mut tm),
+        SolverResult::Sat
+    );
+    // Assumptions do not leak: a plain check afterwards is unconstrained.
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}
+
+/// Reset clears registrations; a fresh model can be installed afterwards.
+#[test]
+fn reset_clears_and_allows_re_registration() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let a = model.add_vertex(g).unwrap();
+    let b = model.add_vertex(g).unwrap();
+    let e = model.new_edge(g, a, b, &mut tm).unwrap();
+    let r = model.reach(g, a, b, &mut tm).unwrap();
+    let mut solver = Solver::new();
+    solver.register_graph(model, &mut tm).unwrap();
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+    solver.reset();
+    // Re-registration must happen before the next check (the documented
+    // lifecycle); install the fresh model first.
+    let mut model2 = GraphModel::new(&tm);
+    let g2 = model2.new_graph();
+    let a2 = model2.add_vertex(g2).unwrap();
+    let b2 = model2.add_vertex(g2).unwrap();
+    let e2 = model2.new_edge(g2, a2, b2, &mut tm).unwrap();
+    let r2 = model2.reach(g2, a2, b2, &mut tm).unwrap();
+    solver.register_graph(model2, &mut tm).unwrap();
+    // The old model's constraints are gone: its atoms are now ordinary free
+    // Booleans, so the old contradiction is no longer detected...
+    solver.assert(r, &mut tm);
+    solver.assert(tm.mk_not(e), &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+    // ...while the new model's constraints bind.
+    solver.assert(r2, &mut tm);
+    solver.assert(tm.mk_not(e2), &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+}
+
+/// Several graph models may be registered on one solver; each is enforced
+/// independently.
+#[test]
+fn multiple_registrations_are_enforced() {
+    let mut tm = TermManager::new();
+    let build = |tm: &mut TermManager| {
+        let mut m = GraphModel::new(tm);
+        let g = m.new_graph();
+        let a = m.add_vertex(g).unwrap();
+        let b = m.add_vertex(g).unwrap();
+        let e = m.new_edge(g, a, b, tm).unwrap();
+        let r = m.reach(g, a, b, tm).unwrap();
+        (m, e, r)
+    };
+    let (m1, e1, r1) = build(&mut tm);
+    let (m2, e2, r2) = build(&mut tm);
+    let (prop1, watch1) = m1.into_propagator();
+    let (prop2, watch2) = m2.into_propagator();
+    let mut solver = Solver::new();
+    solver
+        .register_user_propagator(prop1, &watch1, &mut tm)
+        .unwrap();
+    solver
+        .register_user_propagator(prop2, &watch2, &mut tm)
+        .unwrap();
+    // Model 1's reachability is refuted by disabling its edge, while model
+    // 2's is satisfied by enabling its own (distinct) edge: both models are
+    // enforced simultaneously.
+    let ne1 = tm.mk_not(e1);
+    solver.assert(ne1, &mut tm);
+    solver.assert(r1, &mut tm);
+    solver.assert(e2, &mut tm);
+    solver.assert(r2, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+    // ...while model 2's atom stays free to be satisfied.
+    let mut tm2 = TermManager::new();
+    let (m3, e3, r3) = build(&mut tm2);
+    let (prop3, watch3) = m3.into_propagator();
+    let mut solver2 = Solver::new();
+    solver2
+        .register_user_propagator(prop3, &watch3, &mut tm2)
+        .unwrap();
+    solver2.assert(e3, &mut tm2);
+    solver2.assert(r3, &mut tm2);
+    assert_eq!(solver2.check(&mut tm2), SolverResult::Sat);
+}
