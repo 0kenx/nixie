@@ -128,3 +128,16 @@ cannot propagate *across* binding levels).  That is the cheaper half,
 independently valuable (the same fold subsumes the BV multiplier-identity
 class's rewriter route), and the entry point is
 `nixie-core`'s simplifier — not the encoder.
+
+### The (b)-probe, one datum further: nixie's own `simplify` does not fold it — it times out
+
+`(simplify <the-475 KB-goal>)` on nixie `e7fbd8fb`: **no output in 90 s**
+(z3: 0.05 s to `false`).  So the gap inside route (b) is not merely
+missing fold rules — the existing pass does not terminate-usefully on
+deep let-value-chains (suspects, in check order: the substitution walk
+re-walking shared subterms per reference — `expand_lets`'s historical
+85 %-of-runtime shape, `pp-*`; a non-memoized simplify; or interning
+churn re-hashing the 100 k-node chain per level).  The fixpoint design
+from the previous addendum stands, but step zero is profiling
+`simplify` on this one file — the mechanism found there decides whether
+the fix is memoization (cheap) or a re-architecture (own session).
