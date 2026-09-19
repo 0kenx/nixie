@@ -1300,3 +1300,72 @@ fn test_deep_nested_forall_alpha_equivalent_on_small_stack() {
          (reached only after walking all the way down) must not be alpha-equivalent"
     );
 }
+
+// ======== bag.map / bag.filter shape equality (2026-09-19) ========
+
+/// `bag.map` / `bag.filter` carry their function/predicate symbol as a
+/// payload (`bag.fold`'s discipline): two maps under different functions
+/// are different terms, and the bag operand compares as a child.  These
+/// kinds used to sit in the unary-operator list with the symbol ignored —
+/// `unary_arg` refuses them (they are not unary), so EVERY comparison of
+/// two such terms returned a conservative `false` (the optimization-loss
+/// note in the fold handover; the consumers are the rewrite/cache layers
+/// that consult `structurally_equal`/`alpha_equivalent`).
+#[test]
+fn bag_map_and_filter_shape_equality() {
+    let mut manager = TermManager::new();
+    let elem = manager.sorts.int_sort;
+    let bag_sort = manager.sorts.array(elem, elem); // (Array Int Int) is the bag encoding's sort shape
+    let b = manager.mk_var("b", bag_sort);
+    let c = manager.mk_var("c", bag_sort);
+
+    // Same content interns once (hash-consing): the identity fast path
+    // answers before the walk — the fix matters for the WALK, when the
+    // bag operand pair recurses.
+    let m1 = manager.mk_bag_map("f", elem, b);
+    let m2 = manager.mk_bag_map("f", elem, b);
+    assert_eq!(m1, m2, "identical content interns once");
+    assert!(structurally_equal(m1, m2, &manager));
+    assert!(alpha_equivalent(m1, m2, &manager));
+
+    // Different function symbol: a different term, in both walks.
+    let g = manager.mk_bag_map("g", elem, b);
+    assert_ne!(m1, g);
+    assert!(!structurally_equal(m1, g, &manager));
+    assert!(!alpha_equivalent(m1, g, &manager));
+
+    // Same symbol, different codomain sort: a different function.
+    let m_bool = manager.mk_bag_map("f", manager.sorts.bool_sort, b);
+    assert!(!structurally_equal(m1, m_bool, &manager));
+
+    // Different bag operand: the child comparison decides (false).
+    let m_c = manager.mk_bag_map("f", elem, c);
+    assert!(!structurally_equal(m1, m_c, &manager));
+    assert!(!alpha_equivalent(m1, m_c, &manager));
+
+    // filter: predicate symbol is part of the identity; the bag compares
+    // as a child; map-vs-filter are different kinds.
+    let p1 = manager.mk_bag_filter("p", b);
+    let p2 = manager.mk_bag_filter("p", b);
+    let q = manager.mk_bag_filter("q", b);
+    let p_c = manager.mk_bag_filter("p", c);
+    assert_eq!(p1, p2);
+    assert!(structurally_equal(p1, p2, &manager));
+    assert!(!structurally_equal(p1, q, &manager));
+    assert!(!structurally_equal(p1, p_c, &manager));
+    assert!(
+        !structurally_equal(m1, p1, &manager),
+        "bag.map and bag.filter are different kinds"
+    );
+
+    // The WALK's bag-child recursion, on operands built through the
+    // union-disjoint constructor (the bag union used by the model-value
+    // spellings).
+    let empty = manager.mk_bag_empty_at(bag_sort);
+    let u1 = manager.mk_bag_union_disjoint(b, empty);
+    let u2 = manager.mk_bag_union_disjoint(b, empty);
+    assert_eq!(u1, u2);
+    let mu1 = manager.mk_bag_map("f", elem, u1);
+    let mu2 = manager.mk_bag_map("f", elem, u2);
+    assert!(structurally_equal(mu1, mu2, &manager));
+}

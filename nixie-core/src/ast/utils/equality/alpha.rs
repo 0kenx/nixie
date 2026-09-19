@@ -308,8 +308,6 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::BagCard(a)
                     | TermKind::BagSetof(a)
                     | TermKind::BagChoose(a)
-                    | TermKind::BagMap { bag: a, .. }
-                    | TermKind::BagFilter { bag: a, .. }
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)
@@ -348,6 +346,39 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                             return false;
                         }
                         stack.push((*i1, i2, env.clone()));
+                        stack.push((*b1, b2, env.clone()));
+                    }
+
+                    // `bag.map f b` / `bag.filter p b`: the symbol is part
+                    // of the identity (`bag.fold`'s discipline); the bag
+                    // compares as a child.  Same conservative-`false` hole
+                    // as the structural walk — see the comment there.
+                    TermKind::BagMap {
+                        func: f1,
+                        ret: r1,
+                        bag: b1,
+                    } => {
+                        if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
+                            return false;
+                        }
+                        let Some((f2, r2, b2)) = shape::map_args(&rt.kind) else {
+                            return false;
+                        };
+                        if *f1 != f2 || *r1 != r2 {
+                            return false;
+                        }
+                        stack.push((*b1, b2, env.clone()));
+                    }
+                    TermKind::BagFilter { pred: p1, bag: b1 } => {
+                        if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
+                            return false;
+                        }
+                        let Some((p2, b2)) = shape::filter_args(&rt.kind) else {
+                            return false;
+                        };
+                        if *p1 != p2 {
+                            return false;
+                        }
                         stack.push((*b1, b2, env.clone()));
                     }
 

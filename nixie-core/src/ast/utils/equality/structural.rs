@@ -173,8 +173,6 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::BagCard(a)
                     | TermKind::BagSetof(a)
                     | TermKind::BagChoose(a)
-                    | TermKind::BagMap { bag: a, .. }
-                    | TermKind::BagFilter { bag: a, .. }
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)
@@ -214,6 +212,45 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                             return false;
                         }
                         stack.push((*i1, i2));
+                        stack.push((*b1, b2));
+                    }
+
+                    // `bag.map f b` / `bag.filter p b`: the function /
+                    // predicate symbol is part of the identity (the same
+                    // discipline as `bag.fold`); the bag compares as a
+                    // child.  These used to sit in the unary-operator list
+                    // with the symbol ignored — but `unary_arg` refuses
+                    // them (they are not unary), so every comparison
+                    // returned a conservative `false`: two textually
+                    // identical maps never compared equal, and the
+                    // congruence/rewriting layers that consult structural
+                    // equality missed every such collision.
+                    TermKind::BagMap {
+                        func: f1,
+                        ret: r1,
+                        bag: b1,
+                    } => {
+                        if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
+                            return false;
+                        }
+                        let Some((f2, r2, b2)) = shape::map_args(&rt.kind) else {
+                            return false;
+                        };
+                        if *f1 != f2 || *r1 != r2 {
+                            return false;
+                        }
+                        stack.push((*b1, b2));
+                    }
+                    TermKind::BagFilter { pred: p1, bag: b1 } => {
+                        if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
+                            return false;
+                        }
+                        let Some((p2, b2)) = shape::filter_args(&rt.kind) else {
+                            return false;
+                        };
+                        if *p1 != p2 {
+                            return false;
+                        }
                         stack.push((*b1, b2));
                     }
 
