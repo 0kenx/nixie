@@ -112,3 +112,19 @@ the same family).  Neither side alone pays.  Do not start the 970-line
 conversion expecting the 9 members — probe (b) first: a chain-folding
 simplifier on let-chained ite spines is the cheaper half and is
 independently valuable.
+
+### The (b)-probe, answered the same day: z3's `simplify` alone closes the goal
+
+`(apply simplify)` on the 724 KB `checkpass/prp-43-49` (before any
+search) reduces the entire let-chained goal to **`(goal false :depth
+1)`** — the class is decided by pure simplification: constant
+propagation through the value-chain (a bound comparison folds to a
+constant, the ite selecting on it folds, the fold propagates to the
+next binding, …).  z3's total: 0.05 s, rlimit 108 k.  So route (b) has
+a concrete shape now: an iterative constant-propagation fixpoint over
+shared subterms in `TermManager::simplify` (bottom-up, topologically
+re-driven until no change — the existing one-pass builder folding
+cannot propagate *across* binding levels).  That is the cheaper half,
+independently valuable (the same fold subsumes the BV multiplier-identity
+class's rewriter route), and the entry point is
+`nixie-core`'s simplifier — not the encoder.
