@@ -127,6 +127,22 @@ impl Solver {
         Ok(())
     }
 
+    /// Install finite directed-graph constraints (reified reachability over
+    /// paths of length ≥ 1, and acyclicity) declared in a `GraphModel`.
+    /// Registration follows [`Self::register_user_propagator`]'s lifecycle.
+    /// Graph registrations are trusted client callbacks without independent
+    /// certificates: certified and proof-producing checks fail closed to
+    /// `Unknown` for them. See `docs/GRAPH.md`.
+    pub fn register_graph(
+        &mut self,
+        model: nixie_theories::graph::GraphModel,
+        tm: &mut TermManager,
+    ) -> Result<(), nixie_theories::graph::GraphError> {
+        let (propagator, watches) = model.into_propagator();
+        self.register_user_propagator(propagator, &watches, tm)
+            .map_err(|e| nixie_theories::graph::GraphError(e.0))
+    }
+
     /// Install a finite-domain CP model with all its domain/link assertions.
     /// Registration follows [`Self::register_user_propagator`]'s lifecycle.
     pub fn register_cp(

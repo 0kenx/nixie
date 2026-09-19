@@ -13,6 +13,8 @@
 //! - **UTVPI** (Unit Two-Variable Per Inequality) for constraints ±x ± y ≤ c
 //! - **Pseudo-Boolean** (PB) for cardinality and weighted constraints
 //! - **Special Relations** for partial/total orders, transitive closure
+//! - **Finite Graphs** for reified directed reachability and acyclicity over
+//!   fixed vertex universes (explained user-propagator integration)
 //! - Nelson-Oppen theory combination
 //!
 //! # Architecture
@@ -85,6 +87,7 @@ pub mod ff_euf;
 pub mod ff_theory;
 pub mod fp;
 pub mod fp_interval_prop;
+pub mod graph;
 pub mod hashcons;
 pub(crate) mod lru_cache;
 pub mod pb;
