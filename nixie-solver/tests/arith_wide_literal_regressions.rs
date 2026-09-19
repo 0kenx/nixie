@@ -1551,3 +1551,38 @@ fn bnb_snapshot_survives_scope_pop_at_any_width() {
         "xi publishes the leaf's exact integral value (z3-validated), never the defaulted 0 or a post-pop fraction; got: {model}"
     );
 }
+
+/// The leaf snapshot's REAL half (2026-09-19, the J5 residual): the dive's
+/// scopes pop after the snapshot, restoring a point that can RE-VIOLATE
+/// strict bounds the leaf satisfied (a basic resting at its strict bound's
+/// real part with no infinitesimal).  The δ-instantiation computed over the
+/// popped state then declines — and EVERY real variable published the sort
+/// default `0`, so the exact evaluator refuted the candidate and the
+/// big-const gate downgraded a decidable `sat` to `unknown` (this instance's
+/// `xr` was published as `0` while the tableau held `2147483572/3`; its
+/// failing conjunct `3·xi + 3·xr + 85 > 5` sits exactly on the strict
+/// boundary, so the fabricated `0` flips it).  The snapshot now records the
+/// leaf's real values, δ-instantiated INSIDE the leaf's scopes, and both
+/// publication channels prefer it.  Pre-fix: `unknown`; z3: `sat`.
+#[test]
+fn leaf_snapshot_covers_real_variables() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xi Int)\n\
+             (declare-const yi Int)\n\
+             (declare-const zi Int)\n\
+             (declare-const xr Real)\n\
+             (assert (and (or (and (> (- (+ (* 3 xr) (* 5 xi)) 3) 5) (> (div -6 2) 4)) (not (or (>= (* 3 xi) -2147483648) (= (* 2 zi) (* 5 zi)) (< (+ (div (* 3 xi) 2) (/ (+ (* 1 xr) -1099511627776 2) 2) (+ (div (* 5 zi) 4) (+ -66 (* -1 xr) (* 2 xi)))) (mod (+ 7 (* 5 zi)) 5)))) (= (+ (+ (- 6 -2) (/ (* 2 xr) 2)) (* -1 xr)) 3.0)) (not (and (not (or (= (* 1 zi) -1.0) (> (+ (* 3 yi) (+ (* 5 xr) (+ (* 1 zi) 53) (+ 1 (* -2 zi) (* 2 yi))) (* 2 zi)) 3))) (not (or (>= (* -1 yi) 82) (< (* 5 zi) (+ (* 1 zi) (+ (- (* 10 xi) 2) (+ 0 (* 10 zi))) (div (+ -2 (* 10 yi)) 3))) (> (+ (+ (+ 9223372036854775807 2147483647) (+ (* 1 zi) (* -2 xr))) (* 10 xr) (* -2 xr)) 4))) (<= (mod (- (- (* 5 xi) 3) 2) 5) -8))) (> (+ (+ -8 (+ (* 2 xr) (* 1 xr) 93)) (* 3 xi)) 5)))\n\
+             (check-sat)\n\
+             (get-value (xr))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        !model.contains("xr 0") && !model.contains("xr 0.0"),
+        "xr publishes the leaf's δ-instantiated value, never the sort default 0; got: {model}"
+    );
+}

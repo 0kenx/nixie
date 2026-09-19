@@ -775,3 +775,30 @@ summle ×2 solve under the 40 s cap (were losses), worker_550 63.8 s →
 42.5 s serial. The losses that remain are all conflicts-to-model-bound —
 this study's recorded deep-study items (decision quality, learned-clause
 quality) are unchanged and still the biggest lever.
+
+## 2026-09-19 addendum: the post-XOR spot re-run and the corpus gap
+
+The MBQI arc's handover asked for this table's re-run after the XOR
+landing.  **The full 261-file corpus is not currently on disk** — the
+satcomp/satlib suites are gitignored external data (`.gitignore` /
+`smt-lib/PROVENANCE.md`), the concurrent arcs' disk cleanups left only
+4 files in `satcomp2024/bench/` and an empty `satcomp2025/
+main_easy_mid/`.  The full re-run requires refilling the corpora out of
+band first (see `bench/differential/README.md`); until then any
+"standing table" would be a 4-file anecdote.
+
+The 4-file spot re-run (main `bc8c160a`, 60 s cap, both reference
+builds at `../temp/{cadical,kissat}/build/`):
+
+| instance | nixie | cadical | kissat |
+|---|---|---|---|
+| j3037_10_mdd_bm1 (unsat) | timeout | UNSAT ~3 s | UNSAT |
+| circuit_48in64out | sat, 21.9 s | SAT ~3 s | SAT |
+| constraints_17_0.4_1 | sat, 15.0 s | SAT | SAT |
+| si2-b03m-m800-03 | sat, 5.2 s | SAT ~2.8 s | SAT |
+
+**Zero verdict mismatches** on everything solved; the one loss is the
+UNSAT mdd instance (the conflicts-to-model class this study's taxonomy
+already owns).  Nothing here contradicts the standing picture — and
+nothing here *updates* it either: the corpus must come back before the
+next real table.

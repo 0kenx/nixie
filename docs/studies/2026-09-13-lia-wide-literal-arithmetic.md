@@ -2774,8 +2774,6 @@ before choosing a slice).  Landed as `bf9f5b71`.
       fabricated variable directly.  The residual 75: the div/mod
       leaf-acceptance class remains (candidates now honest but
       tableau-vs-original divergent), A2 budgets, and tails.
-
-
 ## Continuation 43 (2026-09-19): item 85's evidence obligation served — the canary made audible, 1 917-file corpus sweep, zero reconciliations
 
 The delta-vs-reeval canary (`NIXIE_DELTA_VERIFY`) reconciled SILENTLY —

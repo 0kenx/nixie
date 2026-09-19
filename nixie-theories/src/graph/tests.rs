@@ -763,3 +763,82 @@ fn zero_length_paths_do_not_count() {
             .all(|&(_, _, a)| value_of(tm.mk_not(a)))
     );
 }
+
+/// Focused regression for the empty-cut soundness defect caught by the
+/// exhaustive oracle during development: a *forward*-closure cut for the
+/// self-pair case produced `Consequence(¬reach(u,u), [])` — an
+/// unconditional justification the solver would keep as a permanent unit
+/// clause, wrongly forbidding cycles in later branches (a false `unsat`
+/// whenever the search backtracks past the false edges and re-enables
+/// them). The correct backward cut must pin the false edges that close the
+/// cycle, here `{¬e0, ¬e1}`.
+#[test]
+fn self_pair_negative_propagation_pins_the_cut_edges() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let v0 = model.add_vertex(g).unwrap();
+    let v1 = model.add_vertex(g).unwrap();
+    let e0 = model.new_edge(g, v0, v1, &mut tm).unwrap();
+    let e1 = model.new_edge(g, v0, v1, &mut tm).unwrap();
+    let e2 = model.new_edge(g, v1, v0, &mut tm).unwrap();
+    let r00 = model.reach(g, v0, v0, &mut tm).unwrap();
+    let edge_terms = model.edges(g).unwrap();
+    let (propagator, watches) = model.into_propagator();
+    let mut manager = UserPropagatorManager::new();
+    for &w in &watches {
+        manager.watch_term(w);
+    }
+    manager.register_propagator(propagator);
+    let true_term = tm.mk_bool(true);
+    let false_term = tm.mk_bool(false);
+
+    // The exact state that triggered the defect: both parallel edges from
+    // the source false, the back edge unassigned.
+    manager.notify_fixed(e0, false_term);
+    manager.notify_fixed(e1, false_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    let consequences = manager.get_consequences();
+    let neg_r00 = tm.mk_not(r00);
+    let mut found = false;
+    for c in &consequences {
+        if c.term == neg_r00 {
+            found = true;
+            // The justification must be non-empty and consist exactly of
+            // the false cycle-closing edges: an unconditional ¬reach(0,0)
+            // would be a globally invalid unit clause.
+            assert!(
+                !c.justification.is_empty(),
+                "empty justification would forbid all cycles through vertex 0"
+            );
+            let expected = [tm.mk_not(e0), tm.mk_not(e1)];
+            for &j in &c.justification {
+                assert!(
+                    expected.contains(&j),
+                    "unexpected justification literal {j:?} in {:?}",
+                    c.justification
+                );
+            }
+            for &want in &expected {
+                assert!(
+                    c.justification.contains(&want),
+                    "missing cut literal {want:?} in {:?}",
+                    c.justification
+                );
+            }
+        }
+    }
+    assert!(found, "¬reach(0,0) must propagate in this state");
+    // And with the back edge also disabled there is no route back at all:
+    // the cut stays the two false edges from the source.
+    manager.notify_fixed(e2, false_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    let _ = edge_terms;
+    let _ = true_term;
+}

@@ -162,6 +162,8 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Floating-Point** | IEEE 754 with bit-blasting, rounding modes |
 | **Datatypes** | ADT with constructors, testers, selectors |
 | **Pseudo-Boolean** | Cardinality constraints, PB-specific propagation |
+| **Finite Graphs** | Reified directed reachability/acyclicity over fixed vertex universes; explained user-propagator integration (`docs/GRAPH.md`) |
+| **CP Globals** | Finite-domain all-different/table/regular/circuit/cumulative; explained user-propagator integration (`docs/CP.md`) |
 | **Theory Combination** | Nelson-Oppen, model-based, delayed, polite combination |
 
 ### nixie-nlsat (Non-linear Arithmetic)

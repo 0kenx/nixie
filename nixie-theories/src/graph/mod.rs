@@ -126,9 +126,26 @@ impl VertexId {
     }
 }
 
-/// Handle to one graph inside a [`GraphModel`].
+/// Handle to one graph inside a [`GraphModel`]. Obtained from
+/// [`GraphModel::new_graph`]; the zero-based index is addressable via
+/// [`GraphHandle::new`] for serialization-style tooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GraphHandle(usize);
+
+impl GraphHandle {
+    /// The graph with zero-based index `index`. Only indices below the
+    /// owning model's graph count are meaningful; all APIs validate them.
+    #[must_use]
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// The handle's zero-based index.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
 
 /// Assignment state of one edge term.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,13 +456,25 @@ fn find_cycle(adj: &[Vec<(u32, u32)>], vertices: usize) -> Option<Vec<u32>> {
     None
 }
 
+/// Per-instance salt for minted atom names, so two models over one term
+/// manager never silently share atoms through name interning.
+fn next_model_uid() -> u64 {
+    static COUNTER: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+    COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+}
+
 /// A collection of finite directed graphs with reified reachability and
 /// acyclicity constraints, installable with `Solver::register_graph`.
 ///
 /// Construct the model before registering it; handles are local to one model.
 /// The model itself becomes the propagator, so all constraints must be
-/// declared before `into_propagator`/`register_graph`.
+/// declared before `into_propagator`/`register_graph`. Atoms minted by
+/// `new_edge`/`reach`/`acyclic` carry a per-model unique salt, so several
+/// models over one term manager stay disjoint; user-supplied edge terms may
+/// deliberately be shared (the same term cannot be reused twice *within* a
+/// model).
 pub struct GraphModel {
+    uid: u64,
     graphs: Vec<GraphSpec>,
     /// Every term used as an edge atom (across graphs), for uniqueness.
     edge_terms: FxHashSet<TermId>,
@@ -470,6 +499,7 @@ impl GraphModel {
     /// Start a graph model using the same term manager as the SMT solver.
     pub fn new(tm: &TermManager) -> Self {
         Self {
+            uid: next_model_uid(),
             graphs: Vec::new(),
             edge_terms: FxHashSet::default(),
             system_terms: FxHashSet::default(),
@@ -559,7 +589,7 @@ impl GraphModel {
     ) -> Result<TermId, GraphError> {
         let index = self.graph(g)?.edges.len();
         let atom = tm.mk_var(
-            &format!("graph{}_edge{}_{}_{}", g.0, from.0, to.0, index),
+            &format!("gm{}_g{}_edge{}_{}_{}", self.uid, g.0, from.0, to.0, index),
             tm.sorts.bool_sort,
         );
         self.add_edge(g, from, to, atom, tm)
@@ -586,7 +616,7 @@ impl GraphModel {
             }
         }
         let atom = tm.mk_var(
-            &format!("graph{}_reach{}_{}", g.0, u.0, v.0),
+            &format!("gm{}_g{}_reach{}_{}", self.uid, g.0, u.0, v.0),
             tm.sorts.bool_sort,
         );
         let negation = tm.mk_not(atom);
@@ -610,7 +640,10 @@ impl GraphModel {
         if let Some((atom, _)) = self.graph(g)?.acyclic {
             return Ok(atom);
         }
-        let atom = tm.mk_var(&format!("graph{}_acyclic", g.0), tm.sorts.bool_sort);
+        let atom = tm.mk_var(
+            &format!("gm{}_g{}_acyclic", self.uid, g.0),
+            tm.sorts.bool_sort,
+        );
         let negation = tm.mk_not(atom);
         self.system_terms.insert(atom);
         self.graph_mut(g)?.acyclic = Some((atom, negation));
