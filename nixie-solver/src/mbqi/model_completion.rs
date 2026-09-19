@@ -105,6 +105,13 @@ pub struct CompletedModel {
     /// are never merged anywhere (the merge-forcing instances must keep
     /// seeing every ground pair).
     pub semantic_domains: FxHashMap<(TermId, usize), Vec<TermId>>,
+    /// The structure version (see `ModelCompleter`): a *monotone* number
+    /// assigned by the completer, identical across rounds exactly when the
+    /// completed structure is semantically unchanged.  The model checker's
+    /// memo/veto/certification machinery keys on it instead of a content
+    /// hash: a persistent structure moves only through explicit repair
+    /// steps, so its version is the cheap, honest identity of its content.
+    pub version: u64,
     /// Generation number
     pub generation: u32,
 }
@@ -125,6 +132,7 @@ impl CompletedModel {
             constructor_sources: FxHashMap::default(),
             table_domains: FxHashMap::default(),
             semantic_domains: FxHashMap::default(),
+            version: 0,
             generation: 0,
         }
     }
@@ -753,6 +761,57 @@ pub struct ModelCompleter {
     /// the set9 divergence: 17-wide rows, 32-element cap reached).
     pub(crate) last_round_fresh_mints: usize,
 
+    /// **The persistent structure** (z3's proto-model-as-search-object —
+    /// see `docs/studies/2026-09-14-model-finder-constructor-tables.md`,
+    /// the 2026-09-18 rewrite).  Once a goal's constructor tables exist,
+    /// the completed model stops being rebuilt per round from
+    /// `partial_model`: the structure survives across rounds and each
+    /// round only *applies* the ground solver's effects — fresh ground
+    /// pins at unclaimed points, and explicit repairs (mint, row pin
+    /// from a falsifier, freeze growth).  The ground solver stays the
+    /// lemma engine (its instances remain sound consequences); it is no
+    /// longer the structure's source of truth, because a completed model
+    /// re-derived from a freshly-re-modelled ground solver every round
+    /// cannot make the falsifier-driven refinement monotone (the
+    /// eighteenth follow-up's verdict: the ground rows churn every
+    /// round, each churn mints new target rows, and the closure never
+    /// fixpoints — measured non-convergent at 10x the global conflict
+    /// budget).
+    ///
+    /// Soundness is unchanged in kind: the structure is an interpretation
+    /// candidate whose `sat` worthiness is *checked* — every tracked
+    /// quantifier is certified against it by the nested checker, and the
+    /// quantifier-free assertions are validated against it by the
+    /// `Satisfied`-path assertion gate.  A structure that fails either is
+    /// repaired or never printed `sat`.
+    structure: Option<CompletedModel>,
+    /// The structure's minted points (the mint memory): elements minted by
+    /// `mint_fresh_row_element`, across rounds.  The two pollution
+    /// channels key on it — minted points speak only through the
+    /// structure's own rows, never through harvested polarities
+    /// (assignment keys at minted atoms, channel (a)) or their twin
+    /// entries (harvest entries whose args coincide with the mint's own,
+    /// channel (b)).
+    minted_points: FxHashSet<TermId>,
+    /// Ground atoms whose entries the next merge re-reads from the
+    /// harvest (the repair channel): the commitments of falsifiers that
+    /// became fresh lemmas (about to be forced in the ground solver) and
+    /// of duplicate fully-pinned falsifiers (whose blocking clause
+    /// excludes the stale arrangement).  Drained by each merge.
+    invalidated_atoms: FxHashSet<TermId>,
+    /// Monotone serial over every completed model this completer produced
+    /// (persistent or not): the source of `CompletedModel::version`.
+    model_serial: u64,
+    /// Commitment-sets already invalidated once (the idempotence gate for
+    /// the duplicate-falsifier re-read channel): re-reading the same
+    /// arrangement's atoms every round re-reads the ground's *free* flips
+    /// too — the structure never stabilizes, the checks grow past their
+    /// budgets (`nested check undetermined`, measured on set19: `sat` ->
+    /// `unknown` at 50+ rounds).  A distinct arrangement may re-read once;
+    /// an arrangement whose re-read did not repair it never re-reads
+    /// again.
+    invalidated_sets: FxHashSet<u64>,
+
     /// Statistics
     stats: CompletionStats,
     /// Cardinality escalations used (see `thaw_table_domains`): the
@@ -779,10 +838,22 @@ impl ModelCompleter {
             cache: FxHashMap::default(),
             frozen_table_domains: FxHashMap::default(),
             last_round_fresh_mints: 0,
+            structure: None,
+            minted_points: FxHashSet::default(),
+            invalidated_atoms: FxHashSet::default(),
+            invalidated_sets: FxHashSet::default(),
+            model_serial: 0,
             thaws_used: 0,
             frozen_range_sorts: FxHashSet::default(),
             stats: CompletionStats::default(),
         }
+    }
+
+    /// The macro solver's current function names (the functions a macro
+    /// definition owns) — the static exclusion set for the hint extraction
+    /// (see `constructor_tables::goal_has_tables`).
+    pub(crate) fn macro_function_names(&self) -> FxHashSet<Spur> {
+        self.macro_solver.definitions().keys().copied().collect()
     }
 
     /// Cardinality escalation (Z3's model finder's search shape): a
@@ -843,6 +914,15 @@ impl ModelCompleter {
     /// 6. Collect universes for all sorts from ground terms in model
     /// 7. Set default values for every sort
     /// 8. Ensure every function has a complete interpretation
+    ///
+    /// **The persistent-structure path** (table goals, see
+    /// `Self::structure): when a structure exists from a previous
+    /// round, steps 1-9 run on a throwaway *harvest* view of the fresh
+    /// ground model, the harvest is then merged into the structure
+    /// (monotone, pollution-gated - see `Self::merge_harvest), and the
+    /// constructor tables are computed over the merged structure.  Goals
+    /// without a structure keep the legacy wholesale rebuild, so every
+    /// non-table behaviour is bit-identical to the pre-rewrite build.
     pub fn complete(
         &mut self,
         partial_model: &FxHashMap<TermId, TermId>,
@@ -852,11 +932,11 @@ impl ModelCompleter {
         self.stats.num_completions += 1;
 
         // Start with the partial model
-        let mut completed = CompletedModel::new();
-        completed.assignments = partial_model.clone();
+        let mut harvested = CompletedModel::new();
+        harvested.assignments = partial_model.clone();
 
         // Step 1: Extract function interpretations from Apply terms in the model
-        self.extract_function_interpretations(&mut completed, manager);
+        self.extract_function_interpretations(&mut harvested, manager);
 
         // Step 2: Try to solve some quantifiers as macros.
         // Important: do NOT overwrite an existing interpretation extracted in step 1.
@@ -865,7 +945,7 @@ impl ModelCompleter {
         let macro_results = self.macro_solver.solve_macros(quantifiers, manager)?;
         for (func_name, macro_interp) in macro_results {
             // Only insert the macro interpretation if step 1 found no entries for this function.
-            completed
+            harvested
                 .function_interps
                 .entry(func_name)
                 .or_insert(macro_interp);
@@ -886,7 +966,7 @@ impl ModelCompleter {
             // applies the same preference when it sees the candidates; this
             // defends against future callers that bypass it.)
             let candidate = (macro_def.bound_vars.clone(), macro_def.body);
-            match completed.macros.entry(func_name) {
+            match harvested.macros.entry(func_name) {
                 std::collections::hash_map::Entry::Vacant(v) => {
                     v.insert(candidate);
                 }
@@ -905,7 +985,7 @@ impl ModelCompleter {
             // is listed under exactly the quantifier whose body won the
             // preference above, which `definitions()` already collapsed to
             // one winner per function).
-            completed
+            harvested
                 .macro_sources
                 .entry(macro_def.quantifier)
                 .or_default()
@@ -914,25 +994,25 @@ impl ModelCompleter {
 
         // Step 3: Complete function interpretations (projections, else values)
         self.model_fixer
-            .fix_model(&mut completed, quantifiers, manager)?;
+            .fix_model(&mut harvested, quantifiers, manager)?;
 
         // Step 4: Handle uninterpreted sorts
         self.uninterp_handler
-            .complete_universes(&mut completed, quantifiers, manager)?;
+            .complete_universes(&mut harvested, quantifiers, manager)?;
 
         // Step 5: Set default values for all sorts
-        self.set_default_values(&mut completed, manager)?;
+        self.set_default_values(&mut harvested, manager)?;
 
         // Step 6: Collect universes from ground terms in the model
         // This implements the Ge & de Moura step: for each sort S, build
         // U_S = set of all ground terms of sort S in the current model
-        completed.collect_universes_from_model(quantifiers, manager);
+        harvested.collect_universes_from_model(quantifiers, manager);
 
         // Step 7: Add default values for sorts that got new universes
-        self.set_default_values(&mut completed, manager)?;
+        self.set_default_values(&mut harvested, manager)?;
 
         // Step 8: Ensure every function has a complete interpretation
-        completed.complete_function_interpretations();
+        harvested.complete_function_interpretations();
 
         // Step 9: freeze the ground-universe views (the universes are
         // immutable from here on; the model only ever crosses rounds by
@@ -940,32 +1020,497 @@ impl ModelCompleter {
         // constant is a legitimate element, a quantifier's stray encoding
         // constant is not.  The same name set drives the entry harvest
         // filter (step 9b).
-        completed.freeze_ground_universes(quantifiers, manager);
-        // Step 9b: drop artifact-keyed (wildcard) entries — the
+        harvested.freeze_ground_universes(quantifiers, manager);
+        // Step 9b: drop artifact-keyed (wildcard) entries - the
         // encoder's binder-constant application rows poison the
         // completion (see `drop_artifact_entries`).
-        completed.drop_artifact_entries(manager);
+        harvested.drop_artifact_entries(manager);
 
-        // Step 10: compute the constructor tables (Z3 `smt_model_finder`'s
-        // entry-table search).  Runs after the universes are frozen and
-        // the entry tables final, and installs its output on the model —
-        // one globally-consistent interpretation every later consumer
-        // (the nested checker, the mining odometer, the enumerative
-        // seeder, the defining pins) reads unchanged.
-        let mut range_sorts = core::mem::take(&mut self.frozen_range_sorts);
-        let mut fresh_mints = 0usize;
-        super::constructor_tables::compute_constructor_tables(
-            &mut completed,
-            quantifiers,
-            &mut self.frozen_table_domains,
-            &mut range_sorts,
-            &mut fresh_mints,
-            manager,
-        );
-        self.frozen_range_sorts = range_sorts;
-        self.last_round_fresh_mints = fresh_mints;
+        // The persistent-structure split.  A structure exists only for
+        // table goals (promoted below on the first round whose tables
+        // install), so goals without tables never take this path.
+        if let Some(mut structure) = self.structure.take() {
+            // Apply the round's harvest to the persistent structure:
+            // fresh ground pins at unclaimed points, invalidated points
+            // re-read, minted rows repaired from forced lemmas, the
+            // pollution channels enforced.
+            let changed = self.merge_harvest(&mut structure, harvested, manager);
+            // Recompute the derived layers over the merged structure:
+            // defaults and else values for freshly merged functions, then
+            // the constructor tables (step 10) - the rows are stable now,
+            // so the tables are the same deterministic function of them
+            // every round, and the mint (at most one fresh row per
+            // constructor) is the only grow step.
+            self.set_default_values(&mut structure, manager)?;
+            structure.complete_function_interpretations();
+            let mut range_sorts = core::mem::take(&mut self.frozen_range_sorts);
+            let mut fresh_mints = 0usize;
+            super::constructor_tables::compute_constructor_tables(
+                &mut structure,
+                quantifiers,
+                &mut self.frozen_table_domains,
+                &mut range_sorts,
+                &mut self.minted_points,
+                &mut fresh_mints,
+                manager,
+            );
+            self.frozen_range_sorts = range_sorts;
+            self.last_round_fresh_mints = fresh_mints;
+            // One coherent universe view for the frozen sorts: the
+            // structure's own domain (frozen + minted growth), not the
+            // harvest's raw view - every element the interpretation is
+            // defined over must be enumerable by the consumers.
+            for (sort, domain) in structure.table_domains.clone() {
+                structure.universes.insert(sort, domain.clone());
+                structure.ground_universes.insert(sort, domain);
+            }
+            // Version: the structure's identity moves only when its
+            // content did (a merge adoption, a repair, or a mint).  A
+            // barren round against an unchanged structure keeps the
+            // version - the memo/veto machinery then correctly reuses
+            // the previous verdicts instead of re-paying nested solves.
+            if changed || fresh_mints > 0 {
+                self.model_serial += 1;
+                structure.version = self.model_serial;
+            }
+            let returned = structure.clone();
+            self.structure = Some(structure);
+            if std::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
+                let printer = nixie_core::smtlib::Printer::new(manager);
+                eprintln!(
+                    "[merge] --- final structure (version {}) ---",
+                    returned.version
+                );
+                for (sort, domain) in &returned.table_domains {
+                    let elems: Vec<String> =
+                        domain.iter().map(|&t| printer.print_term(t)).collect();
+                    eprintln!("[merge] domain({:?}): {}", sort, elems.join(", "));
+                }
+                for (func, interp) in returned.function_interps.iter().take(12) {
+                    eprintln!(
+                        "[merge] fn {} ({} entries):",
+                        func.into_inner().get(),
+                        interp.entries.len()
+                    );
+                    for e in interp.entries.iter().take(40) {
+                        let args: Vec<String> =
+                            e.args.iter().map(|&a| printer.print_term(a)).collect();
+                        eprintln!(
+                            "[merge]   ({}) -> {}",
+                            args.join(", "),
+                            printer.print_term(e.result)
+                        );
+                    }
+                }
+            }
+            Ok(returned)
+        } else {
+            // Legacy path (no structure yet): the wholesale rebuild.
+            let mut completed = harvested;
 
-        Ok(completed)
+            // Step 10: compute the constructor tables (Z3 `smt_model_finder`'s
+            // entry-table search).  Runs after the universes are frozen and
+            // the entry tables final, and installs its output on the model -
+            // one globally-consistent interpretation every later consumer
+            // (the nested checker, the mining odometer, the enumerative
+            // seeder, the defining pins) reads unchanged.
+            let mut range_sorts = core::mem::take(&mut self.frozen_range_sorts);
+            let mut fresh_mints = 0usize;
+            super::constructor_tables::compute_constructor_tables(
+                &mut completed,
+                quantifiers,
+                &mut self.frozen_table_domains,
+                &mut range_sorts,
+                &mut self.minted_points,
+                &mut fresh_mints,
+                manager,
+            );
+            self.frozen_range_sorts = range_sorts;
+            self.last_round_fresh_mints = fresh_mints;
+
+            // Promotion: the first round whose tables install becomes the
+            // persistent structure.  Its minted points are recorded (the
+            // pollution channels and the row repairs key on them from the
+            // next round on): every computed entry whose result is a
+            // fresh `tbl!`-named element.
+            self.model_serial += 1;
+            completed.version = self.model_serial;
+            if !completed.computed_entries.is_empty() {
+                let minted: Vec<TermId> = completed
+                    .computed_entries
+                    .values()
+                    .flat_map(|es| es.iter().map(|e| e.result))
+                    .filter(|&r| {
+                        manager.get(r).is_some_and(|n| {
+                            matches!(n.kind, TermKind::Var(name) if manager.resolve_str(name).starts_with("tbl!"))
+                        })
+                    })
+                    .collect();
+                self.minted_points.extend(minted);
+                self.structure = Some(completed.clone());
+            }
+            Ok(completed)
+        }
+    }
+
+    /// Apply one round's ground harvest to the persistent structure
+    /// (see [`Self::structure`]).  Returns whether anything changed -
+    /// the caller moves the structure version only then.
+    ///
+    /// # The merge rules
+    ///
+    /// * **Assignments** (channel (a)): the structure adopts the
+    ///   harvest's assignment table minus every key (or value) that
+    ///   mentions a minted point.  Those keys are the falsifier lemmas'
+    ///   committed polarities *at minted elements* - the ground solver's
+    ///   atoms for terms the encoder internalized - and the completion
+    ///   evaluator's whole-term assignment lookup would answer from them
+    ///   before any entry is consulted, overriding the structure's own
+    ///   rows.  Minted points speak only through the structure.
+    /// * **Entries** (channel (b) + monotonicity): per function, the
+    ///   structure keeps every entry it already holds (its rows are
+    ///   interpretation choices - the certifiable witness), except at
+    ///   atoms the repair channel invalidated, which re-read from the
+    ///   harvest.  Harvest entries touching a minted point are dropped:
+    ///   the harvest (`extract_function_interpretations`) converts the
+    ///   same committed polarities into observer entries whose args
+    ///   coincide exactly with the mint's own, and a key-based retain
+    ///   would keep both - two values at one point.
+    /// * **Minted-row repair** (the row pin from a falsifier): an
+    ///   invalidated atom at a minted point cannot re-read from harvest
+    ///   entries (they are purged by rule two); instead the row bit is
+    ///   taken from the harvest's *assignment* for that atom - the forced
+    ///   lemma's committed polarity is precisely the new row bit.
+    /// * **Universes / macros / defaults**: adopted from the harvest
+    ///   (they are functions of the quantifiers and the raw ground
+    ///   view); the tabled sorts' domains are re-derived by the table
+    ///   compute over the persistent frozen domains (which the mint and
+    ///   the thaw alone grow).
+    fn merge_harvest(
+        &mut self,
+        structure: &mut CompletedModel,
+        harvest: CompletedModel,
+        manager: &mut TermManager,
+    ) -> bool {
+        let mut changed = false;
+        let invalidated = core::mem::take(&mut self.invalidated_atoms);
+        let minted = self.minted_points.clone();
+
+        // Assignments (monotonicity): the structure's whole-term lookup
+        // table is *grown*, never re-rolled — existing keys keep the
+        // structure's frozen word (first-wins, exactly like entries),
+        // fresh keys are adopted from the harvest, and keys the repair
+        // channel invalidated re-read.  Without the monotone merge the
+        // ground solver's free flips churn the assignment view every
+        // round, the version never stabilizes, and the checker re-pays
+        // its nested solves until the global conflict budget dies
+        // (measured on set16: 43 rounds to budget-exhaustion, no
+        // verdict).  The seventeenth follow-up's polarity-override
+        // channel (assignments at minted atoms answering before entries)
+        // is closed by the self-consistency pass below instead of a
+        // purge: an adopted polarity that disagrees with the structure's
+        // own row at that point is overwritten by the row, so the purge
+        // would only discard *new forced facts at minted tuples* — the
+        // witness lemmas' pins the structure needs (measured on set16:
+        // purging them deadlocks the witness axiom forever).
+        //
+        // **Element canonicity**: an element of a frozen domain is its
+        // own canonical value — an assignment `e -> v` with `e` an
+        // element and `v != e` is dropped, not adopted.  The ground
+        // solver merges elements freely (an EUF free choice — measured
+        // on set16: `u!0 -> skf!0(b,a)` while both sit in the frozen
+        // Elem domain), and baking that merge into the structure's
+        // assignment view makes the completed model evaluate one point
+        // two ways: the chain constructions bake `(= u!0 (skf!0 b a))`
+        // conditions the aux can set freely, while the entries stay
+        // keyed at both — and the aux restriction asserts `distinct`
+        // over elements the model's own assignments equate (an
+        // incoherent interpretation).  Dropping the assignment costs at
+        // most completeness (a *forced* element equality — an asserted
+        // `= e1 e2` — leaves the structure's elements distinct and the
+        // assertion gate honestly refuses `sat`; a repair for that class
+        // is future work); adopting it costs the structure's coherence.
+        {
+            let elements: FxHashSet<TermId> = self
+                .frozen_table_domains
+                .values()
+                .flat_map(|d| d.iter().copied())
+                .collect();
+            let mut assignments: FxHashMap<TermId, TermId> = FxHashMap::default();
+            let mut dropped_elem_assigns = 0usize;
+            for (&term, &value) in structure.assignments.iter() {
+                if elements.contains(&term) && value != term {
+                    dropped_elem_assigns += 1;
+                    continue; // element canonicity (kept keys too)
+                }
+                assignments.insert(term, value);
+            }
+            if std::env::var_os("NIXIE_DEBUG_MERGE").is_some() {
+                eprintln!(
+                    "[merge] kept {} harvest {} dropped-elem-assigns {} elements {}",
+                    structure.assignments.len(),
+                    harvest.assignments.len(),
+                    dropped_elem_assigns,
+                    elements.len()
+                );
+            }
+            for (&term, &value) in &harvest.assignments {
+                if elements.contains(&term) && value != term {
+                    continue; // element canonicity: `e -> v != e` is dropped
+                }
+                // An invalidated atom re-reads (the repair channel);
+                // otherwise first-wins: an existing key keeps the
+                // structure's frozen word.
+                if assignments.contains_key(&term) && !invalidated.contains(&term) {
+                    continue;
+                }
+                assignments.insert(term, value);
+            }
+            if assignments.len() != structure.assignments.len()
+                || assignments
+                    .iter()
+                    .any(|(k, v)| structure.assignments.get(k) != Some(v))
+            {
+                changed = true;
+            }
+            structure.assignments = assignments;
+        }
+
+        // Entries (channel (b), monotonicity, repairs).
+        {
+            // Index the harvest per function: (args, result, touches-minted).
+            let mut harvest_rows: FxHashMap<Spur, Vec<(Vec<TermId>, TermId, bool)>> =
+                FxHashMap::default();
+            for (&func, interp) in &harvest.function_interps {
+                let rows = interp
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        let touches = e.args.iter().any(|&a| term_touches(a, &minted, manager));
+                        (e.args.clone(), e.result, touches)
+                    })
+                    .collect();
+                harvest_rows.insert(func, rows);
+            }
+            let funcs: Vec<Spur> = structure
+                .function_interps
+                .keys()
+                .copied()
+                .chain(harvest.function_interps.keys().copied())
+                .collect();
+            let mut seen: FxHashSet<Spur> = FxHashSet::default();
+            for func in funcs {
+                if !seen.insert(func) {
+                    continue;
+                }
+                let harvest_interp = harvest.function_interps.get(&func);
+                let range = harvest_interp
+                    .map(|i| i.range)
+                    .or_else(|| structure.function_interps.get(&func).map(|i| i.range));
+                let Some(range) = range else {
+                    // No interpretation on either side: nothing to merge.
+                    continue;
+                };
+                let mut entries: Vec<FunctionEntry> =
+                    match structure.function_interps.get_mut(&func) {
+                        Some(interp) => core::mem::take(&mut interp.entries),
+                        None => Vec::new(),
+                    };
+                let mut entry_changed = false;
+                // Repair pass over the structure's own entries: an
+                // invalidated atom re-reads.  At a minted point the new
+                // bit comes from the harvest's assignment for the atom
+                // (the forced lemma's polarity); elsewhere the entry is
+                // dropped and re-adopted from the harvest below.
+                if !invalidated.is_empty() {
+                    let mut repaired: Vec<FunctionEntry> = Vec::with_capacity(entries.len());
+                    for entry in entries {
+                        let atom = entry_atom(func, &entry.args, entry.result, range, manager);
+                        if invalidated.contains(&atom) {
+                            entry_changed = true;
+                            let touches_minted = entry
+                                .args
+                                .iter()
+                                .any(|&a| term_touches(a, &minted, manager));
+                            if touches_minted {
+                                // Minted-row repair: adopt the forced bit.
+                                if let Some(&value) = harvest.assignments.get(&atom)
+                                    && manager.get(value).is_some_and(|n| {
+                                        matches!(n.kind, TermKind::True | TermKind::False)
+                                    })
+                                {
+                                    repaired.push(FunctionEntry {
+                                        args: entry.args,
+                                        result: value,
+                                    });
+                                }
+                                // No forced bit available: the row stands.
+                                continue;
+                            }
+                            // Dropped; re-adopted from the harvest below.
+                            continue;
+                        }
+                        repaired.push(entry);
+                    }
+                    entries = repaired;
+                }
+                // Adoption: harvest entries at points the structure does
+                // not hold.  Every entry is adopted — including ones whose
+                // args touch minted points: the seventeenth follow-up's
+                // same-key-twin channel lives on the *rebuild*
+                // architecture (the harvest re-derives the whole table, so
+                // twins had to be purged before re-injecting remembered
+                // rows); here the structure's own rows are kept by the
+                // first-wins rule above, so a minted-touching entry is
+                // either the mint's own twin (already held — skipped) or a
+                // *new forced fact at a minted tuple* — exactly the
+                // falsifier lemmas' witness pins the structure needs to
+                // ever certify the witness axioms over its minted
+                // elements (measured on set16: purging them deadlocks the
+                // witness axiom at (a, tbl!...) forever — the structure
+                // never sees the witness the ground already chose).
+                if let Some(rows) = harvest_rows.get(&func) {
+                    for (args, result, _touches) in rows {
+                        if !entries.iter().any(|e| e.args == *args) {
+                            entries.push(FunctionEntry {
+                                args: args.clone(),
+                                result: *result,
+                            });
+                            entry_changed = true;
+                        }
+                    }
+                }
+                if entry_changed {
+                    changed = true;
+                }
+                // Install: adopt the harvest's shape (domain/range/else)
+                // for the interpretation, keeping the merged entries.
+                match (structure.function_interps.get_mut(&func), harvest_interp) {
+                    (Some(interp), Some(h)) => {
+                        if interp.else_value != h.else_value {
+                            interp.else_value = h.else_value;
+                            changed = true;
+                        }
+                        interp.entries = entries;
+                    }
+                    (Some(interp), None) => {
+                        interp.entries = entries;
+                    }
+                    (None, Some(h)) => {
+                        let mut interp = h.clone();
+                        interp.entries = entries;
+                        structure.function_interps.insert(func, interp);
+                        changed = true;
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+
+        // Self-consistency pass: the merged assignments must agree with
+        // the structure's entries at every claimed point.  The harvest's
+        // assignments are the *ground solver's* current view — including
+        // its free choices — while a claimed entry is the structure's
+        // frozen word (first-wins); leaving both in place makes the
+        // completed model evaluate one atom two ways (the concrete entry
+        // lookup answers `false` while the whole-term assignment lookup
+        // and the chain normalizations answer `true` — measured on set16:
+        // the difference axiom's walk consumed `(member u!0 a) = false`
+        // and `(= true (member u!0 a)) = true` in ONE evaluation).  The
+        // entry wins: the structure is the interpretation candidate the
+        // certifier judges, and the repair channels (invalidation, the
+        // assertion gate) are what move a claimed point — never a silent
+        // free flip in the harvest.
+        {
+            let mut overrides: Vec<(TermId, TermId)> = Vec::new();
+            for (&func, interp) in &structure.function_interps {
+                for entry in &interp.entries {
+                    let atom = entry_atom(func, &entry.args, entry.result, interp.range, manager);
+                    if let Some(&value) = structure.assignments.get(&atom)
+                        && value != entry.result
+                    {
+                        overrides.push((atom, entry.result));
+                    }
+                }
+            }
+            for (atom, value) in overrides {
+                structure.assignments.insert(atom, value);
+            }
+        }
+
+        // Universes, macros, defaults, sources: adopted from the harvest.
+        // (The tabled sorts' own domains are re-derived by the table
+        // compute; the override to `universes` happens after it, in
+        // `complete`.)
+        if structure.universes != harvest.universes {
+            changed = true;
+            structure.universes = harvest.universes;
+        }
+        if structure.macros != harvest.macros {
+            changed = true;
+            structure.macros = harvest.macros;
+        }
+        if structure.macro_sources != harvest.macro_sources {
+            changed = true;
+            structure.macro_sources = harvest.macro_sources;
+        }
+        if structure.defaults != harvest.defaults {
+            changed = true;
+            structure.defaults = harvest.defaults;
+        }
+        if structure.bound_var_names != harvest.bound_var_names {
+            changed = true;
+            structure.bound_var_names = harvest.bound_var_names;
+        }
+        if structure.ground_universes != harvest.ground_universes {
+            changed = true;
+            structure.ground_universes = harvest.ground_universes;
+        }
+        changed
+    }
+
+    /// The repair channel (see `Self::invalidated_atoms): ground atoms
+    /// whose completed entries the next merge re-reads from the ground
+    /// harvest.  Called with the commitments of a falsifier that became a
+    /// fresh lemma (the lemma is about to force the ground solver's value
+    /// at exactly those atoms) or of a duplicate fully-pinned falsifier
+    /// (whose blocking clause excludes the stale arrangement).
+    pub fn invalidate_atoms(&mut self, atoms: impl IntoIterator<Item = TermId>) {
+        self.invalidated_atoms.extend(atoms);
+    }
+
+    /// The idempotent variant of the duplicate-falsifier repair ([see
+    /// `Self::invalidated_sets`]): the arrangement's atom set hashes to a
+    /// key already invalidated once is skipped — the re-read already ran,
+    /// and repeating it every round only re-reads the ground's free flips
+    /// (the structure churns forever).
+    pub fn invalidate_arrangement_once(&mut self, atoms: &[TermId]) {
+        use core::hash::Hash;
+        let mut hasher = rustc_hash::FxHasher::default();
+        let mut sorted: Vec<TermId> = atoms.to_vec();
+        sorted.sort_by_key(|t| t.0);
+        for t in &sorted {
+            t.0.hash(&mut hasher);
+        }
+        let key = core::hash::Hasher::finish(&hasher);
+        if self.invalidated_sets.insert(key) {
+            self.invalidated_atoms.extend(sorted);
+        }
+    }
+
+    /// Drop the persistent structure and every table-search state (search
+    /// restore / `pop`): the structure is derived from one search's ground
+    /// models and must not leak into the next (scope consistency).  The
+    /// frozen domains and the mint memory belong to the same search - a
+    /// fresh search re-freezes at its own first universe.
+    pub fn reset_structure(&mut self) {
+        self.structure = None;
+        self.minted_points.clear();
+        self.invalidated_atoms.clear();
+        self.invalidated_sets.clear();
+        self.frozen_table_domains.clear();
+        self.frozen_range_sorts.clear();
+        self.thaws_used = 0;
     }
 
     /// Evaluate an arithmetic expression to a canonical constant TermId.
@@ -2088,6 +2633,66 @@ impl fmt::Display for CompletionError {
 }
 
 impl core::error::Error for CompletionError {}
+
+/// Whether `term` has any of `points` in its subterm closure
+/// (including itself): the "touches" test the merge's pollution channels
+/// and repair rules key on.  Explicit subterm walk (AGENTS.md rule: no
+/// unbounded native recursion over user-controlled DAGs).
+fn term_touches(term: TermId, points: &FxHashSet<TermId>, manager: &TermManager) -> bool {
+    if points.is_empty() {
+        return false;
+    }
+    if points.contains(&term) {
+        return true;
+    }
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack: Vec<TermId> = vec![term];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        if points.contains(&t) {
+            return true;
+        }
+        let Some(node) = manager.get(t) else {
+            continue;
+        };
+        let mut children: SmallVec<[TermId; 4]> = SmallVec::new();
+        crate::mbqi::model_checker::push_children(&node.kind, &mut children);
+        stack.extend(children);
+    }
+    false
+}
+
+/// Reconstruct the ground atom a completed-model commitment would record
+/// for the entry `func(args...) -> result` of a function whose range sort
+/// is `range`: the application itself for Bool-valued functions, the
+/// equality `f(args) = result` otherwise (see
+/// `CompletionEval::record_commitment`).  Hash-consing makes the
+/// reconstruction term-identical to the recorded atom whenever the
+/// recording walked the same (evaluated) arguments; a mismatch only makes
+/// the repair miss a point, which costs completeness, never soundness.
+fn entry_atom(
+    func: Spur,
+    args: &[TermId],
+    result: TermId,
+    range: SortId,
+    manager: &mut TermManager,
+) -> TermId {
+    let small_args: SmallVec<[TermId; 4]> = args.iter().copied().collect();
+    let app = manager.intern_term(
+        TermKind::Apply {
+            func,
+            args: small_args,
+        },
+        range,
+    );
+    if range == manager.sorts.bool_sort {
+        app
+    } else {
+        manager.mk_eq(app, result)
+    }
+}
 
 /// Statistics for model completion
 #[derive(Debug, Clone, Default)]

@@ -316,6 +316,43 @@ fn set16_family_is_never_wrong() {
     );
 }
 
+/// The pigeonhole family's canonical shape (quant_fuzz `unsat` family,
+/// ~20/30 unknown before the EUF-representative export landed): the
+/// enumeration axiom covers the sort, `distinct` fixes the cardinality,
+/// and an injective `f` whose range misses one element is unsatisfiable
+/// by the pigeonhole principle.  Before the export, the model readback
+/// recorded *nothing* for the sort's unpinned classes (the declared
+/// constants had no values), the completion's synthetic seeder minted a
+/// phantom `u!0..u!7` universe, and the enumeration axiom falsified at
+/// every phantom forever — `unknown` on a goal z3 refutes.  With the
+/// export (the e-graph's classes as the readback's values, gated off
+/// table goals), the universe is the quotient, the falsifier's
+/// identification instances land, and the loop refutes.
+#[test]
+fn pigeonhole_enumeration_refutes_through_the_euf_export() {
+    let output = run_bounded(
+        r#"
+        (set-logic UFLRA)
+        (declare-sort S 0)
+        (declare-fun f (S) S)
+        (declare-fun c0 () S)
+        (declare-fun c1 () S)
+        (declare-fun c2 () S)
+        (assert (forall ((x S)) (or (= x c0) (= x c1) (= x c2))))
+        (assert (distinct c0 c1 c2))
+        (assert (forall ((x S) (y S)) (=> (= (f x) (f y)) (= x y))))
+        (assert (forall ((x S)) (not (= (f x) c2))))
+        (check-sat)
+    "#,
+        30_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "unsat",
+        "the EUF-representative export closes the pigeonhole family (z3: unsat); got {status}"
+    );
+}
+
 /// The `set16` corpus goal, verbatim shape (uninterpreted `Elem`, not
 /// the Real variant above): after the ill-typed-diagonal repair, the
 /// artifact-default repair, and the fresh-row-element mint (see the
@@ -350,7 +387,11 @@ fn set16_family_answers_sat() {
         (assert (not (subset b a)))
         (check-sat)
     "#,
-        30_000,
+        // The persistent-model rewrite made this an honest convergence
+        // (rows no longer vanish at round boundaries): ~9 s standalone,
+        // and the band needs headroom for full-suite parallel load (the
+        // set9 pin's 120 s budget is the precedent).
+        120_000,
     );
     let status = last_status(&output);
     assert!(

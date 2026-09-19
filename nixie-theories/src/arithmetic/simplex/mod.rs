@@ -4934,7 +4934,10 @@ impl Simplex {
                 wexpr.terms.iter().map(|(v, _)| *v),
                 int_vars.len(),
             );
-            if self.derive_stamp.get(&(*basic_var, 2)) == Some(&stamp) {}
+            // (The landed stamps audit left a no-op read here; removed —
+            // the stamp comparison had no effect, and clippy flags the
+            // empty branch.  Behavior is exactly the committed one.)
+            let _ = self.derive_stamp.get(&(*basic_var, 2));
             for lower in [true, false] {
                 let Some((real, delta, reasons)) =
                     self.derive_bound_big_parts(&wexpr.constant, &wexpr.terms, lower)

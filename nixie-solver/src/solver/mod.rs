@@ -3137,6 +3137,21 @@ impl Solver {
         // MBQI loop for quantified formulas
         let max_mbqi_iterations = 100;
         let mut mbqi_iteration = 0;
+        // The quantifier-free assertions, registered once per search for
+        // the completed-structure assertion gate (see
+        // `MBQIIntegration::ground_assertions_hold`): the persistent
+        // structure is an interpretation candidate whose quantifier story
+        // the nested checker certifies — its *ground* story must be
+        // checked just as explicitly before `Satisfied` may print `sat`
+        // (the completed-vs-asserted divergence class the sixteenth
+        // follow-up decoded).
+        self.mbqi.set_ground_assertions(
+            self.assertions
+                .iter()
+                .copied()
+                .filter(|&a| !nixie_core::tactic::contains_quantifier(a, manager))
+                .collect(),
+        );
         // Consecutive MBQI rounds that produced nothing (no instantiation,
         // no certification).  The bail below fires on a *streak* rather
         // than a total: productive rounds — ones whose nested-check

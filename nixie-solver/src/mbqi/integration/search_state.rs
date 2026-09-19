@@ -136,6 +136,18 @@ impl MBQIIntegration {
         }
         self.instantiation_engine.clear_caches();
         self.lazy_instantiator.clear();
+        // The persistent structure and the assertion gate's inputs are
+        // search state too (see `ModelCompleter::reset_structure`): the
+        // structure is derived from one search's ground models, and its
+        // frozen domains / mint memory / pending repairs belong to the
+        // same search.  A fresh search re-freezes at its own first
+        // universe.
+        self.model_completer.reset_structure();
+        self.ground_assertions.clear();
+        self.active_table_quantifiers.clear();
+        self.last_round_barren = false;
+        self.barren_streak = 0;
+        self.model_repair_clauses.clear();
     }
 
     /// Test-only view of the fields [`Self::restore_search_state`] resets.

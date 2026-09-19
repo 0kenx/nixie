@@ -1426,44 +1426,17 @@ fn term_mentions_var(term: TermId, manager: &TermManager) -> bool {
 /// term count reads as "unchanged"), so the veto and re-check gates keyed on
 /// this must observe flips.
 fn completed_model_signature(model: &CompletedModel) -> u64 {
-    use core::hash::Hash;
-    let mut hasher = rustc_hash::FxHasher::default();
-    model.assignments.len().hash(&mut hasher);
-    for (&k, &v) in &model.assignments {
-        k.0.hash(&mut hasher);
-        v.0.hash(&mut hasher);
-    }
-    model.function_interps.len().hash(&mut hasher);
-    for interp in model.function_interps.values() {
-        interp.entries.len().hash(&mut hasher);
-        for entry in &interp.entries {
-            for &a in &entry.args {
-                a.0.hash(&mut hasher);
-            }
-            entry.result.0.hash(&mut hasher);
-        }
-    }
-    // The computed constructor tables and the semantic domains are part
-    // of the interpretation: a certification remembered for a signature
-    // must not survive a table change.
-    model.computed_entries.len().hash(&mut hasher);
-    for entries in model.computed_entries.values() {
-        entries.len().hash(&mut hasher);
-        for entry in entries {
-            for &a in &entry.args {
-                a.0.hash(&mut hasher);
-            }
-            entry.result.0.hash(&mut hasher);
-        }
-    }
-    model.semantic_domains.len().hash(&mut hasher);
-    for domain in model.semantic_domains.values() {
-        domain.len().hash(&mut hasher);
-        for &e in domain {
-            e.0.hash(&mut hasher);
-        }
-    }
-    core::hash::Hasher::finish(&hasher)
+    // The structure version (see `CompletedModel::version`): a monotone
+    // serial assigned by the completer, identical across rounds exactly
+    // when the completed structure is semantically unchanged.  The
+    // harvest-rebuild architecture needed a content hash to notice a
+    // moved model; the persistent structure moves only through explicit
+    // repair steps, and its version is that movement's honest identity
+    // (the rewrite design: "the signature/veto/memo machinery keys on
+    // the structure's version, not a content hash").  The legacy path
+    // assigns a fresh serial to every rebuild, preserving the old
+    // "a rebuilt model is always new content" semantics bit-for-bit.
+    model.version
 }
 
 /// The closed-world else table: every *Bool-valued* function's else forced

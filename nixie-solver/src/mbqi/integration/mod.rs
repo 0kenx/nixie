@@ -157,6 +157,15 @@ pub struct MBQIIntegration {
     /// targeted cardinality escalation (see
     /// `ModelCompleter::thaw_axes_only`).
     barren_streak: u32,
+    /// The search's quantifier-free assertions, for the assertion gate
+    /// (see [`Self::ground_assertions_hold`]): the completed structure
+    /// is `sat`-worthy only if it *evaluates* them true, not merely if
+    /// the ground solver's own model (its source) did.
+    ground_assertions: Vec<TermId>,
+    /// Cached answer to [`Self::goal_uses_constructor_tables`] — a
+    /// static property of the quantifier set, invalidated whenever the
+    /// set changes.
+    tables_goal_cache: Option<bool>,
 }
 
 impl MBQIIntegration {
@@ -181,6 +190,8 @@ impl MBQIIntegration {
             active_table_quantifiers: FxHashSet::default(),
             last_round_barren: false,
             barren_streak: 0,
+            ground_assertions: Vec::new(),
+            tables_goal_cache: None,
             max_rounds: 100,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
@@ -192,6 +203,7 @@ impl MBQIIntegration {
 
     /// Add a quantified formula
     pub fn add_quantifier(&mut self, term: TermId, manager: &TermManager) {
+        self.tables_goal_cache = None;
         let Some(t) = manager.get(term) else {
             return;
         };
@@ -233,6 +245,7 @@ impl MBQIIntegration {
             if self.quantifiers.iter().any(|q| q.term == term) {
                 return;
             }
+            self.tables_goal_cache = None;
             let bound_vars: SmallVec<[(Spur, SortId); 4]> = vars.iter().copied().collect();
             let mut qf = QuantifiedFormula::new(term, bound_vars, *body, true);
             qf.guard = Some(guard);
@@ -257,6 +270,134 @@ impl MBQIIntegration {
     /// theories the same way the outer solver does.
     pub fn set_logic_hint(&mut self, logic: &str) {
         self.logic_hint = Some(logic.to_string());
+    }
+
+    /// Register the search's quantifier-free assertions (the assertion
+    /// gate's input — see `Self::ground_assertions_hold).  Called once
+    /// per search by the solver; cleared with the rest of the per-search
+    /// state.
+    pub fn set_ground_assertions(&mut self, assertions: Vec<TermId>) {
+        self.ground_assertions = assertions;
+    }
+
+    /// Whether the goal's quantifiers extract any constructor/hint tables
+    /// — a *static* property of the quantifier set (the extraction depends
+    /// only on the axiom shapes).  The model readback's
+    /// EUF-representative export is declined for such goals: a table owns
+    /// its functions' applications, and exporting committed equality
+    /// values for table-owned compounds is the sixteenth follow-up's
+    /// decoded false-`sat` pollution channel (the per-round
+    /// `active_table_quantifiers` signal is too weak — the goal's *first*
+    /// round has no tables yet, and the export firing there poisons the
+    /// structure the tables are about to build — measured on set16:
+    /// `sat` -> `unknown`).  Cached on first call; the cache is dropped
+    /// whenever the quantifier set changes.
+    pub fn goal_uses_constructor_tables(&mut self, manager: &TermManager) -> bool {
+        if let Some(cached) = self.tables_goal_cache {
+            return cached;
+        }
+        let macro_funcs = self.model_completer.macro_function_names();
+        let uses =
+            super::constructor_tables::goal_has_tables(&self.quantifiers, &macro_funcs, manager);
+        self.tables_goal_cache = Some(uses);
+        uses
+    }
+
+    /// **The assertion gate** (the sixteenth follow-up's held-back piece,
+    /// re-derived): every quantifier-free assertion must *evaluate* true
+    /// under the completed structure before the legacy finite-exhaustion
+    /// `Satisfied` may print `sat`.
+    ///
+    /// Why it exists: the persistent structure is an interpretation
+    /// candidate in its own right (z3's proto-model), not a readback of
+    /// the ground solver's model — its first-wins rows, minted points
+    /// and computed tables are *choices* the ground solver never made.
+    /// The nested checker certifies the quantified story against exactly
+    /// those choices; the ground story (the assertions) needs its own
+    /// explicit check.  A stale first-wins row or an aggressive mint can
+    /// otherwise diverge from an asserted fact, and `Satisfied` would
+    /// print `sat` for a witness that refutes an assertion (the
+    /// completed-vs-asserted divergence class).
+    ///
+    /// On violation the gate also repairs: every assertion atom whose
+    /// completed value disagrees with the ground model's (the partial
+    /// model the structure was harvested from) is queued for the merge's
+    /// re-read channel — the ground model satisfies the assertions, so
+    /// re-reading those atoms restores agreement next round.  Returns
+    /// `false` (blocking `Satisfied`) while any assertion fails.
+    fn ground_assertions_hold(
+        &mut self,
+        model: &CompletedModel,
+        partial_model: &FxHashMap<TermId, TermId>,
+        manager: &mut TermManager,
+    ) -> bool {
+        if self.ground_assertions.is_empty() {
+            return true;
+        }
+        let else_table = crate::mbqi::model_checker::choose_else_table(model, manager);
+        let mut violations: Vec<TermId> = Vec::new();
+        for &assertion in &self.ground_assertions {
+            match crate::mbqi::model_checker::eval_completed_ground(
+                assertion,
+                model,
+                &else_table,
+                manager,
+            ) {
+                Ok(value) => {
+                    if !manager
+                        .get(value)
+                        .is_some_and(|t| matches!(t.kind, TermKind::True))
+                    {
+                        violations.push(assertion);
+                    }
+                }
+                Err(_) => violations.push(assertion),
+            }
+        }
+        if violations.is_empty() {
+            return true;
+        }
+        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+            let printer = nixie_core::smtlib::Printer::new(manager);
+            for v in &violations {
+                eprintln!("[mc] assertion gate violation: {}", printer.print_term(*v));
+            }
+        }
+        // Repair: queue every Bool subterm of a violated assertion whose
+        // completed value disagrees with the ground model's for the next
+        // merge's re-read.  The ground model satisfies the assertion, so
+        // adopting its values at the diverging atoms restores agreement;
+        // a divergence the re-read cannot reach (minted rows, computed
+        // entries) blocks `Satisfied` permanently — honest `unknown`,
+        // never a fabricated `sat`.
+        let mut atoms: Vec<TermId> = Vec::new();
+        for &assertion in &violations {
+            for sub in nixie_core::ast::traversal::collect_subterms(assertion, manager) {
+                let Some(node) = manager.get(sub) else {
+                    continue;
+                };
+                if node.sort != manager.sorts.bool_sort {
+                    continue;
+                }
+                let completed = crate::mbqi::model_checker::eval_completed_ground(
+                    sub,
+                    model,
+                    &else_table,
+                    manager,
+                )
+                .ok();
+                let ground = partial_model.get(&sub).copied();
+                let diverges = match (completed, ground) {
+                    (Some(c), Some(g)) => c != g,
+                    _ => false,
+                };
+                if diverges {
+                    atoms.push(sub);
+                }
+            }
+        }
+        self.model_completer.invalidate_atoms(atoms);
+        false
     }
 
     /// The escalation proper (see the call sites in [`Self::run`]): decide
@@ -350,57 +491,94 @@ impl MBQIIntegration {
                             // (the check paid for itself).
                             self.model_checker.mark_productive(quantifier.term);
                             veto = false;
-                        } else if *fully_pinned
-                            && !commitments.is_empty()
-                            && !self.active_table_quantifiers.is_empty()
-                        {
-                            // The stale-pin repair: a *duplicate* falsifier
-                            // whose evaluation consumed no free completion
-                            // choice (`fully_pinned`) is a function of its
-                            // recorded ground-model commitments alone, so
-                            // every model of the assertions that agrees
-                            // with all of them falsifies this asserted
-                            // quantifier at this point — no such model
-                            // exists, and the blocking disjunction
-                            // `or_i (atom_i != value_i)` the caller emits
-                            // excludes only non-solutions.
-                            //
-                            // Soundness rests on the recording being
-                            // *complete*: every ground-model fact the
-                            // evaluation walk consults must become a
-                            // commitment.  The classes: ground assignment
-                            // hits and entry hits (recorded), the entry
-                            // normalizations the chains bake in (recorded
-                            // since 2026-09-15), and structural constant
-                            // folds (rigid — transfer for free).  Every
-                            // completion *choice* — else fallthroughs,
-                            // macro unfoldings, computed tables, universe
-                            // distinctness — sets `free_choice`, and a
-                            // falsifier that consumed any is not
-                            // `fully_pinned`.  This closes the removed
-                            // emission's failure mode (its recording
-                            // missed the normalization consults, its
-                            // chains baked unflagged choices, and blocking
-                            // refuted satisfiable goals — the quant_fuzz
-                            // false-`unsat`); the `fully_pinned` gate plus
-                            // the complete recording is what the old
-                            // emission lacked.
-                            //
-                            // Table *mode* only (soundness is the
-                            // `fully_pinned` gate; this is the cost gate):
-                            // goals with no tables keep the old behaviour
-                            // entirely (the scope-rebase convergence pin
-                            // regressed past 400 s when the repair was
-                            // ungated), while within a table problem every
-                            // quantifier's stale pins are repairable — the
-                            // witness axioms are not table-owned but their
-                            // falsifiers are exactly the fully-pinned
-                            // shape this exists for.
-                            self.model_repair_clauses.push(commitments.clone());
+                            // The repair channel (persistent structure):
+                            // this falsifier's commitments are the ground
+                            // atoms whose completed values the falsifying
+                            // evaluation consumed, and the fresh lemma is
+                            // about to force the ground solver's value at
+                            // exactly the arrangement they describe — queue
+                            // them for the next merge's re-read so the
+                            // structure follows the refinement instead of
+                            // holding a stale first-wins row against it
+                            // (the falsifier would otherwise re-mine as a
+                            // duplicate forever).
+                            self.model_completer
+                                .invalidate_atoms(commitments.iter().map(|&(a, _)| a));
                         } else {
-                            // Duplicate falsifier with free choices or
-                            // outside the table arc: no clause (see the
-                            // repair branch above for the conditions).
+                            // A duplicate falsifier: its lemma already
+                            // landed (or was a duplicate at birth), so the
+                            // ground solver has already answered this
+                            // arrangement — queue the commitments for the
+                            // merge's re-read regardless of `fully_pinned`
+                            // (a re-read adopts the ground's current word,
+                            // forced or free — a legitimate interpretation
+                            // choice either way; the *blocking clause*
+                            // below stays gated on `fully_pinned`, that is
+                            // the soundness-critical transfer).
+                            // Without this, a stale first-wins pin the
+                            // falsifier consumes spins forever: the set
+                            // family's `subset(b,a)`-shaped stall — the
+                            // structure holds the stale pin, every round
+                            // re-finds the same duplicate, and nothing
+                            // ever re-reads the atom (measured on the
+                            // extensional family: 13 barren rounds,
+                            // `unknown` on a goal z3 refutes).
+                            if *fully_pinned
+                                && !commitments.is_empty()
+                                && !self.active_table_quantifiers.is_empty()
+                            {
+                                let atoms: Vec<TermId> =
+                                    commitments.iter().map(|&(a, _)| a).collect();
+                                self.model_completer.invalidate_arrangement_once(&atoms);
+                            }
+                            if *fully_pinned
+                                && !commitments.is_empty()
+                                && !self.active_table_quantifiers.is_empty()
+                            {
+                                // The stale-pin repair: a *duplicate* falsifier
+                                // whose evaluation consumed no free completion
+                                // choice (`fully_pinned`) is a function of its
+                                // recorded ground-model commitments alone, so
+                                // every model of the assertions that agrees
+                                // with all of them falsifies this asserted
+                                // quantifier at this point — no such model
+                                // exists, and the blocking disjunction
+                                // `or_i (atom_i != value_i)` the caller emits
+                                // excludes only non-solutions.
+                                //
+                                // Soundness rests on the recording being
+                                // *complete*: every ground-model fact the
+                                // evaluation walk consults must become a
+                                // commitment.  The classes: ground assignment
+                                // hits and entry hits (recorded), the entry
+                                // normalizations the chains bake in (recorded
+                                // since 2026-09-15), and structural constant
+                                // folds (rigid — transfer for free).  Every
+                                // completion *choice* — else fallthroughs,
+                                // macro unfoldings, computed tables, universe
+                                // distinctness — sets `free_choice`, and a
+                                // falsifier that consumed any is not
+                                // `fully_pinned`.  This closes the removed
+                                // emission's failure mode (its recording
+                                // missed the normalization consults, its
+                                // chains baked unflagged choices, and blocking
+                                // refuted satisfiable goals — the quant_fuzz
+                                // false-`unsat`); the `fully_pinned` gate plus
+                                // the complete recording is what the old
+                                // emission lacked.
+                                //
+                                // Table *mode* only (soundness is the
+                                // `fully_pinned` gate; this is the cost gate):
+                                // goals with no tables keep the old behaviour
+                                // entirely (the scope-rebase convergence pin
+                                // regressed past 400 s when the repair was
+                                // ungated), while within a table problem every
+                                // quantifier's stale pins are repairable — the
+                                // witness axioms are not table-owned but their
+                                // falsifiers are exactly the fully-pinned
+                                // shape this exists for.
+                                self.model_repair_clauses.push(commitments.clone());
+                            }
                         }
                     }
                 }
@@ -1105,6 +1283,7 @@ impl MBQIIntegration {
                         manager,
                     )
                 })
+                && self.ground_assertions_hold(&completed_model, partial_model, manager)
             {
                 // Every quantifier body evaluated to concrete True under every
                 // candidate assignment AND every bound variable ranged over a
@@ -1435,6 +1614,17 @@ impl MBQIIntegration {
         self.quantifiers.truncate(len);
         self.clear_dedup_cache();
         self.blind_attempted = false;
+        self.tables_goal_cache = None;
+        // Scope consistency (AGENTS.md): the persistent structure was
+        // derived under the popped assertions — its rows, frozen domains
+        // and minted points do not roll back per-atom, so the whole
+        // table-search state resets and the next check re-derives it.
+        self.model_completer.reset_structure();
+        self.ground_assertions.clear();
+        self.active_table_quantifiers.clear();
+        self.last_round_barren = false;
+        self.barren_streak = 0;
+        self.model_repair_clauses.clear();
     }
 
     /// Check if an instantiation is a duplicate

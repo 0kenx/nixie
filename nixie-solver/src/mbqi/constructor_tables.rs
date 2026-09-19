@@ -287,6 +287,20 @@ fn extract_hint_macros(
     out
 }
 
+/// The static table-usage test (see `MBQIIntegration::goal_uses_
+/// constructor_tables`): whether the goal's quantifiers extract any
+/// constructor or hint table.  Depends only on the axiom shapes and the
+/// macro-solver's definitions, never on a model.
+pub(crate) fn goal_has_tables(
+    quantifiers: &[QuantifiedFormula],
+    macro_funcs: &FxHashSet<Spur>,
+    manager: &TermManager,
+) -> bool {
+    let qms = extract_quasi_macros(quantifiers, manager);
+    let hints = extract_hint_macros(quantifiers, &qms, macro_funcs, manager);
+    !qms.is_empty() || !hints.is_empty()
+}
+
 /// Extract every quasi-macro from the tracked quantifiers, first defining
 /// axiom per constructor (deterministic in tracking order).
 pub(crate) fn extract_quasi_macros(
@@ -467,6 +481,7 @@ pub(crate) fn compute_constructor_tables(
     quantifiers: &[QuantifiedFormula],
     frozen: &mut FxHashMap<SortId, Vec<TermId>>,
     range_sorts: &mut FxHashSet<SortId>,
+    minted: &mut FxHashSet<TermId>,
     fresh_mints: &mut usize,
     manager: &mut TermManager,
 ) {
@@ -562,10 +577,10 @@ pub(crate) fn compute_constructor_tables(
     // interpretation).
     for _ in 0..2 {
         for qm in &qms {
-            compute_one(model, qm, frozen, quantifiers, fresh_mints, manager);
+            compute_one(model, qm, frozen, quantifiers, minted, fresh_mints, manager);
         }
         for hm in &hints {
-            compute_hint_one(model, hm, frozen, quantifiers, manager);
+            compute_hint_one(model, hm, frozen, quantifiers, minted, manager);
         }
     }
 
@@ -818,6 +833,7 @@ fn compute_one(
     qm: &QuasiMacro,
     frozen: &mut FxHashMap<SortId, Vec<TermId>>,
     quantifiers: &[QuantifiedFormula],
+    minted: &mut FxHashSet<TermId>,
     fresh_mints: &mut usize,
     manager: &mut TermManager,
 ) {
@@ -940,6 +956,14 @@ fn compute_one(
 
     // The row of every range element, under the completed model.
     let mut rows: Vec<Vec<bool>> = Vec::with_capacity(universe.len());
+    if std::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
+        eprintln!(
+            "[rows d{}] fn {} row_points {}",
+            crate::mbqi::model_checker::nested_depth(),
+            qm.func.into_inner().get(),
+            row_points.len()
+        );
+    }
     for &z in &universe {
         let mut row: Vec<bool> = Vec::with_capacity(row_points.len());
         for point in &row_points {
@@ -969,6 +993,17 @@ fn compute_one(
             }
         }
         rows.push(row);
+    }
+    if std::env::var_os("NIXIE_DEBUG_CT_ROWS").is_some() {
+        let printer = nixie_core::smtlib::Printer::new(manager);
+        for (&z, row) in universe.iter().zip(rows.iter()) {
+            let bits: String = row.iter().map(|&b| if b { '1' } else { '0' }).collect();
+            eprintln!(
+                "[rows d{}]   z={} row={bits}",
+                crate::mbqi::model_checker::nested_depth(),
+                printer.print_term(z)
+            );
+        }
     }
 
     // Walk every tuple of the range universe, computing entries for the
@@ -1139,7 +1174,7 @@ fn compute_one(
         for &i in &order[..k] {
             let (tuple, target) = &missed_this_round[i];
             if let Some(fresh) =
-                mint_fresh_row_element(qm, target, &row_points, model, frozen, manager)
+                mint_fresh_row_element(qm, target, &row_points, model, frozen, minted, manager)
             {
                 *fresh_mints += 1;
                 entries.push(FunctionEntry {
@@ -1203,6 +1238,7 @@ fn mint_fresh_row_element(
     row_points: &[Vec<TermId>],
     model: &mut CompletedModel,
     frozen: &mut FxHashMap<SortId, Vec<TermId>>,
+    minted: &mut FxHashSet<TermId>,
     manager: &mut TermManager,
 ) -> Option<TermId> {
     /// The aux Skolem restriction's universe cap (`model_checker`): a
@@ -1291,6 +1327,10 @@ fn mint_fresh_row_element(
             vac.insert(domain);
         }
     }
+    // The mint memory: this element is a structure-owned point from
+    // here on - the merge's pollution channels and the row repairs key
+    // on it (see `ModelCompleter::minted_points`).
+    minted.insert(fresh);
     Some(fresh)
 }
 
@@ -1346,6 +1386,7 @@ fn compute_hint_one(
     hm: &HintMacro,
     frozen: &FxHashMap<SortId, Vec<TermId>>,
     quantifiers: &[QuantifiedFormula],
+    _minted: &FxHashSet<TermId>,
     manager: &mut TermManager,
 ) {
     let Some(q) = quantifiers.iter().find(|q| q.term == hm.quantifier) else {
@@ -1396,7 +1437,13 @@ fn compute_hint_one(
             .enumerate()
             .map(|(i, &j)| domains[i][j])
             .collect();
-        // Ground pins are never overridden.
+        // Ground pins are never overridden.  (A minted-args repair —
+        // overwriting a pin that contradicts the defining psi at a
+        // minted tuple with psi's truth — was built and measured on the
+        // extensional family: it closed neither gap and regressed set9
+        // to `unknown`; the residual extensional unknowns are an
+        // instance-coverage problem, not a pin problem.  Do not retry
+        // blind — see the study.)
         let pinned = model.function_interps.get(&hm.func).is_some_and(|interp| {
             interp
                 .entries

@@ -1090,3 +1090,169 @@ pollution) is understood and avoided.
 
 Verification of the reverted state: set family all `sat`; quant_fuzz
 seed 42 × 60 CLEAN.
+
+## The persistent-model rewrite landed (2026-09-19, nineteenth follow-up — z3's proto-model architecture)
+
+The handover's rewrite (`docs/handovers/2026-09-18-mbqi-persistent-model.md`)
+is built: the completed model is **one persistent structure per search**
+(z3's proto-model-as-search-object), repaired in place by each round's
+harvest — the harvest-rebuild cycle that the eighteenth proved cannot
+carry honest semantics is gone, for table goals.  The family pins stay
+`sat` **with honest rows** (the landed build converged by letting minted
+rows vanish; the persistent structure keeps them), and the session's
+second half closed the **pigeonhole gap outright** through the mapped
+theory-layer export.  z3 still times out on set19.
+
+### What landed (one unit)
+
+1. **The persistent structure** (`ModelCompleter::structure`): once a
+   goal's constructor/hint tables install (first round), the completed
+   model survives across rounds.  Each round harvests the fresh ground
+   model into a throwaway view (steps 1–9b exactly as before), then
+   *merges* it (`merge_harvest`) into the structure, then recomputes
+   the tables over the merged rows.  Goals without tables keep the
+   legacy wholesale rebuild — bit-identical behaviour (the scope-rebase
+   convergence pins and every non-table regression are unchanged).
+2. **The merge rules** (the eighteenth's diagnosis, answered):
+   * *Monotone assignments and entries*: the structure's rows are
+     first-wins — a claimed point keeps its frozen word; the harvest
+     only adopts points the structure does not hold.  Without this the
+     ground solver's free bits churn the structure every round, the
+     version never stabilizes, and the checker re-pays its nested
+     solves until the global conflict budget dies (measured on set16:
+     43 rounds to budget-exhaustion under a wholesale-adopt merge).
+   * *Self-consistency*: the merged assignment table is forced to agree
+     with the structure's entries at every claimed point (the entry
+     wins).  A wholesale-adopted assignment table contradicted
+     first-wins entries — the walk then read one atom two ways
+     (`(member u!0 a) = false` from the entry, `(= true (member u!0
+     a)) = true` from the normalization, in ONE evaluation).
+   * *Element canonicity*: an element of a frozen domain is its own
+     canonical value — an assignment `e -> v != e` is dropped, kept or
+     adopted.  The ground solver merges elements freely (an EUF free
+     choice — `u!0 -> skf!0(b,a)` while both sit in the frozen Elem
+     domain); baking that merge in makes the chains compare
+     `distinct`-asserted elements the model itself equates (an
+     incoherent interpretation).  Dropping the assignment costs at
+     most completeness on *asserted* element equalities (the assertion
+     gate then honestly refuses `sat`); adopting it costs coherence.
+   * *The pollution channels, revised*: the seventeenth's channel (a)
+     (assignment purge) and channel (b) (entry purge) were re-derived
+     — and then **dropped as blanket rules**: on the persistent
+     architecture they deadlock the witness axioms.  The witness lemma
+     at a *minted tuple* is a ground fact the structure must adopt to
+     ever certify over its minted elements; purging it (its args
+     "touch" minted points) means the witness never materializes
+     (measured on set16: the witness axiom falsified forever,
+     `unknown`).  The twins problem the purge existed for is closed
+     structurally instead: the mint's rows win by first-wins, and the
+     self-consistency pass kills the polarity override.
+3. **The repair channels** (the falsifier instances' effects, applied
+   in place): a fresh falsifier's lemma invalidates its commitments
+   (the ground is about to move them); a duplicate **fully-pinned**
+   falsifier emits the blocking clause *and* invalidates — once per
+   distinct arrangement (`invalidated_sets`): re-reading the same
+   arrangement every round re-reads the ground's free flips too, and
+   the structure churns past every budget (measured on set19: `sat`
+   -> `unknown` at 50+ rounds of `nested check undetermined`).
+   Invalidated atoms re-read from the next harvest; at minted points
+   the new row bit comes from the forced lemma's assignment (the
+   "row pin from a falsifier").
+4. **Version-keyed signatures**: `completed_model_signature` returns
+   the completer-assigned monotone `version` (a persistent structure
+   moves only through repairs, so its version is its honest identity;
+   the legacy path assigns a fresh serial per rebuild, preserving the
+   old semantics exactly).  The memo/veto/certification machinery now
+   reuses verdicts against a *stable* structure instead of re-paying.
+5. **The assertion gate** (the sixteenth's held-back piece,
+   re-derived): every quantifier-free assertion must *evaluate* true
+   under the completed structure before the legacy finite-exhaustion
+   `Satisfied` may print `sat` — the structure is an interpretation
+   candidate in its own right, and its ground story needs its own
+   check (the completed-vs-asserted divergence class).  Violations
+   repair: diverging atoms are queued for the merge's re-read.
+6. **The EUF-representative export** (the pigeonhole route, mapped in
+   the handover): the model readback records every internalized
+   term of an uninterpreted sort as its e-graph class representative
+   (a merge is a consequence; a self-rep assignment is trivially
+   true).  Without the export, an unpinned class (a declared
+   constant, a free application) has *no* readback value, the
+   completion's synthetic seeder mints `u!0..u!7`, and the goal's
+   enumeration axiom falsifies at every phantom forever while the
+   real elements never enter the universe.  With it, the universe is
+   the quotient, the identification instances land, and the loop
+   refutes.  **Gated off table goals** (the static
+   `goal_uses_constructor_tables` test — the per-round ownership set
+   is empty on a table goal's *first* round, and the export firing
+   there poisons the structure the tables are about to build:
+   measured set16 `sat` -> `unknown`): the sixteenth's decoded
+   false-`sat` pollution channel stays closed.
+
+### Measured
+
+* **Set family**: all three `sat` on honest rows — set16 ~9 s, set9
+  ~5–9 s, set19 ~8 s (the landed build: 0.1/8/14 s on dishonest
+  rows).  z3 4.16.0 still times out on set19.
+* **Pigeonhole gap: closed.**  seeds 51–54 × 150 (unsat family): the
+  family went from ~20/30 `unknown` (0 solved) to 19–29/30 `unsat`
+  every seed — 96/120 solved, 0 false answers.  Total unknowns across
+  the four batteries: 124 → 28.
+* **Extensional gap: partially moved** (~6/24 → 5–10/24 per seed).
+  The residual decodes to an *instance-coverage* problem, not a
+  structure problem: the refutation needs the literal difference-axiom
+  instance at `(w, union(a,b), b)` (with the asserted equality), and
+  the semantic-domain collapse (union(a,b) ≡ b under the rows)
+  removes the tuple from every engine's candidate space before the
+  ground congruence can exploit it.
+* **Perf gate**: PASS — conflicts/decisions geomean 1.000 (the
+  rewrite is completion-layer; the SAT core is untouched).
+
+### Negative results (do not retry blind)
+
+* **Wholesale assignment adoption into the merge** — the structure
+  never stabilizes (version churns, budget death at 43 rounds).
+* **Blanket pollution purges on the persistent architecture** — the
+  witness lemmas at minted tuples are purged with the twins; the
+  witness axioms deadlock (`unknown` on set16).  First-wins +
+  self-consistency replace both channels.
+* **Blanket duplicate-falsifier invalidation** (regardless of
+  `fully_pinned`) — re-reads the ground's free flips; set19 regressed
+  to `unknown`.  The idempotence gate (`invalidate_arrangement_once`)
+  was *also* insufficient on its own — the gated form
+  (fully-pinned duplicates only, once per arrangement) is what lands.
+* **The minted-args hint repair** (overwrite a pin that contradicts
+  psi at a minted tuple with psi's truth): closed neither extensional
+  shape and regressed set9 to `unknown` (the psi evaluation runs
+  against rows still in flux mid-compute).  Reverted; the extensional
+  residual is instance coverage, not pins.
+* **The per-round ownership gate for the export** — the first round
+  of a table goal has no tables yet; the export fires and poisons
+  the structure (set16 `sat` -> `unknown`).  The gate must be the
+  static extraction test.
+
+### Scope-state notes
+
+The structure, mint memory, repair queues, invalidated-arrangement
+memory and frozen domains are **search state**: `restore_search_state`
+(after every `check`) and `truncate_quantifiers` (`pop`) reset them
+via `reset_structure`.  `frozen_table_domains` previously survived
+searches (harmless under the rebuild architecture — the rows vanished
+anyway); on the persistent architecture it must reset with the
+structure or the next search re-freezes over row-less phantom points.
+The assertion gate's inputs (`ground_assertions`) reset with the same
+boundary.
+
+### Verification
+
+quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat **CLEAN**
+(pigeonhole 96/120 solved, zero false-sats); parity **176 Correct /
+1 Inconclusive / 0 wrong** (z3 4.16.0); workspace
+`--all-features` **11972/11972** (set16's pin budget raised 30 s →
+120 s for the honest-convergence band under parallel load, the set9
+precedent); clippy/fmt/doc clean (a pre-existing empty-`if` clippy
+break in main's simplex and an unformatted arith block ride along
+fixed — behavior-identical); perf gate **PASS** (1.000).  New pin:
+`pigeonhole_enumeration_refutes_through_the_euf_export`.  Debug
+channels added: `NIXIE_DEBUG_MERGE` (merge stats + final-structure
+dump), `NIXIE_DEBUG_CT_ROWS` (per-constructor row tables) — both
+print-only, env-gated, cold-path.

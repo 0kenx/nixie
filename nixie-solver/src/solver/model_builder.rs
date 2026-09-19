@@ -332,6 +332,67 @@ impl Solver {
             }
         }
 
+        // **EUF-representative export** (the theory layer's word on
+        // uninterpreted-sorted classes — the mapped route for the
+        // pigeonhole completeness gap, see the sixteenth follow-up):
+        // every internalized term of an uninterpreted sort whose class
+        // carries no pinned value is recorded as its class
+        // representative.  Without the export, a class nothing pinned
+        // (a declared constant `c0` of sort `S`, a free application
+        // `f(c0)`) has *no* value in the readback, the completion's
+        // universe collection sees "nothing about this sort", and the
+        // synthetic seeder mints `u!0..u!7` instead — a universe of
+        // phantoms the problem's own enumeration axiom
+        // (`forall x. x = c0 || x = c1 || x = c2`) then falsifies at
+        // every point, while the real elements never enter the domain
+        // and the falsifier's identification instance can never land.
+        // With the export, the universe is exactly the e-graph's classes
+        // (`{c0, c1, c2, f(c0), ...}`): the enumeration axiom falsifies
+        // at the extra classes through the universe-distinctness fold,
+        // the instance identifies them (a sound consequence), and the
+        // loop converges on the quotient.
+        //
+        // Soundness: a merge the e-graph committed is a consequence of
+        // the asserted constraints, so `term -> rep` is a fact, and a
+        // self-representative assignment (`rep -> rep`) is trivially
+        // true — the export never fabricates a value.
+        //
+        // Gate (the sixteenth follow-up's lesson): table goals decline
+        // the export wholesale — a constructor/hint table owns its
+        // functions' S-valued applications, and exporting committed
+        // equality values for table-owned compounds re-keyed onto minted
+        // elements is the decoded false-`sat` mechanism (the global
+        // export's pollution channel).  The gate is the *static*
+        // table-usage test: the per-round ownership set is empty on the
+        // goal's first round, and the export firing there poisons the
+        // structure the tables are about to build (measured on set16:
+        // `sat` -> `unknown`).
+        if !self.mbqi.goal_uses_constructor_tables(manager) {
+            let node_count = self.euf.node_count() as u32;
+            for idx in 0..node_count {
+                let Some(term) = self.euf.node_term(idx) else {
+                    continue;
+                };
+                let Some(node) = manager.get(term) else {
+                    continue;
+                };
+                if !matches!(
+                    manager.sorts.get(node.sort).map(|s| &s.kind),
+                    Some(nixie_core::sort::SortKind::Uninterpreted(_)),
+                ) {
+                    continue;
+                }
+                if model.get(term).is_some() {
+                    continue; // a pinned value is strictly better
+                }
+                let rep_node = self.euf.find_immutable(idx);
+                let Some(rep_term) = self.euf.node_term(rep_node) else {
+                    continue;
+                };
+                model.set(term, rep_term);
+            }
+        }
+
         // Get bitvector values.  Which theory owns a BV variable's value depends
         // on how it was actually constrained (see `bv_solver_is_authoritative`):
         //
