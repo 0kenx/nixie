@@ -356,6 +356,7 @@ impl Solver {
         // bit-identical; only allocation identity changes.
         let mut mapped: SmallVec<[Lit; 8]> = SmallVec::new();
         let mut lits: Vec<Lit> = Vec::new();
+        let mut seen: FxHashMap<Vec<Lit>, ClauseId> = FxHashMap::default();
 
         for cid in live_ids {
             // ELS-rewatching surgery hook (NIXIE_ELS_CSR_SURGERY=1): capture
@@ -440,6 +441,30 @@ impl Solver {
             if tautology {
                 self.retire_clause(cid);
                 continue;
+            }
+            // Exact-duplicate retire — ONLY when the recorded owner is an
+            // ORIGINAL clause (a learned owner can be purged later — the
+            // doomed purge retires learned clauses mentioning eliminated
+            // vars, correctly — and then the constraint is gone with no
+            // obligation: retiring original (¬2990∨¬15955) in favor of the
+            // learned twin 213141 was the b21/seed-1 false-sat's exact
+            // mechanism).  An original meeting a learned owner takes the
+            // ownership over; learned-vs-learned collisions leave both.
+            match seen.get(&lits) {
+                Some(&owner) => {
+                    let owner_learned = self.clauses.get(owner).is_some_and(|c| c.learned);
+                    let self_learned = self.clauses.get(cid).is_some_and(|c| c.learned);
+                    if self_learned {
+                        // learned never retires anything and never owns
+                    } else if owner_learned {
+                        seen.insert(lits.clone(), cid);
+                    } else {
+                        self.retire_clause(cid);
+                    }
+                }
+                None => {
+                    seen.insert(lits.clone(), cid);
+                }
             }
             match lits.len() {
                 0 => {
