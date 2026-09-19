@@ -144,6 +144,8 @@ impl MBQIIntegration {
         // universe.
         self.model_completer.reset_structure();
         self.ground_assertions.clear();
+        self.gate_violations_seen.clear();
+        self.compound_representations.clear();
         self.active_table_quantifiers.clear();
         self.last_round_barren = false;
         self.barren_streak = 0;

@@ -1224,6 +1224,25 @@ impl ModelChecker {
             value_of(sort, value, term, &mut sorts);
         }
 
+        // The readback's assertion-mentioned compounds (the literal-
+        // binding channel — see `CompletedModel::compound_values`): each
+        // pair registers the *compound* as the value's term, so a
+        // falsifier mined at the value binds the compound and the
+        // instance lands at the literal tuple.  Compounds beat the bare
+        // constants the map may already hold (the `assigned` pass below
+        // only sees terms the readback assigned — on table goals the
+        // compounds deliberately have no assignment, or they would
+        // become never-overridden pins).
+        for &(compound, value) in &model.compound_values {
+            if mentions_bound(compound) {
+                continue;
+            }
+            let Some(vnode) = manager.get(value) else {
+                continue;
+            };
+            value_of(vnode.sort, value, compound, &mut sorts);
+        }
+
         let mut sets: FxHashMap<SortId, Vec<TermId>> = FxHashMap::default();
         let mut value_to_term: FxHashMap<TermId, TermId> = FxHashMap::default();
         for (sort, (values, map)) in sorts {
@@ -1352,6 +1371,36 @@ pub(crate) fn eval_completed_ground(
 ) -> Result<TermId, &'static str> {
     let bound: FxHashSet<Spur> = FxHashSet::default();
     CompletionEval::run(term, model, &bound, else_table, manager)
+}
+
+/// Evaluate a *ground* term under the completed model **structurally**
+/// (see `CompletionEval::structural_only`): composite terms fold through
+/// the interpretation; only application atoms and bare constants may
+/// answer from the assignment table.  The assertion gate's evaluator —
+/// the completed structure is on trial, not the ground solver's
+/// committed polarities.
+pub(crate) fn eval_completed_structural(
+    term: TermId,
+    model: &CompletedModel,
+    else_table: &FxHashMap<Spur, TermId>,
+    manager: &mut TermManager,
+) -> Result<TermId, &'static str> {
+    let bound: FxHashSet<Spur> = FxHashSet::default();
+    let mut eval = CompletionEval {
+        model,
+        bound: &bound,
+        else_table,
+        cache: FxHashMap::default(),
+        symbolic: FxHashMap::default(),
+        nodes_visited: 0,
+        macro_depth: 0,
+        recording: false,
+        commitments: Vec::new(),
+        free_choice: false,
+        structural_only: true,
+        else_consulted: FxHashSet::default(),
+    };
+    eval.eval(term, manager)
 }
 
 /// Whether the completed body still applies some *Bool-valued* function at
@@ -1771,6 +1820,12 @@ struct CompletionEval<'a> {
     /// (an `else` fallthrough, a macro expansion, a sort default, a
     /// universe fold) rather than a ground-model fact.
     free_choice: bool,
+    /// Structural mode (see [`eval_completed_structural`]): the
+    /// whole-term assignment lookup is disabled for *composite* terms —
+    /// only application atoms and bare constants answer from the
+    /// assignment table; every connective, equality and binder folds
+    /// through the completed interpretation itself.
+    structural_only: bool,
     /// Functions whose `else` default this evaluation consulted (the
     /// revision targets for the bounded else-search — Z3's
     /// `smt_model_finder` "search, verify, revise": a falsified body whose
@@ -1816,6 +1871,7 @@ impl<'a> CompletionEval<'a> {
             recording: false,
             commitments: Vec::new(),
             free_choice: false,
+            structural_only: false,
             else_consulted: FxHashSet::default(),
         };
         eval.eval(root, manager)
@@ -1845,6 +1901,7 @@ impl<'a> CompletionEval<'a> {
             recording: true,
             commitments: Vec::new(),
             free_choice: false,
+            structural_only: false,
             else_consulted: FxHashSet::default(),
         };
         let result = eval.eval(root, manager);
@@ -2010,7 +2067,20 @@ impl<'a> CompletionEval<'a> {
                     // vacuously (the strengthened quant_fuzz false-`sat`).
                     let is_binder =
                         matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. });
-                    if !is_binder && !self.is_symbolic(term, manager) {
+                    // Structural mode: a composite term (a connective,
+                    // equality, binder — anything that is not an
+                    // application atom or a bare constant) must FOLD
+                    // through the completed interpretation, never answer
+                    // from the assignment table: the assignment for a
+                    // composite is the ground solver's committed Tseitin
+                    // polarity, and reading it lets a stale ground word
+                    // shadow the structure (the assertion gate's first
+                    // cut certified a violated equality through exactly
+                    // this hole — the persistent structure's whole point
+                    // is that its word, not the ground's, is on trial).
+                    let structural_blocked = self.structural_only
+                        && !matches!(node.kind, TermKind::Apply { .. } | TermKind::Var(_));
+                    if !is_binder && !structural_blocked && !self.is_symbolic(term, manager) {
                         if let Some(&value) = self.model.assignments.get(&term) {
                             self.record_commitment(term, value, manager);
                             self.cache.insert(term, value);
@@ -2252,63 +2322,84 @@ impl<'a> CompletionEval<'a> {
                             if a == b {
                                 manager.mk_true()
                             } else {
-                                match compare_numeric(a, b, manager) {
-                                    Some(NumOrder::Eq) => manager.mk_true(),
-                                    Some(_) => manager.mk_false(),
-                                    None => {
-                                        // Uninterpreted-sort equality: two
-                                        // *ground* universe representatives
-                                        // of the same sort are unequal by
-                                        // construction (the universe is a
-                                        // set of pairwise-distinct
-                                        // elements).  Without this fold the
-                                        // ite-chain conditions `(= z a)` of
-                                        // a mined substitution stay symbolic
-                                        // and the falsifier the aux check
-                                        // found at `(z,z)` is never mined
-                                        // (the set-family diagonal stall).
-                                        //
-                                        // Groundness of BOTH operands is
-                                        // load-bearing: the universe
-                                        // contains bound-variable artifact
-                                        // terms (entry args harvested by
-                                        // `collect_universes_from_model`),
-                                        // and folding symbolic operands
-                                        // fabricates `?s1 != ?s2` — with
-                                        // it both a fake falsifier and, on
-                                        // `(distinct s1 s2) \/ psi`-shaped
-                                        // bodies, a fabricated pointwise
-                                        // `true` the completion does not
-                                        // justify (a false-`Satisfied`).
-                                        // The fold is also a *universe*
-                                        // fact, not a ground-model pin, so
-                                        // it counts as a free choice for
-                                        // blocking-clause purposes.
-                                        let a_symbolic = self.is_symbolic(a, manager);
-                                        let b_symbolic = self.is_symbolic(b, manager);
-                                        let verdict = (|| {
-                                            let na = manager.get(a)?;
-                                            let nb = manager.get(b)?;
-                                            if na.sort != nb.sort
-                                                || !matches!(
-                                                    manager.sorts.get(na.sort).map(|s| &s.kind),
-                                                    Some(SortKind::Uninterpreted(_)),
-                                                )
-                                            {
-                                                return None;
+                                // Boolean-valued operands fold through
+                                // `value_equal` (the Bool-constant cases):
+                                // a body' whose one side folded to `true`
+                                // and the other to the `false` literal —
+                                // the difference axiom at a pinned tuple,
+                                // `(= (M w (difference a b)) (and ...))`
+                                // — left `(= true false)` SYMBOLIC with
+                                // only `compare_numeric` here, and the
+                                // mining never recognized the falsifier
+                                // the aux had found ("no relevant
+                                // falsifier" forever, the extensional
+                                // family's residual).
+                                if let Some(eq) = value_equal(a, b, manager) {
+                                    if eq {
+                                        manager.mk_true()
+                                    } else {
+                                        manager.mk_false()
+                                    }
+                                } else {
+                                    match compare_numeric(a, b, manager) {
+                                        Some(NumOrder::Eq) => manager.mk_true(),
+                                        Some(_) => manager.mk_false(),
+                                        None => {
+                                            // Uninterpreted-sort equality: two
+                                            // *ground* universe representatives
+                                            // of the same sort are unequal by
+                                            // construction (the universe is a
+                                            // set of pairwise-distinct
+                                            // elements).  Without this fold the
+                                            // ite-chain conditions `(= z a)` of
+                                            // a mined substitution stay symbolic
+                                            // and the falsifier the aux check
+                                            // found at `(z,z)` is never mined
+                                            // (the set-family diagonal stall).
+                                            //
+                                            // Groundness of BOTH operands is
+                                            // load-bearing: the universe
+                                            // contains bound-variable artifact
+                                            // terms (entry args harvested by
+                                            // `collect_universes_from_model`),
+                                            // and folding symbolic operands
+                                            // fabricates `?s1 != ?s2` — with
+                                            // it both a fake falsifier and, on
+                                            // `(distinct s1 s2) \/ psi`-shaped
+                                            // bodies, a fabricated pointwise
+                                            // `true` the completion does not
+                                            // justify (a false-`Satisfied`).
+                                            // The fold is also a *universe*
+                                            // fact, not a ground-model pin, so
+                                            // it counts as a free choice for
+                                            // blocking-clause purposes.
+                                            let a_symbolic = self.is_symbolic(a, manager);
+                                            let b_symbolic = self.is_symbolic(b, manager);
+                                            let verdict = (|| {
+                                                let na = manager.get(a)?;
+                                                let nb = manager.get(b)?;
+                                                if na.sort != nb.sort
+                                                    || !matches!(
+                                                        manager.sorts.get(na.sort).map(|s| &s.kind),
+                                                        Some(SortKind::Uninterpreted(_)),
+                                                    )
+                                                {
+                                                    return None;
+                                                }
+                                                let uni = self.model.universe(na.sort)?;
+                                                let a_in = uni.contains(&a);
+                                                let b_in = uni.contains(&b);
+                                                (!a_symbolic && !b_symbolic && a_in && b_in)
+                                                    .then_some(false)
+                                            })(
+                                            );
+                                            if self.recording && matches!(verdict, Some(false)) {
+                                                self.free_choice = true;
                                             }
-                                            let uni = self.model.universe(na.sort)?;
-                                            let a_in = uni.contains(&a);
-                                            let b_in = uni.contains(&b);
-                                            (!a_symbolic && !b_symbolic && a_in && b_in)
-                                                .then_some(false)
-                                        })();
-                                        if self.recording && matches!(verdict, Some(false)) {
-                                            self.free_choice = true;
-                                        }
-                                        match verdict {
-                                            Some(false) => manager.mk_false(),
-                                            _ => manager.mk_eq(a, b),
+                                            match verdict {
+                                                Some(false) => manager.mk_false(),
+                                                _ => manager.mk_eq(a, b),
+                                            }
                                         }
                                     }
                                 }

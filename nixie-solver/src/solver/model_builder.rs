@@ -357,22 +357,50 @@ impl Solver {
         // self-representative assignment (`rep -> rep`) is trivially
         // true — the export never fabricates a value.
         //
-        // Gate (the sixteenth follow-up's lesson): table goals decline
-        // the export wholesale — a constructor/hint table owns its
-        // functions' S-valued applications, and exporting committed
-        // equality values for table-owned compounds re-keyed onto minted
-        // elements is the decoded false-`sat` mechanism (the global
-        // export's pollution channel).  The gate is the *static*
-        // table-usage test: the per-round ownership set is empty on the
-        // goal's first round, and the export firing there poisons the
-        // structure the tables are about to build (measured on set16:
-        // `sat` -> `unknown`).
-        if !self.mbqi.goal_uses_constructor_tables(manager) {
+        // Gate (the sixteenth follow-up's lesson, refined): the export
+        // covers only terms **mentioned in the goal's assertions**.
+        // The decoded false-`sat` pollution channel ran through the
+        // *search's own* terms — instance-minted compounds whose
+        // exported equality values re-keyed onto minted elements and
+        // mutated rows post-mint; those terms appear in no assertion,
+        // so a mention gate closes the channel without declining the
+        // export on table goals wholesale.  Declining wholesale (the
+        // first cut, gated on the static table test) kept the
+        // *assertion-mentioned* compounds value-less too — and those
+        // are exactly the terms the refutation side needs: the
+        // extensional family's `a = difference(union(a b), b)` never
+        // conflicts, because the falsifier mining's `value_to_term`
+        // never maps the semantic values back to the literal compounds,
+        // so the instance at the literal tuple `(w, union(a b), b)` —
+        // the one the ground solver refutes through — can never emit
+        // (measured: `unknown` on a goal z3 refutes).  With the mention
+        // gate, the compounds carry their e-graph values, the mining
+        // binds the literal tuple, and the ground conflict lands.
+        {
+            let mut mentioned: FxHashSet<TermId> = FxHashSet::default();
+            for &assertion in &self.assertions {
+                for sub in nixie_core::ast::traversal::collect_subterms(assertion, manager) {
+                    mentioned.insert(sub);
+                }
+            }
+            let table_goal = self.mbqi.goal_uses_constructor_tables(manager);
+            let mut compound_reps: Vec<(TermId, TermId)> = Vec::new();
             let node_count = self.euf.node_count() as u32;
             for idx in 0..node_count {
                 let Some(term) = self.euf.node_term(idx) else {
                     continue;
                 };
+                // The mention filter is the *mining channel's* gate (a
+                // table goal must only ever bind the goal's own
+                // compounds — instance-minted ones would re-mint the
+                // compound chase the tables exist to kill).  The
+                // non-table export takes every internalized term: the
+                // pigeonhole universe needs the *instantiated* classes
+                // too (`f(c0)` appears in no assertion literally — the
+                // injectivity axiom mentions `f(x)` under a binder).
+                if table_goal && !mentioned.contains(&term) {
+                    continue;
+                }
                 let Some(node) = manager.get(term) else {
                     continue;
                 };
@@ -382,15 +410,31 @@ impl Solver {
                 ) {
                     continue;
                 }
-                if model.get(term).is_some() {
-                    continue; // a pinned value is strictly better
-                }
                 let rep_node = self.euf.find_immutable(idx);
                 let Some(rep_term) = self.euf.node_term(rep_node) else {
                     continue;
                 };
+                if model.get(term).is_some() {
+                    continue; // a pinned value is strictly better
+                }
+                if table_goal {
+                    // A table goal's structure owns its interpretation:
+                    // an exported assignment would surface as a harvest
+                    // *entry* - a "ground pin" the tables never override
+                    // (measured on set16: `intersection(a,b) -> a` pins
+                    // row(a) |= row(a) \cap row(b)`, the row search
+                    // derails past every budget, `unknown`).  The pair
+                    // goes to the falsifier mining's compound channel
+                    // instead: the mining may bind the *literal* compound
+                    // at its representative's value - the refutation
+                    // side's literal-tuple instance - without the pair
+                    // ever becoming a pin.
+                    compound_reps.push((term, rep_term));
+                    continue;
+                }
                 model.set(term, rep_term);
             }
+            self.mbqi.note_compound_representations(compound_reps);
         }
 
         // Get bitvector values.  Which theory owns a BV variable's value depends

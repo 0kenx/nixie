@@ -1242,6 +1242,106 @@ structure or the next search re-freezes over row-less phantom points.
 The assertion gate's inputs (`ground_assertions`) reset with the same
 boundary.
 
+
+## The extensional residual decoded to the shadowing layer; five sound pieces landed (2026-09-19, twentieth follow-up)
+
+The continuation attacked the extensional family's residual (~5–10/24
+`unknown` per seed) and drove it to the *last* layer — one stale
+assignment away from closure — landing five independently-sound pieces
+on the way.  The family stays `sat`/CLEAN throughout; the residual
+itself did not close (the closing move regressed set16 and was
+reverted; the correct shape is specified below).
+
+### What landed
+
+1. **Bool-constant equality folds** (`CompletionEval`'s `Eq` arm now
+   consults `value_equal`, whose Bool-constant cases existed but were
+   never reached — the arm used `compare_numeric` only): a body whose
+   sides fold to `true` and `false` left `(= true false)` SYMBOLIC, and
+   the mining never recognized falsifiers the aux had found.
+2. **The assertion gate evaluates structurally**
+   (`eval_completed_structural`): composite terms (connectives,
+   equalities, binders) fold through the completed interpretation;
+   only application atoms and bare constants answer from the
+   assignment table.  The gate's first cut read the ground solver's
+   committed Tseitin polarity for the asserted equality *term itself*
+   and certified a violated equality through exactly that hole — the
+   persistent structure's whole point is that its word, not the
+   ground's, is on trial.
+3. **The gate runs every round** (not only at the `Satisfied`
+   decision): violations repair immediately (diverging atoms re-read,
+   asserted-equality merges materialized), instead of waiting for a
+   satisfaction attempt the loop may never reach.  The
+   **materialization arms on persistent violations only** (the second
+   and later round the same assertion fails): a round-1 violation is
+   the rows still in flux, and materializing the equality pin there
+   derails the row search exactly like the round-1 export did
+   (measured on set16: `sat` -> `unknown` until the arming landed).
+   The materialization itself (`adopt_asserted_equality_pins`)
+   installs the e-graph's *merged* pairs (compound ≠ representative;
+   self-representative compounds would re-mint the chase) as
+   structure entries — a repair step that moves the version.
+4. **The export's mention split**: non-table goals export every
+   internalized uninterpreted-sorted term (the pigeonhole universe
+   needs the *instantiated* classes — `f(c0)` appears in no assertion
+   literally); table goals route assertion-mentioned compounds to a
+   **mining-only channel** (`compound_values` stamped per round,
+   never assignments, never pins): the falsifier mining's
+   `value_to_term` may map a value to the literal compound, so the
+   instance at the *literal tuple* — the refutation side's ticket
+   through asserted equalities — can emit.
+5. The mining channel's plumbing (`goal_uses_constructor_tables`
+   restored as the static gate; the pairs flow readback → integration
+   → completed model → `build_instantiation_set`).
+
+### The residual, decoded to the last layer
+
+The extensional middle shape (`a = difference(union(a b), b)` with
+`M(w,a)`, `M(w,b)`) now walks: the structural gate detects the
+violation (round 1), the persistent-violation materialization lands
+the pin (`difference(a,b) -> a` after normalization), the aux
+correctly falsifies the difference axiom at `(w, a, b)` — and **the
+mining walk still folds the body TRUE at that tuple**.  The mechanism,
+probed end to end: the round-2 *instance lemma* committed the ground
+atom `M(w, difference(a b)) -> false` (the ground's free choice for
+the fresh Tseitin atom), first-wins adopted it, and the evaluator's
+whole-term assignment lookup serves that stale polarity — shadowing
+the pin that would make the axiom falsifiable.  The composed
+consistency rule is exactly what's missing: *an assignment key
+`g(u...)` whose arguments the structure resolves to a claimed entry
+point of `g` must agree with that entry*.
+
+### Negative results (this session's, do not retry blind)
+
+* **The composed-consistency pass as built** (override every
+  divergently-resolvable application key, unconditionally): regressed
+  set16 to `unknown` (the overrides touch asserted-equality-adjacent
+  keys every round; the version never stabilizes) without closing the
+  family.  A correct pass must (a) restrict to keys whose *arguments*
+  resolve through structure-owned values (pins, minted points) — not
+  asserted ground atoms, whose committed polarities are forced facts;
+  (b) be idempotent per key so the version settles; and (c) leave
+  non-Bool keys alone (the disease is polarity shadowing).
+* **Always-adopt gate repair** (materialize on the first violation):
+  the round-1 pin derails the row search (set16 `sat` -> `unknown`).
+  The arming must be persistence-based — landed.
+* **The blanket export on table goals** (the session's first cut,
+  mention-gated but as assignments): every exported compound value
+  becomes a harvest entry — a never-overridden pin — and set16's
+  `intersection(a,b) -> a` forced `row(a) |= row(a) \cap row(b)`
+  before the rows could settle: 17 row points, mint names lying,
+  every check past budget (`unknown`).  The mining-only channel is
+  the safe form — landed.
+
+### Verification
+
+quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat **CLEAN**
+(counts identical to the nineteenth's landing — pigeonhole 96/120
+solved, zero false answers); set family all `sat`; workspace
+nixie-solver + nixie-core 4895/4895; parity **176 Correct /
+1 Inconclusive / 0 wrong** (z3 4.16.0); clippy/fmt/doc clean; perf
+gate **PASS** (conflicts/decisions 1.000, wall 1.00).
+
 ### Verification
 
 quant_fuzz {41..46}×150 random **CLEAN**; {51..54}×150 unsat **CLEAN**

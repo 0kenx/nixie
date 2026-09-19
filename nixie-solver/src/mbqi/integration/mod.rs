@@ -166,6 +166,19 @@ pub struct MBQIIntegration {
     /// static property of the quantifier set, invalidated whenever the
     /// set changes.
     tables_goal_cache: Option<bool>,
+    /// The readback's assertion-mentioned compound/representative pairs
+    /// (see [`Self::note_compound_representations`]).
+    compound_representations: Vec<(TermId, TermId)>,
+    /// Per-assertion violation counts (the gate's repair-arm arming):
+    /// the asserted-equality materialization fires only on a
+    /// *persistent* violation — the second and later rounds the same
+    /// assertion fails against the completed structure.  A round-1
+    /// violation is the rows still in flux (the structure has not yet
+    /// converged to anything), and materializing the equality pin there
+    /// derails the row search exactly like the round-1 export did
+    /// (measured on set16: `sat` -> `unknown` with the always-adopt
+    /// gate).
+    gate_violations_seen: FxHashMap<TermId, u32>,
 }
 
 impl MBQIIntegration {
@@ -192,6 +205,8 @@ impl MBQIIntegration {
             barren_streak: 0,
             ground_assertions: Vec::new(),
             tables_goal_cache: None,
+            compound_representations: Vec::new(),
+            gate_violations_seen: FxHashMap::default(),
             max_rounds: 100,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
@@ -273,7 +288,7 @@ impl MBQIIntegration {
     }
 
     /// Register the search's quantifier-free assertions (the assertion
-    /// gate's input — see `Self::ground_assertions_hold).  Called once
+    /// gate's input — see `Self::ground_assertions_hold`).  Called once
     /// per search by the solver; cleared with the rest of the per-search
     /// state.
     pub fn set_ground_assertions(&mut self, assertions: Vec<TermId>) {
@@ -282,16 +297,14 @@ impl MBQIIntegration {
 
     /// Whether the goal's quantifiers extract any constructor/hint tables
     /// — a *static* property of the quantifier set (the extraction depends
-    /// only on the axiom shapes).  The model readback's
-    /// EUF-representative export is declined for such goals: a table owns
-    /// its functions' applications, and exporting committed equality
-    /// values for table-owned compounds is the sixteenth follow-up's
-    /// decoded false-`sat` pollution channel (the per-round
-    /// `active_table_quantifiers` signal is too weak — the goal's *first*
-    /// round has no tables yet, and the export firing there poisons the
-    /// structure the tables are about to build — measured on set16:
-    /// `sat` -> `unknown`).  Cached on first call; the cache is dropped
-    /// whenever the quantifier set changes.
+    /// only on the axiom shapes).  Decides which side of the
+    /// EUF-representative export a term takes: table goals route
+    /// assertion-mentioned compounds to
+    /// [`Self::note_compound_representations`] (the mining channel — an
+    /// exported assignment would become a never-overridden ground pin and
+    /// derail the row search); non-table goals export them as readback
+    /// values (the pigeonhole universe fix).  Cached on first call; the
+    /// cache is dropped whenever the quantifier set changes.
     pub fn goal_uses_constructor_tables(&mut self, manager: &TermManager) -> bool {
         if let Some(cached) = self.tables_goal_cache {
             return cached;
@@ -301,6 +314,17 @@ impl MBQIIntegration {
             super::constructor_tables::goal_has_tables(&self.quantifiers, &macro_funcs, manager);
         self.tables_goal_cache = Some(uses);
         uses
+    }
+
+    /// The readback's assertion-mentioned compound/representative pairs
+    /// (table goals; see the export in `model_builder`).  Stamped onto
+    /// every completed model for the falsifier mining's literal-binding
+    /// channel: `value_to_term` may map a value to the *compound* it
+    /// denotes, so the mining can emit the instance at the literal tuple
+    /// — the refutation side's ticket through asserted equalities the
+    /// semantic collapse would otherwise erase.
+    pub fn note_compound_representations(&mut self, pairs: Vec<(TermId, TermId)>) {
+        self.compound_representations = pairs;
     }
 
     /// **The assertion gate** (the sixteenth follow-up's held-back piece,
@@ -337,13 +361,21 @@ impl MBQIIntegration {
         let else_table = crate::mbqi::model_checker::choose_else_table(model, manager);
         let mut violations: Vec<TermId> = Vec::new();
         for &assertion in &self.ground_assertions {
-            match crate::mbqi::model_checker::eval_completed_ground(
+            match crate::mbqi::model_checker::eval_completed_structural(
                 assertion,
                 model,
                 &else_table,
                 manager,
             ) {
                 Ok(value) => {
+                    if std::env::var_os("NIXIE_DEBUG_GATE").is_some() {
+                        let printer = nixie_core::smtlib::Printer::new(manager);
+                        eprintln!(
+                            "[gate] {} -> {}",
+                            printer.print_term(assertion),
+                            printer.print_term(value)
+                        );
+                    }
                     if !manager
                         .get(value)
                         .is_some_and(|t| matches!(t.kind, TermKind::True))
@@ -356,6 +388,42 @@ impl MBQIIntegration {
         }
         if violations.is_empty() {
             return true;
+        }
+        let persistent: Vec<TermId> = violations
+            .iter()
+            .copied()
+            .filter(|&v| {
+                let count = self.gate_violations_seen.entry(v).or_insert(0);
+                *count += 1;
+                *count >= 2
+            })
+            .collect();
+        // The asserted-equality materialization (the gate's repair arm for
+        // table goals): the e-graph has already merged the goal's compound
+        // equalities (`a = difference(union(a b), b)`), but on table goals
+        // the export deliberately does not read those merges back — a
+        // round-1 pin derails the row search (measured on set16).  A
+        // *violated* assertion is the late signal that the structure's own
+        // row algebra will not honor the equality on its own: materialize
+        // exactly the merged pairs (compound != representative — a
+        // self-representative pair pinned to its own compound would re-mint
+        // the chase the tables exist to kill) as structure entries, through
+        // the same normalization the harvest path runs.  The next round's
+        // tables then compute under the pin, the defining axiom falsifies
+        // at the collapsed tuple, and the mining's literal-binding channel
+        // emits the instance at the *literal* tuple — the one the ground
+        // solver refutes through (the extensional family's closure).
+        if !persistent.is_empty() {
+            let merged: Vec<(TermId, TermId)> = self
+                .compound_representations
+                .iter()
+                .copied()
+                .filter(|(compound, rep)| compound != rep)
+                .collect();
+            if !merged.is_empty() {
+                self.model_completer
+                    .adopt_asserted_equality_pins(&merged, manager);
+            }
         }
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
             let printer = nixie_core::smtlib::Printer::new(manager);
@@ -931,7 +999,7 @@ impl MBQIIntegration {
         let round_start = Instant::now();
 
         // Step 1: Complete the model with proper Ge & de Moura completion
-        let completed_model =
+        let mut completed_model =
             match self
                 .model_completer
                 .complete(partial_model, &self.quantifiers, manager)
@@ -945,6 +1013,19 @@ impl MBQIIntegration {
                     return MBQIResult::Unknown;
                 }
             };
+        // Stamp the readback's compound pairs (the mining channel — see
+        // `CompletedModel::compound_values`); readback info, not
+        // structure state.
+        completed_model.compound_values = self.compound_representations.clone();
+        // The assertion gate, always on: a violated quantifier-free
+        // assertion is repaired immediately (diverging atoms re-read;
+        // asserted-equality merges materialized as pins — see the gate's
+        // repair arm), instead of waiting for a `Satisfied` attempt the
+        // loop may never reach (the extensional family died in
+        // certification with the violated equality unrepaired).  The
+        // verdict is not consumed here — the `Satisfied` sites re-run the
+        // gate for the blocking decision; this call exists for the repair.
+        let _ = self.ground_assertions_hold(&completed_model, partial_model, manager);
 
         #[cfg(feature = "std")]
         {
@@ -1615,12 +1696,14 @@ impl MBQIIntegration {
         self.clear_dedup_cache();
         self.blind_attempted = false;
         self.tables_goal_cache = None;
+        self.compound_representations.clear();
         // Scope consistency (AGENTS.md): the persistent structure was
         // derived under the popped assertions — its rows, frozen domains
         // and minted points do not roll back per-atom, so the whole
         // table-search state resets and the next check re-derives it.
         self.model_completer.reset_structure();
         self.ground_assertions.clear();
+        self.gate_violations_seen.clear();
         self.active_table_quantifiers.clear();
         self.last_round_barren = false;
         self.barren_streak = 0;

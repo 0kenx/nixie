@@ -105,6 +105,17 @@ pub struct CompletedModel {
     /// are never merged anywhere (the merge-forcing instances must keep
     /// seeing every ground pair).
     pub semantic_domains: FxHashMap<(TermId, usize), Vec<TermId>>,
+    /// The readback's assertion-mentioned compound/representative pairs
+    /// (stamped by the integration after each completion; NOT structure
+    /// state — never merged, never version-relevant): the falsifier
+    /// mining's literal-binding channel.  A pair `(compound, value)`
+    /// lets `value_to_term` map the value to the literal compound, so a
+    /// falsifier mined at the value binds the *compound* — the instance
+    /// at the literal tuple is the refutation side's ticket through
+    /// asserted equalities (`a = difference(union(a b), b)`) that the
+    /// semantic-domain collapse would otherwise erase from every
+    /// engine's candidate space.
+    pub compound_values: Vec<(TermId, TermId)>,
     /// The structure version (see `ModelCompleter`): a *monotone* number
     /// assigned by the completer, identical across rounds exactly when the
     /// completed structure is semantically unchanged.  The model checker's
@@ -132,6 +143,7 @@ impl CompletedModel {
             constructor_sources: FxHashMap::default(),
             table_domains: FxHashMap::default(),
             semantic_domains: FxHashMap::default(),
+            compound_values: Vec::new(),
             version: 0,
             generation: 0,
         }
@@ -916,10 +928,10 @@ impl ModelCompleter {
     /// 8. Ensure every function has a complete interpretation
     ///
     /// **The persistent-structure path** (table goals, see
-    /// `Self::structure): when a structure exists from a previous
+    /// `Self::structure`): when a structure exists from a previous
     /// round, steps 1-9 run on a throwaway *harvest* view of the fresh
     /// ground model, the harvest is then merged into the structure
-    /// (monotone, pollution-gated - see `Self::merge_harvest), and the
+    /// (monotone, pollution-gated - see `Self::merge_harvest`), and the
     /// constructor tables are computed over the merged structure.  Goals
     /// without a structure keep the legacy wholesale rebuild, so every
     /// non-table behaviour is bit-identical to the pre-rewrite build.
@@ -1436,6 +1448,16 @@ impl ModelCompleter {
             for (atom, value) in overrides {
                 structure.assignments.insert(atom, value);
             }
+            // (A composed-consistency pass — overriding assignment keys
+            // `g(u...)` whose args resolve to a claimed entry point of
+            // `g` — was built for the extensional residual: the instance
+            // lemmas' committed atoms at compound terms shadow the very
+            // pins that make them falsifiable.  It regressed set16 to
+            // `unknown` (the overrides touch asserted-equality-adjacent
+            // keys every round and the version never stabilizes) without
+            // closing the family.  Reverted; see the study's twentieth
+            // follow-up for the full decoded chain and what a correct
+            // composed pass must respect.)
         }
 
         // Universes, macros, defaults, sources: adopted from the harvest.
@@ -1469,7 +1491,7 @@ impl ModelCompleter {
         changed
     }
 
-    /// The repair channel (see `Self::invalidated_atoms): ground atoms
+    /// The repair channel (see `Self::invalidated_atoms`): ground atoms
     /// whose completed entries the next merge re-reads from the ground
     /// harvest.  Called with the commitments of a falsifier that became a
     /// fresh lemma (the lemma is about to force the ground solver's value
@@ -1477,6 +1499,59 @@ impl ModelCompleter {
     /// (whose blocking clause excludes the stale arrangement).
     pub fn invalidate_atoms(&mut self, atoms: impl IntoIterator<Item = TermId>) {
         self.invalidated_atoms.extend(atoms);
+    }
+
+    /// The assertion gate's repair arm for table goals (see the gate in
+    /// the integration): materialize the goal's asserted-equality merges
+    /// — pairs `(compound, representative)` with `compound != rep`, the
+    /// e-graph's consequences of asserted equalities — as structure
+    /// pins.  The compound's application entry is installed raw (keyed
+    /// at its own args); the next round's entry-table normalization
+    /// re-keys it onto the structure's own points through the computed
+    /// tables, exactly as a harvest entry would be.  A repair step: the
+    /// structure's version moves.
+    pub fn adopt_asserted_equality_pins(
+        &mut self,
+        pairs: &[(TermId, TermId)],
+        manager: &mut TermManager,
+    ) {
+        let Some(structure) = self.structure.as_mut() else {
+            return;
+        };
+        let mut changed = false;
+        for &(compound, rep) in pairs {
+            if let std::collections::hash_map::Entry::Vacant(v) =
+                structure.assignments.entry(compound)
+            {
+                v.insert(rep);
+                changed = true;
+            }
+            let Some(node) = manager.get(compound) else {
+                continue;
+            };
+            let TermKind::Apply { func, args } = &node.kind else {
+                continue;
+            };
+            let args_vec: Vec<TermId> = args.iter().copied().collect();
+            let interp = structure.function_interps.entry(*func).or_insert_with(|| {
+                let domain: SmallVec<[SortId; 4]> = args_vec
+                    .iter()
+                    .map(|&a| manager.get(a).map_or(node.sort, |n| n.sort))
+                    .collect();
+                FunctionInterpretation::new(*func, domain, node.sort)
+            });
+            if !interp.entries.iter().any(|e| e.args == args_vec) {
+                interp.entries.push(FunctionEntry {
+                    args: args_vec,
+                    result: rep,
+                });
+                changed = true;
+            }
+        }
+        if changed {
+            self.model_serial += 1;
+            structure.version = self.model_serial;
+        }
     }
 
     /// The idempotent variant of the duplicate-falsifier repair ([see
