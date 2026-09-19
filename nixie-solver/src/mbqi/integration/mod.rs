@@ -179,6 +179,10 @@ pub struct MBQIIntegration {
     /// (measured on set16: `sat` -> `unknown` with the always-adopt
     /// gate).
     gate_violations_seen: FxHashMap<TermId, u32>,
+    /// Whether the gate's materialization has fired this search (the
+    /// literal-binding channel's arming signal — see
+    /// `CompletedModel::literal_channel_armed`).
+    gate_materialized: bool,
 }
 
 impl MBQIIntegration {
@@ -207,6 +211,7 @@ impl MBQIIntegration {
             tables_goal_cache: None,
             compound_representations: Vec::new(),
             gate_violations_seen: FxHashMap::default(),
+            gate_materialized: false,
             max_rounds: 100,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
@@ -423,6 +428,7 @@ impl MBQIIntegration {
             if !merged.is_empty() {
                 self.model_completer
                     .adopt_asserted_equality_pins(&merged, manager);
+                self.gate_materialized = true;
             }
         }
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
@@ -1017,6 +1023,7 @@ impl MBQIIntegration {
         // `CompletedModel::compound_values`); readback info, not
         // structure state.
         completed_model.compound_values = self.compound_representations.clone();
+        completed_model.literal_channel_armed = self.gate_materialized;
         // The assertion gate, always on: a violated quantifier-free
         // assertion is repaired immediately (diverging atoms re-read;
         // asserted-equality merges materialized as pins — see the gate's
@@ -1704,6 +1711,7 @@ impl MBQIIntegration {
         self.model_completer.reset_structure();
         self.ground_assertions.clear();
         self.gate_violations_seen.clear();
+        self.gate_materialized = false;
         self.active_table_quantifiers.clear();
         self.last_round_barren = false;
         self.barren_streak = 0;
