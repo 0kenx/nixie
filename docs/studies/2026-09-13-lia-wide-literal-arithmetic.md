@@ -2512,3 +2512,102 @@ only, so release users had no protection at all.
 
 Item 85 stays **open as a proof obligation** (mechanize the boundary
 argument or find the reachable state); the canary is the standing tripwire.
+
+## Continuation 42 (2026-09-19): item 86 — the floating-constant slice pinned at the root; the fractional numerator-column; three stale-read defects closed
+
+Executed the items-69-78 handoff's open list against the CURRENT tree
+(read the wide-LP handoff first: its items 81-84 already landed the
+handoff's named project #1, so the session re-attributed the residual
+before choosing a slice).  Landed as `bf9f5b71`.
+
+86. **The re-attribution (decline-site probes rebuilt)**: at `77d80b3d`
+    the survey's 47 members decompose as **A3 = 0** (the B&B width wall is
+    GONE — the wide-LP build's `wide_floor_ceil_exact` channel absorbed
+    it; the handoff's #1 was stale), **float class = 8** (the big-const
+    column abstraction's column FLOATS: model publishes defaults → the
+    evaluator refutes `Genuine` → the blocking loop degrades a decidable
+    `sat` to `unknown` — sites J17/J5), **fractional parse-gate = 9** (a
+    folded constant `n/d` with an out-of-range numerator: no λ helps, the
+    integer column arm needs an integer, the parse gated the atom), A2 =
+    24 (B&B node/depth budgets), S3 = 14 (wide-repair NOCOL), plus
+    Q1/Q2 int-eq companions.  **The parallel session's "40 of 49 are
+    div/mod capacity" reading was partly this**: the gated atoms carried
+    div/mod too; the parse gate, not search capacity, held them.
+    * **The fix stack (five pieces, one root)**:
+      (a) `pin_int_const` — the synthesized constant column is PINNED to
+      its exact value (wide singleton bounds; the reason term registered
+      in `tautological_reasons` so conflict cores drop it knowingly — a
+      constant equals itself in every model, so the learned clause stays
+      entailed).  Assert-time, idempotent BY BOUND INSPECTION (a memo
+      would skip the re-pin after a pop and float the column again).
+      (b) The fractional numerator-column: `col ↦ n` at coefficient
+      `-1/d` — no λ of the form `±1/2^k` can EVER shrink a numerator
+      (it only cancels factors of two), so the E4 arm's honest gate
+      becomes a column + pin; only a non-narrowable DENOMINATOR still
+      gates.
+      (c) **The column SIGN**: the column replaces the moved-to-RHS
+      constant, so `coef·col = −moved` — the pre-existing integer arm
+      entered at `+moved`, asserting the NEGATED constant (latent only
+      because λ almost always wins; the `i64::MIN` flip special case was
+      consistent with the same inversion).  Found as a **false `unsat`**
+      (`gap_s20261000_i332`: z3 `sat`) on the FIRST version of the
+      fractional arm, root-caused with the conflict-polarity pipeline
+      (the decoder printed the pin's reason term in the final conflict);
+      pinned by `constant_column_sign_convention_is_not_inverted`.
+      (d) `value()`'s honesty guard covered wide ROWS only — a
+      branch-and-bound bound beyond width parks an integer at a WIDE
+      POINT whose raw entry is stale-by-design, and the model published
+      `0` for a variable resting at `-9.2×10^18` (the evaluator refuted
+      it; the same member degraded to `unknown`).  Both wide channels now
+      read honest values; `can_increase`/`can_decrease` compare against
+      the EXACT point for wide points (the stale read answered eligibility
+      wrongly in BOTH directions — "cannot" declined repairable states,
+      "can" pivoted variables resting at their bound).
+      (e) The model builder's DL potentials no longer PREEMPT the exact
+      channel (`value` → `value_exact` → DL — a DL potential for a term
+      the simplex owns is a fabrication), and a row carrying a
+      wide-constant column BREAKS DL PURITY (the difference graph cannot
+      see the pin; a `Consistent` over a floating column certified a
+      relaxation).
+    * **Measured**: survey on the fixed seeds at my base `77d80b3d`:
+      47 → **31** (16 recovered, every new verdict agreeing with z3,
+      every published model validated by binding it as `define-fun`s and
+      re-solving the negation with z3).  On the CURRENT main
+      (`3533b461`, post the SAT pre-search-factoring landing — which
+      alone moved the survey 47 → 115 by trajectory reshuffle): 115 →
+      **37**.  Differentials: 3 fresh mixed ×400 + 3 fresh wide ×300 on
+      the fix build, and fresh seeds re-run at each rebase (6 more),
+      zero disagreements, zero refuted models.  Parity 176/177 Correct,
+      0 wrong (z3 4.16.0).  Perf gate PASS, counters 1.000/1.000 against
+      the pinned baseline `2b0b4d54` (the first WARN — 1.087 geomean —
+      was the gate comparing against a baseline that carries the
+      factoring change my pre-rebase base lacked; the one 3.5× SAT-comp
+      cell is factoring's, not arithmetic's).  Debug panic sweep 0.
+      Suite 11 961/11 976 (the 15 are the documented corpus-missing
+      class; the new regressions 5/5).  clippy/fmt/rustdoc clean (one
+      dead `if` from the stamps landing removed in-flight — main's owner
+      landed the same removal independently and the rebase kept theirs).
+    * **Disk-pressure notes (cost real time)**: `/media/data` pinned at
+      100% by concurrent agents' shared `target/` all session; the debug
+      full-suite links SIGBUS on ENOSPC (the documented trap).  The
+      battery completed with `CARGO_TARGET_DIR` on the ROOT disk
+      (129G free; the "never /tmp" directive's concern is filling the
+      root disk — ~10G, deleted after) — document, don't repeat
+      casually.  The gap survey measures TIMEOUTS under load: re-measure
+      quiet before believing a delta (a 115 read under full test load
+      reproduced exactly quiet, but only because both runs were equally
+      loaded-vs-quiet checked).
+    * **What remains (the next session's map)**: A2 B&B budgets (24
+      members — any bump is a heuristic change: matched nulls, ≥10
+      seeds, `docs/BENCHMARKING.md` FIRST; check whether the pins
+      already shrank it — the 37-member attribution is the starting
+      point), S3 wide-repair NOCOL residual (the eligibility rule after
+      the wide-point fix; re-attribute first), 3 float members left
+      (J17×1 + J5×2 — other publication shapes; the `[mb]`-style probe
+      at the model builder's term loop is the tool), the item-75 strict
+      reproducer, item 71's re-assertion channel question, and fi1
+      (unchanged).  The probes are NOT in the tree (session-local, as
+      before): rebuild from this item's site names — J17 = the blocking
+      downgrade in the CDCL Sat arm, J5 = `arith_abstracted_big_const`
+      uncertified, E4 = the fractional parse arm, plus the statement-
+      position Unknown returns the previous sessions used.
