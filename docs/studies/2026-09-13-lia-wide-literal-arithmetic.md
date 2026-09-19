@@ -2735,3 +2735,109 @@ before choosing a slice).  Landed as `bf9f5b71`.
       acceptance vs. the div/mod defining axioms' tightness at the
       leaf), A2 budgets, and the tails.  Item 88's zero-delta hole (the
       model-less terminal `Sat`) remains documented and unlanded.
+
+## Continuation 46 (2026-09-19): item 90 — the leaf snapshot's REAL half: δ-instantiated inside the leaf's scopes
+
+90. **Item 89 fixed the integers; the reals were the same defect one
+    layer down** (`65228ee8`).  The dive's scopes pop after the
+    snapshot, restoring a point that can RE-VIOLATE strict bounds the
+    leaf satisfied — e.g. a basic resting at its strict bound's real
+    part with no infinitesimal (`(0, 0)` against `(0, +1)`; the narrow
+    `find_violating` IS delta-aware and would repair it, but it runs at
+    CHECK time, not at publication).  The δ-instantiation computed over
+    the popped state then declines (no positive δ₀ exists over a
+    violated strict bound), and `value()`'s real arm has no snapshot —
+    EVERY real published the sort default `0`.  The exact evaluator
+    refuted the candidate and the big-const gate downgraded a decidable
+    `sat` to `unknown`: this instance published `xr = 0` while the
+    tableau held `2147483572/3`, flipping a conjunct that sits exactly
+    on its strict boundary (`3·xi + 3·xr + 85 > 5` at `= 5`).
+    * **The fix**: `snapshot_lia_model` records the leaf's real values,
+      δ-instantiated INSIDE the leaf's scopes (a leaf with no positive
+      instantiation leaves them unpublished, never guessed), and
+      `value()` prefers the snapshot for BOTH sorts before any live
+      read (`value_exact` already did, item 89).
+    * **Measured**: survey 79 → **75** (the arc's cumulative run on
+      these seeds: 150 → 110 → 91 → 79 → 75 across items 86–90), every
+      new verdict agreeing with z3; the recovered model validated by
+      binding all four variables and negating the assertion (z3:
+      `unsat`).  Differentials 3 fresh mixed ×400 + 2 fresh wide ×300
+      clean; parity 176/177 (z3 4.16.0); gate 1.000/1.000 wall 0.99;
+      panic sweep 0; arith suite green but the documented corpus-missing
+      class; clippy/fmt/rustdoc clean.  Regression:
+      `leaf_snapshot_covers_real_variables` (the fuzz instance
+      verbatim, default-0-pinned).
+    * **Decode notes**: the certifier-side probes (`[cert-false]` +
+      `INTERP` with `manager.resolve_str`, and `delta_instantiation_exact`'s
+      per-arm `[d0-*]` prints) are the fastest route for this class —
+      the failing CONJUNCT under the published values names the
+      fabricated variable directly.  The residual 75: the div/mod
+      leaf-acceptance class remains (candidates now honest but
+      tableau-vs-original divergent), A2 budgets, and tails.
+## Continuation 43 (2026-09-19): item 85's evidence obligation served — the canary made audible, 1 917-file corpus sweep, zero reconciliations
+
+The delta-vs-reeval canary (`NIXIE_DELTA_VERIFY`) reconciled SILENTLY —
+a tripwire that could not trip audibly, so its evidence was not
+gatherable beyond verdict-neutrality.  The reconcile site now prints
+(`[delta-verify reconcile v{i}: delta-said=… exact=…]`; default-off with
+the flag, so default behavior is unchanged).
+
+**The sweep** (every run under `NIXIE_DELTA_VERIFY=1`, stderr watched):
+the parity corpus (177) plus a stratified SMT-LIB sample — 200 per
+arithmetic family over QF_LIA/QF_UFLIA/QF_ANIA/QF_AUFLIA/QF_NIA/QF_IDL/
+QF_UFIDL/AUFLIA/UF (1 740; UFLRA's 15 included) — **1 917 files, ZERO
+reconciliations**, plus 500 fresh mixed-fuzz instances across two
+canary-active differential runs (verdict-identical vs z3, as they must
+be either way).  This extends item 85's original 120+120 evidence by
+an order of magnitude: across every corpus trajectory the incremental
+snap-delta update agreed with exact evaluation at every pivot.
+
+The obligation stands as stated (a reviewed boundary argument plus this
+evidence — not a mechanized proof); the canary is now a tripwire a
+corpus run, a differential, or a user can actually hear.
+
+## Continuation 47 (2026-09-19): item 91 — the div/mod leaf-acceptance class decoded ONE LAYER DEEPER: wide-row explosion + constraint detachment (mapped, not fixed)
+
+91. **The ~40-member "div/mod leaf-acceptance" residual decoded on
+    `gap_s20261000_i423`** (the J5 gate's `verify FALSE` on an otherwise
+    honest model): the failing conjunct is the equality
+    `5·yi + mod(3yi−8,5) + 2·xi = 4611686018427387905`; the candidate
+    violates it by exactly 34 (the theory's mod slack would have to be 34,
+    outside `[0,4]`).  The div/mod axioms are COMPLETE and correct (the
+    div/mod pair's values check out exactly); the atom is committed
+    `True`; `assert_eq` fires; **and yet no tableau row enforces the
+    constraint**:
+    * The `atom_rows` cache maps the atom to slack `v301`, whose CURRENT
+      row is `v301 = v6` — the pivot chain reduced C3's row to a single
+      trivially-zero variable, DETACHING it from `(yi, mod, xi)`.  The
+      tableau is internally consistent the whole way (no violated
+      basics, no rows referencing basics, the debug definitional
+      invariant passes) — the row's FORM no longer means C3.
+    * **The zoo it happened in**: `wide_rows` holds ~150 NEAR-DUPLICATE
+      rows at this gate — the same linear form under different slack ids
+      (v239 ≡ v264 ≡ v249 ≡ …; v289 ≡ v288 ≡ v296 ≡ …).  The narrow
+      channel is content-addressed (`intern_row_cached`); the WIDE
+      channel (`intern_row_big_reported` → `intern_wide_row`) is NOT —
+      every rebuild round (MBQI/blocking rebases re-assert the atoms)
+      mints FRESH wide rows for the same content, and the wide-repair
+      pivots then churn between the duplicates.  A constraint detached
+      in that churn is the prime suspect for the C3 corruption (and the
+      duplication alone is a serious capacity defect: every wide
+      classification pass iterates all of them).
+    * **Entry points for the fix session**: (1) content-address the wide
+      intern (a `wide_row_key` map, mirroring `intern_row_cached` —
+      this alone kills the 150×); (2) re-verify the atom-row equivalence
+      after wide pivots (a debug-mode canary: for every
+      `atom_rows` entry, the slack's row must still ENTAIL the key's
+      linear form over the current basis — the definitional invariant
+      does NOT check this); (3) the probes used here:
+      `debug_atom_row(reason)` (cache key vs current row),
+      `debug_rows_with_column` / `debug_wide_rows_with_column` (the
+      zoo), and the certifier's `[cert-false]` + `INTERP`
+      (`manager.resolve_str`) for the failing conjunct under the
+      published values.
+    * Reproducer: the instance verbatim (bytes in the survey corpus;
+      seed 20261000, index 423); pre-fix verdict `unknown`, z3 `sat`.
+    * No code landed this item — the two defects named above are real
+      but the fix touches the wide-pivot core and must land with its
+      own battery; nothing here should land unverified.

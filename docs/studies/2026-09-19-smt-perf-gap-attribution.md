@@ -118,3 +118,120 @@ both**; the deep-split flips on with that fix.
 The default path is behavior-identical (the gate returns before any
 work; 5167/5167 incl. both new unit tests, parity 176/1/0, fuzz spots
 CLEAN, clippy/fmt clean).
+
+## Addendum (2026-09-19, later session): route 1 DE-PRIORITIZED by probe — the depth lift converts the unknowns into timeouts
+
+The deep-encoding fix route (the iterative encoder, ~970 lines) was
+probed before committing to it: a throwaway build with
+`ENCODE_DEPTH_LIMIT = 8192` (8× the deepest member's chain; no crash,
+no stack overflow in release) on the nec-smt `large` class —
+**every member TIMED OUT at 60 s** (bftpd_login, int_from_list,
+getoption_group, checkpass, checkpass_pwd, getoption_user …; z3:
+unsat/sat, mostly sub-second).  The instant `unknown` is not masking a
+decidable problem the encoder alone can reach: once encoded, the
+search grinds — z3 decides these at **0 conflicts** (its preprocessor
+folds the ite/`=` spines outright), and nixie has no equivalent folder.
+
+**Consequence for the route map:** converting the encoder (or a
+flattening pre-pass) without a search-side folding pass is
+table-neutral at best (instant `unknown` → 60 s timeout is strictly
+worse wall-wise) and moves zero verdicts.  The route's true shape is
+TWO-SIDED: (a) an iterative/shallow encoding AND (b) a preprocessing
+folder for ite/`=` value-chains (z3's `smt2parser` + rewriter folds
+them before search; the SOM/structural-rewrite route on the BV side is
+the same family).  Neither side alone pays.  Do not start the 970-line
+conversion expecting the 9 members — probe (b) first: a chain-folding
+simplifier on let-chained ite spines is the cheaper half and is
+independently valuable.
+
+### The (b)-probe, answered the same day: z3's `simplify` alone closes the goal
+
+`(apply simplify)` on the 724 KB `checkpass/prp-43-49` (before any
+search) reduces the entire let-chained goal to **`(goal false :depth
+1)`** — the class is decided by pure simplification: constant
+propagation through the value-chain (a bound comparison folds to a
+constant, the ite selecting on it folds, the fold propagates to the
+next binding, …).  z3's total: 0.05 s, rlimit 108 k.  So route (b) has
+a concrete shape now: an iterative constant-propagation fixpoint over
+shared subterms in `TermManager::simplify` (bottom-up, topologically
+re-driven until no change — the existing one-pass builder folding
+cannot propagate *across* binding levels).  That is the cheaper half,
+independently valuable (the same fold subsumes the BV multiplier-identity
+class's rewriter route), and the entry point is
+`nixie-core`'s simplifier — not the encoder.
+
+### The (b)-probe, one datum further: nixie's own `simplify` does not fold it — it times out
+
+`(simplify <the-475 KB-goal>)` on nixie `e7fbd8fb`: **no output in 90 s**
+(z3: 0.05 s to `false`).  So the gap inside route (b) is not merely
+missing fold rules — the existing pass does not terminate-usefully on
+deep let-value-chains (suspects, in check order: the substitution walk
+re-walking shared subterms per reference — `expand_lets`'s historical
+85 %-of-runtime shape, `pp-*`; a non-memoized simplify; or interning
+churn re-hashing the 100 k-node chain per level).  The fixpoint design
+from the previous addendum stands, but step zero is profiling
+`simplify` on this one file — the mechanism found there decides whether
+the fix is memoization (cheap) or a re-architecture (own session).
+
+### Step zero, executed (2026-09-19, third session): the "simplify timeout" decomposed — a PRINTER blowup over a real fold gap
+
+Two corrections to the previous addendum, both proven by profile and
+oracle:
+
+1. **The 90 s `(simplify …)` timeout is not the simplify pass — it is
+   the PRINTER.**  `perf` on the small member (`int_from_list/prp-3-21`,
+   12.5 KB): 35 % `BigInt::to_radix_le` + 10 % `BigInt::Display` + the
+   rest in `Printer::write_term_at_depth`/`write_str`/`RawVec` growth.
+   The pass is memoized and iterative (`query/simplify.rs`) and
+   finishes; the RESULT, unfolded for printing as a tree, explodes: the
+   goal DAG's let-bound values have heavy fan-out (one variable
+   referenced 44×, the next 31×, 23×, … — compounding multiplicatively
+   through the chain), and the printer re-prints each subtree per
+   reference.  SMT-LIB printers conventionally re-share with `let`
+   (z3's does); nixie's prints the raw tree — valid, exponentially
+   verbose on shared terms.  A `let`-sharing printer is an independent,
+   contained improvement.
+2. **The fold gap is real but narrower than "missing ite/cmp rules":
+   nixie HAS the local rules** (the `Ite`/comparison arms fold constant
+   conditions) **yet the chain does not collapse**, while z3's *plain*
+   `simplify` tactic reduces both the small and the 724 KB members to
+   `false` — and `solve-eqs` / `elim-uncnstr` alone do NOT (they leave
+   residuals), so the collapsing power is in the core rewrite set
+   proper.  The owning session's next probe: parameter-sweep
+   `(apply (using-params simplify …))` and diff the folded intermediates
+   to name the exact rule family (candidates by shape: equality
+   congruence through folded constants, `ite`-chain selection
+   tightening, `and`/`or` absorption after argument collapse), then
+   port into `query/simplify.rs` — whose memoized bottom-up driver is
+   already the right harness for a rule addition.
+
+### Step zero, closed (fourth session): the residual's exact shape, the cheap rule measured insufficient, the real algorithm named
+
+The folded residual of the small member, dumped structurally
+(nodes=662; the printer blowup hides it from text output):
+`And[Not c₁, Not c₂, Not c₃, (= IntConst(400) (Ite(c₄, 88, <chain>))]` —
+and the `Not`s' atoms do NOT match the top ite's condition by
+identity: the conditions nest inside `or`/`not` layers (z3's own
+`ctx-simplify` residual exposes the same: `(not (or (= i844 (+ 1 0))
+(= 22 18)))` — a constant-eq-constant `22 = 18` sitting unreduced
+inside the nesting).
+
+An And-arm conjunction-context prune (one-level atom-polarity map +
+ite branch rewrite, budgeted) was implemented and measured:
+**662 → 652 nodes** — the mechanism is real but one level of context
+is far too shallow; the conditions need recursive case-literal
+collection through the nesting.  Reverted rather than landed blind (no
+consumer benefit at 10 nodes).
+
+**The route's final shape**: a genuine `ctx-simplify`-style pass —
+collect condition literals recursively through `and`/`or`/`not`,
+case-split prune ite branches under them, iterate — is the algorithm
+that closes the class (z3's PLAIN `simplify` tactic does close it to
+`false`, while `solve-eqs`, `elim-uncnstr`, and `ctx-simplify` alone
+each leave residuals — so z3's plain simplify carries strictly more
+than any one of those; isolating its plugin set via
+`(apply (using-params simplify :…))` sweeps is the owning session's
+first probe).  Sizing: the pass is self-contained in
+`query/simplify.rs`'s harness (memoized driver already correct), an
+own-session project — with the printer's let-sharing fix as its
+companion (any folded-but-large result still cannot be printed).

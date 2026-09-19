@@ -3741,6 +3741,15 @@ impl Simplex {
                             && let Some(want) = self.eval_expr(new_row)
                             && want != sum
                         {
+                            // The canary's AUDIBLE trip (item 85's proof
+                            // obligation makes the evidence gatherable): a
+                            // reachable incremental/exact disagreement.  The
+                            // exact value still wins (the reconciliation is
+                            // unchanged); the print is what a corpus sweep
+                            // or a differential run watches for.
+                            eprintln!(
+                                "[delta-verify reconcile v{vi}: delta-said={sum:?} exact={want:?}]"
+                            );
                             self.assignment[vi] = want;
                         } else {
                             self.assignment[vi] = sum;
