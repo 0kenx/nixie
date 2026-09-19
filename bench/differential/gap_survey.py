@@ -41,13 +41,14 @@ sys.argv = _argv
 def run(binary, path):
     args = [binary, path]
     try:
-        out = subprocess.run(args, capture_output=True, text=True, timeout=10).stdout
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        out = proc.stdout
     except subprocess.TimeoutExpired:
-        return "timeout", None
+        return "timeout", None, ""
     lines = [l.strip() for l in out.splitlines() if l.strip() and not l.startswith("Processing")]
     if not lines:
-        return "none", None
-    return lines[0], "\n".join(lines[1:])
+        return "none", None, proc.stderr
+    return lines[0], "\n".join(lines[1:]), proc.stderr
 
 
 def main():
@@ -62,8 +63,8 @@ def main():
                 f.write(src)
                 path = f.name
             try:
-                nz, _ = run(NIXIE, path)
-                z3v, _ = run("z3", path)
+                nz, _, nzerr = run(NIXIE, path)
+                z3v, _, _ = run("z3", path)
                 stats[f"nixie={nz}"] += 1
                 stats[f"z3={z3v}"] += 1
                 if nz == "unknown" and z3v in ("sat", "unsat"):
@@ -71,6 +72,12 @@ def main():
                     name = f"gap_s{seed}_i{i}_{z3v}.smt2"
                     with open(os.path.join(OUTDIR, name), "w") as g:
                         g.write(src)
+                    # Attribution capture: the decline-site stderr (the
+                    # item-67 probe recipe, `NIXIE_GAP_PROBE=1` on the
+                    # nixie binary) alongside every gap member.
+                    if nzerr:
+                        with open(os.path.join(OUTDIR, name + ".err"), "w") as g:
+                            g.write(nzerr)
                     manifest.append(
                         {"seed": seed, "idx": i, "z3": z3v, "file": name}
                     )

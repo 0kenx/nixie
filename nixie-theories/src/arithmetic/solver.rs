@@ -2985,6 +2985,17 @@ impl ArithSolver {
                 if !self.simplex.state_feasible() {
                     return false;
                 }
+                // Re-scan at the post-`state_feasible` state: the probe's
+                // `crash_basis` re-derivation may have replaced the very
+                // entries the scan read (a stale integral-looking entry
+                // whose row-true value is fractional).  The snapshot
+                // publishes the re-derived values, so integrality must be
+                // established for THOSE — the same
+                // re-scan-after-the-feasibility-probe discipline the B&B
+                // leaf and `try_eq_incumbent` apply.
+                if self.find_fractional_int_var(int_vars).is_some() {
+                    return false;
+                }
                 self.snapshot_lia_model(int_vars);
                 return true;
             }
@@ -3124,11 +3135,40 @@ impl ArithSolver {
                     // unsat-side members answered `unknown` here).
                     match self.simplex.check() {
                         Ok(()) if !self.simplex.resource_limit_reached() => {
-                            self.snapshot_lia_model(int_vars);
-                            for _ in 0..stack.len() {
-                                self.simplex.pop();
+                            // RE-SCAN INTEGRality AT THE RE-SOLVED VERTEX.
+                            // `check()` is a full `make_feasible` solve:
+                            // repairing the crude point re-optimizes the LP
+                            // onto a possibly DIFFERENT vertex than the one
+                            // `find_fractional_int_var` scanned.  Accepting
+                            // on feasibility alone certified the crude
+                            // point's integrality, not the snapshot's —
+                            // the wide-constant mod false-`sat` (2026-09-19,
+                            // mixed fuzz 20262113 instance 41: with
+                            // `mod(−2y + 2^62, 4) > 2` committed, the re-solve
+                            // left `q = (2^62−1)/4` at the accepted vertex
+                            // while the scan had seen it integral).  The
+                            // same re-scan-after-check discipline
+                            // `try_eq_incumbent` already applies.  A newly
+                            // fractional vertex branches HERE (the loop
+                            // continues with it); a newly underivable one
+                            // declines; only a still-integral vertex is a
+                            // model.
+                            match self.find_fractional_int_var(int_vars) {
+                                Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
+                                Some(FracVar::Underivable) => {
+                                    for _ in 0..stack.len() {
+                                        self.simplex.pop();
+                                    }
+                                    return Ok(TheoryResult::Unknown);
+                                }
+                                None => {
+                                    self.snapshot_lia_model(int_vars);
+                                    for _ in 0..stack.len() {
+                                        self.simplex.pop();
+                                    }
+                                    return Ok(TheoryResult::Sat);
+                                }
                             }
-                            return Ok(TheoryResult::Sat);
                         }
                         Ok(()) => {
                             // Pivot budget: honest Unknown, never a Sat.
