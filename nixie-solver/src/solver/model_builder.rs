@@ -208,17 +208,30 @@ impl Solver {
             }
 
             let arith_value = self.arith.value(term).or_else(|| {
-                // Pure-DL routing: the simplex never saw these atoms, so the
-                // dense closure is the value provider (its negated-row-minimum
-                // assignment satisfies every asserted edge — see
-                // `DenseDlCore::value`).  On the sparse engine's pure route
-                // the multi-source distances play the same role (a feasible
-                // potential for every asserted difference constraint,
-                // refreshed by the final-check backstop's full `check()`).
-                self.diff
-                    .dense_value(term)
-                    .map(num_rational::Rational64::from_integer)
-                    .or_else(|| self.diff.sparse_value_of(term))
+                // The DL potentials may only serve a term the simplex does
+                // NOT own: both `value` and the exact channel below
+                // already declined any term the tableau has a value for,
+                // and a DL potential for a term outside the DL graph is a
+                // fabrication — observed as a published `0` for a wide
+                // basic resting at `-9.2e18`, which the evaluator refuted
+                // (`Genuine`) and the blocking loop degraded to
+                // `unknown`.
+                if self.arith.value_exact(term).is_some() {
+                    None
+                } else {
+                    // Pure-DL routing: the simplex never saw these atoms,
+                    // so the dense closure is the value provider (its
+                    // negated-row-minimum assignment satisfies every
+                    // asserted edge — see `DenseDlCore::value`).  On the
+                    // sparse engine's pure route the multi-source
+                    // distances play the same role (a feasible potential
+                    // for every asserted difference constraint, refreshed
+                    // by the final-check backstop's full `check()`).
+                    self.diff
+                        .dense_value(term)
+                        .map(num_rational::Rational64::from_integer)
+                        .or_else(|| self.diff.sparse_value_of(term))
+                }
             });
             if let Some(value) = arith_value {
                 // Determine whether the term has Int or Real sort, and create the

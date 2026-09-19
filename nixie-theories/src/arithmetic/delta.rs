@@ -407,6 +407,18 @@ impl BoundValue {
         }
     }
 
+    /// Exact lexicographic comparison against an exact (possibly wide)
+    /// point value — the wide-point-aware counterpart of
+    /// [`Self::cmp_narrow`] for consumers that hold the variable's exact
+    /// point from the wide point store.
+    #[must_use]
+    pub fn cmp_big(&self, other: &BigDeltaRational) -> Ordering {
+        match self {
+            BoundValue::Narrow(d) => core::cmp::Ordering::reverse(other.cmp_narrow(d)),
+            BoundValue::Wide(w) => (**w).cmp(other),
+        }
+    }
+
     /// Exact lexicographic comparison between bound values.
     #[must_use]
     pub fn cmp_value(&self, other: &Self) -> Ordering {

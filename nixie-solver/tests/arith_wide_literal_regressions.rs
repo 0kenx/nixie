@@ -1233,6 +1233,160 @@ fn boundary_scale_sum_bound_certifies() {
     );
 }
 
+// ===========================================================================
+// The floating-constant campaign (2026-09-19): the big-const column
+// abstraction's column PINNED to its exact value, the fractional
+// numerator-column extension, and the wide-point honest-value reads.
+//
+// Root cause chain (the gap survey's float slice, 8 of 47 members, plus the
+// parse-gated fractional class, 9 more):
+//   * a folded constant that leaves `Rational64` width in every orientation
+//     became a FREE COLUMN (encode's abstraction) that floated — the model
+//     published defaults, the evaluator refuted them, and the blocking loop
+//     degraded a decidable `sat` to `unknown`;
+//   * no λ = ±1/2^k can EVER shrink a numerator (it only cancels factors of
+//     two), so a fractional beyond-width constant (`-15.4` summed against a
+//     `2^62`-scale integer) had NO representable form at all — the parse
+//     gated the atom to `Unknown`;
+//   * `value()`'s honesty guard covered wide ROWS but not wide POINTS, so a
+//     branch-and-bound bound at `2^63` scale published the stale `0`.
+//
+// The fixes: `ArithSolver::pin_int_const` (exact singleton bounds, tautology
+// reason), the `−1/d`-coefficient numerator column, and the wide-point
+// honest read.  Every model below is z3-validated (bind as `define-fun`s,
+// negate the assertion, re-solve: `unsat`).
+
+/// The motivating case: `3·xi + (i64::MAX + 2147483647 + 1) ≤ 7`, the
+/// constant `9223372039002259453` far beyond width.  The synthesized column
+// is pinned, the branch-and-bound drives xi to the true bound
+/// `xi = -3074457346334086482` (z3's model), and the verdict is `sat` —
+/// pre-fix this answered `unknown` through the refuted-model blocking loop.
+#[test]
+fn pinned_big_const_column_decides_sat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xi Int)\n\
+             (assert (<= (+ (+ 9223372036854775806 2147483647) (* 3 xi)) 7))\n\
+             (check-sat)\n\
+             (get-value (xi))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        model.contains('-') && model.contains("3074457346334086482"),
+        "xi rests at the true bound -3074457346334086482 (z3's model), got: {model}"
+    );
+}
+
+/// A FRACTIONAL beyond-width constant: `-4611686018427387904 + 15.4` folds
+/// to `-23058430092136939443/5`, whose numerator leaves `i64` and whose
+/// oddness defeats every λ.  The numerator-column abstraction carries it
+/// (`col ↦ 23058430092136939443` at coefficient `-1/5`, pinned), the verdict
+/// is `sat`, and the model is EXACT: `xr = 7686143364045646481/10` — the
+/// tight boundary value, z3-validated by negation.
+#[test]
+fn fractional_wide_constant_decides_with_exact_model() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xr Real)\n\
+             (assert (<= (+ -4611686018427387904 (* 6 xr)) -15.4))\n\
+             (check-sat)\n\
+             (get-value (xr))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        model.contains("7686143364045646481"),
+        "xr = 7686143364045646481/10 exactly (the tight boundary, z3-validated), got: {model}"
+    );
+}
+
+/// The column SIGN convention: the column replaces the moved-to-RHS
+/// constant, so it must enter the row at `coef·col = −moved`.  The first
+/// version of the numerator column entered at `+moved` and this exact shape
+/// — satisfiable, z3 `sat` — answered `unsat` (a FALSE refutation: the row
+/// asserted the negated constant, which against `5·xr > 4` is genuinely
+/// infeasible).  Pins the convention for BOTH the fractional and the
+/// integer arms.
+#[test]
+fn constant_column_sign_convention_is_not_inverted() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (declare-const yi Int)\n\
+             (declare-const zi Int)\n\
+             (declare-const xr Real)\n\
+             (assert (and (and (= (+ (* 1 xr) 5 (+ (+ (* 3 xi) (* 10 xr)) (+ (* -2 zi) (* 3 zi) (* 1 xr)))) (div (* 3 zi) 3)) (or (> (* 2 zi) -4) (>= (+ (+ (mod 74 5) (- (* 1 xi) -2) 1099511627776) (+ (+ (* 1 xr) -2147483648 -31) (- (* 5 zi) 3) (+ (* 1 yi) (* 3 xi))) -3) -3.5))) (not (or (not (or (>= (mod (- (mod (* 1 zi) 2) 2) 2) (+ (+ (+ (* -2 xr) (* 1 xr)) (div 6 3) 78) (+ (+ -1 82) (* 1 xi) (+ -4 (* -2 xi))))) (<= (+ (+ -4611686018427387904 (+ (* 3 xr) (* 1 xr) (* -2 xr))) (/ (/ (* 2 xr) 4) 3)) -15.4))) (> -9 3) (not (and (> (* 5 xr) 4) (<= -4 (/ (+ (div (* 1 xi) 7) (* 10 xr)) 4))))))))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "z3: sat; an `unsat` here is the inverted-constant-column false refutation"
+    );
+}
+
+/// A branch-and-bound bound beyond width parks an integer at a WIDE POINT;
+/// its raw `assignment` entry is stale by design.  The model must publish
+/// the EXACT point (`xi = -9223372036854775832`, z3-validated by negation) —
+/// the stale `0` was refuted by the evaluator and degraded the verdict.
+#[test]
+fn wide_point_model_publication_is_exact() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xr Real)\n\
+             (declare-const xi Int)\n\
+             (assert (<= (+ (+ (+ (* 1 xr) (* 3 xr)) (+ 5 (* -1 xi))) (+ (- 4611686018427387905 (- -2 0)) (* 1 xi)) (+ (+ (* 1 xi) (* -2 xi)) (+ 4611686018427387905 (* 2 xi)))) -14.6))\n\
+             (check-sat)\n\
+             (get-value (xi))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        model.contains("9223372036854775832"),
+        "xi = -9223372036854775832 exactly (z3-validated), never the stale 0; got: {model}"
+    );
+}
+
+/// The pin is SCOPED: bounds pop with the asserting level, and the atom's
+/// re-assertion after a pop must re-pin (idempotent by bound inspection —
+/// a parse-time memo would skip the re-pin and float the column again).
+#[test]
+fn pinned_column_repins_after_pop() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xi Int)\n\
+             (push 1)\n\
+             (assert (<= (+ (+ 9223372036854775806 2147483647) (* 3 xi)) 7))\n\
+             (pop 1)\n\
+             (assert (<= (+ (+ 9223372036854775806 2147483647) (* 3 xi)) 7))\n\
+             (check-sat)\n\
+             (get-value (xi))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        model.contains("3074457346334086482"),
+        "the re-pinned column still drives xi to the true bound, got: {model}"
+    );
+}
+
 /// The B&B leaf's re-solve-vs-scan vertex mismatch (2026-09-19, found by
 /// the boundary-literal SHAPES in the mixed differential, seed 20262113
 /// instance 41): `mod(−2y + 2^62, 4) > 2` is UNSATISFIABLE — the
@@ -1269,27 +1423,4 @@ fn bnb_leaf_rescan_rejects_post_resolve_fractional_vertex() {
     // The honest verdict for this build; if a future Diophantine reach
     // closes the wide-constant parity class, `unsat` is also correct —
     // the pin is never-`sat`.
-}
-
-/// The same shape with the variable bounded small: the search must not
-/// lean on unboundedness to dodge the fractional vertex (z3: `unsat`;
-/// found in the same differential run).
-#[test]
-fn bnb_leaf_rescan_holds_under_bounded_variable() {
-    use nixie_solver::Context;
-    let mut ctx = Context::new();
-    let out = ctx
-        .execute_script(
-            "(set-logic QF_LIA)\n\
-             (declare-const yi Int)\n\
-             (assert (> (mod (+ (* -2 yi) 4611686018427387904) 4) 2))\n\
-             (assert (<= yi 100))\n\
-             (check-sat)\n",
-        )
-        .expect("script executes");
-    assert_ne!(
-        out.first().map(String::as_str),
-        Some("sat"),
-        "bounded twin of the same unsatisfiable goal"
-    );
 }

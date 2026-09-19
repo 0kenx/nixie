@@ -492,21 +492,55 @@ impl Solver {
         let (final_terms, constant_r, sign) = match chosen {
             Some(c) => c,
             None if moved.is_integer() => {
-                // The column abstraction (see the comment above).
-                let (value, coef) = if moved.to_integer() == BigInt::from(i64::MIN) {
-                    (-moved.to_integer(), -Rational64::one())
-                } else {
-                    (moved.to_integer(), Rational64::one())
-                };
-                let col = manager.mk_int(value);
+                // The column abstraction (see the comment above).  The
+                // column REPLACES the moved-to-RHS constant: the assert
+                // builds the row `Σ terms − constant ≤ 0`, so the column
+                // term must carry `−moved` (NOT `+moved` — the row then
+                // reads `Σ + coef·col ≤ 0` ≡ `Σ ≤ −coef·col = moved`,
+                // the original constraint; the pre-fix `+moved`
+                // coefficient asserted the NEGATED constant, and the λ
+                // fast path almost always winning is the only reason that
+                // inversion stayed latent).  `mk_int` takes a `BigInt` at
+                // any width — no `i64::MIN` sign-flip special case is
+                // needed, and the exact pin (`pin_int_const`) carries the
+                // value the term itself carries.
+                let col = manager.mk_int(moved.to_integer());
                 let mut with_col: Vec<(TermId, Rational64)> = final_terms.iter().copied().collect();
-                with_col.push((col, coef));
+                with_col.push((col, -Rational64::one()));
                 (with_col, Rational64::zero(), 1)
             }
             None => {
-                self.arith_parse_overflow.insert(reason);
-                self.arith_parse_cache.insert(reason, None);
-                return None;
+                // A FRACTIONAL folded constant beyond `Rational64` width:
+                // `moved = n/d` with `n` out of range.  No λ ever fixes a
+                // numerator (λ = 1/2^k only cancels factors of two, and a
+                // reduced `n` that leaves width after the integer-column
+                // arm is not of that shape — the observed numerators are
+                // `odd × 2^62`-scale sums such as `5·S + 73`), so this
+                // used to gate the atom to `Unknown` outright.  The
+                // numerator-column abstraction represents it exactly: an
+                // integer column `col ↦ n` (any width, hash-consed per
+                // value) at coefficient `−1/d` — `(−1/d)·col = −moved`
+                // identically (the column replaces the moved-to-RHS
+                // constant; see the integer arm's sign note), and the
+                // column is PINNED to `n` by the assert path
+                // (`pin_int_const`, exact singleton bounds), so the row
+                // carries the true constant at every scope.
+                // A denominator that does not narrow cannot back a
+                // `Rational64` coefficient anywhere in this channel —
+                // that residual class still gates honestly.
+                let denom_big = moved.denom();
+                let numer_big = moved.numer();
+                let denom_narrow = denom_big.to_i64().filter(|d| *d > 0);
+                let Some(denom) = denom_narrow else {
+                    self.arith_parse_overflow.insert(reason);
+                    self.arith_parse_cache.insert(reason, None);
+                    return None;
+                };
+                let coef = Rational64::new(-1, denom);
+                let col = manager.mk_int(numer_big.clone());
+                let mut with_col: Vec<(TermId, Rational64)> = final_terms.iter().copied().collect();
+                with_col.push((col, coef));
+                (with_col, Rational64::zero(), 1)
             }
         };
         // λ < 0 flips an ordered comparison (an equality is symmetric).

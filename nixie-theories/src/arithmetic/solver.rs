@@ -963,6 +963,53 @@ impl ArithSolver {
         var
     }
 
+    /// Pin an integer-constant COLUMN to its exact value: the big-const
+    /// abstraction (encode synthesizes a fresh free column for a folded
+    /// constant that leaves `Rational64` width in every orientation — no
+    /// λ can shrink a numerator, so powers of two only ever fix
+    /// denominator width) historically left that column FLOATING.  A
+    /// floating constant column makes the abstracted system a relaxation
+    /// of the original: refutations stayed sound (an abstract conflict
+    /// holds for every column value, in particular the constant's true
+    /// value) but every `sat` rested on certification, and a model whose
+    /// column drifted answered `unknown` after the evaluator refuted it
+    /// (the gap survey's floating-constant slice).  The wide bound store
+    /// (any width, exact comparisons) can carry the TRUE value as a
+    /// singleton bound, which turns the abstraction into an exact
+    /// representation: the column is the constant, at every scope where
+    /// an atom using it is asserted.
+    ///
+    /// The reason is the constant term ITSELF, registered by the caller as
+    /// a theory tautology (`a constant equals itself in every model`), so a
+    /// conflict explanation citing the pin drops it from the learned
+    /// clause knowingly — the clause stays entailed by the asserted atoms.
+    ///
+    /// Idempotent by BOUND INSPECTION, not a memo: bounds pop with the
+    /// scope that asserted them, and the next assert of an atom using the
+    /// column re-pins — a memo would skip that re-pin after a pop and let
+    /// the column float again (the exact hazard this pin retires).
+    pub fn pin_int_const(&mut self, term: TermId, value: num_rational::BigRational) {
+        use super::delta::BigDeltaRational;
+        let var = self.intern(term);
+        let exact = BigDeltaRational::real_only(value);
+        let already_pinned = self
+            .simplex
+            .get_lower(var)
+            .is_some_and(|b| b.value.cmp_big(&exact) == core::cmp::Ordering::Equal)
+            && self
+                .simplex
+                .get_upper(var)
+                .is_some_and(|b| b.value.cmp_big(&exact) == core::cmp::Ordering::Equal);
+        if already_pinned {
+            return;
+        }
+        let id = self.add_reason(term);
+        self.simplex
+            .set_lower_exact(var, exact.clone(), smallvec::smallvec![id]);
+        self.simplex
+            .set_upper_exact(var, exact, smallvec::smallvec![id]);
+    }
+
     /// Whether every variable of `lhs` is a known-integer variable and every
     /// coefficient integral, so the linear form takes only integer values.
     /// Terms are interned first (idempotent) so the check never fails on a
@@ -1739,6 +1786,21 @@ impl ArithSolver {
         if self.simplex.is_wide_basic(var) && self.simplex.delta_value_exact(var).is_none() {
             return None;
         }
+        // The HONEST narrow read: BOTH wide channels leave the raw entry
+        // stale by design — a wide basic's row (the guard above) AND a
+        // wide POINT (a non-basic resting at a bound beyond `Rational64`,
+        // typically a branch-and-bound bound at 2^63 scale).  Reading the
+        // raw entry for a wide point published a fabricated `0` for an
+        // integer resting at -9.2e18: the model carried it, the evaluator
+        // refuted it (`Genuine`), and the blocking loop degraded a
+        // decidable `sat` to `unknown`.  A point whose exact value does
+        // not narrow declines to the exact channel (`value_exact`),
+        // never a guess.
+        let honest = if self.simplex.is_wide_point(var) {
+            self.simplex.delta_value_exact(var)
+        } else {
+            Some(self.simplex.delta_value(var))
+        };
         // Per-VARIABLE integrality, not per-mode: in mixed mode a
         // `Real`-sorted term sitting at a strict bound keeps its
         // delta-rational value, while an `Int`-sorted term rounds.
@@ -1749,8 +1811,9 @@ impl ArithSolver {
             if let Some(v) = self.lia_model.get(&var) {
                 return Some(*v);
             }
-            // Get the full delta-rational value
-            let dval = self.simplex.delta_value(var);
+            // Get the full delta-rational value (the HONEST read — a
+            // wide point's raw entry is stale by design; see above)
+            let dval = honest?;
 
             // For integer arithmetic, round based on delta:
             // - Positive delta means we have a strict lower bound (x > r)
@@ -1810,7 +1873,7 @@ impl ArithSolver {
             // rejected, degrading the verdict to `unknown`).  `None` hands
             // publication to the exact channel (`value_exact`), which
             // instantiates in `BigRational` and publishes the true value.
-            let dval = self.simplex.delta_value(var);
+            let dval = honest?;
             if dval.delta.is_zero() {
                 Some(dval.real)
             } else {

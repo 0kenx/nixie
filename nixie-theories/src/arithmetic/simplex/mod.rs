@@ -1612,6 +1612,16 @@ impl Simplex {
     pub fn is_wide_basic(&self, var: VarId) -> bool {
         self.wide_rows.contains_key(&var)
     }
+    /// Whether `var` rests at a WIDE POINT (a non-basic snapped to a bound
+    /// beyond `Rational64` width — its `assignment` entry is stale by
+    /// design, exactly a wide basic's is).  The honest-value guards in the
+    /// theory layer must cover BOTH wide channels: a wide-point integer
+    /// reading its raw entry published a fabricated `0` while its exact
+    /// value sat at `-9.2×10¹⁸`.
+    #[must_use]
+    pub fn is_wide_point(&self, var: VarId) -> bool {
+        self.wide_points.contains_key(&var)
+    }
     /// Concrete positive rational to substitute for the infinitesimal `δ` when
     /// turning the delta-rational assignment into an ordinary rational model.
     ///
@@ -3321,20 +3331,41 @@ impl Simplex {
     }
 
     /// Check if a variable can be increased
+    ///
+    /// Wide-point aware: a variable parked in the wide point store has a
+    /// stale-by-design `assignment` entry (it rests at a bound beyond
+    /// `Rational64` width), so the eligibility comparison must read its
+    /// EXACT point.  Reading the stale entry answered the wrong question in
+    /// both directions — "cannot increase" declined a repairable state
+    /// (the wide-repair NOCOL class), and "can increase" pivoted a
+    /// variable already resting at its bound.
     #[inline]
     pub(super) fn can_increase(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.upper[idx] {
-            Some(hi) => hi.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Greater,
+            Some(hi) => {
+                if let Some(w) = self.wide_points.get(&var) {
+                    hi.value.cmp_big(w) == core::cmp::Ordering::Greater
+                } else {
+                    hi.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Greater
+                }
+            }
             None => true,
         }
     }
-    /// Check if a variable can be decreased
+    /// Check if a variable can be decreased (wide-point aware; see
+    /// [`Self::can_increase`]).
     #[inline]
     pub(super) fn can_decrease(&self, var: VarId) -> bool {
         let idx = var as usize;
         match &self.lower[idx] {
-            Some(lo) => lo.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Less,
+            Some(lo) => {
+                if let Some(w) = self.wide_points.get(&var) {
+                    lo.value.cmp_big(w) == core::cmp::Ordering::Less
+                } else {
+                    lo.value.cmp_narrow(&self.assignment[idx]) == core::cmp::Ordering::Less
+                }
+            }
             None => true,
         }
     }

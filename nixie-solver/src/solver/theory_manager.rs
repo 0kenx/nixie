@@ -2761,11 +2761,50 @@ impl<'a> TheoryManager<'a> {
         }
     }
 
+    /// Pin every beyond-`i64` integer-constant COLUMN in a parsed row to
+    /// its exact value (singleton bounds, any width; see
+    /// [`ArithSolver::pin_int_const`]).  The big-const abstraction leaves
+    /// such a column floating — a free variable standing for a constant —
+    /// which made every `sat` rest on after-the-fact certification and let
+    /// drifted columns answer `unknown` after the evaluator refuted the
+    /// model.  The pin is a TAUTOLOGY (`a constant equals itself in every
+    /// model`): the reason term is registered so a conflict explanation
+    /// citing the pin drops it from the learned clause knowingly — the
+    /// clause remains entailed by the asserted atoms, since any model of
+    /// them also satisfies `col = n`.
+    ///
+    /// Returns whether the row carries at least one wide-constant column
+    /// (the caller uses this to keep such rows off the pure-DL fast path:
+    /// the difference graph cannot see the column's pinned value, so a
+    /// `Consistent` over a floating column certifies a relaxation).
+    ///
+    /// At assert time, not parse time: bounds pop with the asserting scope,
+    /// and the parse cache is untrailed — a parse-time pin would die on the
+    /// first pop past it and never return (the cache remembers the parse,
+    /// never re-pins).
+    fn pin_big_const_columns(&mut self, terms: &[(TermId, Rational64)]) -> bool {
+        let mut any = false;
+        for &(t, _) in terms {
+            if let Some(value) = self.manager.get(t).and_then(|node| match &node.kind {
+                nixie_core::ast::TermKind::IntConst(v) if v.to_i64().is_none() => {
+                    Some(num_rational::BigRational::from(v.clone()))
+                }
+                _ => None,
+            }) {
+                self.tautological_reasons.insert(t);
+                self.arith.pin_int_const(t, value);
+                any = true;
+            }
+        }
+        any
+    }
+
     /// Assert one parsed arithmetic atom into the simplex at the current
     /// polarity (the shared body of the `process_constraint` assert arms and
     /// the [`Self::break_dl_purity`] replay).
     fn arith_assert_parsed(&mut self, var: Var, parsed: &ParsedArithConstraint, is_positive: bool) {
         let terms: Vec<(TermId, Rational64)> = parsed.terms.iter().copied().collect();
+        self.pin_big_const_columns(&terms);
         let reason = parsed.reason_term;
         let constant = parsed.constant;
         use super::types::ArithConstraintType::{Ge, Gt, Le, Lt};
@@ -3742,6 +3781,18 @@ impl<'a> TheoryManager<'a> {
                     let reason = parsed.reason_term;
                     let constant = parsed.constant;
                     let _ = (terms.as_slice(), reason, constant);
+
+                    // Pin wide-constant columns before anything consumes the
+                    // row.  A row carrying one is NOT difference-logic-pure:
+                    // the pin is a simplex bound the DL graph cannot see, so
+                    // a `Consistent` verdict over the floating column would
+                    // certify a relaxation — break purity first and let the
+                    // general path assert the row into the simplex (the
+                    // replay in `break_dl_purity` re-pins, idempotently).
+                    let has_wide_const_column = self.pin_big_const_columns(&terms);
+                    if has_wide_const_column {
+                        self.break_dl_purity();
+                    }
 
                     // Pure-DL fast path: the difference engines run BEFORE
                     // the simplex assert, and a `Consistent` verdict finishes
