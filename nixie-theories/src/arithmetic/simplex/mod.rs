@@ -2553,6 +2553,7 @@ impl Simplex {
                                 // repair direction is blocked at its
                                 // bound — not a state this classification
                                 // can repair; decline honestly.
+
                                 declined = true;
                                 break;
                             };
@@ -4379,26 +4380,29 @@ impl Simplex {
             } else {
                 (hi_of(vi), lo_of(vi))
             };
+            // The endpoint choice already folds the signs: for c > 0 the
+            // minimum sits at `lo` and the maximum at `hi`; for c < 0 they
+            // swap.  The contribution is ALWAYS `+ c·endpoint` — the
+            // pre-fix code SUBTRACTED it on the c < 0 arm (`min -= c·hi`),
+            // which computes the wrong endpoint value by `2·c·hi` and so a
+            // range WIDER than the truth: valid refutations were missed
+            // (the row's true minimum already above its window read as
+            // overlap), the repair step then found every direction
+            // blocked at its bound (NOCOL), and the check declined an
+            // LP-infeasible state to `unknown` — the S3 residual's
+            // dominant mechanism (45 of the 110 survey members at
+            // `bf9f5b71`).  Conservative in the safe direction only (the
+            // widened range can only FAIL to refute), so nothing answered
+            // wrongly — it only failed to answer.
             match min_src {
                 Some(e) => {
-                    // min += c·e  (c and e signs already folded by choice
-                    // of endpoint: c·lo for c>0, c·hi for c<0 — both are
-                    // the smaller product; subtract when c < 0).
-                    if *c > BR::zero() {
-                        acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
-                    } else {
-                        acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
-                    }
+                    acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
                 }
                 None => min_unbounded = true, // range reaches -∞ on this side
             }
             match max_src {
                 Some(e) => {
-                    if *c > BR::zero() {
-                        acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
-                    } else {
-                        acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
-                    }
+                    acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
                 }
                 None => max_unbounded = true, // unbounded above
             }

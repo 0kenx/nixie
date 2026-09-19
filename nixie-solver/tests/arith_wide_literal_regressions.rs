@@ -1423,3 +1423,34 @@ fn bnb_leaf_rescan_rejects_post_resolve_fractional_vertex() {
          widened Hermite solve (MAG_BOUND_SOLVE)"
     );
 }
+
+/// The wide-row interval refutation's SIGN (2026-09-19, the S3 residual's
+/// dominant mechanism — 19 of the 110 survey members at `bf9f5b71`): for a
+/// negative coefficient the row's minimum contribution is `+ c·hi` (the
+/// endpoint choice folds the sign), but the accumulation SUBTRACTED it,
+/// computing a range wider than the truth.  Valid refutations were missed
+/// (conservative — the widened range can only fail to refute), the repair
+/// step then found every direction blocked at its bound (NOCOL), and the
+/// check declined LP-infeasible states to `unknown`.  This instance's
+/// violated wide row (a `div`/`mod`-fractional row over a variable resting
+/// at a `-4.6e18` upper) is genuinely refutable at its minimum — z3 and
+/// the fixed build answer `sat` with `xi = 9` (model z3-validated); the
+/// pre-fix build answered `unknown`.
+#[test]
+fn wide_row_interval_refutation_sign() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const xi Int)\n\
+             (assert (and (or (<= (- -3 3) (+ (div (* -1 xi) 3) (div (mod -7 3) 3) (+ (mod (* -2 xi) 5) (+ (* 2 xi) -6)))) (>= (* 1 xi) 1099511627776)) (not (and (<= (+ (- (mod 9 7) 2) (+ (+ (* 1 xi) (* -2 xi)) (+ (* 10 xi) (* 5 xi)) (mod (* 1 xi) 7))) -3) (not (and (>= (* 1 xi) -4) (= xi 9223372036854775809))) (and (<= -96 5) (> (* -1 xi) 0) (= (+ (+ -73 (+ (* 1 xi) (* 1 xi)) (* 5 xi)) 7 2147483648) (+ (* 1 xi) (+ (+ (* 2 xi) (* -2 xi)) (+ -7 5) (- (* 10 xi) -2))))))) (> (+ (mod (- -7 3) 1) (div (* 3 xi) 2)) 4)))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(
+        out.first().map(String::as_str),
+        Some("sat"),
+        "z3: sat (model xi = 9, validated); `unknown` is the missed interval refutation (the S3 NOCOL decline), `unsat` would be a fabricated refutation"
+    );
+}
