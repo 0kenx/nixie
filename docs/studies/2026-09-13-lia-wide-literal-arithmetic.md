@@ -2735,3 +2735,42 @@ before choosing a slice).  Landed as `bf9f5b71`.
       acceptance vs. the div/mod defining axioms' tightness at the
       leaf), A2 budgets, and the tails.  Item 88's zero-delta hole (the
       model-less terminal `Sat`) remains documented and unlanded.
+
+## Continuation 46 (2026-09-19): item 90 — the leaf snapshot's REAL half: δ-instantiated inside the leaf's scopes
+
+90. **Item 89 fixed the integers; the reals were the same defect one
+    layer down** (`65228ee8`).  The dive's scopes pop after the
+    snapshot, restoring a point that can RE-VIOLATE strict bounds the
+    leaf satisfied — e.g. a basic resting at its strict bound's real
+    part with no infinitesimal (`(0, 0)` against `(0, +1)`; the narrow
+    `find_violating` IS delta-aware and would repair it, but it runs at
+    CHECK time, not at publication).  The δ-instantiation computed over
+    the popped state then declines (no positive δ₀ exists over a
+    violated strict bound), and `value()`'s real arm has no snapshot —
+    EVERY real published the sort default `0`.  The exact evaluator
+    refuted the candidate and the big-const gate downgraded a decidable
+    `sat` to `unknown`: this instance published `xr = 0` while the
+    tableau held `2147483572/3`, flipping a conjunct that sits exactly
+    on its strict boundary (`3·xi + 3·xr + 85 > 5` at `= 5`).
+    * **The fix**: `snapshot_lia_model` records the leaf's real values,
+      δ-instantiated INSIDE the leaf's scopes (a leaf with no positive
+      instantiation leaves them unpublished, never guessed), and
+      `value()` prefers the snapshot for BOTH sorts before any live
+      read (`value_exact` already did, item 89).
+    * **Measured**: survey 79 → **75** (the arc's cumulative run on
+      these seeds: 150 → 110 → 91 → 79 → 75 across items 86–90), every
+      new verdict agreeing with z3; the recovered model validated by
+      binding all four variables and negating the assertion (z3:
+      `unsat`).  Differentials 3 fresh mixed ×400 + 2 fresh wide ×300
+      clean; parity 176/177 (z3 4.16.0); gate 1.000/1.000 wall 0.99;
+      panic sweep 0; arith suite green but the documented corpus-missing
+      class; clippy/fmt/rustdoc clean.  Regression:
+      `leaf_snapshot_covers_real_variables` (the fuzz instance
+      verbatim, default-0-pinned).
+    * **Decode notes**: the certifier-side probes (`[cert-false]` +
+      `INTERP` with `manager.resolve_str`, and `delta_instantiation_exact`'s
+      per-arm `[d0-*]` prints) are the fastest route for this class —
+      the failing CONJUNCT under the published values names the
+      fabricated variable directly.  The residual 75: the div/mod
+      leaf-acceptance class remains (candidates now honest but
+      tableau-vs-original divergent), A2 budgets, and tails.
