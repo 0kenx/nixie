@@ -58,3 +58,55 @@ builds), which makes this a soundness lead, not a perf footnote.
 The duplicate retire itself remains attractive (0.8066 geomean behind
 it) — after the reconstruction audit either lands clean or the retire
 needs to preserve whatever the reconstruction reads.
+
+## Addendum (same day): the mechanism demonstrated; the walk hardened; the reference divergence named
+
+Recreated the repro (worktree + the dedup retire + a model-checking
+harness) and traced the extension walk (`NIXIE_WALK_TRACE`).  The exact
+failure on b21/seed 1:
+
+- `entry@559194` = witness `+100`, clause `(100 ∨ ¬15955)` — **the
+  violated original clause itself**, correctly on the stack (BVE retired
+  it with the pivot's witness when 100 was eliminated).  At walk time
+  both literals are false → the walk flips 100 to true ✓.
+- `entry@559189` = witness `−100`, clause `(¬100 ∨ ¬2990 ∨ ¬2382)` —
+  five positions **earlier in the same elimination group**, opposite
+  witness polarity (BVE pushes each retired clause with the pivot
+  literal *that clause contains* — mixed polarities within one group are
+  structural).  Under the then-current model (2990=T, 2382=T) every
+  literal is false → the walk flips 100 **back to false** — re-falsifying
+  the already-repaired `entry@559194`.  Under the upstream flips
+  (15955's group at `576460` set 15955=T) the two demands are
+  **contradictory**: no value of 100 satisfies both; the greedy walk
+  oscillates — measured 64/64 repair passes without convergence.
+- The wrongness cascades from upstream groups' flip decisions; the
+  corner is a *shape* of the greedy walk, not a single bad entry.
+
+**Cadical reference divergence (named, port attempted)**: cadical's
+`External::extend` (extend.cpp) on a falsified entry flips **every
+currently-false literal** of the clause, not only the witness.  The
+naive port of that rule regressed catastrophically on the repro
+(**13,762** violated clauses) — our push side differs from cadical's
+somewhere upstream (what each mechanism pushes, per-elimination
+grouping, or the base-value convention).  The next session's precise
+task: diff the PUSH side against cadical's
+`push_clause_on_extension_stack` callers per mechanism (BVE pivot
+clauses, ELS equivalence implications, pure literals, probe promotions)
+before touching the walk again.  The dedup remains the on-demand
+trajectory generator for the corner.
+
+**Landed**: a bounded (8-pass) fixpoint wrapper around the walk — repeat
+the backward pass until a pass repairs nothing.  Bit-identical on
+healthy trajectories by construction (pass 2 performs zero repairs when
+the one-pass walk converged — verified conflicts-identical on the
+five-instance gate band; suite 1080/1080; bv_ILA 15,144 = pin), and
+strictly better on non-oscillating divergence; the oscillation corner
+gives up at the bound (documented, unchanged).  Plus two `doc(hidden)`
+audit accessors (`debug_ext_stack`, `debug_bve_def`).
+
+Harness recipe (recreate as a `nixie-sat` example): load the DIMACS with
+`ConfigPreset::CaDiCaL.config()`, `new_vars_bulk`, `add_clause_dimacs`
+per clause, solve, then evaluate every original clause against
+`model_value`; on violation print the clause, its vars'
+`var_eliminated`, and the enclosing ext-stack entries mentioning each
+var (split on `u32::MAX` sentinels; entry = `[witness, lits…]`).
