@@ -118,7 +118,7 @@ pub struct ArithSolver {
     /// integral assignment found by branch-and-bound rather than the (possibly
     /// fractional) LP-relaxation optimum.  Cleared at the start of every
     /// `check()` and on `reset()`.
-    lia_model: FxHashMap<VarId, Rational64>,
+    lia_model: FxHashMap<VarId, num_rational::BigRational>,
     /// Integer equalities asserted in LIA mode, kept as raw
     /// `(sum a_i·x_i = b)` rows so that a linear Diophantine consistency check
     /// can detect cross-constraint parity infeasibility (e.g. `y=2x ∧ y=2z+1`)
@@ -1807,9 +1807,22 @@ impl ArithSolver {
         if self.int_vars.contains(&var) {
             // Prefer the integral assignment found by branch-and-bound when
             // the last check() proved Sat – the raw LP optimum may be
-            // fractional for Int variables.
+            // fractional for Int variables.  The snapshot is EXACT
+            // (`BigRational`, any width): the leaf's integral value
+            // survives the branch scopes' pop, which restores the FRACTIONAL
+            // pre-dive point the live reads would otherwise report (a
+            // beyond-width leaf value used to be left to `value_exact` on
+            // the assumption it would still be readable later — the popped
+            // state declined it, the model builder defaulted the variable
+            // to 0, and the evaluator refuted the candidate: the J5
+            // 61-member class).  A value too wide for this channel hands
+            // publication to the exact channel, never a guess.
             if let Some(v) = self.lia_model.get(&var) {
-                return Some(*v);
+                use num_traits::ToPrimitive as _;
+                return Some(Rational64::new_raw(
+                    v.numer().to_i64()?,
+                    v.denom().to_i64()?,
+                ));
             }
             // Get the full delta-rational value (the HONEST read — a
             // wide point's raw entry is stale by design; see above)
@@ -1894,6 +1907,13 @@ impl ArithSolver {
     /// has not resolved them — publishing would fabricate integrality).
     pub fn value_exact(&self, term: TermId) -> Option<num_rational::BigRational> {
         let &var = self.term_to_var.get(&term)?;
+        // The branch-and-bound snapshot wins for integer variables: it is
+        // the INTEGRAL leaf value, exact at any width, and it survives the
+        // branch scopes' pop (the live exact read below would see the
+        // fractional pre-dive point — see `value`'s snapshot note).
+        if let Some(v) = self.lia_model.get(&var) {
+            return Some(v.clone());
+        }
         // The exact read covers BOTH wide channels: a wide basic's defining
         // row and a wide point value (a non-basic snapped to a wide
         // bound).  The δ-instantiation for a value carrying an
@@ -2391,13 +2411,14 @@ impl ArithSolver {
                 // Fractional exact value: unresolved — do not publish.
                 continue;
             }
-            use num_traits::ToPrimitive as _;
-            if let (Some(n), Some(d)) = (rounded.numer().to_i64(), rounded.denom().to_i64()) {
-                // `to_i64` already rejects beyond-width values (they stay
-                // unpublished here and publish exactly through
-                // `value_exact`); no clamping, ever.
-                self.lia_model.insert(var, Rational64::new_raw(n, d));
-            }
+            // Store the integral leaf value EXACTLY (`BigRational`, any
+            // width): the branch scopes pop right after this snapshot, and
+            // the live reads would report the fractional pre-dive point.
+            // The old narrow-only store left beyond-width leaf values to
+            // `value_exact`'s live read — which declined on the popped
+            // state, the model builder defaulted the variable to `0`, and
+            // the evaluator refuted a genuine leaf model (the J5 class).
+            self.lia_model.insert(var, rounded);
         }
     }
 

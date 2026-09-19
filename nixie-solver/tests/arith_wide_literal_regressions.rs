@@ -1515,3 +1515,39 @@ fn get_value_rational_echo_round_trips() {
         "the published value equals the echoed value; `distinct` must refute"
     );
 }
+
+/// The branch-and-bound snapshot must carry the leaf's integral value at ANY
+/// width (2026-09-19, the J5 class — 12 of the 91 residual survey members
+/// recovered, 61 tagged): the dive snapshots inside its scoped branch bounds,
+/// and the scopes POP right after, restoring the fractional pre-dive point.
+/// A beyond-width leaf value used to be left to `value_exact`'s live read on
+/// the assumption it would still be readable later — the popped state
+/// declined it, the model builder published the sort default `0` for the
+/// variable, the (exact, Euclidean) certifier refuted the candidate, and the
+/// big-const gate downgraded a decidable `sat` to `unknown`.  The snapshot
+/// is now exact (`BigRational`), and both publication channels prefer it.
+/// This instance's leaf rests at `xi = -49806208999015789358` (validated
+/// with z3 by binding the model and negating the assertion: `unsat`);
+/// pre-fix it answered `unknown` with the defaulted `xi = 0` candidate.
+#[test]
+fn bnb_snapshot_survives_scope_pop_at_any_width() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const xi Int)\n\
+             (declare-const yi Int)\n\
+             (declare-const zi Int)\n\
+             (assert (and (not (or (or (> (- (* 3 xi) 2) -11) (< (* 1 yi) -24) (<= (+ (+ (+ 9223372036854775808 (* 1 xi) (* -1 zi)) 7) (* 1 yi)) (+ (- (+ (* 5 xi) -8) -2) (div (mod -2 5) 5) (* 5 yi)))) (or (<= zi 9223372036854775808) (> (+ (+ (+ (* 10 yi) (* 10 xi)) (* 5 xi) (+ (* 1 yi) (* -1 xi))) (+ (+ -74 (* -1 zi) (* 5 yi)) (- (* -2 zi) 3))) 3) (< (+ (div (- (* -1 zi) 2) 5) (+ (+ (* 10 zi) (* 1 yi) (* 1 zi)) (* 2 xi))) -3))))))\n\
+             (check-sat)\n\
+             (get-value (xi))\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+    let model = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        model.contains("49806208999015789358"),
+        "xi publishes the leaf's exact integral value (z3-validated), never the defaulted 0 or a post-pop fraction; got: {model}"
+    );
+}
