@@ -2692,3 +2692,46 @@ before choosing a slice).  Landed as `bf9f5b71`.
     * Soundness screens this session: the 91-member screen and 6 fresh
       differential seeds (3 mixed ×400 + 3 wide ×300) at the sign-fix
       build, zero wrong verdicts, zero refuted models.
+
+## Continuation 45 (2026-09-19): item 89 — the J5 root FIXED: the B&B snapshot is exact at any width; the leaf's integral value survives the scope pop
+
+89. **Item 88's decode, executed to the root and landed (`db596013`)**:
+    the integral dive snapshots at its leaf INSIDE the scoped branch
+    bounds, and the scopes pop right after — restoring the fractional
+    pre-dive point.  The narrow-only `lia_model` deliberately left
+    beyond-width integral leaf values to `value_exact`'s LIVE read "on
+    the assumption it would still be readable later" (the snapshot's own
+    comment) — the popped state declined it, the model builder published
+    the sort default `0`, and the exact certifier correctly refuted the
+    candidate.  **`lia_model` now holds `BigRational`**: the snapshot
+    stores the integral rounded value at any width, `value()` narrows it
+    for the narrow channel (declining to the exact channel), and
+    `value_exact()` returns it outright — both prefer the snapshot over
+    the post-pop live state.
+    * **Debug notes that cost time (do not repeat)**: three probe
+      iterations were corrupted by (a) an f-string writing the INDENT
+      COUNT instead of spaces — a syntax error whose stale-binary
+      runoff produced phantom "never runs" conclusions (final_check and
+      the arith loop DO run; verify probe placement against a fresh
+      build before believing an absence), and (b) sequential line-index
+      inserts shifting later tags off their statements.  Verify every
+      probe fires on a known path before trusting its silence.
+    * **Measured**: survey 91 → **79** (12 recovered, every new verdict
+      agreeing with z3; the recovered `xi = -49806208999015789358`
+      model z3-validated by negation).  The other ~49 J5-tagged members
+      now decline at GENUINELY BAD candidates — the certifier's
+      `verify FALSE` is honest there: the dive's leaf satisfies the
+      TABLEAU but not the original formula (the div/mod axiom feeds are
+      loose at the leaf — the parallel session's "search capacity over
+      the div/mod axiom feeds" reading, now precisely located at the
+      DIVE's acceptance, not the budget).  Differentials 3 fresh mixed
+      ×400 + 3 fresh wide ×300 clean; parity 176/177 (z3 4.16.0);
+      gate 1.000/1.000 wall 0.93; panic sweep 0; arith suite green but
+      the documented corpus-missing class.  Regression:
+      `bnb_snapshot_survives_scope_pop_at_any_width` (the fuzz instance
+      verbatim, model-pinned).
+    * **Residual 79's map**: the div/mod-leaf-acceptance class (the
+      ~49 above — entry: `integral_dive`'s `state_feasible`-and-scan
+      acceptance vs. the div/mod defining axioms' tightness at the
+      leaf), A2 budgets, and the tails.  Item 88's zero-delta hole (the
+      model-less terminal `Sat`) remains documented and unlanded.
