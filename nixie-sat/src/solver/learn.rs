@@ -2280,56 +2280,94 @@ impl Solver {
         // added at each elimination carry cross-variable obligations as
         // live clauses (or as later-walked entries themselves).
         if !self.ext_stack.is_empty() {
-            let mut i = self.ext_stack.len();
-            while i > 0 {
-                // entry layout: witness, lit, ..., lit, SENTINEL
-                let end = i - 1;
-                debug_assert_eq!(self.ext_stack[end], u32::MAX);
-                let start = self.ext_stack[..end]
-                    .iter()
-                    .rposition(|&c| c == u32::MAX)
-                    .map_or(0, |p| p + 1);
-                let witness = Lit::from_code(self.ext_stack[start]);
-                // Reintroduced variables skip the walk: their retired
-                // clauses were resurrected as live originals
-                // (`void_elimination_promises`), so the search already
-                // enforces them — and a toggle here could now falsify one
-                // of those live clauses, which the walk has no knowledge of.
-                if self.ext_rementioned.contains(&witness.var()) {
-                    i = start;
-                    continue;
-                }
-                let satisfied = self.ext_stack[start + 1..end].iter().any(|&code| {
-                    let lit = Lit::from_code(code);
-                    match self.model.get(lit.var().index()).copied() {
-                        Some(LBool::True) => lit.is_pos(),
-                        _ => lit.is_neg(),
+            // Fixpoint wrapper (2026-09-18, the b21/seed-1 false-sat): the
+            // one-pass backward walk's order argument covers flips within a
+            // witness group, but a variable can carry SEVERAL obligation
+            // groups with OPPOSITE witness polarities (ELS pushes both
+            // implications of an equivalence; BVE pushes the pivot's
+            // polarity of its own elimination) - an older group's repair
+            // can then toggle the variable back and re-falsify a newer
+            // group's already-repaired entry (demonstrated: entry@559194
+            // repaired to `100=T`, then entry@559189's `-100` witness
+            // flipped it back, leaving the original clause `(~15955 | 100)`
+            // violated in the reported model).  Repeat the full backward
+            // pass until a pass repairs nothing.  When the one-pass walk
+            // already converges - every healthy trajectory measured - the
+            // extra pass is a pure no-op (no flips -> identical model), so
+            // trajectories are unchanged; the loop only ever differs on
+            // cases that were reporting invalid models.  Bound: 64 passes
+            // (each non-converging pass performs at least one repair;
+            // pathological oscillation would need alternating groups, and
+            // the bound gives oscillation up quickly rather than burning
+            // wall - 2-3 passes is the observed convergence maximum).
+            let mut passes = 0usize;
+            let mut repaired_any = true;
+            while repaired_any && passes < 8 {
+                repaired_any = false;
+                passes += 1;
+                let mut i = self.ext_stack.len();
+                while i > 0 {
+                    // entry layout: witness, lit, ..., lit, SENTINEL
+                    let end = i - 1;
+                    debug_assert_eq!(self.ext_stack[end], u32::MAX);
+                    let start = self.ext_stack[..end]
+                        .iter()
+                        .rposition(|&c| c == u32::MAX)
+                        .map_or(0, |p| p + 1);
+                    let witness = Lit::from_code(self.ext_stack[start]);
+                    // Reintroduced variables skip the walk: their retired
+                    // clauses were resurrected as live originals
+                    // (`void_elimination_promises`), so the search already
+                    // enforces them — and a toggle here could now falsify one
+                    // of those live clauses, which the walk has no knowledge of.
+                    if self.ext_rementioned.contains(&witness.var()) {
+                        i = start;
+                        continue;
                     }
-                });
-                if !satisfied {
-                    let idx = witness.var().index();
-                    if let Some(slot) = self.model.get_mut(idx) {
-                        // Flip the variable's boolean iff the witness literal
-                        // reads falsified (cadical's `vals[idx] = !vals[idx]`
-                        // under guard `tmp != lit`); every variable already
-                        // carries a concrete value here, so this is a plain
-                        // toggle.
-                        let witness_true = match *slot {
-                            LBool::True => witness.is_pos(),
-                            LBool::False => witness.is_neg(),
-                            LBool::Undef => witness.is_neg(),
-                        };
-                        if !witness_true {
-                            *slot = if witness.is_pos() {
-                                LBool::True
-                            } else {
-                                LBool::False
+                    let satisfied = self.ext_stack[start + 1..end].iter().any(|&code| {
+                        let lit = Lit::from_code(code);
+                        match self.model.get(lit.var().index()).copied() {
+                            Some(LBool::True) => lit.is_pos(),
+                            _ => lit.is_neg(),
+                        }
+                    });
+                    if !satisfied {
+                        let idx = witness.var().index();
+                        if let Some(slot) = self.model.get_mut(idx) {
+                            // Flip the variable's boolean iff the witness literal
+                            // reads falsified (cadical's `vals[idx] = !vals[idx]`
+                            // under guard `tmp != lit`); every variable already
+                            // carries a concrete value here, so this is a plain
+                            // toggle.  NOTE (2026-09-18 forensics): cadical's
+                            // extend flips EVERY falsified literal of the entry,
+                            // witness-only is our long-standing shape; the naive
+                            // flip-all port regressed 13,762 violated clauses on
+                            // the b21 repro — our push side differs from
+                            // cadical's somewhere upstream; see
+                            // docs/studies/2026-09-18-fold-dedup-false-sat.md.
+                            let witness_true = match *slot {
+                                LBool::True => witness.is_pos(),
+                                LBool::False => witness.is_neg(),
+                                LBool::Undef => witness.is_neg(),
                             };
+                            if !witness_true {
+                                *slot = if witness.is_pos() {
+                                    LBool::True
+                                } else {
+                                    LBool::False
+                                };
+                                repaired_any = true;
+                            }
                         }
                     }
+                    i = start;
                 }
-                i = start;
             }
+            debug_assert!(
+                !repaired_any || passes < 8,
+                "extension walk did not converge in 8 passes"
+            );
+            let _ = passes;
         }
     }
 

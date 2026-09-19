@@ -5014,6 +5014,19 @@ impl Solver {
         self.ext_stack.len()
     }
 
+    /// Study tooling: the raw extension stack (witness, lits..., SENTINEL
+    /// per entry), for external reconstruction audits.
+    #[doc(hidden)]
+    pub fn debug_ext_stack(&self) -> &[u32] {
+        &self.ext_stack
+    }
+
+    /// Study tooling: `bve_def[v]` (the reconstruction snapshots).
+    #[doc(hidden)]
+    pub fn debug_bve_def(&self, v: Var) -> Option<&[SmallVec<[Lit; 4]>]> {
+        self.bve_def.get(v.index()).map(|v| v.as_slice())
+    }
+
     /// Number of AND/XOR gates the congruence detector finds in the current
     /// clause set (`solver/congruence.rs`).  Diagnostic accessor for the
     /// structural-gate studies: the count is a formula property (seed- and
