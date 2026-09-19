@@ -7,6 +7,7 @@ pub(super) mod bag_model;
 pub(super) mod bag_theory;
 pub(super) mod bv_unified;
 pub(super) mod candidates;
+pub(super) mod caps;
 pub(super) mod certification;
 pub(super) mod check_array;
 pub(super) mod check_bv;

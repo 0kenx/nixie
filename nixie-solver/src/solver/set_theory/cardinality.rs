@@ -92,11 +92,16 @@ use num_bigint::BigInt;
 use super::{Shape, Survey, element_sort, shape_of, support};
 
 /// Cap on the number of set terms in one element sort's counting cone.
-const MAX_CONE_SETS: usize = 40;
+fn max_cone_sets() -> usize {
+    crate::solver::caps::cap("set_cone_sets", 40)
+}
 
 /// Cap on the number of ground elements the counting sums run over; the
-/// de-duplication guards are quadratic in this.
-const MAX_COUNT_ELEMENTS: usize = 24;
+/// de-duplication guards are quadratic in this. Env-overridable and
+/// reported on firing — see [`crate::solver::caps`].
+fn max_count_elements() -> usize {
+    crate::solver::caps::cap("set_count_elements", 24)
+}
 
 /// The outcome of the cardinality reduction.
 pub(super) struct CardOutcome {
@@ -277,7 +282,9 @@ pub(super) fn reduce(
                 continue;
             }
             cone.sets.push(t);
-            if cone.sets.len() > MAX_CONE_SETS {
+            let cap = max_cone_sets();
+            if cone.sets.len() > cap {
+                crate::solver::caps::report_fired("set_cone_sets", cone.sets.len(), cap);
                 capped = true;
                 break;
             }
@@ -390,10 +397,12 @@ pub(super) fn reduce(
         // ---- the ground elements the sums run over ----
         let empty_list: Vec<TermId> = Vec::new();
         let ground_elements: &[TermId] = elements.get(&elem_sort).unwrap_or(&empty_list);
-        if ground_elements.len() > MAX_COUNT_ELEMENTS {
+        let cap = max_count_elements();
+        if ground_elements.len() > cap {
             // The de-duplication guards are quadratic; decline honestly
             // rather than emit a quadratic blowup or (worse) an
             // under-constrained sum.
+            crate::solver::caps::report_fired("set_count_elements", ground_elements.len(), cap);
             incomplete = true;
             continue;
         }
