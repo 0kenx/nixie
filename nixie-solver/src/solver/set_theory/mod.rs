@@ -157,8 +157,11 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
 /// regardless). User-surveyed elements are never counted against it —
 /// the input's own size is not feedback. Aligned with the counting cap
 /// ([`cardinality`]'s `MAX_COUNT_ELEMENTS`): the same population drives
-/// both passes' pair products.
-const MAX_DERIVED_ELEMENTS: usize = 24;
+/// both passes' pair products. Env-overridable and reported on firing —
+/// see [`crate::solver::caps`].
+fn max_derived_elements() -> usize {
+    crate::solver::caps::cap("set_derived_elements", 24)
+}
 
 /// The returned list may contain duplicates and terms that are only
 /// *candidates* — membership still decides which are really in. That is what
@@ -776,11 +779,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         .flatten()
         .collect();
         for e in user_elems {
-            if target_sorts.iter().any(|sort| {
-                elements
-                    .get(sort)
-                    .is_some_and(|l| l.len() + 2 > MAX_DERIVED_ELEMENTS)
-            }) {
+            let cap = max_derived_elements();
+            if target_sorts
+                .iter()
+                .any(|sort| elements.get(sort).is_some_and(|l| l.len() + 2 > cap))
+            {
+                crate::solver::caps::report_fired("set_derived_elements", target_sorts.len(), cap);
                 rel_incomplete = true;
                 break;
             }
@@ -1126,7 +1130,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                         sort.is_some_and(|sort| {
                             elements
                                 .get(&sort)
-                                .is_some_and(|l| l.len() + 2 > MAX_DERIVED_ELEMENTS)
+                                .is_some_and(|l| l.len() + 2 > max_derived_elements())
                         })
                     }) {
                         rel_incomplete = true;
