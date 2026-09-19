@@ -126,9 +126,26 @@ impl VertexId {
     }
 }
 
-/// Handle to one graph inside a [`GraphModel`].
+/// Handle to one graph inside a [`GraphModel`]. Obtained from
+/// [`GraphModel::new_graph`]; the zero-based index is addressable via
+/// [`GraphHandle::new`] for serialization-style tooling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GraphHandle(usize);
+
+impl GraphHandle {
+    /// The graph with zero-based index `index`. Only indices below the
+    /// owning model's graph count are meaningful; all APIs validate them.
+    #[must_use]
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    /// The handle's zero-based index.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
 
 /// Assignment state of one edge term.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

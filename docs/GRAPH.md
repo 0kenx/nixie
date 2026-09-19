@@ -134,7 +134,11 @@ default decisions are complete for this fragment.
   edge forcing (MonoSAT's `buildForcedEdgeReason`).
 - **Zero-length paths** are excluded from `reach`; see above.
 - **Performance**: stateless recomputation per event; no incremental
-  algorithms; no shared-source BFS caching across reach atoms.
+  algorithms; no shared-source BFS caching across reach atoms. Measured
+  (see the study below): random instances at n = 100 / 6 224 edges solve
+  in ~0.3 s even in a debug build, so the guidance below is conservative;
+  workloads with very many reach atoms per check are the ones that feel the
+  O(V·E) per-event cost first.
 - **Certification**: graph registrations are trusted client callbacks
   without independently checkable certificates. Proof-producing and
   certified checks fail closed to `Unknown` for them (the same boundary as
@@ -206,3 +210,15 @@ segmentation policy *and* a deployment-order constraint in one query.
 The reference for the procedure is MonoSAT's source and the AAAI 2015 paper;
 semantics deviations (zero-length paths) are documented above rather than
 inherited silently.
+
+## Differential campaign against MonoSAT
+
+`bench/graph_differential/` runs verdict parity against the MonoSAT
+reference implementation itself on randomly generated GNF instances
+(generator + driver script; `nixie-solver/examples/graph_gnf.rs` reads the
+supported unweighted directed subset and rejects self-pair reach loudly,
+since that is where the two reach conventions split). Recorded result
+(`docs/studies/2026-09-19-graph-constraints-differential.md`): **1 600/1
+600 instances agree** across 2–20 vertices per graph, with a healthy
+sat/unsat split (860/740), no skips, no `Unknown`s, plus scale probes to
+n = 100.
