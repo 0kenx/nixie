@@ -45,3 +45,14 @@ The scratch `results.json` is gitignored; commit the per-environment
 The QF_LIA gap (−22) is simplex-side capacity — the arithmetic arc's
 active territory; QF_BV is within 3.  Re-run at landing-relevant shas
 and compare against this table.
+
+**Every loss is now mechanism-attributed** with repros and fix routes —
+see `docs/studies/2026-09-19-smt-perf-gap-attribution.md`: the LIA gap
+splits into the deep-encoding class (9 instant `unknown`s at paren
+depth 2537 vs `ENCODE_DEPTH_LIMIT` 512 — the iterative-encoder project)
+and the integer-reasoning/simplex-blowup class (z3 decides via its
+Diophantine solver, `arith-dio-calls 1`, while nixie's branch-and-bound
+grinds BigInt-GCD blowup); the BV gap is the algebraic-identity
+(multiplier/wienand) preprocessing class, z3-at-0-conflicts.  On the
+both-solved set the conflict-ratio median is 1.0 — the gap is
+concentrated, not general slowness.
