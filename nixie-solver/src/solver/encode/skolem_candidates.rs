@@ -251,6 +251,13 @@ impl Solver {
                 | TermKind::BagFilter { bag: a, .. }
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
+                // A fold's initial accumulator and domain bag walk like any
+                // other subterm (its defining equation is conjoined by the
+                // bag reduction, whose axioms these children appear in).
+                TermKind::BagFold { init, bag, .. } => {
+                    stack.push(*bag);
+                    stack.push(*init);
+                }
                 TermKind::SetUniv(_) => {}
 
                 // Finite fields: ordinary traversal, no candidates of their

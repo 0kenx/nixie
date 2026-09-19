@@ -2427,3 +2427,88 @@ members, 70 closed (68 SAT-side, 2 UNSAT-side).  New regressions in
 `boundary_scale_sum_bound_certifies`) plus the re-scoped
 `i64_min_bound_rows_decline_instead_of_wrapping`, the model-blocking
 contracts, and the evaluator's exact-channel pins in `model_eval.rs`.
+
+## Continuation 41 (2026-09-19): item 85 — the latent delta-propagation invariant mapped, the exposure closed at the boundary, and the canary made release-runnable
+
+**The item (from the derivation-stamps handover, pre-RESOLVED):** during
+the stamp debugging a trajectory existed where the incremental snap-delta
+update disagreed with exact evaluation by exactly 1/2 (the
+`delta propagation mismatch` `debug_assert` in the pivot's row-update
+loop). The stamps' three store defects are fixed and store-sequence
+bit-identity was demonstrated, so *that* trajectory is gone — but the
+assert's exposure was trajectory-dependent, not the defect: the item asks
+for the minimal state in which the incremental update can disagree with
+`eval_expr`, and either a fix or an unreachability argument.
+
+**The invariant, spelled out.** After a pivot, for every substituted
+narrow row `(var, new_row)` the propagation claims
+
+```text
+assignment[var] + snap_delta · coef(basic_var in new_row) == eval_expr(new_row)
+```
+
+which holds iff, at the delta loop's start: (I1) every entry the loop
+accumulates on equals the exact evaluation of the row's *previous*
+content at the pre-snap point; (I2) the only assignment entry that moved
+since that base is the snapped leaving variable; (I3) the substituted
+row is the same linear function of the original variables as the row the
+base was computed from; (I4) `eval_expr` reads exactly the entries the
+identity assumes.
+
+**The guard inventory (why each attempted minimal state is closed under
+the landed semantics):**
+
+- *Stale base across pivots* — closed at the boundary: the pivot entry
+  runs `if !self.assignment_current { self.crash_basis() }` (the
+  div/mod `assignment[71] = 0` fix), so every flag-setting skip inside a
+  pivot (wide-points guard, overflow refusal, entering-eval failure,
+  wide entering row, wide updates) is erased by a full re-derivation
+  before the next pivot can propagate on top of it.
+- *A row whose entry is stale by design* — the `was_wide` skip (wide-
+  leaving pivots) recomputes the entry exactly in the same pivot's
+  commit; the wide-points skip leaves the row's entry drifting but skips
+  it *every* pivot (the wide-point term persists in the row —
+  substitution only replaces the entering variable), so a skipped row is
+  never a propagated row.
+- *Cross-row interference inside the loop* — an earlier iteration moves
+  `assignment[var_T]`, and if a later row referenced `var_T` its delta
+  would miss that move. Blocked by the canonical-tableau property: rows
+  reference nonbasic variables only (the substitution replaces the
+  entering variable everywhere), and the loop's `var`s are basics —
+  `var_T` cannot appear in another `new_row`'s terms.
+- *Arithmetic* — `checked_mul_delta`/`checked_add_delta` refuse on
+  overflow (flag set, no write), and `eval_expr` is exact (the
+  wide-LP build's item-84 evaluator).
+- *The stamps trajectory itself* — the exposure needed *missing
+  legitimate stores* (rows never substituted where they should have
+  been); the three store defects behind that are closed, with
+  690 070/690 070 store bit-identity demonstrated.
+
+**Residual obligation, stated honestly:** the argument above walks every
+input the delta loop consumes, but it is a reviewed argument, not a
+mechanized proof — a future edit that lets an entry go stale without
+setting `assignment_current`, or breaks the rows-reference-nonbasics-only
+property, re-opens the hole silently. The assert is `debug_assertions`-
+only, so release users had no protection at all.
+
+**The landing:**
+
+1. **`NIXIE_DELTA_VERIFY=1`** — the delta-vs-reeval canary is now
+   release-runnable: every propagation is checked against
+   `eval_expr(new_row)` and **reconciled to the exact value** on
+   disagreement. The exact evaluation always wins, so a reachable
+   incremental/exact mismatch degrades into a corrected entry rather
+   than a silently corrupted assignment (the pre-RESOLVED trajectory
+   would have self-healed instead of firing). Opt-in: the re-evaluation
+   is the very cost the incremental path exists to avoid (the full
+   per-pivot re-evaluation was 40–52% of QF_UFLIA runtime).
+2. Evidence sweep with the canary active: mixed differential
+   (120 fresh instances, seed 20260922) and wide differential
+   (120 fresh, seed 20260923) vs z3 — no verdict disagreements, no
+   refuted models; since a reconciliation is trajectory-changing, clean
+   runs under the flag are direct evidence the incremental path agreed
+   with exact evaluation on those trajectories. Bag-fold differential
+   (60, seed 20260924) also clean.
+
+Item 85 stays **open as a proof obligation** (mechanize the boundary
+argument or find the reachable state); the canary is the standing tripwire.

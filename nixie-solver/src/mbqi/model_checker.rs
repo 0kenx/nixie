@@ -1619,6 +1619,12 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
         | TermKind::BagChoose(a)
         | TermKind::BagMap { bag: a, .. }
         | TermKind::BagFilter { bag: a, .. } => out.push(*a),
+        // A fold's children in positional order: the initial accumulator,
+        // then the domain bag (the order `rebuild_with` indexes them by).
+        TermKind::BagFold { init, bag, .. } => {
+            out.push(*init);
+            out.push(*bag);
+        }
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
@@ -2999,6 +3005,16 @@ fn rebuild_with(
         }
         TermKind::BagMap { .. } | TermKind::BagFilter { .. } => {
             return Err("bag.map/bag.filter have no theory to evaluate them");
+        }
+        TermKind::BagFold { func, .. } => {
+            // Rebuild the fold node over the evaluated children; the
+            // function symbol is a payload, rebuilt from its interned
+            // name. MBQI's candidate evaluation of a fold rests on the
+            // model's own bag/fun values like any other compound — no
+            // separate evaluation is attempted here.
+            let (i, b) = two_at(0)?;
+            let name = manager.resolve_str(*func).to_string();
+            manager.mk_bag_fold(&name, i, b)
         }
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;

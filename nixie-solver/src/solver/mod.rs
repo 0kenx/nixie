@@ -330,13 +330,26 @@ pub struct Solver {
     /// entries after a `pop` only ever suppress; a re-asserted equality is
     /// user-written and therefore exempt from the suppression.
     pub(super) bag_minted_eq_atoms: FxHashSet<TermId>,
-    /// Unary `define-fun` definitions usable by `bag.map`/`bag.filter`:
-    /// the function's interned name to `(parameter variable, body)`. The
-    /// reduction inlines the body per element — exactly the parser's
-    /// call-site substitution — so its images and the user's `(f x)`
-    /// spellings are the same terms. Definitions are script-global
-    /// (SMT-LIB forbids redefinition), so entries are never removed.
-    pub(super) bag_fun_defs: FxHashMap<nixie_core::interner::Spur, (TermId, TermId)>,
+    /// Fold terms the bag reduction could not pin to an unrolled chain
+    /// (order-sensitive function, opaque or symbolic-multiplicity domain,
+    /// unroll budget), with the reason. They stay free — sound for `unsat`
+    /// — and the model pass certifies any `sat` resting on them (faithful
+    /// synthesis from the bag's assembled cells plus an assertion check
+    /// for domain declines; an unconditional degrade for order-sensitive
+    /// ones; see `extract_bag_model`). Persisted across asserts like the
+    /// minted-atom registry: entries are hash-consed term ids, a stale
+    /// entry after a `pop` only ever adds a check the model pass then
+    /// skips (a fold not in the current assertions is neither certified
+    /// nor degraded).
+    pub(super) bag_declined_folds: FxHashMap<TermId, bag_theory::FoldDecline>,
+    /// Unary `define-fun` definitions usable by `bag.map`/`bag.filter`
+    /// (and binary ones by `bag.fold`): the function's interned name to
+    /// its [`BagFunDef`]. The reduction inlines the body per element —
+    /// exactly the parser's call-site substitution — so its images and
+    /// the user's `(f x)` spellings are the same terms. Definitions are
+    /// script-global (SMT-LIB forbids redefinition), so entries are never
+    /// removed.
+    pub(super) bag_fun_defs: FxHashMap<nixie_core::interner::Spur, bag_theory::BagFunDef>,
     /// Named assertions for unsat core tracking
     pub(super) named_assertions: Vec<NamedAssertion>,
     /// Assumption literals for unsat core tracking (maps assertion index to assumption var)
@@ -1199,6 +1212,7 @@ impl Solver {
             define_fun_equations: Vec::new(),
             certificate_assertions: Vec::new(),
             bag_minted_eq_atoms: FxHashSet::default(),
+            bag_declined_folds: FxHashMap::default(),
             bag_fun_defs: FxHashMap::default(),
             named_assertions: Vec::new(),
             assumption_vars: FxHashMap::default(),

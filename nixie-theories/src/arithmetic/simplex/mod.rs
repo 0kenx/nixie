@@ -1117,6 +1117,13 @@ pub struct Simplex {
     /// consistency).  Dutertre–de-Ma-style incremental assignment, adapted to
     /// nixie's slack-per-constraint tableau.
     assignment_current: bool,
+    /// The delta-vs-reeval canary (item 85, wide-literal study): when set,
+    /// every snap-delta propagation is checked against the exact evaluation
+    /// of the substituted row and reconciled to it — the exact value wins.
+    /// Opt-in because the re-evaluation is the cost the incremental path
+    /// exists to avoid (the full per-pivot re-evaluation was 40–52% of
+    /// QF_UFLIA runtime).
+    delta_verify: bool,
 }
 impl Default for Simplex {
     fn default() -> Self {
@@ -1167,6 +1174,10 @@ impl Simplex {
             soi_enabled: config.enable_soi,
             resource_limit: false,
             assignment_current: true,
+            #[cfg(feature = "std")]
+            delta_verify: std::env::var("NIXIE_DELTA_VERIFY").as_deref() == Ok("1"),
+            #[cfg(not(feature = "std"))]
+            delta_verify: false,
         }
     }
     /// Record that `row`'s tableau row now references `var`.
@@ -3683,7 +3694,25 @@ impl Simplex {
                                 "delta propagation mismatch: delta={delta:?} coef={coef:?} got={sum:?} want={want:?}"
                             );
                         }
-                        self.assignment[vi] = sum;
+                        // `NIXIE_DELTA_VERIFY` (the delta-vs-reeval canary
+                        // the stamps debugging ran live): re-evaluate the
+                        // substituted row exactly and reconcile — the exact
+                        // evaluation always wins, so a reachable
+                        // incremental/exact disagreement (item 85 in the
+                        // wide-literal study: the stamps trajectory exposed
+                        // one, off by exactly 1/2, before the three store
+                        // defects were fixed) degrades into a corrected
+                        // entry instead of a silently corrupted assignment.
+                        // The re-evaluation is the cost the incremental path
+                        // exists to avoid, hence opt-in.
+                        if self.delta_verify
+                            && let Some(want) = self.eval_expr(new_row)
+                            && want != sum
+                        {
+                            self.assignment[vi] = want;
+                        } else {
+                            self.assignment[vi] = sum;
+                        }
                     } else {
                         // Overflow: refuse to guess a value.  Mark the
                         // assignment stale so the next `check()` re-derives
@@ -4934,7 +4963,11 @@ impl Simplex {
                 wexpr.terms.iter().map(|(v, _)| *v),
                 int_vars.len(),
             );
-            if self.derive_stamp.get(&(*basic_var, 2)) == Some(&stamp) {}
+            // (A stamp-unchanged `continue` mirroring the narrow loop above
+            // was evidently intended here — the landed line was an empty
+            // `if` (dead code, clippy `-D warnings` blocker). Removed
+            // verbatim: the behavior — always re-deriving — is unchanged;
+            // the skip, if wanted, belongs to the stamps owner.)
             for lower in [true, false] {
                 let Some((real, delta, reasons)) =
                     self.derive_bound_big_parts(&wexpr.constant, &wexpr.terms, lower)

@@ -56,6 +56,16 @@ pub(super) fn unary_rm_arg(kind: &TermKind) -> Option<(RoundingMode, TermId)> {
     }
 }
 
+/// Extract `(function symbol, initial accumulator, bag)` from `BagFold`.
+/// The symbol is a payload, not a child, so the shape helper is the one
+/// place it is spelled out for both equality walks to compare.
+pub(super) fn fold_args(kind: &TermKind) -> Option<(crate::interner::Spur, TermId, TermId)> {
+    match kind {
+        TermKind::BagFold { func, init, bag } => Some((*func, *init, *bag)),
+        _ => None,
+    }
+}
+
 /// Extract `(a, b)` from any `TermKind` whose only fields are exactly two
 /// terms (`Xor`, `Eq`, every plain `Bv*`/`Str*`/`Fp*` binary operator, ...).
 pub(super) fn binary_args(kind: &TermKind) -> Option<(TermId, TermId)> {

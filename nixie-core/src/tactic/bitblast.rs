@@ -148,6 +148,12 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::BagMap { bag: a, .. }
                 | TermKind::BagFilter { bag: a, .. }
                 | TermKind::BvNot(a) => stack.push(*a),
+                // A fold's initial accumulator and domain bag walk like
+                // any other subterm.
+                TermKind::BagFold { init, bag, .. } => {
+                    stack.push(*init);
+                    stack.push(*bag);
+                }
                 TermKind::BvExtract { arg, .. } => stack.push(*arg),
                 TermKind::And(args)
                 | TermKind::Or(args)

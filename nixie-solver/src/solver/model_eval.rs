@@ -1544,6 +1544,19 @@ impl Solver {
                     _ => Opened::Done(EvalOutcome::UNDETERMINED),
                 }
             }
+            // `bag.fold f t b`: the model entry its defining equation (the
+            // unrolled application chain, an ordinary arithmetic/string
+            // term) or the purification proxy pins — or undetermined, for
+            // a fold the reduction declined (whose `Sat` already degraded
+            // to `Unknown`).
+            TermKind::BagFold { .. } => {
+                match model.get(term).map(|v| parse_value_term(v, manager)) {
+                    Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
+                        Opened::Done(parsed)
+                    }
+                    _ => Opened::Done(EvalOutcome::UNDETERMINED),
+                }
+            }
             // Bit-vector comparison atoms (`bvult`/`bvule`/`bvslt`/`bvsle`):
             // evaluate both operands concretely and fold, for the same reason
             // as the BV equality arm above.  These are Bool-sorted terms whose

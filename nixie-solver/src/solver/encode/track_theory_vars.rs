@@ -318,6 +318,13 @@ impl Solver {
                 | TermKind::BagFilter { bag: a, .. }
                 | TermKind::SetRelTranspose(a)
                 | TermKind::SetRelIden(a) => stack.push(*a),
+                // A fold's accumulator-sorted result is never a theory
+                // variable of its own (its defining equation is conjoined
+                // by the bag reduction); only the children walk.
+                TermKind::BagFold { init, bag, .. } => {
+                    stack.push(*bag);
+                    stack.push(*init);
+                }
                 TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
                 TermKind::BagEmpty(_) => {}
                 // Finite fields: children are walked so nested structure is

@@ -132,6 +132,13 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
             children.push(*a);
         }
 
+        // `bag.fold f t b`: the initial accumulator and the domain bag
+        // are children; the function is a bare symbol, like `bag.map`'s.
+        TermKind::BagFold { init, bag, .. } => {
+            children.push(*init);
+            children.push(*bag);
+        }
+
         TermKind::BvExtract { arg, .. } => {
             children.push(*arg);
         }

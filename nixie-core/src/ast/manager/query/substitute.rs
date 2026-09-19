@@ -963,6 +963,12 @@ impl TermManager {
                 let name = self.resolve_str(pred).to_string();
                 self.mk_bag_filter(&name, bag)
             }
+            TermKind::BagFold { func, init, bag } => {
+                let init = sub(init);
+                let bag = sub(bag);
+                let name = self.resolve_str(func).to_string();
+                self.mk_bag_fold(&name, init, bag)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);

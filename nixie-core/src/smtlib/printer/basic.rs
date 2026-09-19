@@ -513,6 +513,15 @@ impl<'a> Printer<'a> {
                 self.write_term(w, *bag);
                 let _ = write!(w, ")");
             }
+            TermKind::BagFold { func, init, bag } => {
+                let _ = write!(w, "(bag.fold ");
+                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(w, " ");
+                self.write_term(w, *init);
+                let _ = write!(w, " ");
+                self.write_term(w, *bag);
+                let _ = write!(w, ")");
+            }
             TermKind::SetCard(s) => {
                 let _ = write!(w, "(set.card ");
                 self.write_term(w, *s);

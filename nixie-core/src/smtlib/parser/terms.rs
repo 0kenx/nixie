@@ -190,6 +190,15 @@ enum Head {
         arg_sort: SortId,
         ret_sort: SortId,
     },
+    /// `bag.fold f t b`: like [`Head::BagFun`] the head consumes the bare
+    /// *binary* function symbol `f : (-> T1 T2 T2)` (element first,
+    /// accumulator second, exactly CVC5's type rule), leaving the initial
+    /// value and the bag as the frame's two operands.
+    BagFold {
+        func: String,
+        elem_sort: SortId,
+        acc_sort: SortId,
+    },
     /// The Bool-sorted uninterpreted-application fallback.
     GenericApply(String),
 }
@@ -771,6 +780,16 @@ impl Parser<'_> {
                 };
                 self.build_bag_fun(&op, &func, arg_sort, ret_sort, *bag)
             }
+            Head::BagFold {
+                func,
+                elem_sort,
+                acc_sort,
+            } => {
+                let [init, bag] = args else {
+                    return Err(self.operand_mismatch("bag.fold", args.len()));
+                };
+                self.build_bag_fold(&func, elem_sort, acc_sort, *init, *bag)
+            }
             Head::Indexed { name, indices } => {
                 if let Some(term) = self.build_indexed_op(&name, &indices, args)? {
                     return Ok(term);
@@ -1105,6 +1124,64 @@ impl Parser<'_> {
         })
     }
 
+    /// The function operand of `(bag.fold f t b)`: a binary function of
+    /// type `(-> T1 T2 T2)` — element first, accumulator second, with the
+    /// second argument's sort equal to the codomain, exactly CVC5's
+    /// `BAG_FOLD` type rule. Returns `(name, T1, T2)`.
+    fn parse_bag_fold_fun_operand(&mut self, op: &str) -> Result<(String, SortId, SortId)> {
+        let name = self.expect_symbol()?;
+        let bad = |what: String| NixieError::ParseError {
+            position: self.lexer.position(),
+            message: what,
+        };
+        if let Some(def) = self.function_defs.get(&name) {
+            if def.param_vars.len() != 2 {
+                return Err(bad(format!(
+                    "{op} needs a binary function; {name} takes {} arguments",
+                    def.param_vars.len()
+                )));
+            }
+            let elem_sort = self
+                .manager
+                .get(def.param_vars[0])
+                .map(|d| d.sort)
+                .unwrap_or(self.manager.sorts.int_sort);
+            let acc_param = self
+                .manager
+                .get(def.param_vars[1])
+                .map(|d| d.sort)
+                .unwrap_or(self.manager.sorts.int_sort);
+            let ret_sort = self
+                .manager
+                .get(def.body)
+                .map(|d| d.sort)
+                .unwrap_or(self.manager.sorts.int_sort);
+            if acc_param != ret_sort {
+                return Err(bad(format!(
+                    "{op} needs a function of type (-> T1 T2 T2); {name}'s second argument sort and codomain differ"
+                )));
+            }
+            return Ok((name, elem_sort, ret_sort));
+        }
+        if let Some((arg_sorts, ret)) = self.functions.get(&name).cloned() {
+            if arg_sorts.len() != 2 {
+                return Err(bad(format!(
+                    "{op} needs a binary function; {name} takes {} arguments",
+                    arg_sorts.len()
+                )));
+            }
+            if arg_sorts[1] != ret {
+                return Err(bad(format!(
+                    "{op} needs a function of type (-> T1 T2 T2); {name}'s second argument sort and codomain differ"
+                )));
+            }
+            return Ok((name, arg_sorts[0], ret));
+        }
+        Err(bad(format!(
+            "{op} needs a declared or defined binary function; {name} is neither"
+        )))
+    }
+
     /// Head of the form `((as name Sort) ...)` or `((_ name i ...) ...)`.
     fn open_sexpr_head(&mut self) -> Result<Opened> {
         let qualifier = self.expect_symbol()?;
@@ -1367,6 +1444,20 @@ impl Parser<'_> {
                         ret_sort,
                     },
                     Plan::Fixed(1),
+                )));
+            }
+            // `bag.fold f t b`: the same interception with a *binary*
+            // function — the remaining operands are the initial value and
+            // the bag, checked against the signature at close time.
+            "bag.fold" => {
+                let (func, elem_sort, acc_sort) = self.parse_bag_fold_fun_operand(&op)?;
+                return Ok(Opened::Frame(Frame::op(
+                    Head::BagFold {
+                        func,
+                        elem_sort,
+                        acc_sort,
+                    },
+                    Plan::Fixed(2),
                 )));
             }
             "fp.fma" => {

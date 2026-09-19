@@ -539,6 +539,36 @@ impl<'a> Parser<'a> {
             "assert" => {
                 let term = self.parse_term()?;
                 self.expect_rparen()?;
+                // SMT-LIB: the asserted term must be `Bool`-sorted. Z3 and
+                // CVC5 reject a non-Boolean operand at parse ("argument of
+                // assert is not Boolean" / "Expected term with sort Bool");
+                // accepting it silently would let the Tseitin encoder mint a
+                // free Boolean for an Int/Bag/... term and answer `sat` to a
+                // script the standard rejects.
+                let is_bool = self
+                    .manager
+                    .get(term)
+                    .is_some_and(|d| d.sort == self.manager.sorts.bool_sort);
+                if !is_bool {
+                    let found = self
+                        .manager
+                        .get(term)
+                        .and_then(|d| self.manager.sorts.get(d.sort))
+                        .map(|s| match &s.kind {
+                            crate::sort::SortKind::Int => "Int".to_string(),
+                            crate::sort::SortKind::Real => "Real".to_string(),
+                            crate::sort::SortKind::String => "String".to_string(),
+                            crate::sort::SortKind::BitVec(w) => format!("(_ BitVec {w})"),
+                            crate::sort::SortKind::Bag(_) => "(Bag _)".to_string(),
+                            crate::sort::SortKind::Set(_) => "(Set _)".to_string(),
+                            _ => format!("sort #{}", s.id.0),
+                        })
+                        .unwrap_or_else(|| "an unknown sort".to_string());
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("assert requires a term of sort Bool, found {found}"),
+                    });
+                }
                 // Thread a top-level `:named` annotation into the command so
                 // the solver can register the assertion by name (required for
                 // `(get-unsat-core)`).  When the asserted expression is
