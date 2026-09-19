@@ -138,6 +138,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 100,
@@ -203,6 +211,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 50,
@@ -268,6 +284,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 200,
@@ -333,6 +357,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 80,
@@ -398,6 +430,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 30,
@@ -463,6 +503,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 500,
@@ -524,6 +572,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 100,
@@ -585,6 +641,14 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
             enable_factoring: false,
             enable_xor_reasoning: false,
             restart_interval: 100,
@@ -646,7 +710,23 @@ impl ConfigPreset {
             chrono_reuse_after: 0,
             presearch_collapse: false,
             els_presearch: false,
-            enable_factoring: false,
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
+            // Pre-search factoring on (2026-09-18 powered landing: 10 seeds
+            // x the 30-instance corpus, conflicts geomean 0.632, solved 268
+            // = 268, 0 verdict mismatches; oddball 0.008x / Break_t 0.067x
+            // / x9 0.658x, worst cell Break_12_30 1.392 with every cell
+            // solved; the mid-search rounds stay off - they measured 60x
+            // wall at zero introductions on b21/b22, see
+            // `factor_mid_rounds_enabled` and
+            // docs/studies/2026-09-18-factor-presearch.md).
+            enable_factoring: true,
             enable_xor_reasoning: false,
             restart_interval: 100,
             restart_multiplier: 1.4,

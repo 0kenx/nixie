@@ -169,6 +169,26 @@ fn factor_budget_override() -> Option<u64> {
 }
 
 /// Whether the chain factor is enabled (config flag or `NIXIE_FACTOR=1`).
+/// Mid-search factoring rounds: default OFF.  The 2026-09-18 corpus A/B
+/// (10 seeds x 30 instances) measured the factoring value entirely at
+/// pre-search (oddball 125x, Break_t 15x, x9 1.5x conflicts; the
+/// introductions land in the pre-search one-shot) while the mid-search
+/// rounds pay 60x wall at zero introductions on b21/b22 (allocation churn
+/// per round and a trajectory shift with no yield).  Opt back in with
+/// `NIXIE_FACTOR_MID=1` (the full kissat shape) for future study.
+#[cfg(feature = "std")]
+pub(super) fn factor_mid_rounds_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_FACTOR_MID").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    })
+}
+#[cfg(not(feature = "std"))]
+pub(super) fn factor_mid_rounds_enabled() -> bool {
+    false
+}
+
 pub(super) fn factor_enabled_cfg(config: &super::SolverConfig) -> bool {
     if config.enable_factoring {
         return true;

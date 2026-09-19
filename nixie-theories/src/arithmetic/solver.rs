@@ -824,10 +824,9 @@ impl ArithSolver {
             let zero = DeltaRational::from_rational(Rational64::zero());
             if want_lower
                 && let Some(id) = lo_atom
-                && self
-                    .simplex
-                    .get_lower(fresh)
-                    .is_none_or(|b| BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Less)
+                && self.simplex.get_lower(fresh).is_none_or(|b| {
+                    BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Less
+                })
             {
                 match form.dir {
                     SlackDir::Gt => self.simplex.set_strict_lower(fresh, Rational64::zero(), id),
@@ -837,10 +836,9 @@ impl ArithSolver {
             }
             if want_upper
                 && let Some(id) = hi_atom
-                && self
-                    .simplex
-                    .get_upper(fresh)
-                    .is_none_or(|b| BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Greater)
+                && self.simplex.get_upper(fresh).is_none_or(|b| {
+                    BoundValue::Narrow(zero).cmp_value(&b.value) != core::cmp::Ordering::Greater
+                })
             {
                 match form.dir {
                     SlackDir::Lt => self.simplex.set_strict_upper(fresh, Rational64::zero(), id),
@@ -1546,24 +1544,16 @@ impl ArithSolver {
         // that crossing.  Writing the weak side over the live tighter
         // bound would silently drop a constraint the old bound carried;
         // a skipped write leaves the crossed pair for the crossing scan.
-        if self
-            .simplex
-            .get_lower(slack)
-            .is_none_or(|b| {
-                BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
-                    != core::cmp::Ordering::Less
-            })
-        {
+        if self.simplex.get_lower(slack).is_none_or(|b| {
+            BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
+                != core::cmp::Ordering::Less
+        }) {
             self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         }
-        if self
-            .simplex
-            .get_upper(slack)
-            .is_none_or(|b| {
-                BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
-                    != core::cmp::Ordering::Greater
-            })
-        {
+        if self.simplex.get_upper(slack).is_none_or(|b| {
+            BoundValue::Narrow(DeltaRational::from_rational(Rational64::zero())).cmp_value(&b.value)
+                != core::cmp::Ordering::Greater
+        }) {
             self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         }
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
