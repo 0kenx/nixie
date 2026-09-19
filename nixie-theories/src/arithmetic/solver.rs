@@ -1786,6 +1786,18 @@ impl ArithSolver {
         if self.simplex.is_wide_basic(var) && self.simplex.delta_value_exact(var).is_none() {
             return None;
         }
+        // The leaf SNAPSHOT wins for BOTH sorts (integers rounded, reals
+        // δ-instantiated at the leaf — see `snapshot_lia_model`'s real
+        // pass): the branch scopes pop after the snapshot, restoring a
+        // point that may re-violate strict bounds the leaf satisfied, and
+        // the live reads then decline or report the pre-dive point.
+        if let Some(v) = self.lia_model.get(&var) {
+            use num_traits::ToPrimitive as _;
+            return Some(Rational64::new_raw(
+                v.numer().to_i64()?,
+                v.denom().to_i64()?,
+            ));
+        }
         // The HONEST narrow read: BOTH wide channels leave the raw entry
         // stale by design — a wide basic's row (the guard above) AND a
         // wide POINT (a non-basic resting at a bound beyond `Rational64`,
@@ -2419,6 +2431,33 @@ impl ArithSolver {
             // state, the model builder defaulted the variable to `0`, and
             // the evaluator refuted a genuine leaf model (the J5 class).
             self.lia_model.insert(var, rounded);
+        }
+        // The leaf's REAL values belong in the snapshot for the same
+        // reason: the branch scopes pop right after, restoring a point
+        // that may RE-VIOLATE strict bounds the leaf satisfied (a basic
+        // resting at its strict bound's real part with no infinitesimal),
+        // and the δ-instantiation computed over the popped state declines
+        // — every real then published the sort default `0` and the
+        // evaluator refuted the candidate (the J5 residual's real half).
+        // Instantiating δ HERE, inside the leaf's scopes, yields the
+        // concrete witness the leaf actually rests at.
+        let d0 = self.simplex.delta_instantiation_exact();
+        for var in 0..self.var_to_term.len() as VarId {
+            if self.lia_model.contains_key(&var) || self.int_vars.contains(&var) {
+                continue; // integers are snapshotted above (rounded)
+            }
+            let Some(exact) = self.simplex.point_value_exact(var) else {
+                continue;
+            };
+            let value = if exact.delta.is_zero() {
+                exact.real
+            } else {
+                match &d0 {
+                    Some(d0) => exact.real + exact.delta * d0,
+                    None => continue, // no positive instantiation at the leaf: leave unpublished
+                }
+            };
+            self.lia_model.insert(var, value);
         }
     }
 
