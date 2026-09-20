@@ -112,3 +112,50 @@ roundtrip's own plumbing — the `Option` construction, the span copy
 in/out, the spread write-back/commit calls — which the split-borrow
 in-place span scan eliminates structurally.  That, sparse overflow, and
 the `Vec` deletion are the flip commit's work list.
+
+## Addendum (fourth increment): the slack-CSR redesign — landed `2f30aafa`
+
+The aggressive data-structure pass.  `CsrWatchLists` is now a slack-CSR:
+one contiguous allocation per literal with embedded slack, pushes bump
+the live end into slack (O(1), no per-literal structure at all), scans
+run IN PLACE via `split_at_mut` (the cursor on a clean `&mut` slice;
+pushes into the head/tail halves at their destination's live end —
+region-disjoint by construction, **zero unsafe**), spills go to a DENSE
+`Option<Box<Vec>>` array, and slack is sized adaptively from the
+previous interval's actual arrivals (uncapped — bounded by real push
+volume, the same order the old overflow held).
+
+**The debugging story is the valuable part** (two new traps):
+
+17. **Pre-layout blind spots**: loops bounded by `num_lits()` see ZERO
+    literals before the first materialization — the old overflow array
+    had covered pre-layout content by construction.  The relocation
+    pass silently skipped every pre-rebuild spill (stale refs, dead
+    entries) and desynced the mirror from the first compaction.  Every
+    per-literal loop over a CSR must also cover the spill structure's
+    full extent.
+18. **Order of observation in the driver**: computing the scan's
+    charge length AFTER `take_fallback` detached the tail read
+    span(0)+spill(0)=0 — a silent tick undercount that shifted every
+    restart/stable decision (the mut-trace caught it as
+    `begin_scan len=0` against the Vec world's `len=46`).  Take/len
+    ordering in a scan driver is load-bearing, not cosmetic.
+
+**The spill-structure lesson**: a `BTreeMap<u32, Vec>` for spills cost
+89.5G instructions on 14.normalised (log-n lookups on every scan's
+take, every len, every push of a permanently-hot map — the 0-conflict
+classes never get a second rebuild to learn slack from); the dense
+array took the same run to **73.7G**.  Map-shaped per-literal state in
+a per-scan hot path is a 20% tax; dense arrays are the answer.
+
+**Standing**: 14.normalised B 73.7G vs OFF 68.2G (**+8.1%**, from
++16.8% at the arc's start); GP_190 +2.9%; peak RSS **+444 MB** (from
++760).  Three-way identity everywhere; gate 1.000; OFF suite 1116/1116;
+B-mode 1098/1116 (the known scaffolding).
+
+**The flip's remaining work**: the +8% residue is now genuinely diffuse
+scan/driver plumbing with no structural villain left; the memory story
+is +450 MB against a −450 MB header win pending the Vec deletion —
+the flip (delete `Vec<Vec<Watcher>>`, make B the default, convert the
+18 scaffolding tests) is now a clean deletion with every prerequisite
+landed and validated.
