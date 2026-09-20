@@ -29,6 +29,36 @@ const CTX_FUEL_BUDGET: u32 = 200_000;
 /// The growth guard's multiplier: a result beyond this multiple of the
 /// input's DAG size is discarded (the input kept).
 const CTX_GROWTH_LIMIT: usize = 4;
+/// Fuel for one guard-equality solve (`eq_ite_rules`): every worklist
+/// step decrements; zero means "stop applying rules, finish with the
+/// plain equality" — the solve degrades to the identity, never to a
+/// wrong answer.
+const SOLVE_EQ_FUEL: u32 = 100_000;
+
+/// The value kinds of [`TermKind`]: constants for which `mk_eq` decides
+/// (folds to `true`/`false`) — the "is a value" test of z3's
+/// `try_ite_value`.
+fn is_value_kind(kind: &TermKind) -> bool {
+    matches!(
+        kind,
+        TermKind::True
+            | TermKind::False
+            | TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::BitVecConst { .. }
+            | TermKind::StringLit(_)
+    )
+}
+
+/// The comparison family of [`TermManager::cmp_ite_rule`]: which
+/// operator a distributed residual keeps.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CmpOp {
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
 
 impl TermManager {
     /// Re-share a term for PRINTING: the DAG's multiply-referenced
@@ -109,10 +139,16 @@ impl TermManager {
                 Frame::Combine(t) => {
                     let Some(data) = self.get(t) else { continue };
                     let children = crate::ast::traversal::get_children(&data.kind);
-                    let s = 1 + children
+                    // Saturating: the TREE size of a shared DAG grows
+                    // exponentially with fan-out (the nec-smt large
+                    // members exceed 2^64 nodes) — the sizes only gate
+                    // the share threshold and binding count, so clamping
+                    // at `usize::MAX` is semantically exact ("huge")
+                    // where a plain `+` would overflow-panic.
+                    let s = children
                         .iter()
                         .map(|c| size.get(c).copied().unwrap_or(1))
-                        .sum::<usize>();
+                        .fold(1usize, usize::saturating_add);
                     size.insert(t, s);
                 }
             }
@@ -209,6 +245,490 @@ impl TermManager {
         }
 
         cache.get(&id).copied().unwrap_or(id)
+    }
+
+    /// `true` when `t` is a value constant ([`is_value_kind`]) — the
+    /// "is a value" test of z3's `try_ite_value`.
+    fn is_value(&self, t: TermId) -> bool {
+        self.get(t).is_some_and(|d| is_value_kind(&d.kind))
+    }
+
+    /// z3 `are_equal` for the solve rules: structural identity or value
+    /// equality — delegated to `mk_eq`'s constant folding (which decides
+    /// every value pair exactly, including mixed `Int`/`Real`).
+    fn rw_are_equal(&mut self, a: TermId, b: TermId) -> bool {
+        self.mk_eq(a, b) == self.true_id
+    }
+
+    /// z3 `are_distinct`: provably different values.  Only ever true for
+    /// a value pair (hash-consing makes distinct ids distinct terms, and
+    /// `mk_eq` folds every value pair).
+    fn rw_are_distinct(&mut self, a: TermId, b: TermId) -> bool {
+        a != b && self.mk_eq(a, b) == self.false_id
+    }
+
+    /// Guard-equality elimination — the `solve_eqs` family proper (z3
+    /// `bool_rewriter::mk_eq_core`'s ite rule set: `try_ite_eq`,
+    /// `try_ite_value`, and the ite×ite case; the parameter sweep of
+    /// `2026-09-19-smt-perf-gap-attribution.md` named this family as one
+    /// of the three individually necessary for the nec-smt fold).
+    ///
+    /// Solves `(= lhs rhs)` when an ite sits on a side into a formula
+    /// over the ite's CONDITIONS — the guards are EXTRACTED as literals
+    /// (`(= v (ite c t e))` with `t ≠ v` becomes `(and (= e v) ¬c)`),
+    /// which the conjunction context then absorbs — instead of being
+    /// CASE-SPLIT, which is the measured fuel cost (the ninth session's
+    /// memo: distinct split paths carry distinct signatures by
+    /// construction, so no memo can catch them).
+    ///
+    /// Returns `None` when no rule applies.  Every rule is an
+    /// unconditional equivalence at the node, so the caller may fall
+    /// back to the plain equality.  z3 order: `try_ite_eq` on both
+    /// orientations, then `try_ite_value` (one side ite, other a
+    /// value), then the ite×ite case.
+    fn eq_ite_rules(&mut self, lhs: TermId, rhs: TermId) -> Option<TermId> {
+        let l_kind = self.get(lhs).map(|d| d.kind.clone());
+        let r_kind = self.get(rhs).map(|d| d.kind.clone());
+        if let Some(out) = self.try_ite_eq(lhs, l_kind.as_ref(), rhs) {
+            return Some(out);
+        }
+        if let Some(out) = self.try_ite_eq(rhs, r_kind.as_ref(), lhs) {
+            return Some(out);
+        }
+        match (&l_kind, &r_kind) {
+            (Some(TermKind::Ite(..)), Some(k)) if is_value_kind(k) => {
+                self.solve_ite_value(lhs, rhs)
+            }
+            (Some(k), Some(TermKind::Ite(..))) if is_value_kind(k) => {
+                self.solve_ite_value(rhs, lhs)
+            }
+            (Some(TermKind::Ite(..)), Some(TermKind::Ite(..))) => self.solve_ite_ite(lhs, rhs),
+            _ => None,
+        }
+    }
+
+    /// z3 `bool_rewriter::try_ite_eq`: `(= (ite c t e) x)` with the
+    /// then-branch equal to `x` and the else-branch provably different
+    /// reduces to the condition itself (and symmetrically to `¬c`).
+    fn try_ite_eq(
+        &mut self,
+        ite: TermId,
+        ite_kind: Option<&TermKind>,
+        other: TermId,
+    ) -> Option<TermId> {
+        let Some(TermKind::Ite(c, t, e)) = ite_kind else {
+            return None;
+        };
+        let _ = ite;
+        if self.rw_are_equal(*t, other) && self.rw_are_distinct(*e, other) {
+            return Some(*c);
+        }
+        if self.rw_are_equal(*e, other) && self.rw_are_distinct(*t, other) {
+            return Some(self.mk_not(*c));
+        }
+        None
+    }
+
+    /// z3 `bool_rewriter::try_ite_value` — the guard-extraction core —
+    /// as an explicit worklist (z3 re-enters its rewriter via
+    /// `BR_REWRITE2`; the worklist is the re-entry, without native
+    /// recursion over the chain — the AGENTS.md stack rule).
+    ///
+    /// Rules on `(= (ite c t e) v)`, `v` a value, in z3's order:
+    /// * `try_ite_eq` re-check (the rewriter re-runs it per rewrite);
+    /// * R1 `e` a value `≠ v`  → `(and (= t v) c)`;
+    /// * R2 `t` a value `≠ v`  → `(and (= e v) ¬c)`;
+    /// * R3 `t = v` (and `e = v`) → `true` (else `(or (= e v) c)`);
+    /// * R4 `e = v`             → `(or (= t v) ¬c)`;
+    /// * R5 `t` an ite with value leaves → `(ite c <solve (= t v)> (= e v))`;
+    /// * R6 `e` an ite with value leaves → `(ite c (= t v) <solve (= e v)>)`;
+    /// * R7 every leaf of the ite is a value `≠ v` → `false`.
+    ///
+    /// Fuel-bounded: on exhaustion the pending equality is finished as
+    /// the plain (equivalent) `mk_eq` and no further rules fire — the
+    /// solve degrades to the identity, never to a wrong answer.
+    fn solve_ite_value(&mut self, ite: TermId, val: TermId) -> Option<TermId> {
+        // The no-progress guard: when NO rule ever fires, the worklist's
+        // terminal is the plain `mk_eq(ite, val)` — which the caller
+        // would re-feed to `eq_ite_rules` on its next visit (the ctx
+        // walk re-enters on the solved term), an infinite cycle.  Solve
+        // only when something was actually rewritten.
+        let orig = self.mk_eq(ite, val);
+        if matches!(
+            self.get(orig).map(|d| &d.kind),
+            Some(TermKind::True | TermKind::False)
+        ) {
+            // Decided outright (a degenerate `mk_eq` fold): progress.
+            return Some(orig);
+        }
+        /// One accumulated combinator: the and/or rules collect their
+        /// guard literals and carry exactly one pending equality; the
+        /// ite rules (R5/R6) carry two pending equalities (the solved
+        /// branch, then the plain sibling — z3's rewriter descends into
+        /// the sibling on its next pass, so both are solved here).
+        enum Frame {
+            And {
+                parts: SmallVec<[TermId; 4]>,
+            },
+            Or {
+                parts: SmallVec<[TermId; 4]>,
+            },
+            Ite {
+                cond: TermId,
+                val: TermId,
+                else_side: TermId,
+                then_res: Option<TermId>,
+            },
+        }
+        let mut frames: Vec<Frame> = Vec::new();
+        let mut pending: Option<(TermId, TermId)> = Some((ite, val));
+        let mut result: Option<TermId> = None;
+        let mut fuel = SOLVE_EQ_FUEL;
+        loop {
+            if let Some((x, v)) = pending.take() {
+                if fuel == 0 {
+                    result = Some(self.mk_eq(x, v));
+                    continue;
+                }
+                fuel -= 1;
+                let kind = self.get(x).map(|d| d.kind.clone());
+                let Some(TermKind::Ite(c, t, e)) = kind.as_ref() else {
+                    // Terminal: a value (folds) or an unsolvable term —
+                    // the plain equality IS the solved form.
+                    result = Some(self.mk_eq(x, v));
+                    continue;
+                };
+                let (c, t, e) = (*c, *t, *e);
+                if self.rw_are_equal(t, v) && self.rw_are_distinct(e, v) {
+                    result = Some(c);
+                } else if self.rw_are_equal(e, v) && self.rw_are_distinct(t, v) {
+                    result = Some(self.mk_not(c));
+                } else if self.is_value(e) && self.rw_are_distinct(e, v) {
+                    frames.push(Frame::And {
+                        parts: SmallVec::from_iter([c]),
+                    });
+                    pending = Some((t, v));
+                } else if self.is_value(t) && self.rw_are_distinct(t, v) {
+                    frames.push(Frame::And {
+                        parts: SmallVec::from_iter([self.mk_not(c)]),
+                    });
+                    pending = Some((e, v));
+                } else if self.is_value(t) && self.rw_are_equal(t, v) {
+                    if self.is_value(e) && self.rw_are_equal(e, v) {
+                        result = Some(self.true_id);
+                    } else {
+                        frames.push(Frame::Or {
+                            parts: SmallVec::from_iter([c]),
+                        });
+                        pending = Some((e, v));
+                    }
+                } else if self.is_value(e) && self.rw_are_equal(e, v) {
+                    frames.push(Frame::Or {
+                        parts: SmallVec::from_iter([self.mk_not(c)]),
+                    });
+                    pending = Some((t, v));
+                } else if self.ite_with_value_leaves(t).is_some() {
+                    frames.push(Frame::Ite {
+                        cond: c,
+                        val: v,
+                        else_side: e,
+                        then_res: None,
+                    });
+                    pending = Some((t, v));
+                } else if self.ite_with_value_leaves(e).is_some() {
+                    // R6: `(ite c (= t v) solve(= e v))` — the THEN hole
+                    // is the plain t-side, the ELSE hole the solved
+                    // e-side (the frame's `else_side` names the ELSE
+                    // hole's term — `e`, never `t`: solving the t-side
+                    // twice silently dropped the else-branch, a
+                    // false-`unsat` shape the equivalence fuzzer
+                    // isolated).
+                    frames.push(Frame::Ite {
+                        cond: c,
+                        val: v,
+                        else_side: e,
+                        then_res: None,
+                    });
+                    pending = Some((t, v));
+                } else if self.ite_leaves_all_distinct(x, v) {
+                    result = Some(self.false_id);
+                } else {
+                    result = Some(self.mk_eq(x, v));
+                }
+            } else if let Some(r) = result.take() {
+                match frames.pop() {
+                    None => {
+                        if r == orig {
+                            // Nothing was rewritten anywhere on the
+                            // chain: no solve (see the entry guard).
+                            return None;
+                        }
+                        return Some(r);
+                    }
+                    Some(Frame::And { mut parts }) => {
+                        // The extracted guards must meet their negations
+                        // HERE (z3's mk_and is the REWRITER's absorbing
+                        // one): a chain solved down to `(and (= x v) ¬c)`
+                        // refutes exactly when some level's condition `c`
+                        // reappears against the default's equality — the
+                        // member folds only if this conjunction absorbs
+                        // complements.
+                        parts.push(r);
+                        result = Some(self.absorb_literals(parts, true));
+                    }
+                    Some(Frame::Or { mut parts }) => {
+                        parts.push(r);
+                        result = Some(self.absorb_literals(parts, false));
+                    }
+                    Some(Frame::Ite {
+                        cond,
+                        val,
+                        else_side,
+                        then_res,
+                    }) => match then_res {
+                        None => {
+                            frames.push(Frame::Ite {
+                                cond,
+                                val,
+                                else_side,
+                                then_res: Some(r),
+                            });
+                            pending = Some((else_side, val));
+                        }
+                        Some(then_res) => {
+                            result = Some(self.rewrite_ite(cond, then_res, r));
+                        }
+                    },
+                }
+            } else {
+                // Unreachable: the loop starts with `pending` set and
+                // every arm re-establishes exactly one of the two.
+                return None;
+            }
+        }
+    }
+
+    /// `(c, t, e)` when `t` is an ite whose DIRECT branches are values —
+    /// z3's progress guard for the recursive rules R5/R6 (the sub-solve
+    /// is guaranteed to fire its first step).
+    fn ite_with_value_leaves(&self, t: TermId) -> Option<(TermId, TermId, TermId)> {
+        match self.get(t).map(|d| d.kind.clone()) {
+            Some(TermKind::Ite(c, a, b)) if self.is_value(a) && self.is_value(b) => Some((c, a, b)),
+            _ => None,
+        }
+    }
+
+    /// z3 `simplify_eq_ite`: every leaf of the ite (recursively through
+    /// nested ites, DAG-safe) is a value distinct from `v` — then the
+    /// whole `(= ite v)` is `false`.  Iterative with a seen-set.
+    fn ite_leaves_all_distinct(&mut self, root: TermId, v: TermId) -> bool {
+        let mut stack: Vec<TermId> = vec![root];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(x) = stack.pop() {
+            if !seen.insert(x) {
+                continue;
+            }
+            let kind = self.get(x).map(|d| d.kind.clone());
+            match kind {
+                Some(TermKind::Ite(_, t, e)) => {
+                    stack.push(t);
+                    stack.push(e);
+                }
+                Some(ref k) if is_value_kind(k) => {
+                    if self.mk_eq(x, v) != self.false_id {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// z3's ite×ite case (`mk_eq_core`'s `m_ite_extra_rules` block): two
+    /// ites whose four branches are values cross into a four-clause
+    /// conjunction over the conditions (a case-split-free exhaustive
+    /// sign matrix — every leaf equality folds, being value-vs-value).
+    fn solve_ite_ite(&mut self, l: TermId, r: TermId) -> Option<TermId> {
+        let l_kind = self.get(l).map(|d| d.kind.clone());
+        let r_kind = self.get(r).map(|d| d.kind.clone());
+        let (Some(TermKind::Ite(c1, t1, e1)), Some(TermKind::Ite(c2, t2, e2))) = (&l_kind, &r_kind)
+        else {
+            return None;
+        };
+        let (c1, t1, e1, c2, t2, e2) = (*c1, *t1, *e1, *c2, *t2, *e2);
+        if !(self.is_value(t1) && self.is_value(e1) && self.is_value(t2) && self.is_value(e2)) {
+            return None;
+        }
+        let e1e2 = self.mk_eq(e1, e2);
+        let t1t2 = self.mk_eq(t1, t2);
+        let t1e2 = self.mk_eq(t1, e2);
+        let e1t2 = self.mk_eq(e1, t2);
+        let nc1 = self.mk_not(c1);
+        let nc2 = self.mk_not(c2);
+        let d1 = self.mk_or([c1, c2, e1e2]);
+        let d2 = self.mk_or([nc1, nc2, t1t2]);
+        let d3 = self.mk_or([nc1, c2, t1e2]);
+        let d4 = self.mk_or([c1, nc2, e1t2]);
+        Some(self.mk_and([d1, d2, d3, d4]))
+    }
+
+    /// z3 `bool_rewriter::mk_ite_core`, iterative: each rule either
+    /// returns a final term or rewrites the `(c, t, e)` triple in place
+    /// (z3 re-enters `mk_ite_core` per `BR_REWRITE*`; the loop is the
+    /// re-entry, without native recursion).  Every rewrite strictly
+    /// shrinks `t`/`e` as DAG terms, so the loop terminates.
+    ///
+    /// Base rules (unconditional in z3): negated-condition swap,
+    /// same-condition merge on either side, constant conditions,
+    /// identical branches, and the Boolean connections (a Boolean ite
+    /// with constant branches connects to and/or/iff, `m_elim_ite`
+    /// default true).  The tail block carries z3's `m_ite_extra_rules`
+    /// cross-branch merges (default true) — the structural normal form
+    /// that lets two selects with shared leaves fuse into one.
+    fn rewrite_ite(&mut self, mut c: TermId, mut t: TermId, mut e: TermId) -> TermId {
+        loop {
+            // (ite (not c) a b) ==> (ite c b a)
+            if let Some(TermKind::Not(inner)) = self.get(c).map(|d| d.kind.clone()) {
+                c = inner;
+                std::mem::swap(&mut t, &mut e);
+            }
+            // (ite c (ite c t1 t2) t3) ==> (ite c t1 t3)
+            if let Some(TermKind::Ite(c2, t1, _)) = self.get(t).map(|d| d.kind.clone())
+                && c2 == c
+            {
+                t = t1;
+            }
+            // (ite c t1 (ite c2 t1 t2)) ==> (ite (or c c2) t1 t2)
+            if let Some(TermKind::Ite(c2, et, ee)) = self.get(e).map(|d| d.kind.clone()) {
+                if et == t {
+                    let nc = self.mk_or([c, c2]);
+                    c = nc;
+                    e = ee;
+                    continue;
+                }
+                // (ite c t1 (ite c t2 t3)) ==> (ite c t1 t3)
+                if c2 == c {
+                    e = ee;
+                }
+            }
+            if matches!(self.get(c).map(|d| &d.kind), Some(TermKind::True)) {
+                return t;
+            }
+            if matches!(self.get(c).map(|d| &d.kind), Some(TermKind::False)) {
+                return e;
+            }
+            if t == e {
+                return t;
+            }
+            // Boolean connections.
+            if self.get(t).is_some_and(|d| d.sort == self.sorts.bool_sort) {
+                let t_true = matches!(self.get(t).map(|d| &d.kind), Some(TermKind::True));
+                let t_false = matches!(self.get(t).map(|d| &d.kind), Some(TermKind::False));
+                let e_true = matches!(self.get(e).map(|d| &d.kind), Some(TermKind::True));
+                let e_false = matches!(self.get(e).map(|d| &d.kind), Some(TermKind::False));
+                if t_true && e_false {
+                    return c;
+                }
+                if t_false && e_true {
+                    return self.mk_not(c);
+                }
+                if t_true {
+                    return self.mk_or([c, e]);
+                }
+                if t_false {
+                    let nc = self.mk_not(c);
+                    return self.mk_and([nc, e]);
+                }
+                if e_true {
+                    let nc = self.mk_not(c);
+                    return self.mk_or([nc, t]);
+                }
+                if e_false {
+                    return self.mk_and([c, t]);
+                }
+                if c == e {
+                    return self.mk_and([c, t]);
+                }
+                if c == t {
+                    return self.mk_or([c, e]);
+                }
+                // Complement branches: (ite c p (not p)) ==> (= c p)
+                if let Some(TermKind::Not(inner)) = self.get(e).map(|d| d.kind.clone())
+                    && inner == t
+                {
+                    return self.mk_eq(c, t);
+                }
+                if let Some(TermKind::Not(inner)) = self.get(t).map(|d| d.kind.clone())
+                    && inner == e
+                {
+                    return self.mk_eq(c, t);
+                }
+            }
+            // m_ite_extra_rules cross-branch merges.
+            if let Some(TermKind::Ite(c2, tt, te)) = self.get(t).map(|d| d.kind.clone()) {
+                // (ite c1 (ite c2 t1 t2) t1) ==> (ite (and c1 (not c2)) t2 t1)
+                if e == tt {
+                    let nc2 = self.mk_not(c2);
+                    let nc = self.mk_and([c, nc2]);
+                    c = nc;
+                    t = te;
+                    continue;
+                }
+                // (ite c1 (ite c2 t1 t2) t2) ==> (ite (and c1 c2) t1 t2)
+                if e == te {
+                    let nc = self.mk_and([c, c2]);
+                    c = nc;
+                    t = tt;
+                    continue;
+                }
+                if let Some(TermKind::Ite(c3, et1, ee1)) = self.get(e).map(|d| d.kind.clone()) {
+                    // (ite c1 (ite c2 t1 t2) (ite c3 t1 t2))
+                    //   ==> (ite (or (and c1 c2) (and (not c1) c3)) t1 t2)
+                    if tt == et1 && te == ee1 {
+                        let a1 = self.mk_and([c, c2]);
+                        let nc = self.mk_not(c);
+                        let a2 = self.mk_and([nc, c3]);
+                        let o = self.mk_or([a1, a2]);
+                        c = o;
+                        t = tt;
+                        e = te;
+                        continue;
+                    }
+                    // (ite c1 (ite c2 t1 t2) (ite c3 t2 t1))
+                    //   ==> (ite (or (and c1 c2) (and (not c1) (not c3))) t1 t2)
+                    if tt == ee1 && te == et1 {
+                        let a1 = self.mk_and([c, c2]);
+                        let nc = self.mk_not(c);
+                        let nc3 = self.mk_not(c3);
+                        let a2 = self.mk_and([nc, nc3]);
+                        let o = self.mk_or([a1, a2]);
+                        c = o;
+                        t = tt;
+                        e = te;
+                        continue;
+                    }
+                }
+            }
+            if let Some(TermKind::Ite(c2, et, ee)) = self.get(e).map(|d| d.kind.clone()) {
+                // (ite c1 t1 (ite c2 t1 t2)) ==> (ite (or c1 c2) t1 t2)
+                if t == et {
+                    let nc = self.mk_or([c, c2]);
+                    c = nc;
+                    e = ee;
+                    continue;
+                }
+                // (ite c1 t1 (ite c2 t2 t1)) ==> (ite (or c1 (not c2)) t1 t2)
+                if t == ee {
+                    let nc2 = self.mk_not(c2);
+                    let nc = self.mk_or([c, nc2]);
+                    c = nc;
+                    e = et;
+                    continue;
+                }
+            }
+            return self.mk_ite(c, t, e);
+        }
     }
 
     /// Context-dependent simplification (z3's `ctx-simplify` shape, the
@@ -466,7 +986,7 @@ impl TermManager {
                     let s = self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
                     kept.push(s);
                 }
-                self.mk_or(kept)
+                self.absorb_literals(kept, false)
             }
             TermKind::Ite(c, a, b) => {
                 // Case split: each branch under its own guard.
@@ -544,33 +1064,13 @@ impl TermManager {
                 self.mk_ite(cs, as_, bs)
             }
             TermKind::Eq(l, r) => {
-                // The push (z3's `push_ite` equality half): a numeric
-                // constant against an ite becomes an ite of comparisons.
-                let lk = matches!(
-                    self.get(l).map(|d| &d.kind),
-                    Some(TermKind::IntConst(_) | TermKind::RealConst(_))
-                );
-                let rk = matches!(
-                    self.get(r).map(|d| &d.kind),
-                    Some(TermKind::IntConst(_) | TermKind::RealConst(_))
-                );
-                let li = matches!(self.get(l).map(|d| &d.kind), Some(TermKind::Ite(..)));
-                let ri = matches!(self.get(r).map(|d| &d.kind), Some(TermKind::Ite(..)));
-                if (lk && ri) || (rk && li) {
-                    let (k, ite) = if lk { (l, r) } else { (r, l) };
-                    if let Some(TermKind::Ite(c, a, b)) = self.get(ite).map(|d| d.kind.clone()) {
-                        let ka_eq = self.mk_eq(k, a);
-                        let ka = self.ctx_walk(ka_eq, ctx, fuel, sub_atoms, memo);
-                        let kb_eq = self.mk_eq(k, b);
-                        let kb = self.ctx_walk(kb_eq, ctx, fuel, sub_atoms, memo);
-                        let cs = self.ctx_walk(c, ctx, fuel, sub_atoms, memo);
-                        // Re-enter the walk so the ITE arm's connection
-                        // folds see the pushed shape (a constant branch
-                        // connects into and/or where the context absorbs
-                        // it) — returning the raw `mk_ite` bypassed them.
-                        let pushed = self.mk_ite(cs, ka, kb);
-                        return self.ctx_walk(pushed, ctx, fuel, sub_atoms, memo);
-                    }
+                // Guard-equality elimination FIRST (z3 `mk_eq_core`'s ite
+                // rules): the conditions are extracted as literals for
+                // the context walk instead of case-split — the memo
+                // proved the splits, not sharing, were the fuel cost
+                // (the ninth session of the perf-gap study).
+                if let Some(solved) = self.eq_ite_rules(l, r) {
+                    return self.ctx_walk(solved, ctx, fuel, sub_atoms, memo);
                 }
                 let ls = self.ctx_walk(l, ctx, fuel, sub_atoms, memo);
                 let rs = self.ctx_walk(r, ctx, fuel, sub_atoms, memo);
@@ -591,15 +1091,34 @@ impl TermManager {
         memo: &mut FxHashMap<(TermId, u64), TermId>,
     ) -> TermId {
         // Each conjunct asserts its atom's polarity; the REST simplify
-        // under it.  The extensions unwind exactly: fresh entries are
-        // removed, entries a parent had set are restored — a conjunct's
-        // polarity is not valid outside the conjunction.
+        // under it.  The extensions unwind exactly: an entry a parent had
+        // set is restored, a FRESH entry is removed — a conjunct's
+        // polarity is not valid outside the conjunction.  (The first
+        // version of this unwind only restored overwritten entries and
+        // skipped fresh ones — the leak survived the conjunction's end
+        // and poisoned every later sibling walk in the enclosing scope:
+        // the Or arm's next disjunct walked under a conjunct's polarity
+        // and `(or (and p q) p)` simplified to `true` — a live
+        // false-simplify on main, caught by the solve-rules equivalence
+        // fuzzer.)
+        /// Unwind one extension: restore the previous polarity, or
+        /// remove the entry when this conjunction created it.
+        fn unwind_one(ctx: &mut FxHashMap<TermId, bool>, ext: (TermId, Option<bool>)) {
+            match ext.1 {
+                Some(prev) => {
+                    ctx.insert(ext.0, prev);
+                }
+                None => {
+                    ctx.remove(&ext.0);
+                }
+            }
+        }
         let mut simplified: SmallVec<[TermId; 4]> = SmallVec::new();
-        let mut unwind: Vec<Option<(TermId, bool)>> = Vec::new();
+        let mut unwind: Vec<(TermId, Option<bool>)> = Vec::new();
         for a in args {
             if let Some(false) = self.ctx_value(a, ctx) {
-                for (atom, prev) in unwind.into_iter().rev().flatten() {
-                    ctx.insert(atom, prev);
+                for ext in unwind.into_iter().rev() {
+                    unwind_one(ctx, ext);
                 }
                 return self.false_id;
             }
@@ -609,8 +1128,8 @@ impl TermManager {
             let s = self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
             match self.get(s).map(|d| &d.kind) {
                 Some(TermKind::False) => {
-                    for (atom, prev) in unwind.into_iter().rev().flatten() {
-                        ctx.insert(atom, prev);
+                    for ext in unwind.into_iter().rev() {
+                        unwind_one(ctx, ext);
                     }
                     return self.false_id;
                 }
@@ -620,13 +1139,132 @@ impl TermManager {
             simplified.push(s);
             if let Some((atom, pol)) = self.atom_polarity(s) {
                 let prev = ctx.insert(atom, pol);
-                unwind.push(prev.map(|p| (atom, p)));
+                unwind.push((atom, prev));
             }
         }
-        for (atom, prev) in unwind.into_iter().rev().flatten() {
-            ctx.insert(atom, prev);
+        for ext in unwind.into_iter().rev() {
+            unwind_one(ctx, ext);
         }
-        self.mk_and(simplified)
+        self.absorb_literals(simplified, true)
+    }
+
+    /// z3 `bool_rewriter::mk_nflat_and_core`/`mk_nflat_or_core` parity,
+    /// at the SIMPLIFIER layer (z3's absorption lives in its rewriter,
+    /// never in `ast_manager`'s constructors — builder-level folding here
+    /// perturbed the solver's term shapes and broke MBQI's convergence
+    /// pins, so the rule is harness-only): over the flattened `args`, a
+    /// duplicate literal drops and a literal meeting its negation
+    /// decides the connective (`X ∧ ¬X ≡ false`, `X ∨ ¬X ≡ true` —
+    /// classical, for ANY `X`).  Returns the folded term.
+    fn absorb_literals(&mut self, args: SmallVec<[TermId; 4]>, conjunction: bool) -> TermId {
+        // Flatten same-connective children FIRST (z3's
+        // `mk_flat_and_core` → `mk_nflat_and_core` pipeline): complements
+        // hidden across nested levels (`And(And(X Y) ¬X)`) are visible
+        // only in the flattened view — absorbing per level without
+        // flattening misses them (the large nec-smt member's top-level
+        // and-tree is nested binary).
+        let mut flat: SmallVec<[TermId; 4]> = SmallVec::with_capacity(args.len());
+        for a in args {
+            let inner = if conjunction {
+                match self.get(a).map(|d| &d.kind) {
+                    Some(TermKind::And(inner)) => Some(inner.clone()),
+                    Some(TermKind::True) => {
+                        continue;
+                    }
+                    Some(TermKind::False) => return self.false_id,
+                    _ => None,
+                }
+            } else {
+                match self.get(a).map(|d| &d.kind) {
+                    Some(TermKind::Or(inner)) => Some(inner.clone()),
+                    Some(TermKind::False) => {
+                        continue;
+                    }
+                    Some(TermKind::True) => return self.true_id,
+                    _ => None,
+                }
+            };
+            match inner {
+                Some(children) => flat.extend(children.iter().copied()),
+                None => flat.push(a),
+            }
+        }
+        let args = flat;
+        if args.len() < 2 {
+            return if conjunction {
+                self.mk_and(args)
+            } else {
+                self.mk_or(args)
+            };
+        }
+        /// Beyond this many args the linear membership scans switch to
+        /// hash sets.
+        const LINEAR_ABSORB_MAX: usize = 32;
+        let n = args.len();
+        let mut kept: SmallVec<[TermId; 4]> = SmallVec::with_capacity(n);
+        // pos: positive literals kept so far; neg: the inner atoms of
+        // negated literals kept so far.  A complement decides the
+        // connective outright (false for and, true for or).
+        let mut decided: Option<bool> = None;
+        if n <= LINEAR_ABSORB_MAX {
+            let mut pos: SmallVec<[TermId; 8]> = SmallVec::new();
+            let mut neg: SmallVec<[TermId; 8]> = SmallVec::new();
+            for &a in args.iter() {
+                if let Some(TermKind::Not(x)) = self.get(a).map(|d| &d.kind) {
+                    if neg.contains(x) {
+                        continue;
+                    }
+                    if pos.contains(x) {
+                        decided = Some(!conjunction);
+                        break;
+                    }
+                    neg.push(*x);
+                } else {
+                    if pos.contains(&a) {
+                        continue;
+                    }
+                    if neg.contains(&a) {
+                        decided = Some(!conjunction);
+                        break;
+                    }
+                    pos.push(a);
+                }
+                kept.push(a);
+            }
+        } else {
+            let mut pos: FxHashSet<TermId> = FxHashSet::default();
+            let mut neg: FxHashSet<TermId> = FxHashSet::default();
+            for &a in args.iter() {
+                if let Some(TermKind::Not(x)) = self.get(a).map(|d| &d.kind) {
+                    if !neg.insert(*x) {
+                        continue;
+                    }
+                    if pos.contains(x) {
+                        decided = Some(!conjunction);
+                        break;
+                    }
+                } else {
+                    if !pos.insert(a) {
+                        continue;
+                    }
+                    if neg.contains(&a) {
+                        decided = Some(!conjunction);
+                        break;
+                    }
+                }
+                kept.push(a);
+            }
+        }
+        match decided {
+            Some(v) => self.mk_bool(v),
+            None => {
+                if conjunction {
+                    self.mk_and(kept)
+                } else {
+                    self.mk_or(kept)
+                }
+            }
+        }
     }
 
     /// The children `simplify_cached` should recurse into for `id`, or none
@@ -688,11 +1326,11 @@ impl TermManager {
             }
             Some(TermKind::And(args)) => {
                 let new_args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(cache, a)).collect();
-                self.mk_and(new_args)
+                self.absorb_literals(new_args, true)
             }
             Some(TermKind::Or(args)) => {
                 let new_args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(cache, a)).collect();
-                self.mk_or(new_args)
+                self.absorb_literals(new_args, false)
             }
             Some(TermKind::Implies(lhs, rhs)) => {
                 let new_lhs = sub(cache, lhs);
@@ -702,13 +1340,19 @@ impl TermManager {
             Some(TermKind::Eq(lhs, rhs)) => {
                 let new_lhs = sub(cache, lhs);
                 let new_rhs = sub(cache, rhs);
+                // Guard-equality elimination (z3 `mk_eq_core`'s ite
+                // rules): solve the equality over its ite conditions
+                // BEFORE falling back to the plain node.
+                if let Some(solved) = self.eq_ite_rules(new_lhs, new_rhs) {
+                    return solved;
+                }
                 self.mk_eq(new_lhs, new_rhs)
             }
             Some(TermKind::Ite(cond, then_br, else_br)) => {
                 let new_cond = sub(cache, cond);
                 let new_then = sub(cache, then_br);
                 let new_else = sub(cache, else_br);
-                self.mk_ite(new_cond, new_then, new_else)
+                self.rewrite_ite(new_cond, new_then, new_else)
             }
             Some(TermKind::Add(args)) => {
                 let new_args: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(cache, a)).collect();
@@ -862,7 +1506,12 @@ impl TermManager {
             self.get(rhs).map(|t| t.kind.clone()),
         ) {
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => self.mk_bool(a < b),
-            _ => self.mk_lt(lhs, rhs),
+            _ => {
+                if let Some(solved) = self.cmp_ite_rule(CmpOp::Lt, lhs, rhs) {
+                    return solved;
+                }
+                self.mk_lt(lhs, rhs)
+            }
         }
     }
 
@@ -877,7 +1526,12 @@ impl TermManager {
             self.get(rhs).map(|t| t.kind.clone()),
         ) {
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => self.mk_bool(a <= b),
-            _ => self.mk_le(lhs, rhs),
+            _ => {
+                if let Some(solved) = self.cmp_ite_rule(CmpOp::Le, lhs, rhs) {
+                    return solved;
+                }
+                self.mk_le(lhs, rhs)
+            }
         }
     }
 
@@ -892,7 +1546,12 @@ impl TermManager {
             self.get(rhs).map(|t| t.kind.clone()),
         ) {
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => self.mk_bool(a > b),
-            _ => self.mk_gt(lhs, rhs),
+            _ => {
+                if let Some(solved) = self.cmp_ite_rule(CmpOp::Gt, lhs, rhs) {
+                    return solved;
+                }
+                self.mk_gt(lhs, rhs)
+            }
         }
     }
 
@@ -907,7 +1566,82 @@ impl TermManager {
             self.get(rhs).map(|t| t.kind.clone()),
         ) {
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => self.mk_bool(a >= b),
-            _ => self.mk_ge(lhs, rhs),
+            _ => {
+                if let Some(solved) = self.cmp_ite_rule(CmpOp::Ge, lhs, rhs) {
+                    return solved;
+                }
+                self.mk_ge(lhs, rhs)
+            }
         }
+    }
+
+    /// z3 `arith_rewriter::mk_le_ge_eq_core`'s ite rules, extended to the
+    /// strict comparisons (z3 normalizes those through the non-strict
+    /// forms; the direct analogue keeps the residual's operator).
+    ///
+    /// `((ite c t e) ⊙ k)` with `k` a value and a NUMERAL branch decides
+    /// that branch against `k`, so the comparison distributes over the
+    /// guard instead of nesting under it:
+    /// * `t ⊙ k` true  → `(or c (e ⊙ k))`  (the then-path already
+    ///   satisfies the comparison);
+    /// * `t ⊙ k` false → `(and ¬c (e ⊙ k))` (the then-path is excluded);
+    /// * the `e`-numeral case is symmetric (`¬c` / `c`).
+    ///
+    /// The branches were already simplified bottom-up when this fires
+    /// (the residual is built with the plain `mk_*` constructors — no
+    /// re-descent, no native recursion over the chain: the 724 KB
+    /// nec-smt members nest selects thousands deep).
+    /// `None` when no branch is decidable.
+    fn cmp_ite_rule(&mut self, op: CmpOp, lhs: TermId, rhs: TermId) -> Option<TermId> {
+        let Some(TermKind::Ite(c, t, e)) = self.get(lhs).map(|d| d.kind.clone()) else {
+            return None;
+        };
+        if !self.is_value(rhs) {
+            return None;
+        }
+        let mk_residual = |tm: &mut Self, a: TermId, b: TermId| match op {
+            CmpOp::Lt => tm.mk_lt(a, b),
+            CmpOp::Le => tm.mk_le(a, b),
+            CmpOp::Gt => tm.mk_gt(a, b),
+            CmpOp::Ge => tm.mk_ge(a, b),
+        };
+        // The then-branch decides: t ⊙ k.
+        if let Some(true) = self.cmp_decide(op, t, rhs) {
+            let rest = mk_residual(self, e, rhs);
+            return Some(self.mk_or([c, rest]));
+        }
+        if let Some(false) = self.cmp_decide(op, t, rhs) {
+            let nc = self.mk_not(c);
+            let rest = mk_residual(self, e, rhs);
+            return Some(self.mk_and([nc, rest]));
+        }
+        // The else-branch decides: e ⊙ k.
+        if let Some(true) = self.cmp_decide(op, e, rhs) {
+            let nc = self.mk_not(c);
+            let rest = mk_residual(self, t, rhs);
+            return Some(self.mk_or([nc, rest]));
+        }
+        if let Some(false) = self.cmp_decide(op, e, rhs) {
+            let rest = mk_residual(self, t, rhs);
+            return Some(self.mk_and([c, rest]));
+        }
+        None
+    }
+
+    /// Decide `a ⊙ b` when both sides are integer numerals — the exact
+    /// constant fold the comparison simplifiers perform (no descent:
+    /// callers pass already-simplified branches).
+    fn cmp_decide(&self, op: CmpOp, a: TermId, b: TermId) -> Option<bool> {
+        let (Some(TermKind::IntConst(x)), Some(TermKind::IntConst(y))) =
+            (self.get(a).map(|d| &d.kind), self.get(b).map(|d| &d.kind))
+        else {
+            return None;
+        };
+        Some(match op {
+            CmpOp::Lt => x < y,
+            CmpOp::Le => x <= y,
+            CmpOp::Gt => x > y,
+            CmpOp::Ge => x >= y,
+        })
     }
 }

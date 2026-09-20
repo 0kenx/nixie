@@ -479,10 +479,14 @@ fn term_size_pins_distinct_subterm_count() {
     let not_eq = m.mk_not(eq);
     assert_eq!(cex.term_size(not_eq, &m), 4);
 
-    // And(Eq, Not(Eq)): the shared `Eq` subterm is counted exactly once,
-    // so this is `And` + `Eq` + `x` + `1` + `Not` = 5.
-    let conj = m.mk_and([eq, not_eq]);
-    assert_eq!(cex.term_size(conj, &m), 5);
+    // And(Eq, Not(q)): the complement fold in `mk_and` (z3
+    // `mk_nflat_and_core` parity) would collapse `And(Eq, Not(Eq))` to
+    // `false` at construction, so the shared-subterm pin uses a
+    // DIFFERENT negated atom: `And` + `Eq` + `x` + `1` + `Not` + `q` = 6.
+    let q = m.mk_var("q", m.sorts.bool_sort);
+    let not_q = m.mk_not(q);
+    let conj = m.mk_and([eq, not_q]);
+    assert_eq!(cex.term_size(conj, &m), 6);
 
     // `Add` is not one of the descended kinds: only the node itself counts.
     let add = m.mk_add([x, one]);

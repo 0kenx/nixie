@@ -385,3 +385,25 @@ never a ctx test, noted for the record).
 Verification: suite 12 074/12 074; clippy/fmt clean; Z3 parity 100 %
 correct, 0 disagreements (z3 4.16.0); perf gate PASS; fresh
 differentials clean; the iso/idempotence regressions all green.
+
+### The `solve_eqs` pre-pass, LANDED (tenth session, 2026-09-20): the member folds; the ninth session's boundary closes
+
+The entry point named above ("a normal form that merges split paths —
+a `solve_eqs`-style pre-pass that eliminates the guard equalities
+before the walk") is implemented: z3 `bool_rewriter`'s ite-equality
+rule set (`try_ite_eq`, `try_ite_value` R1–R7, the ite×ite matrix) +
+`mk_ite_core`'s merge rules + the arith comparison distribution,
+ported into `query/simplify.rs` as explicit worklists, with and/or
+complement absorption at the SIMPLIFIER layer.  **The member folds to
+`false` in 11 ms** (the 724 KB repro: 33 ms; z3 parity on the fold
+class, and 11 nec-smt members nixie folds where z3's plain simplify
+does not — all verified `unsat`).  The port's equivalence fuzzer
+(`solve_eq_rules_preserve_equivalence`, landed) found **a live
+false-simplify on main** — `ctx_and`'s unwind never removed fresh
+context entries, so `(or (and p q) p)` simplified to `true` — plus two
+port-local bugs (an inverted absorption polarity, an R6 frame typo),
+all fixed with targeted regressions.  A negative result is recorded
+too: builder-level absorption broke the MBQI convergence pins
+(`set9/set16` sat-in-4ms → unknown-at-290s) — z3 places absorption in
+its rewriter, not `ast_manager`, and so do we now.  Full record:
+`2026-09-20-solve-eqs-guard-elimination.md`.

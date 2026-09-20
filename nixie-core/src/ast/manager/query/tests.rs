@@ -1008,3 +1008,399 @@ fn ctx_simplify_is_idempotent() {
     let twice = m.ctx_simplify(once);
     assert_eq!(once, twice, "the pass is idempotent on its own output");
 }
+
+/// A tiny deterministic LCG for the equivalence fuzzer (no external RNG
+/// dependency; reproducible from the seed alone).
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+/// Generate one random typed QF_LIA term over the fixed vocabulary
+/// `x, y : Int`, `p, q : Bool`, biased toward the rule surfaces: ites with
+/// constant branches, equalities and comparisons against constants.
+#[allow(clippy::type_complexity)]
+fn gen_fuzz_term(m: &mut TermManager, rng: &mut Lcg, want_bool: bool, depth: u32) -> TermId {
+    use num_bigint::BigInt;
+    if depth == 0 {
+        return if want_bool {
+            match rng.below(4) {
+                0 => m.mk_var("p", m.sorts.bool_sort),
+                1 => m.mk_var("q", m.sorts.bool_sort),
+                _ => m.mk_bool(rng.below(2) == 0),
+            }
+        } else {
+            match rng.below(3) {
+                0 => m.mk_var("x", m.sorts.int_sort),
+                1 => m.mk_var("y", m.sorts.int_sort),
+                _ => m.mk_int(BigInt::from(rng.below(8) as i64 - 3)),
+            }
+        };
+    }
+    if want_bool {
+        match rng.below(11) {
+            0 => m.mk_bool(true),
+            1 => m.mk_bool(false),
+            2 => m.mk_var("p", m.sorts.bool_sort),
+            3 => {
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_eq(a, b)
+            }
+            4 => {
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_le(a, b)
+            }
+            5 => {
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_lt(a, b)
+            }
+            9 => {
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_gt(a, b)
+            }
+            10 => {
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_ge(a, b)
+            }
+            6 => {
+                let a = gen_fuzz_term(m, rng, true, depth - 1);
+                let b = gen_fuzz_term(m, rng, true, depth - 1);
+                m.mk_and([a, b])
+            }
+            7 => {
+                let a = gen_fuzz_term(m, rng, true, depth - 1);
+                let b = gen_fuzz_term(m, rng, true, depth - 1);
+                m.mk_or([a, b])
+            }
+            _ => {
+                let a = gen_fuzz_term(m, rng, true, depth - 1);
+                m.mk_not(a)
+            }
+        }
+    } else {
+        match rng.below(5) {
+            0 | 1 => {
+                // The ite-with-constant-branches surface (the solve
+                // rules' home): constants and nested selects.
+                let c = gen_fuzz_term(m, rng, true, depth - 1);
+                let a = gen_fuzz_term(m, rng, false, depth - 1);
+                let b = gen_fuzz_term(m, rng, false, depth - 1);
+                m.mk_ite(c, a, b)
+            }
+            2 => m.mk_var("x", m.sorts.int_sort),
+            3 => m.mk_var("y", m.sorts.int_sort),
+            _ => m.mk_int(BigInt::from(rng.below(8) as i64 - 3)),
+        }
+    }
+}
+
+/// The fixed free-variable vocabulary of [`gen_fuzz_term`].
+fn fuzz_vars(m: &mut TermManager) -> Vec<(TermId, Vec<TermId>)> {
+    let bools = vec![m.mk_bool(true), m.mk_bool(false)];
+    let xs: Vec<TermId> = (-1i64..=2)
+        .map(|v| m.mk_int(num_bigint::BigInt::from(v)))
+        .collect();
+    vec![
+        (m.mk_var("p", m.sorts.bool_sort), bools.clone()),
+        (m.mk_var("q", m.sorts.bool_sort), bools),
+        (m.mk_var("x", m.sorts.int_sort), xs.clone()),
+        (m.mk_var("y", m.sorts.int_sort), xs),
+    ]
+}
+
+/// Evaluate a closed QF_LIA Boolean by full substitution + bottom-up fold.
+fn eval_closed(m: &mut TermManager, t: TermId) -> Option<bool> {
+    let folded = m.simplify(t);
+    match m.get(folded).map(|d| &d.kind) {
+        Some(crate::ast::term::TermKind::True) => Some(true),
+        Some(crate::ast::term::TermKind::False) => Some(false),
+        _ => None,
+    }
+}
+
+/// The solve rules' soundness canary: random QF_LIA terms through the
+/// full pipeline (`simplify` + `ctx_simplify`) stay logically equivalent
+/// to their inputs, checked by exhaustive enumeration over the small
+/// variable domains.  A wrong `false` here is exactly the false-`unsat`
+/// class (the `config_read_line/prp-1-31` member shape).
+#[test]
+fn solve_eq_rules_preserve_equivalence() {
+    let mut failures = 0;
+    for seed in 1..=30000u64 {
+        let mut m = TermManager::new();
+        let mut rng = Lcg(seed.wrapping_mul(0x9E3779B97F4A7C15) | 1);
+        let t = gen_fuzz_term(&mut m, &mut rng, true, 5);
+        let bottom = m.simplify(t);
+        let s = m.ctx_simplify(bottom);
+        let vars = fuzz_vars(&mut m);
+        // enumerate assignments
+        let mut vals: Vec<(TermId, TermId)> = Vec::new();
+        let mut ok = true;
+        let n = vars.len();
+        let mut idx = [0usize; 4];
+        loop {
+            vals.clear();
+            for (i, (v, dom)) in vars.iter().enumerate() {
+                let _ = i;
+                vals.push((*v, dom[idx[vals.len()]]));
+            }
+            let map: rustc_hash::FxHashMap<TermId, TermId> = vals.iter().copied().collect();
+            let et = m.substitute(t, &map);
+            let es = m.substitute(s, &map);
+            match (eval_closed(&mut m, et), eval_closed(&mut m, es)) {
+                (Some(a), Some(b)) if a != b => {
+                    ok = false;
+                }
+                (None, _) | (_, None) => {}
+                _ => {}
+            }
+            if !ok {
+                failures += 1;
+                if failures <= 5 {
+                    let printer = crate::smtlib::Printer::new(&m);
+                    eprintln!("seed {seed}: BROKEN term = {}", printer.print_term(t));
+                    eprintln!("  simplified = {}", printer.print_term(s));
+                    let bad: Vec<_> = vals
+                        .iter()
+                        .map(|(v, c)| (printer.print_term(*v), printer.print_term(*c)))
+                        .collect();
+                    eprintln!("  assignment = {:?}", bad);
+                }
+                break;
+            }
+            // odometer increment
+            let mut k = n - 1;
+            loop {
+                idx[k] += 1;
+                if idx[k] < vars[k].1.len() {
+                    break;
+                }
+                idx[k] = 0;
+                if k == 0 {
+                    k = usize::MAX; // done
+                    break;
+                }
+                k -= 1;
+            }
+            if k == usize::MAX {
+                break;
+            }
+        }
+    }
+    assert_eq!(failures, 0, "the solve rules broke equivalence");
+}
+
+// ======== guard-equality solve rules (`solve_eqs` family) ========
+//
+// z3 `bool_rewriter`'s ite-eq rule set ported into the simplifier
+// harness (see `eq_ite_rules`): every test below pins a rule (or a bug
+// this port actually had) in isolation.
+
+/// R2 — the then-branch cannot produce `v`: the equality moves down the
+/// chain accumulating `¬c`, and the extracted guard meets the default's
+/// equality inside the SAME conjunction: `(= 5 (ite (= x 5) 3 x))` is
+/// refuted by pure value reasoning (x=5 selects 3; x≠5 selects x≠5).
+#[test]
+fn solve_eq_r2_guard_meets_default_and_refutes() {
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let five = m.mk_int(5);
+    let three = m.mk_int(3);
+    let c = m.mk_eq(five, x);
+    let sel = m.mk_ite(c, three, x);
+    let goal = m.mk_eq(sel, five);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    assert_eq!(
+        out, m.false_id,
+        "the self-referential priority select is unsat and must fold to false"
+    );
+}
+
+/// R2 chains down a nested select: every guard level is extracted and
+/// the default equality refutes the last one.
+#[test]
+fn solve_eq_r2_descends_nested_selects() {
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let three = m.mk_int(3);
+    let five = m.mk_int(5);
+    let seven = m.mk_int(7);
+    let nine = m.mk_int(9);
+    let c_inner = m.mk_eq(five, x);
+    let inner = m.mk_ite(c_inner, nine, x);
+    let c_outer = m.mk_eq(three, x);
+    let sel = m.mk_ite(c_outer, seven, inner);
+    let goal = m.mk_eq(sel, five);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    assert_eq!(
+        out, m.false_id,
+        "all selections refute: 7, 9, and the default x are all ≠ 5 when their guards hold"
+    );
+}
+
+/// R3 — the then-branch EQUALS `v`: `(= 5 (ite (= x 5) 5 7))` connects
+/// to exactly the guard `(= x 5)` (z3's `(or (= e v) c)` with the
+/// constant branch decided).
+#[test]
+fn solve_eq_r3_connects_to_the_guard() {
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let five = m.mk_int(5);
+    let seven = m.mk_int(7);
+    let c = m.mk_eq(five, x);
+    let sel = m.mk_ite(c, five, seven);
+    let goal = m.mk_eq(sel, five);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    assert_eq!(out, c, "(= 5 (ite (= x 5) 5 7)) is exactly (= x 5)");
+}
+
+/// R6's frame carried the wrong else-side in the first port (the t-side
+/// was solved twice and the else-branch silently dropped — `(= 0 (ite c
+/// x (ite p 4 -3)))` under c=false, p=true must NOT fold to `(= 0 x)`).
+/// Pinned as an equivalence at the exposing assignment.
+#[test]
+fn solve_eq_r6_keeps_the_else_side() {
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let y = m.mk_var("y", m.sorts.int_sort);
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let zero = m.mk_int(0);
+    let four = m.mk_int(4);
+    let minus3 = m.mk_int(-3);
+    // c = (<= y x); at y=1, x=0: c is false, so the select takes the
+    // else (ite p 4 -3) = 4 at p=true: (= 0 4) is FALSE — the original
+    // term is (not ... (= 0 sel)) = true there.  A fold to (= 0 x)
+    // gives (not (= 0 0)) = false: the wrong answer.
+    let c = m.mk_le(y, x);
+    let inner = m.mk_ite(p, four, minus3);
+    let sel = m.mk_ite(c, x, inner);
+    let eq = m.mk_eq(zero, sel);
+    let goal = m.mk_not(eq);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+
+    // Evaluate both at (p=true, q=true, x=0, y=1): equal truths.
+    let eval = |tm: &mut TermManager, t: TermId| -> bool {
+        let map: rustc_hash::FxHashMap<TermId, TermId> =
+            [(p, tm.mk_bool(true)), (x, tm.mk_int(0)), (y, tm.mk_int(1))]
+                .into_iter()
+                .collect();
+        let closed = tm.substitute(t, &map);
+        let folded = tm.simplify(closed);
+        matches!(
+            tm.get(folded).map(|d| &d.kind),
+            Some(crate::ast::term::TermKind::True)
+        )
+    };
+    assert_eq!(
+        eval(&mut m, goal),
+        eval(&mut m, out),
+        "R6 must keep the else side"
+    );
+    // And the exposing assignment itself: the original is TRUE there.
+    assert!(eval(&mut m, goal));
+}
+
+/// R7 — every leaf of the ite is a value distinct from `v`: the
+/// equality is false outright.
+#[test]
+fn solve_eq_r7_all_leaves_distinct_refutes() {
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let q = m.mk_var("q", m.sorts.bool_sort);
+    let five = m.mk_int(5);
+    let six = m.mk_int(6);
+    let seven = m.mk_int(7);
+    let eight = m.mk_int(8);
+    let inner = m.mk_ite(q, seven, eight);
+    let sel = m.mk_ite(p, six, inner);
+    let goal = m.mk_eq(sel, five);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    assert_eq!(out, m.false_id, "6, 7, 8 are all ≠ 5");
+}
+
+/// The comparison distribution (z3 `arith_rewriter`'s ite rule): a
+/// numeral branch decides against the bound and the comparison moves
+/// over the guard instead of nesting under it.
+#[test]
+fn cmp_ite_rule_distributes_over_the_guard() {
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let four = m.mk_int(4);
+    let three = m.mk_int(3);
+    let sel = m.mk_ite(p, four, x);
+    let goal = m.mk_le(sel, three);
+    let bottom = m.simplify(goal);
+    // 4 > 3, so the then-path is excluded: (and ¬p (<= x 3)).
+    let np = m.mk_not(p);
+    let rest = m.mk_le(x, three);
+    let expected = m.mk_and([np, rest]);
+    let expected = m.simplify(expected);
+    assert_eq!(
+        bottom, expected,
+        "4 ≤ 3 is false: the guard must be negated"
+    );
+}
+
+/// The pre-existing ctx leak this port exposed (a live false-simplify
+/// on main): `ctx_and`'s unwind restored overwritten entries but never
+/// REMOVED fresh ones, so the Or arm's second disjunct walked under the
+/// first disjunct's interior context — `(or (and p q) p)` became
+/// `true` (with p false the goal is false).
+#[test]
+fn ctx_and_unwind_removes_fresh_entries() {
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let q = m.mk_var("q", m.sorts.bool_sort);
+    let and = m.mk_and([p, q]);
+    let goal = m.mk_or([and, p]);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    // Not a tautology: with p=false the disjunction is false.  The
+    // correct normal form keeps both disjuncts.
+    let inner = m.mk_and([p, q]);
+    let kept = m.mk_or([inner, p]);
+    assert_eq!(
+        out, kept,
+        "a sibling disjunct must not walk under the and's leaked context"
+    );
+}
+
+/// The nec-smt member shape end-to-end: a satisfiable goal whose
+/// select-chain must NOT be folded to `false` (the wrong-`unsat` class
+/// the equivalence fuzzer caught in the first port: z3 answers `sat`
+/// on the corpus member this mirrors).
+#[test]
+fn solve_rules_do_not_refute_satisfiable_selects() {
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.int_sort);
+    let five = m.mk_int(5);
+    // (= 5 (ite (= x 5) 5 x)): x=5 selects 5 — satisfiable, and in
+    // fact equivalent to (= x 5).
+    let c = m.mk_eq(five, x);
+    let sel = m.mk_ite(c, five, x);
+    let goal = m.mk_eq(sel, five);
+    let bottom = m.simplify(goal);
+    let out = m.ctx_simplify(bottom);
+    assert_ne!(out, m.false_id, "the goal is satisfiable at x=5");
+    assert_eq!(out, c, "it is exactly (= x 5)");
+}

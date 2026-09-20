@@ -439,6 +439,35 @@ impl TermManager {
             _ => {}
         }
 
+        // Boolean-equality section (z3 `bool_rewriter::mk_eq_core`):
+        // a constant side absorbs (`(= true p)` → `p`, `(= false p)` →
+        // `¬p`), double negation unfolds on both sides, and a term equal
+        // to its own negation is refuted (`p = ¬p` is false for any
+        // Boolean `p`).  Gated on Boolean-ness by shape: `True`/`False`
+        // and `Not` only ever occur at the Boolean sort.
+        if let Some(TermKind::Not(l_inner)) = lhs_kind.as_ref() {
+            if let Some(TermKind::Not(r_inner)) = rhs_kind.as_ref() {
+                // (not a) = (not b)  ==>  a = b
+                return self.mk_eq(*l_inner, *r_inner);
+            }
+            // p = (not p)  ==>  false
+            if *l_inner == rhs {
+                return self.false_id;
+            }
+        }
+        if let Some(TermKind::Not(r_inner)) = rhs_kind.as_ref()
+            && *r_inner == lhs
+        {
+            return self.false_id;
+        }
+        match (&lhs_kind, &rhs_kind) {
+            (Some(TermKind::True), _) => return rhs,
+            (_, Some(TermKind::True)) => return lhs,
+            (Some(TermKind::False), _) => return self.mk_not(rhs),
+            (_, Some(TermKind::False)) => return self.mk_not(lhs),
+            _ => {}
+        }
+
         // Finite-field equality: numeral comparison folds, and the atom is
         // oriented by term order (cvc5 `postRewriteFfEq`). Handled by its own
         // constructor because field numerals live at a field sort, not a

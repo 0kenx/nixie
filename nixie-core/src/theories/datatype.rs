@@ -1202,17 +1202,13 @@ mod tests {
                 &mut manager,
             )
             .expect("is_mk(mk(x, y)) = true should be buildable");
-        let truth = manager.mk_true();
+        // `is_C(C(…)) = true` now folds at construction — the builder's
+        // Boolean-equality section (z3 `mk_eq_core` parity) rewrites
+        // `(= p true)` to `p` — so the axiom IS the tester application,
+        // equivalent to the equation it spells.
         match manager.get(positive).map(|t| t.kind.clone()) {
-            Some(TermKind::Eq(lhs, rhs)) => {
-                let tester_side = if lhs == truth { rhs } else { lhs };
-                assert!(lhs == truth || rhs == truth, "one side should be true");
-                assert!(matches!(
-                    manager.get(tester_side).map(|t| t.kind.clone()),
-                    Some(TermKind::DtTester { .. })
-                ));
-            }
-            other => panic!("expected an equality, got {other:?}"),
+            Some(TermKind::DtTester { .. }) => {}
+            other => panic!("expected the tester application, got {other:?}"),
         }
 
         let negative = theory
