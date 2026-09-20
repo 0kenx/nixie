@@ -211,3 +211,34 @@ The 18 legacy-scaffolding tests are pinned to the legacy world they
 assert against (`pin_legacy_watch_world` — nextest's per-test process
 isolation makes the env pin sound); the suite is 1116/1116 in both
 worlds.
+
+## Addendum (sixth increment): the surgery port executed — the audit-gated skip works, the economics are negative with the index — landed `3fbefef5` (env-gated, default off)
+
+The production surgery (`NIXIE_SURGERY_PROD=1`): at rebuild time, if the
+window's surgical updates hold the watch contract (audited by one CSR
+sweep — every live long clause exactly two watchers), the surgically-
+updated CSR IS the post-round state and the counting-sort build is
+skipped; a failed audit falls back to the full rebuild.  Validated on
+si2: green rounds skip (@0 and the first @2000), divergent rounds
+self-heal (the mid-search wrong-count clauses are the known duplicate-
+watcher class from the surgery's plain-push adds).
+
+**The measured economics are NEGATIVE as wired**: si2 with the surgery
+76.6G (note: also a moved trajectory — 30,000 vs 25,930 conflicts) vs
+48.6G default.  The surgery's enabler — the position index
+(`NIXIE_CSR_INDEX=1`, a BTreeMap write per watcher-add) — costs ~+24%
+whole-run (the f5796de0 class), far more than the ~2×117 ms of watch
+rebuild the skips save.  **The index is the tax; the surgery does not
+pay it back.**
+
+The next-agent entry point is sharp: an index-free surgery.  The
+span-sortedness datum (1,708/1,716 spans sorted-by-ref at @0) supports
+binary-search removal over sorted spans (O(log span) instead of the
+O(refs × span) per-ref scans or the index's per-push maintenance).
+Alternatively close the item negative: the flip stands on its own
+measured ledger (+5.5% worst class, memory wash, load-path structure),
+and the surgery was its hoped-for payback.
+
+Trap 22: `git stash` on the shared tree grabs other agents' in-flight
+files (caught and popped immediately this session — stage per-file
+instead, the worktree discipline the AGENTS.md prescribes).
