@@ -121,17 +121,14 @@ impl Solver {
             // exchanged, validated by the same drift comparison.  The span
             // is copied out so the kernel's CSR pushes (index upkeep,
             // overflow mirrors) never alias the scanned slice.
+            // THE FLIP: the slack-CSR is the primary on the default path.
+            // The swapped-dual validation mode and the Vec-primary arm run
+            // only under the `NIXIE_CSR_B=0` legacy opt-out, so the hot
+            // path carries none of their branches.
             #[cfg(feature = "std")]
-            let b_mode = MIRROR && crate::watched::csr_b_enabled() && csr.is_some();
+            let csr_arm = crate::watched::csr_b_enabled() && csr.is_some();
             #[cfg(not(feature = "std"))]
-            let b_mode = false;
-            #[cfg(feature = "std")]
-            let swapped = MIRROR && !b_mode && crate::watched::csr_scan_enabled() && csr.is_some();
-            #[cfg(not(feature = "std"))]
-            let swapped = false;
-            // The CSR-primary arms (commit-B and swapped-dual) share the
-            // in-place split scan below.
-            let csr_arm: bool = b_mode || swapped;
+            let csr_arm = false;
             // Unified CSR-primary in-place scan (commit-B and swapped-dual
             // share it): the entries buffer splits around the scanned
             // literal's live span — the cursor scans the span in place
@@ -139,8 +136,8 @@ impl Solver {
             // destination's live end, and the commit publishes the
             // compacted span.  A spilled literal's tail (if any) is
             // scanned second, on its detached Vec.
-            let mut watches = if b_mode {
-                // Commit-B: the CSR is the sole representation; the Vec
+            let mut watches = if csr_arm {
+                // CSR-primary: the CSR is the sole representation; the Vec
                 // side stays dead (its lists empty).
                 Vec::new()
             } else {
@@ -216,10 +213,13 @@ impl Solver {
                     eprintln!("[content] code={} refs={:?}", code, refs);
                 }
             }
-            let mut result = if csr_arm
-                && let Some((span, mut ctx)) = csr.as_mut().map(|c| c.scan_split(code))
-            {
-                let mut vm = if swapped {
+            let mut result = if csr_arm && let Some(c) = csr.as_mut() {
+                let (span, mut ctx) = c.scan_split(code);
+                // Primary mode: no Vec mirror, no Vec destinations — the
+                // dest struct carries CSR only (the swapped-dual shape
+                // survives behind the legacy opt-out for A/B validation).
+                let swapped_dual = crate::watched::csr_scan_enabled();
+                let mut vm = if swapped_dual {
                     Some(crate::watched::VecScanMirror::new(&mut watches))
                 } else {
                     None
@@ -227,7 +227,7 @@ impl Solver {
                 let mut vm_ref = vm.as_mut();
                 let mut dest = list_kernel::CsrPartsDest {
                     ctx: &mut ctx,
-                    vec_dest: if swapped {
+                    vec_dest: if swapped_dual {
                         Some(&mut *destinations)
                     } else {
                         None
@@ -300,21 +300,17 @@ impl Solver {
             self.stats
                 .propagation_work
                 .take_watch_scan(&mut result.work);
-            if swapped {
-                // The mirror's reconstructed list goes home.
+            if !csr_arm {
+                // Legacy Vec world: the scanned list goes home.
                 watches.truncate(result.write);
-                destinations[code] = watches;
-            } else if !b_mode {
-                watches.truncate(result.write);
-                crate::mut_trace!(
-                    code,
-                    "side=vec act=end_scan kept={} path=session_putback",
-                    watches.len()
-                );
                 destinations[code] = watches;
                 if MIRROR && let Some(c) = csr.as_mut() {
                     c.end_scan();
                 }
+            } else if crate::watched::csr_scan_enabled() {
+                // Swapped-dual validation: the mirror's reconstruction.
+                watches.truncate(result.write);
+                destinations[code] = watches;
             } else {
                 crate::mut_trace!(
                     code,

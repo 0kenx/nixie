@@ -74,7 +74,12 @@ impl Trail {
     pub fn new(num_vars: usize) -> Self {
         Self {
             assignments: Vec::with_capacity(num_vars),
-            values: vec![0; num_vars * 2],
+            // +4 bytes of zero padding: the kernel's AVX2 block filter
+            // dword-gathers values[code..code+4) (little-endian low-byte
+            // extract), and the highest literal's gather would read past
+            // the end without it.  Zeros read as "unassigned" — semantically
+            // inert for literals beyond the domain (never queried).
+            values: vec![0; num_vars * 2 + 4],
             var_info: vec![VarInfo::default(); num_vars],
             level_starts: vec![0],
             current_level: 0,
@@ -297,7 +302,7 @@ impl Trail {
     #[inline(never)]
     fn assign_grow(&mut self, idx: usize) {
         self.var_info.resize(idx + 1, VarInfo::default());
-        let need = (idx + 1) * 2;
+        let need = (idx + 1) * 2 + 4; // +4: the AVX2 gather pad (see new())
         if self.values.len() < need {
             self.values.resize(need, 0);
         }
@@ -478,7 +483,7 @@ impl Trail {
 
     /// Resize to support more variables
     pub fn resize(&mut self, num_vars: usize) {
-        let lit_cap = num_vars * 2;
+        let lit_cap = num_vars * 2 + 4; // +4: the AVX2 gather pad (see new())
         if lit_cap > self.values.len() {
             self.values.resize(lit_cap, 0);
         }
@@ -516,7 +521,7 @@ impl Trail {
         let code = lit.code() as usize;
         if idx >= self.var_info.len() {
             self.var_info.resize(idx + 1, VarInfo::default());
-            let need = (idx + 1) * 2;
+            let need = (idx + 1) * 2 + 4; // +4: the AVX2 gather pad
             if self.values.len() < need {
                 self.values.resize(need, 0);
             }

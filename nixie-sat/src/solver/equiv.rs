@@ -773,7 +773,9 @@ impl Solver {
         // identical contents anyway. Clearing in place keeps every list's
         // capacity - same sequential clause-major pattern, zero allocation
         // churn, bit-identical contents (capacity is not semantic).
-        self.watches.reset_lists_in_place(num_vars);
+        if !crate::watched::csr_b_enabled() {
+            self.watches.reset_lists_in_place(num_vars);
+        }
         // Two-phase CSR build (count → layout → fill): the count pass must
         // apply exactly the filters the fill pass applies (nothing mutates
         // the clause database between the two, so the same live set is seen

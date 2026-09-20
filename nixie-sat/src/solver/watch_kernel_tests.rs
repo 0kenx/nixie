@@ -60,6 +60,7 @@ fn saved_position_scan_moves_the_first_non_false_tail_literal() {
 
 #[test]
 fn stale_watcher_does_not_rewrite_clause_literals() {
+    crate::watched::pin_legacy_watch_world();
     for legacy in [false, true] {
         let mut s = Solver::new();
         s.propagate_legacy_oracle = legacy;
@@ -96,6 +97,7 @@ fn stale_watcher_does_not_rewrite_clause_literals() {
 
 #[test]
 fn exhaustive_small_states_preserve_units_moves_conflicts_and_budgets() {
+    crate::watched::pin_legacy_watch_world();
     let mut cases = 0;
     for pattern in 0..81 {
         for reverse in [false, true] {
@@ -145,6 +147,7 @@ fn exhaustive_small_states_preserve_units_moves_conflicts_and_budgets() {
 
 #[test]
 fn resumption_sees_units_and_preserves_the_unvisited_conflict_tail() {
+    crate::watched::pin_legacy_watch_world();
     for hbr in [false, true] {
         let (mut a, ids) = raw_solver(false, false, hbr);
         let (mut b, _) = raw_solver(true, false, hbr);
@@ -180,6 +183,7 @@ fn resumption_sees_units_and_preserves_the_unvisited_conflict_tail() {
 
 #[test]
 fn first_hole_selects_compaction_and_units_preserve_the_phase() {
+    crate::watched::pin_legacy_watch_world();
     for deleted_hole in [false, true] {
         for reverse in [false, true] {
             let mut s = Solver::new();
@@ -253,6 +257,7 @@ fn first_hole_selects_compaction_and_units_preserve_the_phase() {
 
 #[test]
 fn prefix_can_finish_conflict_or_remove_its_last_entry() {
+    crate::watched::pin_legacy_watch_world();
     for final_deleted in [false, true] {
         for conflict in [false, true] {
             let mut s = Solver::new();
@@ -374,6 +379,7 @@ fn assert_state(a: &Solver, b: &Solver) {
 
 #[test]
 fn delayed_moves_cross_units_and_flush_before_next_literal_and_conflict() {
+    crate::watched::pin_legacy_watch_world();
     for conflict in [false, true] {
         for burst in [1, 7, 97] {
             let mut a = Solver::new();
@@ -450,6 +456,7 @@ fn session_gate_excludes_callbacks() {
 #[cfg(all(feature = "std", not(miri)))]
 #[test]
 fn session_solver_moves_between_rayon_owners_after_growth_and_rebuild() {
+    crate::watched::pin_legacy_watch_world();
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(2)
         .build()
@@ -507,6 +514,7 @@ fn pair(
 
 #[test]
 fn rounds_preserve_strengthening_connection_and_budget_exits() {
+    crate::watched::pin_legacy_watch_world();
     // The first dense clause strengthens the second. Its replacement must be
     // connected after the shrink before it can subsume the last clause.
     let clauses = vec![
@@ -557,6 +565,7 @@ fn truth(clauses: &[Vec<i32>], assignment: usize) -> bool {
 
 #[test]
 fn paired_solves_match_truth_models_and_independent_lrat() {
+    crate::watched::pin_legacy_watch_world();
     let mut sat = 0;
     let mut unsat = 0;
     for seed in 0..24u64 {
@@ -623,6 +632,7 @@ fn paired_solves_match_truth_models_and_independent_lrat() {
 
 #[test]
 fn bounded_cursors_match_scalar_for_all_short_truth_patterns() {
+    crate::watched::pin_legacy_watch_world();
     let mut cases = 0;
     for tail_len in 1..=5 {
         for pattern in 0..3usize.pow(tail_len) {

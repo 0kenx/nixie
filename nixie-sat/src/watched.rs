@@ -14,7 +14,12 @@ use smallvec::SmallVec;
 /// A stable identity is fetched from the clause header only for a live reason.
 /// Observers retain an identity word because they classify deleted blocker hits
 /// even after garbage collection has coalesced deleted headers.
+/// `#[repr(C)]` is load-bearing: the AVX2 block filter extracts the
+/// four blocker codes of a 4-watcher block as dwords 1,3,5,7 of one
+/// `vmovdqu` — a field reorder would silently read refs instead (the
+/// randomized differential test catches it as wild codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct Watcher {
     /// The clause being watched
     #[cfg(any(
@@ -365,11 +370,11 @@ pub struct CsrWatchLists {
     /// the slot is that literal's append target until the next layout.
     #[allow(clippy::box_collection)] // Option<Box<Vec>>'s null IS the 8B spill marker
     spill: Vec<Option<Box<Vec<Watcher>>>>,
-    /// Per-literal arrival counts since the last layout (saturating u16):
-    /// the next layout's slack is sized from ACTUAL demand —
-    /// `min(16, 1 + arrivals)` — so a literal that received k pushes last
-    /// interval gets k+1 free appends before spilling.  ~37 MB on the
-    /// 9.4M-variable class; bounded by real push volume, not formula.
+    /// Per-literal spill DEMAND for the next layout's slack sizing
+    /// (saturating u16): at adopt time, each spilled literal's surviving
+    /// tail length raises its slot, and the next layout gives it
+    /// `1 + demand` free appends.  Derived at adopt time only — the hot
+    /// push path pays nothing.  ~37 MB on the 9.4M-variable class.
     arrivals: Vec<u16>,
     /// The active dual-write scan's mirror state (one scan at a time).
     scan: CsrScanFrame,
@@ -394,6 +399,7 @@ impl CsrWatchLists {
 
     /// Combined-view length of `lit`'s list.
     #[must_use]
+    #[inline]
     pub fn len(&self, lit: Lit) -> usize {
         let i = lit.index();
         let span = (self.prim_end.get(i).copied().unwrap_or(0) as usize)
@@ -449,7 +455,6 @@ impl CsrWatchLists {
         let code = lit.index();
         if let Some(tail) = self.spill.get_mut(code).and_then(|s| s.as_mut()) {
             tail.push(w);
-            self.note_arrival(code);
             return;
         }
         let live = self.prim_end.get(code).copied().unwrap_or(0) as usize;
@@ -466,21 +471,12 @@ impl CsrWatchLists {
                 t.push(w);
             }
         }
-        self.note_arrival(code);
         if self.maintain_index {
             let slot = self.positions.entry(w.r.byte_offset()).or_default();
             if !slot.contains(&(code as u32)) {
                 slot.push(code as u32);
             }
         }
-    }
-
-    /// Record one arrival at `code` for the next layout's slack sizing.
-    fn note_arrival(&mut self, code: usize) {
-        if code >= self.arrivals.len() {
-            self.arrivals.resize(code + 1, 0);
-        }
-        self.arrivals[code] = self.arrivals[code].saturating_add(1);
     }
 
     /// Remove every entry with arena ref `r` from `lit`'s list,
@@ -531,13 +527,21 @@ impl CsrWatchLists {
             entries, span_end, ..
         } = build;
         let num_lits = span_end.len();
-        // Adaptive slack: size each literal's slack from the arrivals the
-        // PREVIOUS interval actually saw (capped), so hot literals stop
-        // spilling after one learning round and the modal literal keeps
-        // its single free append.  Literals new to the layout get the
-        // conservative base.
+        // Adaptive slack from OBSERVED SPILL DEMAND: a literal only needs
+        // more than base slack if it actually spilled last interval, and
+        // its surviving tail length is a lower bound on what it needed.
+        // Derived entirely at adopt time (zero per-push cost — the hot
+        // push path never touches the counter), so the sizing sees every
+        // push source, including the session kernel's watch moves.
         if self.arrivals.len() < num_lits {
             self.arrivals.resize(num_lits, 0);
+        }
+        for (code, tail) in self.spill.iter().enumerate() {
+            if let Some(t) = tail.as_ref() {
+                let demand = t.len().min(usize::from(u16::MAX));
+                let slot = &mut self.arrivals[code];
+                *slot = (*slot).max(demand as u16);
+            }
         }
         let mut starts = Vec::with_capacity(num_lits + 1);
         let mut total = 0u32;
@@ -1074,7 +1078,7 @@ impl CsrWatchLists {
     /// Pre-layout (no materialization yet) the split is degenerate —
     /// empty span, pushes land in the spill tails — so the caller never
     /// special-cases.
-    #[allow(clippy::type_complexity)]
+    #[inline]
     pub(crate) fn scan_split(&mut self, code: usize) -> (&mut [Watcher], ScanCtx<'_>) {
         let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
         let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
@@ -1178,27 +1182,52 @@ impl ScanCtx<'_> {
     /// Append `w` to `key`'s list in arrival order (slack append while
     /// room remains and the literal has not spilled; the sticky spill
     /// tail once it has).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn push_entry(&mut self, key: Lit, w: Watcher) {
+        let k = key.index();
+        // Hot path (the whole reason this is inline): no spill slot and
+        // slack available — one bounds test, one write, one bump.  The
+        // out-of-line form (a call per watch move, ~1.4% of the run)
+        // measured before this split.
+        let live = self.prim_end.get(k).copied().unwrap_or(0) as usize;
+        let cap = self.cap_of(k);
+        let no_spill = self.spill.get(k).is_none_or(|s| s.is_none());
+        if no_spill && !self.maintain_index && k < self.prim_end.len() && live < cap {
+            self.write_abs(live, w);
+            self.prim_end[k] = (live + 1) as u32;
+            return;
+        }
+        self.push_entry_cold(key, w);
+    }
+
+    /// The spilled / layout-miss / spill-creation paths — cold by
+    /// construction (a literal reaches here only after its slack filled).
+    #[cold]
+    #[inline(never)]
+    fn push_entry_cold(&mut self, key: Lit, w: Watcher) {
         let k = key.index();
         if let Some(tail) = self.spill.get_mut(k).and_then(|s| s.as_mut()) {
             tail.push(w);
+            self.index_note(k, w);
             return;
         }
-        {
-            let live = self.end_of(k);
-            let cap = self.cap_of(k);
-            if k < self.prim_end.len() && live < cap {
-                self.write_abs(live, w);
-                self.prim_end[k] = (live + 1) as u32;
-            } else {
-                if k >= self.spill.len() {
-                    self.spill.resize(k + 1, None);
-                }
-                let slot = self.spill[k].get_or_insert_with(Box::default);
-                slot.push(w);
+        let live = self.end_of(k);
+        let cap = self.cap_of(k);
+        if k < self.prim_end.len() && live < cap {
+            self.write_abs(live, w);
+            self.prim_end[k] = (live + 1) as u32;
+        } else {
+            if k >= self.spill.len() {
+                self.spill.resize(k + 1, None);
             }
+            let slot = self.spill[k].get_or_insert_with(Box::default);
+            slot.push(w);
         }
+        self.index_note(k, w);
+    }
+
+    /// Position-index note for an append under `k` (surgery machinery).
+    fn index_note(&mut self, k: usize, w: Watcher) {
         if self.maintain_index {
             let slot = self.positions.entry(w.r.byte_offset()).or_default();
             if !slot.contains(&(k as u32)) {
@@ -1335,7 +1364,14 @@ impl WatchLists {
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
         Self {
-            watches: vec![Vec::new(); num_vars * 2],
+            // The flip: the Vec side is dead in CSR-primary mode — its
+            // 2·num_vars headers (~450 MB on the 9.4M-var class) are not
+            // allocated at all.
+            watches: if csr_b_enabled() {
+                Vec::new()
+            } else {
+                vec![Vec::new(); num_vars * 2]
+            },
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
             // The CSR shadow is a diagnostic/experimental mirror, documented
@@ -1929,7 +1965,7 @@ impl WatchLists {
     /// Resize to support more variables
     pub fn resize(&mut self, num_vars: usize) {
         let new_size = num_vars * 2;
-        if new_size > self.watches.len() {
+        if !csr_b_enabled() && new_size > self.watches.len() {
             self.watches.resize(new_size, Vec::new());
         }
         if new_size > self.bin_phantom.len() {
@@ -2273,6 +2309,7 @@ mod tests {
 
     #[test]
     fn test_watch_lists() {
+        crate::watched::pin_legacy_watch_world();
         let mut wl = WatchLists::new(5);
 
         let lit = Lit::pos(Var::new(0));
@@ -2402,13 +2439,30 @@ pub fn csr_b_enabled() -> bool {
     {
         use std::sync::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
+        // THE FLIP (2026-09-20): the slack-CSR is the primary watch
+        // representation on the default path.  `NIXIE_CSR_B=0` restores
+        // the legacy `Vec<Vec<Watcher>>` world (the A/B measurement
+        // escape hatch; the Vec side is scheduled for deletion).
         *FLAG.get_or_init(|| {
-            std::env::var("NIXIE_CSR_B").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            !std::env::var("NIXIE_CSR_B").is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
         })
     }
     #[cfg(not(feature = "std"))]
     {
-        false
+        true
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn pin_legacy_watch_world() {
+    // The legacy `Vec<Vec<Watcher>>` world this test asserts against is
+    // now the `NIXIE_CSR_B=0` opt-out (the slack-CSR is the default).
+    // nextest isolates each test in its own process, so setting the env
+    // here pins the world before the first `csr_b_enabled()` read —
+    // single-threaded test main, nothing observes the race window.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("NIXIE_CSR_B", "0");
     }
 }
 
@@ -2468,6 +2522,7 @@ mod csr_tests {
 
     #[test]
     fn csr_shadow_compare_detects_divergence() {
+        crate::watched::pin_legacy_watch_world();
         use super::*;
         let mut wl = WatchLists::new(2);
         let w = Watcher::new(ClauseId::new(7), ClauseRef::NULL, Lit::neg(Var::new(1)));
@@ -2734,6 +2789,7 @@ mod csr_tests {
     /// detected (the diagnostic must never silently pass).
     #[test]
     fn watch_lists_dual_write_drifted_compare_round_trip() {
+        crate::watched::pin_legacy_watch_world();
         use super::*;
         let v = |n: usize| Var::new(n as u32);
         let l0 = Lit::pos(v(0));
