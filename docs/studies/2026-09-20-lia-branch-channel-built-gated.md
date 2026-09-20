@@ -1,4 +1,15 @@
-# The LIA branch channel: built, measured, gated off — the per-LP churn is the binding constraint
+# The LIA branch channel: built, measured — and handed to the arithmetic arc (item 96)
+
+> **COORDINATION NOTE (landing time):** the arithmetic arc's item 96 is
+> implementing the same channel in-flight in the primary tree
+> (`LiaBranchRequest` / `take_lia_branch_requests`, mint-at-solver-layer,
+> one atom per final check — z3's `FC_CONTINUE` shape; their dose-response
+> on the ray family: zero recovery at 65 536 depth / 300 000 nodes).
+> Two implementations of one feature is a semantic mess; theirs owns the
+> territory.  **This session's code is REVERTED in favor of theirs**; what
+> lands here is the independent confirmation and the measurements their
+> landing will want: the default-off bit-identity bar, the armed
+> trajectory findings, and the per-LP-churn gating analysis.
 
 **Date:** 2026-09-20 (the "close the gaps for real" session).
 **Landed:** the complete CDCL-visible branch channel, **default off**
@@ -64,3 +75,32 @@ measured solve for unmeasured theory.
 - `problem__022` at 60 s: emission fires, no round-trip completes.
 - The wide-literal bnb pins PASS armed (the channel solves that instance
   through split rounds — noted as the one observed armed-path solve).
+
+
+## The hand-off to item 96 (what their implementation should take from this session)
+
+1. **The default-off bar**: a trajectory-inert gate is provable — armed
+   vs snapshot gave 31/32 LIA cells bit-identical (conflicts equal), and
+   default-off gave 32/32.  Use that check as the landing evidence shape.
+2. **The v20 budget trade**: an armed internal-budget cut REGRESSES
+   `v20_problem__019` (`sat` → timeout) — its solve needs more internal
+   pivots than any small cap, and split round-trips cost more than the
+   internal search they replace.  A pivot-denominated budget (not nodes)
+   is the dimension that adapts to LP hardness; cap only when a split is
+   actually publishable (the Underivable/free-vars paths must keep the
+   historical budget).
+3. **The per-LP churn gates the channel on the CAV family**: ~2 s per
+   post-cut degenerate re-feasibilization is spent inside every theory
+   check BEFORE any round-trip completes (measured: emission fires, no
+   round-trip in 60 s; ~8 bnb nodes in 15 s).  The channel fixes the
+   tree, not the per-LP cost — expect the CAV family to need the
+   fraction-free rows layer first; the ray family (item 96's own) may
+   pay immediately.
+4. **The integral dive runs before the first node is counted** — any
+   budget on the internal search must bound it explicitly (it costs a
+   full LP re-feasibilization per level).
+5. **The `Conflict`-channel alternative exists and is trail-safe**:
+   `analyze_theory_asserting_lemma` handles clauses with unassigned
+   literals (built for MBQI) — a split can be returned as an asserting
+   lemma instead of a reset-restart, if their mint-at-solver-layer shape
+   wants it.

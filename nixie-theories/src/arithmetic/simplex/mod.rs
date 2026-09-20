@@ -1154,10 +1154,6 @@ pub struct Simplex {
     /// Pivoting rule to use
     /// Maximum number of pivot operations before giving up
     max_pivots: usize,
-    /// Total pivots performed by THIS instance (the branch channel's
-    /// pivot-denominated budget: per-instance, unlike the diag module's
-    /// process-global counters which cross-contaminate parallel tests).
-    pivots_total: u64,
     /// SOI feasibility driver enabled (see `SimplexConfig::enable_soi`).
     soi_enabled: bool,
     /// Set to `true` when the most recent `check()`/`dual_simplex()` aborted
@@ -1224,7 +1220,6 @@ impl Simplex {
             trail: Vec::new(),
             trail_limits: vec![0],
             max_pivots: config.max_pivots,
-            pivots_total: 0,
             // Experiment knob (NIXIE_ARITH_SOI=1) mirroring the
             // NIXIE_SAT_VMTF_FOCUS precedent: lets the A/B measurement run
             // without CLI plumbing while the flag default stays off.
@@ -6725,10 +6720,6 @@ impl Simplex {
     #[inline]
     pub(super) fn max_pivots(&self) -> usize {
         self.max_pivots
-    }
-    /// Total pivots this instance has performed (monotone).
-    pub(super) fn pivots_total(&self) -> u64 {
-        self.pivots_total
     }
 }
 pub use super::simplex_opt::SimplexOptStatus;

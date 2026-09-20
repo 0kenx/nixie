@@ -197,8 +197,6 @@ impl super::Solver {
             arith: _,           // SCOPED: reset by `rebase_theory_state`
             bv: _,              // SCOPED: reset by `rebase_theory_state`
             debug_tag: _,       // debug only: never read on a semantic path
-            lia_branch_rounds: _, // per-check bookkeeping (check_core resets)
-            emitted_lia_branches: _, // per-check dedup (check_core clears)
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.

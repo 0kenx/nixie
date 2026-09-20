@@ -1769,14 +1769,6 @@ impl<'a> TheoryManager<'a> {
         core::mem::take(&mut self.colocated_split_pairs)
     }
 
-    /// The LIA branch channel's pending split request (see
-    /// [`ArithSolver::take_pending_branch`]): `(term, k)` when the last
-    /// arithmetic check declined at a fractional point with the channel
-    /// armed.
-    pub fn take_arith_branch_split(&mut self) -> Option<(TermId, i64)> {
-        self.arith.take_pending_branch()
-    }
-
     pub fn take_arrangement_splits(&mut self) -> Vec<(TermId, TermId)> {
         core::mem::take(&mut self.arrangement_splits)
     }
