@@ -27,7 +27,7 @@ impl Solver {
         let values = session.values;
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
-        let (destinations, phantom, ghost_debt, csr, scratch) = self.watches.propagation_parts();
+        let (destinations, phantom, ghost_debt, csr) = self.watches.propagation_parts();
         let stable_mode = self.stable;
         let graph = &self.binary_graph;
         let ticks = if self.stable {
@@ -129,58 +129,46 @@ impl Solver {
             let swapped = MIRROR && !b_mode && crate::watched::csr_scan_enabled() && csr.is_some();
             #[cfg(not(feature = "std"))]
             let swapped = false;
-            // Commit-B (`NIXIE_CSR_B=1`): the CSR's span+overflow ARE the
-            // scan target — take semantics (the span's live end drops to
-            // its start and the overflow leaves the CSR), so mid-scan
-            // self-dedups read an empty combined view exactly as the old
-            // taken-Vec slot did.  Pushes/dedups target the CSR directly
-            // (the kernel's const-B instantiation); the Vec side is dead.
-            // Commit-B scan scratch: reused across scans (clear + copy —
-            // the lists average ~3 entries, so the copy is L1 traffic and
-            // the per-scan `Vec::with_capacity` it replaces was the
-            // dominant commit-B cost).
-            // Empty-overflow fast path (the common inter-rebuild state):
-            // no take, no second pass — mid-scan self-pushes accumulate in
-            // the live slot (visible to later dedups, exactly as the
-            // taken-`Vec` slot was) and the arm truncates them at scan end,
-            // reproducing the put-back-overwrite semantics without the
-            // take/pass/put machinery.
-            #[allow(clippy::type_complexity)]
-            let b_prepared: Option<(usize, &mut Vec<Watcher>, Option<Vec<Watcher>>)> =
-                if b_mode && let Some(c) = csr.as_mut() {
-                    let (start, span, ovf_slot) = c.scan_parts(code);
-                    let ovf = if ovf_slot.is_empty() {
-                        None
-                    } else {
-                        Some(core::mem::take(ovf_slot))
-                    };
-                    scratch.clear();
-                    scratch.extend_from_slice(span);
-                    Some((start, &mut *scratch, ovf))
-                } else {
-                    None
-                };
+            // The CSR-primary arms (commit-B and swapped-dual) share the
+            // in-place split scan below.
+            let csr_arm: bool = b_mode || swapped;
+            // Unified CSR-primary in-place scan (commit-B and swapped-dual
+            // share it): the entries buffer splits around the scanned
+            // literal's live span — the cursor scans the span in place
+            // (no copy), pushes append into the head/tail halves at their
+            // destination's live end, and the commit publishes the
+            // compacted span.  A spilled literal's tail (if any) is
+            // scanned second, on its detached Vec.
             let mut watches = if b_mode {
+                // Commit-B: the CSR is the sole representation; the Vec
+                // side stays dead (its lists empty).
                 Vec::new()
             } else {
                 core::mem::take(&mut destinations[code])
             };
-            let watches_len = if let Some((_, span_copy, ovf)) = b_prepared.as_ref() {
-                span_copy.len() + ovf.as_ref().map_or(0, Vec::len)
+            // The pre-scan combined length — computed BEFORE the spill
+            // tail detaches (the charge drives restart/stable schedules;
+            // an undercount here diverges the whole trajectory).
+            let watches_len = if csr_arm {
+                csr.as_ref()
+                    .map_or(0, |c| c.len(Lit::from_code(code as u32)))
             } else {
                 watches.len()
+            };
+            let mut fbv = if csr_arm {
+                csr.as_mut().and_then(|c| c.take_fallback(code))
+            } else {
+                None
             };
             crate::mut_trace!(
                 code,
                 "side=vec act=begin_scan len={} path=session_take",
                 watches_len
             );
-            // Dual-write BCP scan (CSR slice 2): snapshot the primary/
-            // overflow split before the list is scanned; the per-entry
-            // notifications below mirror keep/remove/move into the CSR.
+            // Dual-write BCP scan (CSR slice 2): the Vec-primary mirror
+            // path snapshots the split before the list is scanned.
             if MIRROR
-                && !swapped
-                && !b_mode
+                && !csr_arm
                 && let Some(c) = csr.as_mut()
             {
                 c.begin_scan(code, watches.len());
@@ -204,19 +192,19 @@ impl Solver {
             if crate::watched::csr_charge_trace_enabled() {
                 eprintln!(
                     "[charge] c={} stable={} len={} bins={} ghosts={} code={}",
-                    charge,
-                    stable_mode,
-                    watches.len(),
-                    bins,
-                    ghosts,
-                    code
+                    charge, stable_mode, watches_len, bins, ghosts, code
                 );
                 if let Ok(t) = std::env::var("NIXIE_CSR_CONTENT_TRACE")
                     && t == code.to_string()
                 {
-                    let refs: Vec<String> = if let Some((_, sc, ov)) = b_prepared.as_ref() {
-                        sc.iter()
-                            .chain(ov.as_deref().unwrap_or(&[]))
+                    let refs: Vec<String> = if csr_arm {
+                        let (p, x) = csr
+                            .as_ref()
+                            .map_or((&[] as &[Watcher], &[] as &[Watcher]), |c| {
+                                c.spans(Lit::from_code(code as u32))
+                            });
+                        p.iter()
+                            .chain(x.iter())
                             .map(|w| format!("{}:{}", w.r.byte_offset(), w.blocker.code()))
                             .collect()
                     } else {
@@ -228,72 +216,57 @@ impl Solver {
                     eprintln!("[content] code={} refs={:?}", code, refs);
                 }
             }
-            // Swapped-state preparation (fallible, unwrap-free): copy the
-            // span out and take the overflow so the kernel's CSR access
-            // never aliases the scanned segments.
-            let swapped_prepared: Option<(usize, Vec<Watcher>, Vec<Watcher>)> = if swapped {
-                csr.as_mut().map(|c| {
-                    let (start, span, ovf_slot) = c.scan_parts(code);
-                    (start, span.to_vec(), std::mem::take(ovf_slot))
-                })
-            } else {
-                None
-            };
-            #[allow(unused_mut)]
-            let mut result = if let Some((span_start, span_copy, ovf)) = b_prepared {
-                // Commit-B arm: the CSR is the sole representation — no
-                // Vec mirror, pushes/dedups land in the CSR (the kernel's
-                // const-B instantiation), and the kept prefixes (unvisited
-                // tails on conflict included) are written back structurally.
-                let r1 = list_kernel::scan_list::<false, true>(
-                    &mut span_copy[..],
+            let mut result = if csr_arm
+                && let Some((span, mut ctx)) = csr.as_mut().map(|c| c.scan_split(code))
+            {
+                let mut vm = if swapped {
+                    Some(crate::watched::VecScanMirror::new(&mut watches))
+                } else {
+                    None
+                };
+                let mut vm_ref = vm.as_mut();
+                let mut dest = list_kernel::CsrPartsDest {
+                    ctx: &mut ctx,
+                    vec_dest: if swapped {
+                        Some(&mut *destinations)
+                    } else {
+                        None
+                    },
+                };
+                let r1 = list_kernel::scan_list(
+                    span,
                     !lit,
                     values,
                     &mut queue,
                     arena.reborrow(),
-                    destinations,
-                    csr,
-                    None,
-                    None,
+                    &mut dest,
+                    vm_ref.as_deref_mut(),
                 );
-                if let Some(c) = csr.as_mut() {
-                    c.write_back_span(code, span_start, &span_copy[..r1.write]);
-                    c.commit_span_end(code, r1.write);
-                }
                 let mut r2 = list_kernel::ScanResult::default();
-                match ovf {
-                    None => {
-                        // Fast path: drop the mid-scan self-pushes (the
-                        // put-back-overwrite) — pass 2 has no list.
-                        if let Some(c) = csr.as_mut() {
-                            c.truncate_overflow(code, 0);
-                        }
+                if r1.conflict.is_null() {
+                    if let Some(v) = fbv.as_deref_mut() {
+                        r2 = list_kernel::scan_list(
+                            v,
+                            !lit,
+                            values,
+                            &mut queue,
+                            arena.reborrow(),
+                            &mut dest,
+                            vm_ref,
+                        );
+                        v.truncate(r2.write);
                     }
-                    Some(mut ovf) => {
-                        let ovf_write = if r1.conflict.is_null() {
-                            r2 = list_kernel::scan_list::<false, true>(
-                                &mut ovf,
-                                !lit,
-                                values,
-                                &mut queue,
-                                arena.reborrow(),
-                                destinations,
-                                csr,
-                                None,
-                                None,
-                            );
-                            r2.write
-                        } else {
-                            // Conflict in the span pass: the overflow was
-                            // never visited — it returns UNTRUNCATED (the
-                            // unvisited tail), exactly as the Vec side's
-                            // finish() did.
-                            ovf.len()
-                        };
-                        if let Some(c) = csr.as_mut() {
-                            c.put_back_overflow(code, ovf, ovf_write);
-                        }
+                    if let Some(v) = fbv.take() {
+                        dest.ctx.put_fallback(v);
                     }
+                } else if let Some(fb) = fbv.take() {
+                    // Conflict in the span pass: the spill tail was never
+                    // visited — it returns UNTRUNCATED.
+                    dest.ctx.put_fallback(fb);
+                }
+                dest.ctx.commit(r1.write);
+                if let Some(vm) = vm {
+                    vm.finish();
                 }
                 let mut merged = r1;
                 if merged.conflict.is_null() {
@@ -305,72 +278,21 @@ impl Solver {
                 }
                 merged.write = watches_len;
                 merged
-            } else if let Some((span_start, mut span_copy, mut ovf)) = swapped_prepared {
-                let mut vm = crate::watched::VecScanMirror::new(&mut watches);
-                let r1 = list_kernel::scan_list::<false, false>(
-                    &mut span_copy,
-                    !lit,
-                    values,
-                    &mut queue,
-                    arena.reborrow(),
-                    destinations,
-                    csr,
-                    Some(&mut vm),
-                    Some(code),
-                );
-                // Copy the compacted span home and commit its live end.
-                if let Some(c) = csr.as_mut() {
-                    c.write_back_span(code, span_start, &span_copy[..r1.write]);
-                    c.commit_span_end(code, r1.write);
-                }
-                let mut r2 = list_kernel::ScanResult::default();
-                let ovf_write = if r1.conflict.is_null() {
-                    r2 = list_kernel::scan_list::<false, false>(
-                        &mut ovf,
-                        !lit,
-                        values,
-                        &mut queue,
-                        arena.reborrow(),
-                        destinations,
-                        csr,
-                        Some(&mut vm),
-                        Some(code),
-                    );
-                    r2.write
-                } else {
-                    // Conflict in the span pass: the overflow was never
-                    // visited — it returns UNTRUNCATED (the unvisited
-                    // tail), exactly as the Vec side does via the mirror.
-                    ovf.len()
-                };
-                if let Some(c) = csr.as_mut() {
-                    c.put_back_overflow(code, ovf, ovf_write);
-                }
-                vm.finish();
-                let mut merged = r1;
-                if merged.conflict.is_null() {
-                    merged.conflict = r2.conflict;
-                    // Both passes' work counters accumulate (the old
-                    // single-pass scan would have counted them together).
-                    #[cfg(feature = "bcp-work")]
-                    {
-                        merged.work.take_watch_scan(&mut r2.work);
-                    }
-                }
-                merged.write = watches.len();
-                merged
             } else if watches.is_empty() {
                 list_kernel::ScanResult::default()
             } else {
-                list_kernel::scan_list::<MIRROR, false>(
+                let mut dest = list_kernel::VecDest::<MIRROR> {
+                    destinations: &mut *destinations,
+                    csr: &mut *csr,
+                    swapped: false,
+                };
+                list_kernel::scan_list(
                     &mut watches,
                     !lit,
                     values,
                     &mut queue,
                     arena.reborrow(),
-                    destinations,
-                    csr,
-                    None,
+                    &mut dest,
                     None,
                 )
             };
@@ -378,13 +300,11 @@ impl Solver {
             self.stats
                 .propagation_work
                 .take_watch_scan(&mut result.work);
-            if b_mode {
-                crate::mut_trace!(
-                    code,
-                    "side=vec act=end_scan kept={} path=session_putback",
-                    result.write
-                );
-            } else {
+            if swapped {
+                // The mirror's reconstructed list goes home.
+                watches.truncate(result.write);
+                destinations[code] = watches;
+            } else if !b_mode {
                 watches.truncate(result.write);
                 crate::mut_trace!(
                     code,
@@ -392,12 +312,15 @@ impl Solver {
                     watches.len()
                 );
                 destinations[code] = watches;
-                if MIRROR
-                    && !swapped
-                    && let Some(c) = csr.as_mut()
-                {
+                if MIRROR && let Some(c) = csr.as_mut() {
                     c.end_scan();
                 }
+            } else {
+                crate::mut_trace!(
+                    code,
+                    "side=vec act=end_scan kept={} path=session_putback",
+                    result.write
+                );
             }
             if !result.conflict.is_null() {
                 #[cfg(feature = "std")]

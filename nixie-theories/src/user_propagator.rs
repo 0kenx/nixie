@@ -86,9 +86,9 @@ pub struct PropagatorContext<'a> {
     /// Undo journal for the consequence queue (see [`UserPropagatorManager`]).
     journal: &'a mut Vec<ConsequenceOp>,
     /// Fixed terms
-    fixed_terms: &'a HashMap<TermId, TermId>,
+    fixed_terms: &'a FxHashMap<TermId, TermId>,
     /// Equalities
-    equalities: &'a HashSet<(TermId, TermId)>,
+    equalities: &'a FxHashSet<(TermId, TermId)>,
 }
 
 impl<'a> PropagatorContext<'a> {
@@ -96,8 +96,8 @@ impl<'a> PropagatorContext<'a> {
     pub(crate) fn new(
         consequences: &'a mut VecDeque<Consequence>,
         journal: &'a mut Vec<ConsequenceOp>,
-        fixed_terms: &'a HashMap<TermId, TermId>,
-        equalities: &'a HashSet<(TermId, TermId)>,
+        fixed_terms: &'a FxHashMap<TermId, TermId>,
+        equalities: &'a FxHashSet<(TermId, TermId)>,
     ) -> Self {
         Self {
             consequences,
@@ -225,14 +225,16 @@ impl UserPropagatorStats {
 pub struct UserPropagatorManager {
     /// Registered propagators
     propagators: Vec<Box<dyn UserPropagator>>,
-    /// Fixed terms (term -> value)
-    fixed_terms: HashMap<TermId, TermId>,
+    /// Fixed terms (term -> value). FxHash, not std SipHash: every watched
+    /// atom of every search event is looked up here, and the SipHash rounds
+    /// measured at ~12 % of a graph-corpus solve.
+    fixed_terms: FxHashMap<TermId, TermId>,
     /// Known equalities
-    equalities: HashSet<(TermId, TermId)>,
+    equalities: FxHashSet<(TermId, TermId)>,
     /// Pending consequences
     consequences: VecDeque<Consequence>,
     /// Watched terms
-    watched_terms: HashSet<TermId>,
+    watched_terms: FxHashSet<TermId>,
     /// Statistics
     stats: UserPropagatorStats,
     /// Context stack for push/pop: exact undo journals. Each observable
@@ -278,10 +280,10 @@ impl UserPropagatorManager {
     pub fn new() -> Self {
         Self {
             propagators: Vec::new(),
-            fixed_terms: HashMap::new(),
-            equalities: HashSet::new(),
+            fixed_terms: FxHashMap::default(),
+            equalities: FxHashSet::default(),
             consequences: VecDeque::new(),
-            watched_terms: HashSet::new(),
+            watched_terms: FxHashSet::default(),
             stats: UserPropagatorStats::default(),
             context_stack: Vec::new(),
             fixed_journal: Vec::new(),

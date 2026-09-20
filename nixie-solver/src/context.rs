@@ -1399,6 +1399,14 @@ impl Context {
             );
             let output_len_before = output.len();
             match cmd {
+                Command::Unsupported(name) => {
+                    // SMT-LIB's observability contract (z3's exact
+                    // behavior): an unrecognized command is *answered*,
+                    // not silently swallowed — a script whose only
+                    // `(check-sat)` sat inside a stray form used to
+                    // execute nothing and exit 0 with no output at all.
+                    output.push(format!("unsupported (command {name})"));
+                }
                 Command::SetLogic(logic) => {
                     self.set_logic(&logic)?;
                 }

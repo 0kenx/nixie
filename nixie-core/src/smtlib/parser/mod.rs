@@ -70,6 +70,14 @@ pub struct RecFunDecl {
 /// SMT-LIB2 command
 #[derive(Debug, Clone)]
 pub enum Command {
+    /// An unrecognized top-level command.  SMT-LIB consumers print
+    /// `unsupported` for these (z3's observable behavior); nixie used to
+    /// skip them silently — a script whose `(check-sat)` nested inside a
+    /// stray `(let …)` form (a command in term position, an easy authoring
+    /// mistake) then executed NOTHING and exited 0 with no output at all,
+    /// which is indistinguishable from success-with-no-queries.  The
+    /// variant carries the command's name for diagnostics.
+    Unsupported(String),
     /// Set logic
     SetLogic(String),
     /// Set option
@@ -885,11 +893,20 @@ mod tests {
             (check-sat)
         "#;
 
-        // Unknown commands should be silently skipped
+        // Unknown commands are skipped-and-CONTINUED, but observably:
+        // they parse as `Command::Unsupported` so the consumer can answer
+        // them per SMT-LIB (`unsupported`, z3's observable behavior)
+        // instead of the historical silent swallow — a script whose only
+        // `(check-sat)` sat inside a stray form used to execute nothing
+        // and exit 0 with no output at all.
         let commands =
-            parse_script(script, &mut manager).expect("should skip unknown commands and continue");
-        // set-logic, declare-const, assert, check-sat (unknown-command is skipped)
-        assert_eq!(commands.len(), 4);
+            parse_script(script, &mut manager).expect("should continue past unknown commands");
+        // set-logic, declare-const, assert, unsupported, check-sat
+        assert_eq!(commands.len(), 5);
+        assert!(matches!(
+            commands[3],
+            Command::Unsupported(ref name) if name == "unknown-command"
+        ));
     }
 
     #[test]

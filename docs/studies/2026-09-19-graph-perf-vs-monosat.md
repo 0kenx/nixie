@@ -184,3 +184,41 @@ remaining gap is the SMT assertion pipeline itself, shared by all theories.
 Fresh corpus re-run on the final build: geomean ratio **2.67×**
 (monosat 0.0150 s vs nixie 0.0400 s), matching the recorded result —
 measurement reproducible end-to-end after the MonoSAT rebuild.
+
+## Addendum (2026-09-20, evening): the "term-management" gap decomposed — two shared-path fixes, gap 2.67× → 2.33×
+
+Challenged the closing attribution above with allocation-level measurement
+(an `LD_PRELOAD` counter plus a phase-sentinel, ~zero overhead) instead of
+perf alone. The "~40 % allocator/libc" blob decomposed into two *specific*
+shared-path defects — neither of them term management:
+
+1. **SipHash in the propagator-manager maps** (~12 % of a corpus solve).
+   `UserPropagatorManager`'s `fixed_terms`/`equalities`/`watched_terms` were
+   plain `std::collections` maps — SipHash with a random seed — while every
+   other hot map in the codebase is Fx. Every watched atom of every event is
+   looked up there (`run_graph` reads all edge values per event: 6 k edges ×
+   3.3 k events ≈ 20 M SipHashed lookups on one corpus instance). Switched
+   to `FxHashMap`/`FxHashSet`. Nothing iterates these maps for output, so
+   results are unchanged.
+2. **`std::env::var` per assertion** (~11 %). The BV routing gates
+   (`bv_unify_enabled`, `bv_dispatch_unified`, `bv_defer_blast_enabled`,
+   `freeze_collapse_enabled`) re-read the environment on every call — and
+   `getenv` is a linear scan over `environ` (visible as `__strncmp_avx2`).
+   Consulted per assertion/registration/check. Memoized in `OnceLock`s;
+   environment variables cannot meaningfully change mid-process.
+
+Also fixed benchmarking parity: the `graph_gnf` example now installs
+**mimalloc** exactly like the production CLI (before, it benchmarked glibc
+malloc; measured here as ≈neutral on this workload, but parity is owed).
+
+Measured (glibc→glibc, identical binaries otherwise): worst instance
+2.66 s → 1.88 s; `v100_r32_s3` 0.94 s → 0.42 s. Corpus: geomean ratio
+**2.67× → 2.33×**, totals 10.99 s → 8.05 s, worst per-instance 39× → 18×.
+The allocation storm itself (696 k mallocs / 212 MB realloc traffic on one
+instance) dropped accordingly; the remainder is genuine interning + Tseitin
+work.
+
+Verification: conflicts/decisions/propagations **bit-identical on 40/40
+corpus instances** (old vs new binaries); full workspace suite 12 070/12 070;
+Z3 4.16.0 parity 176/176 decisive, 0 disagreements; perf gate **1.000**
+against the current pin; graph differential 500/500; clippy/fmt clean.

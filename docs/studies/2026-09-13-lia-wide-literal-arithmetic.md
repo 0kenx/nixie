@@ -2984,3 +2984,91 @@ corpus run, a differential, or a user can actually hear.
     * Doc-gate note: `cargo doc -D warnings` fails on nixie-core's
     `simplify.rs` link errors — a parallel session's in-flight landing,
     untouched by this change.
+
+## Continuation 52 (2026-09-20): item 96 — the A2 budget slice executed and closed as a NEGATIVE result: the class is the branch-walk ray, not a budget; fi1 recovered by the stack; the strict-stranding reproducer landed
+
+Executed the items-86-95 handoff's open list against the current tree
+(binary `precompile/f6daed038/nixie`, z3 4.16.0; the tree adds only the
+SAT CSR slice-6 landing over `6b581764`).
+
+96. **The re-attribution (probe tags rebuilt per the item-67 recipe —
+    `NIXIE_GAP_PROBE=1` statement-position tags, auto-tagged `fn:line`
+    plus the hand-placed A2 vocabulary `lia:bnb-depth-budget` /
+    `lia:bnb-node-budget` / `lia:dive-leafbudget` / `lia:inteq-*`) on
+    the fixed seeds: 76 members (vs 78 at `6b581764`: 2 recovered, 0
+    lost — the SAT-side landing was a strict improvement), every one
+    honest `unknown`.  The map:**
+    * **51 = J5** (`slv:check_with_arith_refinement` big-const certify
+      gate; NO theory decline tags — candidates genuinely bad);
+    * **24 = the depth ray** (`lia:bnb-depth-budget` → sticky
+      resource-exhausted → `slv:check_core_solving:L3339`; 20 with
+      `inteq-incumbent-fail`, 4 with `inteq-giveup`);
+    * 1 = a simplex resource-limit decline.
+    ZERO node-budget, dive-leafbudget, or cut-rounds members — the
+    handoff's "node/depth budgets" class is ENTIRELY depth.
+    * **The 8 reshuffled members (open item 2) identified by re-running
+    the survey at `precompile/01fc31a0/nixie` (the pre-item-95 73) and
+    diffing: 6 are the depth ray, 2 are J5.**  They fold into the same
+    map; the stale point's lost "guidance" is the ray class exactly.
+* **The dose-response that killed the budget idea** (probe-only env
+  knobs `NIXIE_PROBE_MAX_DEPTH`/`NIXIE_PROBE_MAX_NODES`, never landed;
+  pre-registered falsification: "the budget is the binding constraint"):
+  * depth 16 384: 24/24 still `unknown`, STILL depth-tagged — the trees
+    are deeper than 16k;
+  * depth 65 536 (nodes 20k): 24/24 `unknown`, the tag flips to
+    **node-budget** — the signature of a one-live-branch-per-level walk;
+  * depth 65 536 + nodes 300k, 60s cap: 20 `unknown` + 4 timeouts (one
+    still depth-tagged at 65 536).  **Zero recovery at any dose.**
+  * **The unstick probe**: `theory_manager`'s arith-Unknown arm sets
+    `resource_exhausted` for the instance's LIFETIME (a later Sat whose
+    own fresh check verified cleanly is dropped at L3339).  Patching
+    that one arm to not poison: **24/24 still `unknown`** — the sticky
+    gate is not their blocker either; the search never reaches a
+    certifiable candidate.  (The dropped-conflict arms of the same flag
+    are sound-critical and were untouched; see the next-session note.)
+  * **The ray decoded** (`NIXIE_BRANCH_TRACE` branch dump, the fi1
+    recipe): two mutually-defining UNBOUNDED basics in a unit cycle —
+    `v6 = −4/57·v2 + …`, `v2 = −57/4·v6 + …` (coefficient product +1) —
+    walk one level per node (`v6` down 1, `v2` up 57/4 ≈ the observed
+    ~14/level), both `lo=none hi=none`; each branch bound is instantly
+    re-satisfied by the LP re-optimizing along the ray.  z3's model
+    sits far off the ray (e.g. `yi = 0` while the walk is at ~14×2^63).
+  * **Z3 reference** (`src/math/lp/int_solver.cpp` + `int_branch.h`):
+    the cascade does ONE cheap move per check (gcd → patch → cube →
+    HNF → DIO → gomory(2) → branch) and `int_branch` returns
+    `lia_move::branch` — a CDCL-VISIBLE lemma with NO internal depth
+    budget; free vars branch at offset 0 with random polarity, and
+    clause learning never re-walks a ray.  Our internal B&B cannot
+    replicate that with budgets: **the pivot-storm study's map item 1
+    (the CDCL-visible branch channel) owns this class.**  Budget bumps
+    are dead — do not retry without the architecture.
+* **fi1 CLOSED by the cumulative stack** (open item 3):
+  `docs/studies/assets/2026-09-17/false-unsat-fi1.smt2` now answers
+  **`sat` in 48 ms** (z3: `sat`) — the item-95 read fix (plus the
+  wide-constant Hermite widening of the 2026-09-19 study §H) retired
+  the old branch-walk blocker.  Model `{xi = 0, yi = 2^62}` validated
+  by binding as `define-fun`s and re-solving the negation: `unsat` in
+  BOTH z3 and nixie.
+* **The strict-stranding reproducer LANDED** (open item 4's first
+  half; `nixie-theories/src/arithmetic/solver.rs` tests):
+  `strict_lt_stranded_row_rehomes_with_strict_bound` and the Gt twin
+  construct the stranding deterministically at the solver surface (Lt:
+  an equality pivot consumes the strict row; Gt: a transient violation
+  inside a popped scope pivots the slack out — rows are search-global)
+  and pin the full contract: the strict re-intern mints a DEFINING row,
+  the re-asserted bound is STRICT at zero (`delta < 0` / `> 0` — never
+  a weakened `≤ 0`), never flipped, and cites the atom's own live
+  reason.  Revert-checked BOTH halves: deleting the strict-site
+  `slack_forms` recording trips both preconditions; weakening the Lt
+  re-assert to `set_upper` trips the delta assertion.  (Note for the
+  next session: the recording sites in `cached_row_slack` and
+  `cached_row_slack_strict` are textually identical — a revert-check
+  must target the strict one, or it silently patches the wrong arm.)
+* **The doc gate FIXED** (open item 5): the `simplify.rs` links and a
+  `finish_deferred_watches` private link (the CSR slice-6 landing) were
+  committed-on-main breakages, not in-flight; de-linked in `2a60cb54`.
+* **Item 71's channel question remains open** (understanding, not a
+  defect): why the rehome's re-assertion is load-bearing when the
+  stranded slack stays equation-tied.  The reason-side tracing pattern
+  is still the tool; the `parity_infeasibility` repro is still the
+  target.

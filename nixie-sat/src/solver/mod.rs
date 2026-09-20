@@ -3509,7 +3509,7 @@ impl Solver {
     /// one exact-size counting-sort CSR build over the arena.  Idempotent;
     /// also invoked defensively at `solve*` entry.
     ///
-    /// Deliberately NOT the full [`Self::rebuild_watches_and_binary_graph`]:
+    /// Deliberately NOT the full `rebuild_watches_and_binary_graph`:
     /// the BIG was built incrementally during the load (identical edges,
     /// id order — the deferred-BIG pair's validated equivalence) and the
     /// phantom counters were bumped at exactly the same attach sites, so

@@ -104,9 +104,18 @@ fn a_hundred_thousand_unknown_commands_do_not_overflow() {
 
     let count = on_small_stack("unknown_command_flood", move || {
         let mut manager = TermManager::new();
-        parse_script(&script, &mut manager).map(|cmds| cmds.len())
+        parse_script(&script, &mut manager).map(|cmds| {
+            // Unknown commands now parse as `Command::Unsupported`
+            // (answered per SMT-LIB instead of silently skipped); the
+            // flood test's invariant is the STACK, so count only the
+            // surviving real commands.
+            cmds.iter()
+                .filter(|c| !matches!(c, nixie_core::smtlib::Command::Unsupported(_)))
+                .count()
+        })
     });
-    // Every unknown command is skipped; only `(check-sat)` survives.
+    // Every unknown command balance-skips without recursion; only
+    // `(check-sat)` survives as a real command.
     assert_eq!(count.ok(), Some(1));
 }
 
