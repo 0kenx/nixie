@@ -84,3 +84,31 @@ the Vec deletion, not before)
 16. Wall-clock on this box is void even for "obvious" wins (GP_190's
     OFF arm moved 1.8× between reps at load 5-9) — instruction counts
     only, per the standing rule.
+
+## Addendum (same day, third increment): the scan-path tightening — landed `e92a6b35`
+
+Two more measured fixes, both from the differential profile
+(`perf diff -c wdiff:1,1` OFF vs B on 14.normalised — the tool that
+finally localized the cost):
+
+- **Empty-overflow fast path**: the common inter-rebuild state is an
+  empty overflow, and the arm still took the `Vec`, ran an empty second
+  pass, and put it back.  Skipped: no take, no pass 2 — mid-scan
+  self-pushes accumulate in the live slot (visible to later dedups,
+  exactly as the taken-`Vec` slot was) and a `truncate_overflow(code, 0)`
+  at scan end reproduces the put-back-overwrite semantics.
+- **Overflow capacity retention at `adopt_layout`** (clear in place, not
+  drop-and-regrow — the `Vec` world's `reset_lists_in_place` shape);
+  measured as a no-op on this instance (kept: strictly less work, and
+  load-bearing for watch-move-heavy intervals after rebuilds).
+
+14.normalised: 75.1G → **74.0G** instructions (OFF 68.4G; the arc's
+running delta now **+8.2%**, from +16.8% at slice-6 start).  Gate
+1.000/1.000; suite 1115/1115; B-mode 1097/1115; si2 / b21 / SCPC /
+Carry_Bits conflicts-identical.
+
+The profile attributes the remaining ~130 cycles/scan to the two-pass
+roundtrip's own plumbing — the `Option` construction, the span copy
+in/out, the spread write-back/commit calls — which the split-borrow
+in-place span scan eliminates structurally.  That, sparse overflow, and
+the `Vec` deletion are the flip commit's work list.
