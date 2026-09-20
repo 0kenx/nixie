@@ -268,3 +268,28 @@ Regressions: `share_for_printing_bounds_a_doubling_chain` (unit: the
 2^26-unfolding chain binds, every RHS is DAG-linear, names are
 capture-free) and `simplify_output_shares_dag_repetition_with_lets`
 (e2e).  The ctx-simplify fold pass remains the other half of the route.
+
+### The parameter sweep, executed (sixth session): the closing families named; the local subset measured insufficient
+
+`(apply (using-params simplify :P V))` sweeps on the small nec-smt
+member, disabling one parameter at a time — **three families are each
+individually necessary** for the fold-to-`false`:
+`:ite_extra_rules` (extra ite laws), `:push_ite` (push ite over
+operators), `:solve_eqs` (unit-equality solving).  Disabling any one
+leaves a residual; `elim_ite`, `flat`, `sort_disjunctions`,
+`pull_cheap_ite`, `local_ctx`, `hoist_ite` are all immaterial.
+
+The mechanism: `(= k (ite c a b))` pushes to
+`(ite c (= k a) (= k b))` so the constant-vs-constant branches decide,
+and the resulting ite-on-Booleans connects into the surrounding
+conjunction's literals.  A conservative LOCAL subset of exactly these
+rules (constant-side equality push, fuel-bounded; the
+ite-on-Boolean connection folds `ite(c,false,x) → (and ¬c x)` etc.)
+was implemented and measured on the member: **it does not close the
+class, and it GROWS the shared output (54 KB → 88 KB — the connection
+folds duplicate the carried term, z3's own "may reduce locally but
+increase globally" caveat)**.  Reverted.  The owning session's
+ctx-simplify pass needs the push families AND the recursive
+case-literal collection through `and`/`or`/`not` nesting together, with
+a size budget on the expansions — the local rules alone are now a
+measured dead end, not a conjectured one.
