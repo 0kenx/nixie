@@ -1984,3 +1984,75 @@ fn patch_int_columns_declines_on_fractional_nonbasic() {
     assert!(!done, "fractional nonbasic x = 1/2 must decline the pass");
 }
 // scratch debug appended as a test
+
+// ===== gcd kernels: the power-of-two fast path and the u64-range cast =====
+
+#[test]
+fn gcd_u64_matches_reference_and_fast_paths() {
+    fn refgcd(a: u64, b: u64) -> u64 {
+        if b == 0 { a } else { refgcd(b, a % b) }
+    }
+    let interesting = [
+        0u64,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        12,
+        15,
+        16,
+        17,
+        31,
+        32,
+        48,
+        63,
+        64,
+        100,
+        127,
+        128,
+        255,
+        256,
+        999,
+        1000,
+        1023,
+        1024,
+        4095,
+        4096,
+        32768,
+        65535,
+        65536,
+        1 << 20,
+        (1 << 20) + 1,
+        1 << 30,
+        (1 << 30) - 1,
+        (1u64 << 40) + 3,
+        (1u64 << 50) + 5,
+        1 << 52,
+        (1u64 << 62) + 7,
+        1 << 63,
+        u64::MAX,
+        i64::MAX as u64,
+        (i64::MAX as u64) + 1,
+        u64::MAX - 1,
+    ];
+    for &a in &interesting {
+        for &b in &interesting {
+            assert_eq!(gcd_u64(a, b), refgcd(a, b), "gcd_u64({a}, {b})");
+        }
+    }
+    // The i128 delegation's range corner: values in (i64::MAX, u64::MAX]
+    // must not truncate through the 64-bit kernel (the wide-literal
+    // regressions caught exactly this cast when the delegation went
+    // through `as i64`).
+    let big = (i64::MAX as u64) + 12345;
+    let big128 = big as i128;
+    assert_eq!(gcd_i128(big128, big128), big128);
+    assert_eq!(gcd_i128(big128 * 2, big128), big128);
+    assert_eq!(gcd_i128(1 << 100, 1 << 100), 1 << 100);
+    assert_eq!(gcd_i128((1 << 100) * 3, 1 << 100), 1 << 100);
+    assert_eq!(gcd_i128(0, -7), 7);
+}

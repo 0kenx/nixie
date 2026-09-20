@@ -188,15 +188,43 @@ pub mod diag {
 /// GCD of two `i128` values (used by the checked-rational helpers below to
 /// reduce results computed via `i128` intermediates before narrowing back
 /// to `i64`).
-fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
-    a = a.abs();
-    b = b.abs();
-    while b != 0 {
-        let t = a % b;
-        a = b;
-        b = t;
+fn gcd_i128(a: i128, b: i128) -> i128 {
+    let a = a.abs();
+    let b = b.abs();
+    if a == 0 {
+        return b;
     }
-    a
+    if b == 0 {
+        return a;
+    }
+    // Both operands inside `u64`: run the fast 64-bit kernel instead of
+    // software 128-bit modulo (`__umodti3` dominated pivot cycles on
+    // dense LIA rows before this delegation).  NOTE: the range check is
+    // u64, and the kernel takes u64 — an `as i64` here would TRUNCATE
+    // values in (i64::MAX, u64::MAX] (the wide-literal regressions caught
+    // exactly that cast).
+    if a <= u64::MAX as i128 && b <= u64::MAX as i128 {
+        return gcd_u64(a as u64, b as u64) as i128;
+    }
+    // Power-of-two operand: gcd(2^j, 2^k·m) = 2^min(j,k), one shift.
+    let za = a.trailing_zeros();
+    let zb = b.trailing_zeros();
+    let is_pow2 = |v: i128, tz: u32| v == 1i128 << tz;
+    if is_pow2(a, za) || is_pow2(b, zb) {
+        return 1i128 << za.min(zb);
+    }
+    let (mut a, mut b) = (a >> za, b >> zb);
+    let k = za.min(zb);
+    loop {
+        if a > b {
+            std::mem::swap(&mut a, &mut b);
+        }
+        b -= a;
+        if b == 0 {
+            return a << k;
+        }
+        b >>= b.trailing_zeros();
+    }
 }
 /// Euclidean GCD on `i64` – hardware division, no software 128-bit path.
 /// `gcd_i128` above stays for the genuine wide case.
@@ -207,16 +235,26 @@ fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
 /// the whole gcd runs in a fraction of the divisions' latency for the mixed
 /// magnitudes pivot coefficients take.
 fn gcd_i64(a: i64, b: i64) -> i64 {
-    let mut x = a.unsigned_abs();
-    let mut y = b.unsigned_abs();
+    gcd_u64(a.unsigned_abs(), b.unsigned_abs()) as i64
+}
+
+/// The binary-gcd kernel (shift/subtract) with the power-of-two operand
+/// fast path: gcd(2^j, 2^k·m) = 2^min(j,k) for odd m — one shift, no loop.
+/// Measured on the CAV post-cut substitution mass: 37% of all calls carry
+/// an operand of exactly 1 and 58% a power of two; each was paying the
+/// full binary loop (tens of iterations) to rediscover this.
+fn gcd_u64(mut x: u64, mut y: u64) -> u64 {
     if x == 0 {
-        return y as i64;
+        return y;
     }
     if y == 0 {
-        return x as i64;
+        return x;
     }
     let zx = x.trailing_zeros();
     let zy = y.trailing_zeros();
+    if x.is_power_of_two() || y.is_power_of_two() {
+        return 1u64 << zx.min(zy);
+    }
     x >>= zx;
     y >>= zy;
     let k = zx.min(zy);
@@ -228,7 +266,7 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
         }
         y -= x;
         if y == 0 {
-            return (x << k) as i64;
+            return x << k;
         }
         y >>= y.trailing_zeros();
     }

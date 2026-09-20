@@ -355,3 +355,33 @@ COMMAND in term position — nixie currently executes nothing and exits 0
 silently, a diagnostic gap worth its own small fix); and never build
 test strings by embedding an accumulator twice per level (exponential
 text growth OOMs the generator).
+
+### The context memo, LANDED (ninth session): the re-walk cost halved, the class still open — the cost is the splits, not the sharing
+
+The fuel probe confirmed the stall precisely: the real member's walk
+burned the whole 200 k-step budget on a 662-node term (`fuel-left=0`,
+guard not tripped).  A **context-restricted memo** landed: per-subtree
+Boolean-atom sets (one two-phase DAG pass, sets capped at 1 024 —
+bigger subtrees simply do not memoize), a signature = the context's
+entries restricted to the subtree's atoms iterated over the (small)
+context, and `(term, signature)` memoization through the walk.  Sound
+because the walk of `t` consults nothing outside `t`'s subtree: two
+contexts agreeing on those atoms walk `t` identically.
+
+Measured on the member: the result **shrank further (11 336 → 10 572
+bytes; 168 memo entries)** — more of the chain folds within the same
+budget — but the fuel still exhausts.  The residual cost is NOT shared
+re-walking (the memo catches that): it is the **nested case splits**
+themselves — each ite level's both-branch walk under a fresh context
+multiplies, and distinct split paths carry distinct signatures by
+construction, so no memo can catch them.  The honest boundary moves
+again: closing the member needs either a normal form that merges split
+paths (a `solve_eqs`-style pre-pass that eliminates the guard
+equalities before the walk) or a budget policy that orders the splits
+by promise.  The synthetic chains remain closed (they fold in the
+bottom-up pass before ctx even runs — `size-in=1`; the synthetic was
+never a ctx test, noted for the record).
+
+Verification: suite 12 074/12 074; clippy/fmt clean; Z3 parity 100 %
+correct, 0 disagreements (z3 4.16.0); perf gate PASS; fresh
+differentials clean; the iso/idempotence regressions all green.

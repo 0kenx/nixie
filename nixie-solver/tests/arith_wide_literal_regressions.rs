@@ -1672,3 +1672,39 @@ fn unrecognized_command_is_answered_not_swallowed() {
         "the stray form must be answered loudly, not silently skipped"
     );
 }
+
+
+/// Item 96's CDCL-visible branch channel (`NIXIE_LIA_BRANCH_LEMMA=1`): the
+/// recovered ray-class survey instance verbatim (seed 20261000, index 142;
+/// z3: `sat`).  UNARMED the search walks the branch-walk ray to its depth
+/// budget and answers honest `unknown` (the item-96 dose-response measured
+/// the ray immune to every budget); ARMED the theory requests a branch atom
+/// at the decline, CDCL learns the region's refutations, and the search
+/// finds the model (measured ~12 s here; the survey's 10 s cap flips it to
+/// a timeout — the channel's cost side in miniature).  The model
+/// z3-validates by binding + negation (the ledger discipline).  The env set
+/// requires a per-process test (nextest runs each test in its own process —
+/// the documented verification bar).
+#[test]
+fn lia_branch_lemma_channel_recovers_the_ray_class_instance() {
+    // Armed FIRST: the channel's OnceLock caches per process.  Safety
+    // (test-only): this runs before any solver exists in the process.
+    unsafe { std::env::set_var("NIXIE_LIA_BRANCH_LEMMA", "1") };
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const xi Int)\n\
+             (declare-const yi Int)\n\
+             (declare-const zi Int)\n\
+             (assert (and (and (> (- (* 3 xi) 2) (+ (+ (div 6 4) (+ (* 3 xi) 5) (div (* 1 xi) 4)) 9223372036854775809 (div (+ (* 5 xi) (* 1 yi) (* 10 zi)) 5))) (not (and (>= (+ (+ 8 (+ (* 2 xi) (* -1 zi)) (* 2 zi)) (- (+ -3 (* 1 xi) 34) 2)) -5) (> (* -2 xi) 100)))) (and (> (+ (* -2 zi) (* 1 yi) (- 83 -2)) (* 2 zi)) (<= (div (- 7 3) 7) 7) (< (* -2 yi) (+ (+ (+ (* 2 yi) (* 3 yi) -3) (* -1 yi)) (div (* 5 yi) 2) (div (* -1 zi) 4)))) (not (or (> (+ (- (+ (* 10 yi) -6) 3) (+ (+ (* 1 zi) -2) (+ (* 3 zi) (* 1 zi)))) 0) (< 2147483647 (- 9 3)) (= (mod (mod (* -1 zi) 1) 1) (* 5 xi))))))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "sat",
+        "armed, the branch channel must recover the ray-class instance (z3: sat; model z3-validated by binding + negation)"
+    );
+}

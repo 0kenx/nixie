@@ -128,3 +128,18 @@ a clause-blind internal B&B walking an unbounded ray that no budget
 touches, the fix is Z3's CDCL-visible branch channel (the pivot-storm
 map's architectural item), and everything else on the open list either
 closed (fi1, the reproducer, the doc gate) or folded into that map.**
+
+## Update (later the same day): open item 1 EXECUTED — the channel is built, measured, and landed flag-gated
+
+`63cae24b` lands the CDCL-visible branch channel (`NIXIE_LIA_BRANCH_LEMMA=1`,
+default OFF).  The pure-addition variant (no internal budget cut — the
+parallel session's `364c9c90` measured that trade regressing v20; reverted
+in `e2b45aaf` in favor of this build).  Study:
+`docs/studies/2026-09-20-lia-branch-lemma-channel.md` — armed survey 77 →
+55, **16 genuine recoveries (models z3-validated, ledger empty), 6
+timeout-class cost flips; matched null (k=0): 12 recoveries, treatment-only
+10, null-only 0** — the go bar passed; default-off bit-identical (gate
+1.000/1.000); armed differentials clean.  **Open: rung 3 (the default-flip
+campaign: ≥10 seeds, per-family, benchstore, the 6-slow-flip cost
+decision)**, and the J5-certify class is the next blocker IN SERIES on the
+members the armed search now reaches (i116's decode: ray → J5).

@@ -852,6 +852,18 @@ pub struct Solver {
     /// makes the in-loop non-convex-LIA refinement terminate (see
     /// [`Solver::refine_int_case_split`]).
     pub(super) case_split_terms: FxHashSet<TermId>,
+    /// Minted CDCL-visible LIA branch atoms (`(>= form k)`, the item-96
+    /// channel — see the `LiaBranchRequest` type in the arithmetic solver).
+    /// Memo: an already-minted atom is never re-minted (the term is
+    /// hash-consed, so the same (form, k) request lands here twice at
+    /// most).  The atoms are ordinary Boolean atoms in the SAT database,
+    /// permanent for the search like every learned clause.
+    pub(super) lia_branch_atoms: FxHashSet<TermId>,
+    /// Reset-and-re-solve rounds spent minting LIA branch atoms within the
+    /// current `check` (bounded so a pathological walk cannot loop the
+    /// channel forever; budget out ⇒ the honest `Unknown` the
+    /// `resource_exhausted` gate already owns).
+    pub(super) lia_branch_rounds: u32,
     /// Number of reset-and-re-solve refinement rounds spent on integer
     /// case-splitting within the current `check`.  Capped by
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
@@ -1069,6 +1081,13 @@ impl Drop for DeadlineGuard {
 }
 
 impl Solver {
+    /// Cap on [`Self::lia_branch_rounds`] — the number of full re-solve
+    /// rounds the LIA branch-lemma channel may spend.  Generous: each
+    /// round teaches CDCL a new branching dimension (the Z3 architecture's
+    /// per-final-check atom), and the ray family needs tens of dimensions,
+    /// not hundreds.
+    pub(super) const MAX_LIA_BRANCH_ROUNDS: u32 = 64;
+
     /// Record a nullary `define-fun` alias (`name ≡ body`) for the solver's
     /// unit-equality representative machinery, without asserting anything.
     ///
@@ -1317,6 +1336,8 @@ impl Solver {
             last_check: None,
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
+            lia_branch_atoms: FxHashSet::default(),
+            lia_branch_rounds: 0,
             case_split_rounds: 0,
             model_blocking_active: 0,
             model_blocks_nongenuine: 0,
@@ -3332,6 +3353,63 @@ impl Solver {
                         theory_manager.debug_scan_congruence_gaps(8);
                     }
                     if resource_exhausted {
+                        // Item 96's CDCL-visible branch channel: when the
+                        // exhaustion is a PURE arith abstention (the theory's
+                        // internal search gave up — the branch-walk ray —
+                        // nothing was suppressed), the theory may have
+                        // requested branch atoms.  Minting them and
+                        // re-solving teaches CDCL the branching dimension
+                        // the internal B&B lacks (Z3's architecture);
+                        // every OTHER exhaustion cause (dropped conflicts,
+                        // errors, the deadline) must keep poisoning `Sat`
+                        // for the instance's life — the rebase below would
+                        // clear the sticky flags, so those causes skip the
+                        // channel and concede `Unknown` as before.
+                        let may_branch_round = theory_manager.abstention_exhausted()
+                            && !theory_manager.unjustified_conflict()
+                            && self.config.max_conflicts == 0;
+                        if may_branch_round
+                            && self.refine_lia_branch_requests(manager)
+                        {
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.reset_bv_theory_for_round();
+                            self.diff.reset();
+                            self.rebase_theory_state();
+                            let zero_term = manager.mk_int(0);
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &mut self.diff,
+                                &mut self.array_theory,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                &self.numarg_proxies,
+                                &self.interface_const_pins,
+                                zero_term,
+                                &self.ite_result_terms,
+                                &mut self.derived_reasons,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.has_array_ops,
+                                self.config.timeout_ms,
+                                self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
+                                self.has_injective_distinct,
+                                &self.injective_distinct_specs,
+                            );
+                            continue;
+                        }
                         // A real theory conflict was dropped at the conflict
                         // limit; never fabricate Sat over a suppressed conflict.
                         self.unsat_core = None;

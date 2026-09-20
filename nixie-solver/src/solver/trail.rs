@@ -438,6 +438,11 @@ impl super::Solver {
             // next search reads it (the case-split lemmas are SAT-scoped and
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
+            lia_branch_atoms: _, // PER-SEARCH: the minted atoms are SAT-database
+            // clauses like case-split lemmas — retracted by `pop` — and the
+            // memo is cleared at `check_core` entry with the rounds counter
+            // (`check_core` owns both; see `MAX_LIA_BRANCH_ROUNDS`).
+            lia_branch_rounds: _, // PER-SEARCH: same lifetime as the memo
             nl_algebraic_values: _, // RESULT: cleared with the cached verdict by
             // `invalidate_results` — the channel belongs to the check that
             // populated it, exactly as the model does.

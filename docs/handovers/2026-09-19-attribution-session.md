@@ -71,6 +71,17 @@ the study wins. Landed as `7ab21fb5` (binary
    target, alongside the parallel session's S3 interval-refutation work
    (their item 87).
 
+## Tree-health validation record (2026-09-20, at `b49b9242`)
+
+After the heavy multi-owner churn (slack-CSR watches, the arith
+items 93–96, the printer/simplify/parser landings of this arc), the
+full battery re-ran clean on every surface: mixed ×3 + wide ×2 + quant
+×2 fresh differential seeds (zero verdict disagreements, zero refuted
+models), the debug-panic sweep over the parity corpus (zero panics),
+and a 400-file stratified SMT-LIB verdict screen vs z3 across 8
+arithmetic families — **399 decisive-verdict pairs, 0 disagreements**.
+The wrong-verdict ledger stays empty.
+
 ## Process notes from this landing
 
 * Two fresh-seed differential runs (six seeds total) around the merge;

@@ -139,12 +139,13 @@ default decisions are complete for this fragment.
   bits are unchanged — false assignments keep the forced view, true
   assignments keep the possible view, backjumps often revisit seen keys);
   no incremental algorithms. Measured against MonoSAT (see the studies
-  below): random instances at n = 100 / 6 224 edges solve in ~0.3 s even in
-  a debug build; on the release corpus (n ≤ 150) Nixie runs at ≈2.3×
-  MonoSAT's geomean after the 2026-09-20 throughput passes (was 5.1×), with
-  bit-identical solver counters — the remaining gap is MonoSAT's
-  incremental dynamic-graph algorithms plus the general per-assertion SMT
-  pipeline, the documented upgrade path.
+  below): on the release corpus (n ≤ 150) Nixie runs at ≈1.65× MonoSAT's
+  geomean after the 2026-09-20/21 throughput passes (was 5.1×). The
+  propagator maintains its views **incrementally from edge events** (O(1)
+  per event; BFS trees merge on edge additions; backtracks re-read from
+  scratch), so recomputation is paid only after backtracking — the
+  remaining gap is term interning + the general SMT stack, not the graph
+  theory.
 - **Certification**: graph registrations are trusted client callbacks
   without independently checkable certificates. Proof-producing and
   certified checks fail closed to `Unknown` for them (the same boundary as
