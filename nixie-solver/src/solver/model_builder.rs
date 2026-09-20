@@ -178,7 +178,26 @@ impl Solver {
                 match &const_term_data.kind {
                     TermKind::IntConst(n) => {
                         if let Some(val) = n.to_i64() {
-                            let value_term = manager.mk_int(val);
+                            // Sort-honest spelling: a REAL-sorted variable
+                            // pinned by an integer literal (`(= yr 5)` —
+                            // the parser builds `IntConst(5)` for the
+                            // numeral) gets `RealConst(5)`, not the
+                            // integer spelling.  The arith-value path
+                            // below already had this rule (its comment:
+                            // a Real term's integer-ratio value must be
+                            // `RealConst`); the equality-extraction path
+                            // predated it and echoed `((yr 5))` — valid
+                            // in a Real position, but not the sort's
+                            // canonical spelling and inconsistent with
+                            // every other Real entry.
+                            let is_real_sort = manager
+                                .get(var_term)
+                                .is_some_and(|t| t.sort == manager.sorts.real_sort);
+                            let value_term = if is_real_sort {
+                                manager.mk_real(num_rational::Rational64::from_integer(val))
+                            } else {
+                                manager.mk_int(val)
+                            };
                             model.set(var_term, value_term);
                         }
                     }

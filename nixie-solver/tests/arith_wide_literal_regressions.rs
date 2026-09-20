@@ -1489,11 +1489,27 @@ fn get_value_rational_echo_round_trips() {
         !echo.contains("1/4611686018427387904"),
         "the bare-slash math spelling is not parseable SMT-LIB"
     );
-    // (Residual, deliberately NOT pinned here: a Real variable pinned by
-    // an integer literal echoes `5`, not `5.0` — the model ENTRY is an
-    // Int-sorted term, a model-builder spelling question; `5` is accepted
-    // by both parsers in a Real position, so it is not a parseability
-    // defect like the bare-slash form was.)
+    // The former residual, now CLOSED: a Real variable pinned by an
+    // integer literal echoed the integer spelling (`5`) — the
+    // equality-extraction path copied the RHS's kind without consulting
+    // the variable's sort (the arith-value path already had the rule).
+    // The entry is now `RealConst` — the sort's canonical spelling,
+    // consistent with every other Real entry.
+    let mut ctx2 = Context::new();
+    let out2 = ctx2
+        .execute_script(
+            "(set-logic QF_LIRA)\n\
+             (declare-const yr Real)\n\
+             (assert (= yr 5))\n\
+             (check-sat)\n\
+             (get-value (yr))\n",
+        )
+        .expect("script executes");
+    let echo2 = out2.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        echo2.contains("5.0") && echo2.matches("yr 5)").next().is_none(),
+        "a Real variable's entry spells RealConst(5) as 5.0, got: {echo2}"
+    );
 
     // The round-trip: the echoed value IS the model's value.
     let mut ctx = Context::new();
@@ -1672,7 +1688,6 @@ fn unrecognized_command_is_answered_not_swallowed() {
         "the stray form must be answered loudly, not silently skipped"
     );
 }
-
 
 /// Item 96's CDCL-visible branch channel (`NIXIE_LIA_BRANCH_LEMMA=1`): the
 /// recovered ray-class survey instance verbatim (seed 20261000, index 142;

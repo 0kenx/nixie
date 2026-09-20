@@ -1081,7 +1081,24 @@ impl CsrWatchLists {
     #[inline]
     pub(crate) fn scan_split(&mut self, code: usize) -> (&mut [Watcher], ScanCtx<'_>) {
         let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        // A MISSING `prim_end` entry means the code has no live primary
+        // span (the pre-layout contract: pushes land in the spill tails)
+        // — its degenerate span is EMPTY, i.e. `start` itself.  Defaulting
+        // to 0 independently of `start` made a code present in
+        // `span_start` but absent from `prim_end` (the two tables resize
+        // at different times) compute `end - start` UNDERFLOW — a hard
+        // panic on the standing pete_5s fixture, release included (the
+        // wrapped length then trips `split_at_mut`).  Found the day the
+        // CSR flip landed; this is the documented-degenerate repair, with
+        // the both-present invariant (`span_start <= prim_end <= cap`)
+        // now asserted loudly rather than wrapped.
+        let end = self.prim_end.get(code).copied().unwrap_or(start as u32) as usize;
+        debug_assert!(
+            end >= start,
+            "csr scan_split: prim_end {end} < span_start {start} for code {code} \
+             (both entries present — a layout invariant violation, not the \
+             missing-entry degenerate case)"
+        );
         let maintain = self.maintain_index;
         let CsrWatchLists {
             entries,
