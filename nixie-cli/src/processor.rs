@@ -779,6 +779,11 @@ fn process_single_file(
             sat.reserve_clause_bytes(
                 flat.lits.len().saturating_mul(4) + flat.num_clauses.saturating_mul(16),
             );
+            // Commit-B slice 6: defer long-clause watcher attach to one
+            // counting-sort build after the load (no-op on the default
+            // `Vec` path — bit-identical; kills the per-literal overflow
+            // allocation storm in `NIXIE_CSR_B=1` mode).
+            sat.begin_deferred_watches();
             let deadline = if args.timeout > 0 {
                 std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
             } else {
@@ -825,6 +830,7 @@ fn process_single_file(
                     clause.push(lit);
                 }
             }
+            sat.finish_deferred_watches();
             let result = match verdict {
                 Some(v) => v.to_string(),
                 None => match sat.solve() {

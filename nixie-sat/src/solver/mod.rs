@@ -1698,6 +1698,16 @@ pub struct Solver {
     /// graph in one exact-size CSR build. The DIMACS parser wraps its
     /// clause loop in this pair.
     pub(super) deferred_big_attach: bool,
+    /// Long-watch bulk-load deferral latch (commit-B's slice 6): while set,
+    /// `attach_watchers` registers nothing for 3+-literal clauses —
+    /// [`Solver::finish_deferred_watches`] materializes every watcher in one
+    /// counting-sort CSR build from the arena (`add_clause` stores its
+    /// selected pair at `lits[0..2]`, so the rebuild re-derives exactly the
+    /// pairs the incremental attaches would have registered).  Only ever set
+    /// in commit-B mode (`NIXIE_CSR_B=1`), where incremental attach means a
+    /// per-literal overflow allocation storm on 9M-variable loads; the
+    /// `Vec` world keeps its incremental attach (bit-identical default).
+    deferred_watch_attach: bool,
     /// Global average LBD for local restarts
     pub(super) global_lbd_sum: u64,
     /// Number of conflicts contributing to global LBD
@@ -2234,6 +2244,13 @@ impl Solver {
             self.watches.phantom_bump(l1.negate());
             return;
         }
+        if self.deferred_watch_attach {
+            // Slice-6 deferral: the counting-sort build at
+            // `finish_deferred_watches` re-derives both watchers from the
+            // stored `lits[0..2]` — the same pair, with zero per-literal
+            // overflow churn during the load.
+            return;
+        }
         let Some(r) = self.clauses.ref_of(cid) else {
             debug_assert!(
                 false,
@@ -2398,6 +2415,7 @@ impl Solver {
             lbd_ema_slow: 0.0,
             binary_graph: BinaryImplicationGraph::new(0),
             deferred_big_attach: false,
+            deferred_watch_attach: false,
             global_lbd_sum: 0,
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
@@ -3471,6 +3489,100 @@ impl Solver {
     /// Semantics are identical: the rebuilt graph holds exactly the edges
     /// the incremental attaches would have, in the same id-ascending
     /// per-literal order.
+    /// Begin a deferred long-watch bulk load (commit-B's slice 6).
+    ///
+    /// A no-op unless commit-B mode (`NIXIE_CSR_B=1`) is active: the `Vec`
+    /// world's incremental attach is already allocation-shaped by the
+    /// per-list capacity reuse, and re-materializing through the rebuild
+    /// measured net-negative there (the 2026-09-18 bulk-load study's
+    /// deferred-BIG fast-path verdict).  In commit-B mode the incremental
+    /// attach is a per-literal overflow-`Vec` storm (one small allocation
+    /// per watched literal, ~18.7M on the 9.4M-variable class) that the
+    /// single counting-sort build eliminates outright.
+    pub fn begin_deferred_watches(&mut self) {
+        if crate::watched::csr_b_enabled() {
+            self.deferred_watch_attach = true;
+        }
+    }
+
+    /// End a deferred long-watch bulk load: materialize every watcher in
+    /// one exact-size counting-sort CSR build over the arena.  Idempotent;
+    /// also invoked defensively at `solve*` entry.
+    ///
+    /// Deliberately NOT the full [`Self::rebuild_watches_and_binary_graph`]:
+    /// the BIG was built incrementally during the load (identical edges,
+    /// id order — the deferred-BIG pair's validated equivalence) and the
+    /// phantom counters were bumped at exactly the same attach sites, so
+    /// re-running those passes would only pay their cost a second time.
+    /// The counting sort over the stored `lits[0..2]` pairs is the whole
+    /// materialization.
+    pub fn finish_deferred_watches(&mut self) {
+        if !self.deferred_watch_attach {
+            return;
+        }
+        self.deferred_watch_attach = false;
+        // Safety guard: the counting-sort materialization replaces the CSR
+        // wholesale.  It is exact when nothing was attached before the
+        // latch (the bulk-load shape: the CSR is an empty layout whose
+        // overflow never grew).  If any overflow content predates the
+        // latch, fall back to the full rebuild, which re-derives every
+        // representation from the arena.
+        if self.watches.csr_active() && self.watches.csr_has_overflow_content() {
+            self.rebuild_watches_and_binary_graph();
+            return;
+        }
+        use crate::watched::CsrWatchBuild;
+        let num_lits = self.num_vars * 2;
+        let mut csr = CsrWatchBuild::default();
+        {
+            let Solver { clauses, .. } = self;
+            for cid in clauses.iter_ids() {
+                let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                    continue;
+                };
+                if c.lits.len() < 3 {
+                    continue;
+                }
+                csr.count(c.lits[0].negate());
+                csr.count(c.lits[1].negate());
+            }
+        }
+        csr.layout(num_lits);
+        {
+            let Solver { clauses, .. } = self;
+            for cid in clauses.iter_ids() {
+                let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                    continue;
+                };
+                if c.lits.len() < 3 {
+                    continue;
+                }
+                let Some(r) = clauses.ref_of(cid) else {
+                    continue;
+                };
+                csr.fill(
+                    c.lits[0].negate(),
+                    crate::watched::Watcher::new(cid, r, c.lits[1]),
+                );
+                csr.fill(
+                    c.lits[1].negate(),
+                    crate::watched::Watcher::new(cid, r, c.lits[0]),
+                );
+            }
+        }
+        let mut adopted = crate::watched::CsrWatchLists::default();
+        adopted.maintain_index = crate::watched::csr_shadow_enabled()
+            || crate::watched::csr_index_enabled()
+            || crate::solver::equiv::equiv_surgery_enabled();
+        adopted.adopt_layout(csr);
+        self.watches.csr_set(adopted);
+    }
+
+    /// Begin a deferred bulk load for the binary implication graph:
+    /// `attach_watchers` suppresses BIG edges (but still bumps the phantom
+    /// tick counts) while the latch is set; the caller must later call
+    /// [`Solver::finish_deferred_big`] — which materializes the graph in
+    /// one exact-size CSR build — before the next propagation.
     pub fn begin_deferred_big(&mut self) {
         self.deferred_big_attach = true;
     }
@@ -4192,8 +4304,10 @@ impl Solver {
         // Defensive deferral flush: a bulk loader that aborted between
         // `begin_deferred_big` and `finish_deferred_big` must not reach
         // propagation with an unmaterialized graph (a missing BIG edge is
-        // a lost binary implication).
+        // a lost binary implication).  Same for the long-watch deferral —
+        // an unwatched clause is a missed propagation or conflict.
         self.finish_deferred_big();
+        self.finish_deferred_watches();
         // A prior `add_clause` reintroduced a BVE-eliminated variable with no
         // sound way to honor it: refuse rather than risk a wrong verdict.
         if self.fatal_error.is_some() {
@@ -4646,6 +4760,7 @@ impl Solver {
         let _traffic_session = self.begin_clause_traffic_session();
         // Defensive deferral flush (see `Solver::solve`).
         self.finish_deferred_big();
+        self.finish_deferred_watches();
         // Gatekeeper (SK-1): refuse to answer once a BVE-eliminated variable
         // was reintroduced (no sound way to honor it).
         if self.fatal_error.is_some() {

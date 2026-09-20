@@ -111,6 +111,14 @@ pub struct WatchLists {
     /// ops — compared against the rebuild's two-sweep `build=`us per round.
     pub(crate) csr_surgery_visits: u64,
     pub(crate) csr_surgery_nanos: u64,
+    /// Commit-B scan scratch: the swapped-out span copy the session kernel
+    /// scans.  Reused across scans (taken by value for the propagation
+    /// session, put back at its end) so a solve with tens of millions of
+    /// propagated literals performs ZERO per-scan allocations — the lists
+    /// average ~3 entries on watch-dense classes, where a fresh
+    /// `Vec::with_capacity` per scan was the dominant commit-B cost
+    /// (measured +17% whole-run instructions on 14.normalised).
+    pub(crate) csr_scan_scratch: Vec<Watcher>,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -131,9 +139,69 @@ pub struct WatchSnapshot {
     bin_phantom: Vec<u32>,
     /// Copy of compact-time ghost tick debt.
     ghost_debt: Vec<u32>,
-    /// Copy of the CSR shadow, when the dual-write diagnostic is active
-    /// (slices 1.5-3; rollback must restore both representations).
-    csr: Option<CsrWatchLists>,
+    /// Copy of the CSR, when one is active (rollback must restore it).
+    /// Stored PACKED — the overflow as one buffer plus per-literal ends —
+    /// because a derived `Vec<Vec<Watcher>>` clone duplicates every
+    /// per-literal header (18.7M empty headers ≈ 450 MB on the
+    /// 9.4M-variable class; measured 3% of the whole run inside lucky's
+    /// entry snapshot in commit-B mode).
+    csr: Option<PackedCsrSnapshot>,
+}
+
+/// The CSR's packed rollback form: the three contiguous arrays cloned
+/// verbatim (unavoidable — they ARE the state) plus the overflow packed
+/// into one buffer with per-literal end offsets (empty lists cost nothing,
+/// matching the `Vec` side's `WatchSnapshot` economics).
+#[derive(Debug, Clone)]
+pub(crate) struct PackedCsrSnapshot {
+    entries: Vec<Watcher>,
+    span_start: Vec<u32>,
+    prim_end: Vec<u32>,
+    ovf_packed: Vec<Watcher>,
+    ovf_ends: Vec<u32>,
+    maintain_index: bool,
+    positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
+}
+
+impl From<&CsrWatchLists> for PackedCsrSnapshot {
+    fn from(c: &CsrWatchLists) -> Self {
+        let mut ovf_packed = Vec::new();
+        let mut ovf_ends = Vec::with_capacity(c.overflow.len());
+        for list in &c.overflow {
+            ovf_packed.extend_from_slice(list);
+            ovf_ends.push(ovf_packed.len() as u32);
+        }
+        Self {
+            entries: c.entries.clone(),
+            span_start: c.span_start.clone(),
+            prim_end: c.prim_end.clone(),
+            ovf_packed,
+            ovf_ends,
+            maintain_index: c.maintain_index,
+            positions: c.positions.clone(),
+        }
+    }
+}
+
+impl From<&PackedCsrSnapshot> for CsrWatchLists {
+    fn from(p: &PackedCsrSnapshot) -> Self {
+        let mut overflow = Vec::with_capacity(p.ovf_ends.len());
+        let mut start = 0u32;
+        for &end in &p.ovf_ends {
+            overflow.push(p.ovf_packed[start as usize..end as usize].to_vec());
+            start = end;
+        }
+        Self {
+            entries: p.entries.clone(),
+            span_start: p.span_start.clone(),
+            prim_end: p.prim_end.clone(),
+            overflow,
+            scan: CsrScanFrame::default(),
+            warned_precondition: false,
+            positions: p.positions.clone(),
+            maintain_index: p.maintain_index,
+        }
+    }
 }
 
 /// The CSR-form watch build (count → layout → fill), the `RoundOccs`
@@ -983,12 +1051,15 @@ impl CsrWatchLists {
 }
 
 /// The disjoint mutable parts the propagation session needs: destination
-/// lists, phantom ticks, ghost debt, and the CSR dual-write shadow.
+/// lists, phantom ticks, ghost debt, the CSR dual-write shadow, and the
+/// commit-B scan scratch (the reused span-copy buffer — a separate field
+/// so the session borrows it beside the CSR without a move).
 pub(crate) type PropagationParts<'a> = (
     &'a mut [Vec<Watcher>],
     &'a [u32],
     &'a mut [u32],
     &'a mut Option<CsrWatchLists>,
+    &'a mut Vec<Watcher>,
 );
 
 /// The swapped-dual scan's `Vec` mirror (`NIXIE_CSR_SCAN`): the CSR's
@@ -1062,6 +1133,7 @@ impl WatchLists {
             &self.bin_phantom,
             &mut self.ghost_debt,
             &mut self.csr,
+            &mut self.csr_scan_scratch,
         )
     }
 
@@ -1101,6 +1173,7 @@ impl WatchLists {
             },
             csr_surgery_visits: 0,
             csr_surgery_nanos: 0,
+            csr_scan_scratch: Vec::new(),
         }
     }
 
@@ -1126,6 +1199,16 @@ impl WatchLists {
     /// Whether a maintained shadow exists (drifted comparison is meaningful).
     pub(crate) fn csr_active(&self) -> bool {
         self.csr.is_some()
+    }
+
+    /// Whether any literal's overflow holds entries (the deferred-load
+    /// materialization's safety guard: an empty-overflow CSR can be
+    /// replaced wholesale by the counting-sort build; anything else needs
+    /// the full rebuild).
+    pub(crate) fn csr_has_overflow_content(&self) -> bool {
+        self.csr
+            .as_ref()
+            .is_some_and(|c| c.overflow.iter().any(|v| !v.is_empty()))
     }
 
     /// Read a ref's current watched-literal codes from the index (the
@@ -1675,7 +1758,7 @@ impl WatchLists {
             ends: Vec::with_capacity(self.watches.len()),
             bin_phantom: self.bin_phantom.clone(),
             ghost_debt: self.ghost_debt.clone(),
-            csr: self.csr.clone(),
+            csr: self.csr.as_ref().map(PackedCsrSnapshot::from),
         };
         for list in &self.watches {
             snap.packed.extend_from_slice(list);
@@ -1708,7 +1791,7 @@ impl WatchLists {
         }
         self.bin_phantom = bin_phantom;
         self.ghost_debt = ghost_debt;
-        self.csr = csr;
+        self.csr = csr.as_ref().map(CsrWatchLists::from);
     }
 
     /// Live watcher count and total capacity count across all lists

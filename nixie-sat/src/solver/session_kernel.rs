@@ -27,7 +27,7 @@ impl Solver {
         let values = session.values;
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
-        let (destinations, phantom, ghost_debt, csr) = self.watches.propagation_parts();
+        let (destinations, phantom, ghost_debt, csr, scratch) = self.watches.propagation_parts();
         let stable_mode = self.stable;
         let graph = &self.binary_graph;
         let ticks = if self.stable {
@@ -135,14 +135,19 @@ impl Solver {
             // self-dedups read an empty combined view exactly as the old
             // taken-Vec slot did.  Pushes/dedups target the CSR directly
             // (the kernel's const-B instantiation); the Vec side is dead.
-            let b_prepared: Option<(usize, Vec<Watcher>, Vec<Watcher>)> = if b_mode {
-                csr.as_mut().map(|c| {
+            // Commit-B scan scratch: reused across scans (clear + copy —
+            // the lists average ~3 entries, so the copy is L1 traffic and
+            // the per-scan `Vec::with_capacity` it replaces was the
+            // dominant commit-B cost).
+            let b_prepared: Option<(usize, &mut Vec<Watcher>, Vec<Watcher>)> =
+                if b_mode && let Some(c) = csr.as_mut() {
                     let (start, span, ovf_slot) = c.scan_parts(code);
-                    (start, span.to_vec(), core::mem::take(ovf_slot))
-                })
-            } else {
-                None
-            };
+                    scratch.clear();
+                    scratch.extend_from_slice(span);
+                    Some((start, &mut *scratch, core::mem::take(ovf_slot)))
+                } else {
+                    None
+                };
             let mut watches = if b_mode {
                 Vec::new()
             } else {
@@ -223,13 +228,13 @@ impl Solver {
                 None
             };
             #[allow(unused_mut)]
-            let mut result = if let Some((span_start, mut span_copy, mut ovf)) = b_prepared {
+            let mut result = if let Some((span_start, span_copy, mut ovf)) = b_prepared {
                 // Commit-B arm: the CSR is the sole representation — no
                 // Vec mirror, pushes/dedups land in the CSR (the kernel's
                 // const-B instantiation), and the kept prefixes (unvisited
                 // tails on conflict included) are written back structurally.
                 let r1 = list_kernel::scan_list::<false, true>(
-                    &mut span_copy,
+                    &mut span_copy[..],
                     !lit,
                     values,
                     &mut queue,
