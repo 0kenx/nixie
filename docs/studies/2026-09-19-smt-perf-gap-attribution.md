@@ -88,6 +88,37 @@ set the conflict ratio's median is **1.0**.  The gap is concentrated,
 mechanism-attributed, and each mechanism has a named owner route
 above.  Re-run `bench/smt_perf/run_perf.sh` after any of them lands.
 
+## Follow-up (same day): the deep-encoding class's fix built — and the second pathology it uncovers
+
+The deep-split rescue is implemented (`solver/deep_split.rs`, **default
+off**, `NIXIE_DEEP_SPLIT=1` to enable, OnceLock-cached — never a
+per-assert `getenv`): a too-deep assertion is split into shallow,
+equi-satisfiable pieces by lifting deep subterms to fresh constants
+(`dsplit!<term-id>`) with defining equations; every piece passes the
+depth guard; the walk is fully iterative; a 601-deep chain splits into
+`BATCH`-bounded pieces (unit-pinned, with the boundary bug that
+motivated the `ACCEPT ≠ BATCH` distinction found and fixed on the way:
+a cut at depth ≥ BATCH leaves the top piece BATCH+2 deep, and re-cutting
+*that* fires no candidate — its children are exactly BATCH-high).
+
+**Why it is off**: it currently buys no verdict.  The unlocked search
+then hits a *second*, independent pathology — the arithmetic layer's
+**pivot storm on wide equality chains**: a trivially-sat 600-var
+synthetic (an asserted-true Bool selecting through the chain) searches
+past 20 s with zero SAT conflicts, profiled (dev build) as
+`pivot` / `find_violating` / `slice_contains` — thousands of
+conflict-free simplex pivots over the split's eq rows.  Every nec-smt
+instance re-measured with the split on: all still `unknown` (now
+searched rather than refused — honest, but 0.2 s → 20 s of wall to hear
+it).  This second pathology is the same shape the standing table's
+*timeouts* carry (CAV/SMPT: conflict-free arith grinding), which
+strengthens the attribution: **the arith arc's eq-chain handling owns
+both**; the deep-split flips on with that fix.
+
+The default path is behavior-identical (the gate returns before any
+work; 5167/5167 incl. both new unit tests, parity 176/1/0, fuzz spots
+CLEAN, clippy/fmt clean).
+
 ## Addendum (2026-09-19, later session): route 1 DE-PRIORITIZED by probe — the depth lift converts the unknowns into timeouts
 
 The deep-encoding fix route (the iterative encoder, ~970 lines) was
@@ -204,3 +235,36 @@ first probe).  Sizing: the pass is self-contained in
 `query/simplify.rs`'s harness (memoized driver already correct), an
 own-session project — with the printer's let-sharing fix as its
 companion (any folded-but-large result still cannot be printed).
+
+### The let-sharing printer, LANDED (fifth session): the `(simplify)` command prints shared DAGs in kilobytes
+
+`TermManager::share_for_printing` + the `Simplify` command wiring:
+multiply-referenced compound subtrees lift into `let` bindings
+(capture-free `a!N` names minted against the term's own symbol
+vocabulary; bindings ordered children-first so each RHS references only
+earlier names), and the stock printer handles the rest.  Measured on the
+12.5 KB nec-smt member: `(simplify …)` went from 90 s+ at 10 GB of
+string churn to a 10 KB let-shared echo.
+
+Two traps worth recording:
+
+1. **The analysis's first version had a post-order bug**: sizes were
+   combined over a reversed DFS *pre*-order — parents before children —
+   so every subtree read `unwrap_or(1)` for not-yet-sized children and
+   every size was undercounted (the root's true tree size is
+   **~10^16 nodes**; the buggy analysis reported 21,760).  The symptom
+   was exquisite: a 407-DAG-node binding whose print exploded to
+   gigabytes, because the mis-ordered candidate set left un-cut shared
+   subtrees inside the bindings' RHS.  A two-phase Expand/Combine walk
+   is the fix; reversed-pre-order is NOT post-order.
+2. **The share threshold is correctness-bearing, not cosmetic**: the
+   compounding fan-out runs through small compounds (an `(ite c 0 65536)`
+   is 4 nodes), so any size threshold above 2 leaves live sharing below
+   the cuts and the print re-explodes.  Only compounds bind — shared
+   leaves keep their plain spelling, and no existing test's output
+   changed (suite 12 051/12 051 clean).
+
+Regressions: `share_for_printing_bounds_a_doubling_chain` (unit: the
+2^26-unfolding chain binds, every RHS is DAG-linear, names are
+capture-free) and `simplify_output_shares_dag_repetition_with_lets`
+(e2e).  The ctx-simplify fold pass remains the other half of the route.

@@ -836,3 +836,87 @@ mod pattern_free_var_tests {
         );
     }
 }
+
+// ======== let-sharing for printing (2026-09-19, the nec-smt printer fix) ========
+
+/// `share_for_printing` must lift the DAG's multiply-referenced compound
+/// subtrees into `let` bindings so the printed form is linear in the DAG —
+/// a doubling chain (`t_{k+1} = (+ t_k t_k)`) unfolds to 2^n tree nodes,
+/// and printing it unshared never finishes (the nec-smt residual's shape:
+/// a 662-DAG-node goal whose tree unfolding is ~10^16 nodes).
+///
+/// The first version of this pass had a post-order bug worth pinning
+/// against: sizes were combined over a REVERSED PRE-ORDER (parents before
+/// children), undercounting every subtree — the candidate set was then
+/// mis-ordered and the bindings' RHS kept un-cut shared subtrees, so a
+/// 407-DAG-node binding printed gigabytes.  The true sizes are
+/// exponential; the shared print is kilobytes.
+#[test]
+fn share_for_printing_bounds_a_doubling_chain() {
+    use crate::ast::TermKind;
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let zero = m.mk_int(0);
+    let big = m.mk_int(65536);
+    // t_0 = (ite p 0 65536); t_{k+1} = (+ t_k t_k) — 26 levels: the DAG
+    // holds ~80 nodes, the tree unfolding holds ~2^27.
+    let mut t = m.mk_ite(p, zero, big);
+    for _ in 0..26 {
+        t = m.mk_add([t, t]);
+    }
+    // Sanity: the sharing is real (the DAG is small).
+    let mut dag = 0usize;
+    let mut stack = vec![t];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(x) = stack.pop() {
+        if seen.insert(x) {
+            dag += 1;
+            if let Some(d) = m.get(x) {
+                if let TermKind::Add(args) = &d.kind {
+                    stack.extend(args.iter().copied());
+                }
+                if let TermKind::Ite(c, a, b) = &d.kind {
+                    stack.push(*c);
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+            }
+        }
+    }
+    assert!(dag < 200, "the chain's DAG is small, got {dag}");
+
+    let (bindings, body) = m.share_for_printing(t);
+    assert!(!bindings.is_empty(), "the shared compounds must bind");
+    // The body is the chain's top with its shared children replaced by
+    // binding variables: an Add over two Var leaves (the same binding
+    // name twice — the sharing made visible).
+    match m.get(body).map(|d| d.kind.clone()) {
+        Some(TermKind::Add(args)) => {
+            let all_named = args
+                .iter()
+                .all(|&a| matches!(m.get(a).map(|d| &d.kind), Some(TermKind::Var(_))));
+            assert!(
+                all_named,
+                "the body's children are binding variables, got {:?}",
+                args
+            );
+        }
+        other => panic!("the body is the chain top over binding names, got {other:?}"),
+    }
+    // The printed form is bounded: every binding's RHS is small, the
+    // total is linear in the DAG.
+    let printer = crate::smtlib::Printer::new(&m);
+    let mut text = printer.print_term(body);
+    for (name, rhs) in bindings.iter().rev() {
+        let rhs_text = printer.print_term(*rhs);
+        assert!(
+            rhs_text.len() < 2_000,
+            "each binding's RHS is DAG-linear, got {} bytes for {name}",
+            rhs_text.len()
+        );
+        text = format!("(let (({name} {rhs_text})) {text})");
+    }
+    assert!(text.len() < 20_000, "the shared print is kilobytes");
+    // The names are capture-free: none collides with the goal's own `p`.
+    assert!(bindings.iter().all(|(n, _)| n != "p"));
+}
