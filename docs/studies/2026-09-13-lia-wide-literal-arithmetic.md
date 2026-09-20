@@ -2908,3 +2908,39 @@ corpus run, a differential, or a user can actually hear.
       accumulation) and the dive's `set_*_exact`-triggered
       `on_nonbasic_bound_change` propagation into dependents.  The
       tripwire is the acceptance test for the fix.
+
+## Continuation 50 (2026-09-19): item 94 — the detachment hunt's decisive narrowing: r = 0 at [snapshot] only; the row-writing machinery exonerated
+
+94. **The tracers built and run** (session-local, recipes below):
+    * **Pivot form-preservation** (both commit loops, narrow AND wide):
+    every rewrite must satisfy `NEW[v] = OLD[v] + sc·E[v]`
+    coefficient-wise.  **ZERO breaks over the whole i423 run** — the
+    pivot machinery is exonerated.  (The first tracer version had a sign
+    error in its own identity — `old = new + sc·E` instead of
+    `new = old + sc·E` — and "fired" 3 times on healthy rewrites; verify
+    the tracer's algebra on a known-good run before trusting its
+    fires.)
+    * **Wide migrations**: form-copies (identical coefficients,
+    `big_r64`-widened) — exonerated.
+    * **Intern-time equivalence**: 115 raw fires, ALL stale-vector
+    artifacts (the input's basic terms read stale entries while the flag
+    is down — the documented mid-search intern allowance); the interned
+    FORMS are exact.
+    * **The refined tripwire** (landed `01fc31a0`): call-site tags
+    (`snapshot` / `dive-pre` / `dive-post`), the rowless/unevaluable
+    skip (class #4: a slack that left the basis is enforced by its
+    bound plus the pivot's reparametrization), and the `SlackDir` per
+    fire.
+    * **The verdict**: `r != 0` fires on Le/Ge rows are
+    bound-compensated sign flips (legitimate); the REAL class is
+    **`r = 0`, firing ONLY at [snapshot]** — basic slacks with defining
+    rows whose value (0) is no multiple of their key form's evaluation
+    (−22/−44).  The corruption window is the dive's BASE CASE:
+    `find_fractional_int_var` / `state_feasible` (crash_basis + the
+    wide classification) — between a clean `dive-post` and the
+    snapshot's reads.  The next session's probe: instrument
+    `state_feasible`'s constituents (crash_basis's re-snap +
+    `update_assignment`'s narrow/wide passes) with the same key-vs-row
+    evaluation, one constituent at a time; the wide pass's
+    `update_row_exact` (which computes and STORES row values) is the
+    only writer left standing.
