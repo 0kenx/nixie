@@ -1674,6 +1674,29 @@ impl Simplex {
         self.assignment_current
     }
 
+    /// A basic's own row evaluated exactly over the current point (the
+    /// leaf tripwire's discriminator: entry vs own-row vs key-form
+    /// separates staleness from form corruption).
+    pub fn row_eval_exact(&self, var: VarId) -> Option<num_rational::BigRational> {
+        if let Some(w) = self.wide_rows.get(&var) {
+            let (r, _d) = self.eval_big_raw(w)?;
+            return Some(r);
+        }
+        let row = self.tableau.get(&var)?;
+        let mut acc =
+            num_rational::BigRational::from(num_bigint::BigInt::from(*row.constant.numer()))
+                / num_bigint::BigInt::from(*row.constant.denom());
+        for (v, c) in &row.terms {
+            let p = self.point_value_exact(*v)?;
+            acc += p.real
+                * num_rational::BigRational::new(
+                    num_bigint::BigInt::from(*c.numer()),
+                    num_bigint::BigInt::from(*c.denom()),
+                );
+        }
+        Some(acc)
+    }
+
     /// Whether `var` currently carries any bound (the atom-row canary's
     /// liveness gate).
     pub fn has_live_bound(&self, var: VarId) -> bool {
