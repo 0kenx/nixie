@@ -1,0 +1,89 @@
+# Handoff: the Bareiss layer landed, the table carries par-2/geomean, LIA's arithmetic layer closed
+
+**Date:** 2026-09-21 (small hours).  **Arc:** executing
+`docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
+table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
+the harness upgrade the operator asked for (par-2 + geomean on every z3
+comparison).  **Step 3 (the ctx-simplify fold pass) is NOT started** —
+it remains an own-session project; its entry point is unchanged (the
+2026-09-19 attribution study's step-zero-closed section,
+`query/simplify.rs`'s memoized harness).
+
+## What landed (in order)
+
+1. `38cb15d4` — **the calm-load baseline snapshot** (binary
+   `precompile/2edd5b34`): QF_BV 55/60 vs z3 54/60 **with the lead
+   confirmed on par-2 (2425 vs 2615 ms) and geomean (122.6 vs 138.4)**,
+   not just count; QF_LIA 32/60 vs 54/60, zero disagreements, real z3
+   conflict columns for the first time.  `run_perf.sh` now records and
+   prints par2 / geomean_all / both-solved median per family (counters
+   stay the primary metric; these are the load-sensitive secondaries the
+   calm-load discipline makes comparable).
+2. `67eabbe0` — **the fraction-free (Bareiss-style) pivot substitution**
+   (the pivot-storm addendum's item 2, the LIA class's structural
+   arithmetic layer): rows mirrored as `IntRow` (integer numerators +
+   one shared denominator ≤ 2^62) in a POINTER-VALIDATED cache
+   (`Arc::ptr_eq` against the content-replaced tableau rows — stale
+   encodings structurally unreachable), substituted as integer mul-sub +
+   one row-level gcd chain + one single-gcd canonical write-back per
+   term.  **Bit-identical output** to `substitute_row_fast`; gated to
+   fire only when at least one side carries a fraction (all-integral
+   substitutions keep the zero-gcd integer fast path — the ungated
+   version taxed integral cells ~1.1×).  Pins: 4000-case equivalence
+   grid, budget boundaries, cache pointer-coherence.
+3. `0963911e` — **the ff-landing snapshot** (binary `precompile/67eabbe0`):
+   QF_LIA counters bit-identical (5517), **geomean 246 → 144 ms (−41 %,
+   now under z3's 164.7), both-solved median 1.71 → 0.55** (~1.8× faster
+   than z3 on the common LIA mass); solved count unchanged at 32/60 —
+   the count is the branch channel's to move, not arithmetic's.
+4. `55ba292e` — the study with the design finding, evidence, and traps:
+   `docs/studies/2026-09-21-lia-bareiss-fraction-free-rows.md`.
+
+## Verification state at handoff
+
+Perf gate PASS twice (conflicts/decisions 1.000/1.000 — the bit-identity
+canary, both pre- and post-gate binaries); Z3 parity 176/177, 0
+disagreements (z3 4.16.0); workspace nextest green (11842 + 2707; five
+`scope_rebase`/`bv_odd_width` timeouts at load 150 re-verified in
+isolation — the documented flake class); clippy `-D warnings`, fmt, and
+rustdoc clean on every touched file.  The tree's only `-D` failures at
+handoff were another agent's in-flight `nixie-cli/src/dimacs.rs` (their
+parser arc) and `nixie-theories/src/graph/tests.rs`.
+
+## The remaining map (for the next agent)
+
+1. **The ctx-simplify fold pass** (the prp/nec 47×-wall class) —
+   untouched, own-session, entry per the 2026-09-19 study.
+2. **The branch channel rung-3 campaign** — item 96's territory
+   (pre-registered `ca675e2e`).  With the churn layer now cheap, the CAV
+   family's internal B&B should start completing round-trips; the
+   campaign decides the `NIXIE_LIA_BRANCH_LEMMA` default.  Coordinate,
+   don't duplicate.
+3. **The natural ff follow-up** (only if a profile ever shows it):
+   `build_pivot_expr` still pays ~k per-term-division gcds once per
+   pivot (1/46th of the substitution mass).  The zero-gcd version is a
+   re-denomination of the leaving row's cached `IntRow` (numerators
+   negated, denominator := entering numerator) — the design note is in
+   the study's "does NOT close" section.
+4. **Solved-count movers on the table** are architectural (branch
+   channel, SAT capacity cells), not arithmetic — the LIA par-2 floor is
+   now the 28 timeout cells.
+
+## Traps added this session
+
+- **The shared `target/` is volatile under disk pressure**: ENOSPC
+  triggered a wholesale purge mid-session, and `/tmp` scratch dirs
+  (including isolated `CARGO_TARGET_DIR`s) were wiped twice.  Isolate
+  measurement builds under `$HOME/.cache/...` (root fs), keep binaries
+  you care about in `precompile/<sha>/` immediately, and never let an
+  A/B depend on a shared-`target` binary surviving the hour.
+- **Two agents running `run_parity.sh` concurrently share `/tmp` scratch
+  names** — check result-file timestamps and the worktree paths in the
+  log before attributing a run to your tree.
+- **The table's fragile BV cell (`bench_16217`, ~9.9 s at cap 10)**
+  bounces at load >~10 mid-run; the LIA family runs FIRST, so a run that
+  creeps over load late still yields a clean LIA leg (disclosed in the
+  snapshot's `run_note` when that happens).
+- **num-rational's `+=` panics on intermediate overflow in debug** —
+  test generators must merge through `checked_add_r64`, not
+  `LinExpr::add_term`.
