@@ -96,10 +96,11 @@ run_z3() {
 }
 
 emit_json() {
-    # args: family, then the two result files
-    python3 - "$1" "$2" "$3" "$Z3_VERSION" "$NIXIE_SHA" "$CAP" <<'PYEOF'
-import json, sys, os
-family, nixie_f, z3_f, z3ver, sha, cap = sys.argv[1:7]
+    # args: family, then the two result files, cap
+    python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
+import json, sys, math
+family, nixie_f, z3_f, cap = sys.argv[1:5]
+cap = int(cap)
 rows = []
 disagree = 0
 with open(nixie_f) as a, open(z3_f) as b:
@@ -112,8 +113,14 @@ with open(nixie_f) as a, open(z3_f) as b:
                      "nixie": {"verdict": st, "conflicts": int(cf), "wall_ms": int(wl)},
                      "z3":    {"verdict": st2, "conflicts": int(cf2), "wall_ms": int(wl2)}})
 solved = lambda s: sum(1 for r in rows if r["nixie" if s=="n" else "z3"]["verdict"] in ("sat","unsat"))
+def par2(key):
+    return sum(2*cap*1000 if r[key]["verdict"] not in ("sat","unsat") else r[key]["wall_ms"] for r in rows)/len(rows)
+def geo_all(key):
+    return round(math.exp(sum(math.log(min(r[key]["wall_ms"], cap*1000)) for r in rows)/len(rows)), 1)
 print(json.dumps({"family": family, "n": len(rows),
                   "nixie_solved": solved("n"), "z3_solved": solved("z"),
+                  "nixie_par2_ms": round(par2("nixie"), 1), "z3_par2_ms": round(par2("z3"), 1),
+                  "nixie_geomean_all_ms": geo_all("nixie"), "z3_geomean_all_ms": geo_all("z3"),
                   "verdict_disagreements": disagree, "rows": rows}, indent=1))
 PYEOF
 }
@@ -134,18 +141,46 @@ for family in QF_LIA QF_BV; do
     done < "$list"
     [ $first -eq 0 ] && echo "," >> "$ALL_JSON"
     first=0
-    emit_json "$family" "$TMP/nx.res" "$TMP/z3.res" >> "$ALL_JSON"
+    emit_json "$family" "$TMP/nx.res" "$TMP/z3.res" "$CAP" >> "$ALL_JSON"
     # Console table for this family
-    python3 - "$family" "$TMP/nx.res" "$TMP/z3.res" <<'PYEOF'
-import sys
-fam, a, b = sys.argv[1:4]
+    python3 - "$family" "$TMP/nx.res" "$TMP/z3.res" "$CAP" <<'PYEOF'
+import sys, math
+fam, a, b, cap = sys.argv[1:5]
 rows = list(zip(open(a), open(b)))
 ns = sum(1 for x in rows if x[0].split()[1] in ("sat","unsat"))
 zs = sum(1 for x in rows if x[1].split()[1] in ("sat","unsat"))
 ncf = sum(int(x[0].split()[2]) for x in rows)
 zcf = sum(int(x[1].split()[2]) for x in rows)
 dis = sum(1 for x in rows if x[0].split()[1] in ("sat","unsat") and x[1].split()[1] in ("sat","unsat") and x[0].split()[1] != x[1].split()[1])
+# Solved counts alone hide wall shifts (a solver can hold n while doubling
+# every runtime), so the standing readout also carries two wall-based
+# aggregates alongside the deterministic counters.  These are
+# load-sensitive secondary metrics -- the calm-load discipline exists so
+# they are comparable across snapshots; the conflict counters remain the
+# primary comparison.
+#
+#   PAR-2  penalized average runtime: unsolved instances count as 2*cap
+#          (the SMT-COMP scoring rule).
+#   geomean_all   geometric mean over ALL instances, a timeout counted at
+#          cap (capped time, the SMT-COMP "virtual best" companion).
+def wall(cell):  # "path status conflicts wall_ms" -> ms, penalized per solver
+    f = cell.split()
+    st, wl = f[1], int(f[3])
+    return 2*cap*1000 if st not in ("sat","unsat") else wl
+def wall_capped(cell):
+    f = cell.split()
+    return min(int(f[3]), cap*1000)
+def par2(cells):  return sum(wall(c) for c in cells)/len(cells)
+def geo_all(cells):
+    return math.exp(sum(math.log(wall_capped(c)) for c in cells)/len(cells))
+nx_cells = [x[0].rstrip("\n") for x in rows]
+z3_cells = [x[1].rstrip("\n") for x in rows]
+both = [(x[0].split(), x[1].split()) for x in rows
+        if x[0].split()[1] in ("sat","unsat") and x[1].split()[1] in ("sat","unsat")]
+ratios = sorted(int(a[3])/int(b[3]) for a, b in both if int(b[3]) > 0)
+med = ratios[len(ratios)//2] if ratios else float("nan")
 print(f"{fam}: solved nixie {ns}/{len(rows)}  z3 {zs}/{len(rows)}  disagreements {dis}  conflicts nixie {ncf}  z3 {zcf}")
+print(f"    par2_s nixie {par2(nx_cells):8.0f}  z3 {par2(z3_cells):8.0f}   geomean_all ms nixie {geo_all(nx_cells):8.1f}  z3 {geo_all(z3_cells):8.1f}   both-solved median nixie/z3 {med:.2f} (n={len(ratios)})")
 PYEOF
 done
 echo "]" >> "$ALL_JSON"
