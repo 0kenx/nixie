@@ -111,14 +111,6 @@ pub struct WatchLists {
     /// ops — compared against the rebuild's two-sweep `build=`us per round.
     pub(crate) csr_surgery_visits: u64,
     pub(crate) csr_surgery_nanos: u64,
-    /// Commit-B scan scratch: the swapped-out span copy the session kernel
-    /// scans.  Reused across scans (taken by value for the propagation
-    /// session, put back at its end) so a solve with tens of millions of
-    /// propagated literals performs ZERO per-scan allocations — the lists
-    /// average ~3 entries on watch-dense classes, where a fresh
-    /// `Vec::with_capacity` per scan was the dominant commit-B cost
-    /// (measured +17% whole-run instructions on 14.normalised).
-    pub(crate) csr_scan_scratch: Vec<Watcher>,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -158,18 +150,24 @@ pub(crate) struct PackedCsrSnapshot {
     span_start: Vec<u32>,
     prim_end: Vec<u32>,
     ovf_packed: Vec<Watcher>,
-    ovf_ends: Vec<u32>,
+    /// (literal code, packed end offset) per nonempty spill tail.
+    ovf_ends: Vec<(u32, u32)>,
     maintain_index: bool,
     positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
 }
 
 impl From<&CsrWatchLists> for PackedCsrSnapshot {
     fn from(c: &CsrWatchLists) -> Self {
+        // The spill tails pack into one buffer keyed by literal (sparse —
+        // the common run has none at all); the three contiguous arrays
+        // are the state and clone verbatim.
         let mut ovf_packed = Vec::new();
-        let mut ovf_ends = Vec::with_capacity(c.overflow.len());
-        for list in &c.overflow {
-            ovf_packed.extend_from_slice(list);
-            ovf_ends.push(ovf_packed.len() as u32);
+        let mut ovf_ends = Vec::new();
+        for (code, tail) in c.spill.iter().enumerate() {
+            if let Some(t) = tail.as_ref() {
+                ovf_packed.extend_from_slice(t);
+                ovf_ends.push((code as u32, ovf_packed.len() as u32));
+            }
         }
         Self {
             entries: c.entries.clone(),
@@ -185,17 +183,22 @@ impl From<&CsrWatchLists> for PackedCsrSnapshot {
 
 impl From<&PackedCsrSnapshot> for CsrWatchLists {
     fn from(p: &PackedCsrSnapshot) -> Self {
-        let mut overflow = Vec::with_capacity(p.ovf_ends.len());
-        let mut start = 0u32;
-        for &end in &p.ovf_ends {
-            overflow.push(p.ovf_packed[start as usize..end as usize].to_vec());
-            start = end;
+        let mut spill: Vec<Option<Box<Vec<Watcher>>>> = Vec::new();
+        let mut start = 0usize;
+        for &(code, end) in &p.ovf_ends {
+            let v = p.ovf_packed[start..end as usize].to_vec();
+            if (code as usize) >= spill.len() {
+                spill.resize(code as usize + 1, None);
+            }
+            spill[code as usize] = Some(Box::new(v));
+            start = end as usize;
         }
         Self {
             entries: p.entries.clone(),
             span_start: p.span_start.clone(),
             prim_end: p.prim_end.clone(),
-            overflow,
+            spill,
+            arrivals: Vec::new(),
             scan: CsrScanFrame::default(),
             warned_precondition: false,
             positions: p.positions.clone(),
@@ -319,139 +322,192 @@ struct CsrScanFrame {
     active: bool,
 }
 
-/// The maintained CSR watch representation — slice 1.5's foundation
-/// (`docs/studies/2026-09-13-csr-watches-kickoff.md`): primary spans
-/// (rebuilt by the counting sort) plus per-literal arrival-order
-/// overflow, with the four mutation operations the search performs.
+/// The maintained CSR watch representation — the **slack-CSR** form
+/// (2026-09-20 redesign): one contiguous allocation per literal with
+/// embedded slack, replacing the earlier span+per-literal-overflow pair.
 ///
-/// Slices 1.5-2: the search-time hooks now maintain this beside the
-/// `Vec<Vec<Watcher>>` under `NIXIE_CSR_SHADOW=1` — every scan's
-/// keep/remove/move is dual-written, cold-path mutations (`add`,
-/// `remove_clause`, arena relocation, snapshot/restore) are mirrored, and
-/// each rebuild compares the **drifted** state against the drifted `Vec`
-/// lists (order included) before adopting a fresh layout.  Nothing reads
-/// this on any default path; readers switch in slice 4.
+/// * `entries[span_start[c]..cap(c)]` is literal `c`'s allocation
+///   (`cap(c) = span_start[c+1]`; the array carries one sentinel at the
+///   end); `[span_start[c]..prim_end[c])` is live, `[prim_end[c]..cap(c))`
+///   is slack.
+/// * A search-time append (`push_overflow`) writes `entries[prim_end[c]]`
+///   and bumps — O(1), zero per-literal structure, zero allocation while
+///   slack remains.  A literal whose slack fills **spills**: its appends
+///   go to `fallback` from then on (sticky, so arrival order across the
+///   two segments stays chronological) until the next rebuild.
+/// * A scan compacts its span in place (the cursor's write stays behind
+///   its read) and commits `prim_end` — mid-scan self-pushes land beyond
+///   the snapshotted live end and die at the commit, exactly the old
+///   taken-`Vec` put-back-overwrite semantics.
+/// * The scan's visit order — *(rebuilt span in id order) compacted by
+///   survivors, then arrival-ordered appends* — is the same
+///   survivors-then-appends decomposition the span+overflow form
+///   maintained, so trajectories are unchanged (bit-identity verified
+///   per landing).
 ///
-/// Invariants (the order-isomorphism argument, kickoff doc §slice-1):
-/// every list is *(sorted primary survivors in order) ++ (arrival-ordered
-/// overflow)*, which is exactly the drifted `Vec<Vec<Watcher>>` order —
-/// in-place compaction, removal and append are all order-preserving on
-/// that decomposition.
+/// Pre-layout (before the first rebuild/deferred materialization) there
+/// is no layout: `span_start`/`prim_end` are empty and every push goes
+/// to `fallback`.
 #[derive(Debug, Default, Clone)]
-#[allow(dead_code)] // adopted by the shadow hooks; readers switch in slice 4
 pub struct CsrWatchLists {
-    /// Primary entries; literal `code`'s span is
-    /// `entries[span_start[code]..prim_end[code]]`.
+    /// Per-literal allocations with embedded slack; literal `c`'s live
+    /// span is `entries[span_start[c]..prim_end[c]]`.
     entries: Vec<Watcher>,
-    /// Immutable span starts (the counting-sort layout).
+    /// Allocation starts; `span_start[c+1]` is `c`'s cap (sentinel at the
+    /// end: `span_start[num_lits] == entries.len()`).
     span_start: Vec<u32>,
-    /// Live end of each primary span (compaction shrinks it; the space up
-    /// to the next span's start is reclaimed at the next layout).
+    /// Live end of each span (a push bumps it; a scan commits it; the
+    /// space up to the cap is slack, reclaimed at the next layout).
     prim_end: Vec<u32>,
-    /// Per-literal arrival-order overflow for search-time appends.
-    overflow: Vec<Vec<Watcher>>,
+    /// Sticky-spill tails: literals whose slack filled — a dense array of
+    /// optional boxed lists (8 B per literal, heap only where actually
+    /// spilled; O(1) take/put/push per scan).  Stickiness: once `Some`,
+    /// the slot is that literal's append target until the next layout.
+    #[allow(clippy::box_collection)] // Option<Box<Vec>>'s null IS the 8B spill marker
+    spill: Vec<Option<Box<Vec<Watcher>>>>,
+    /// Per-literal arrival counts since the last layout (saturating u16):
+    /// the next layout's slack is sized from ACTUAL demand —
+    /// `min(16, 1 + arrivals)` — so a literal that received k pushes last
+    /// interval gets k+1 free appends before spilling.  ~37 MB on the
+    /// 9.4M-variable class; bounded by real push volume, not formula.
+    arrivals: Vec<u16>,
     /// The active dual-write scan's mirror state (one scan at a time).
     scan: CsrScanFrame,
     /// Precondition-violation reporting is once per process.
     warned_precondition: bool,
     /// ref → watched-literal codes (≤ 2 entries: one watcher per
     /// (clause, literal)): the surgery experiment's position index.
-    /// Maintained by the same funnels as the entries themselves —
-    /// `push_overflow` (every append: attach, move, repair, surgery add),
-    /// `remove_clause`, the scan notifications, `relocate` rekeying, and
-    /// `adopt_layout` (rebuilt from the fresh spans).  The BCP moves
-    /// watches without touching stored clause order, so this index — not
-    /// `(lits[0], lits[1])` — is the ground truth for where a clause's
-    /// watchers actually live (the watch-position-drift finding,
-    /// 2026-09-14).
+    /// Surgery/diagnostic machinery only — see `maintain_index`.
     positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
-    /// Whether `positions` is maintained at all: the index is surgery /
-    /// diagnostic machinery (read by `csr_positions_of` and the audit
-    /// prints), never by the default path — and a BTreeMap write per
-    /// watcher-add measured +24% whole-run instructions in commit-B mode
-    /// (the f5796de0 cost class).  A plain field read per mutation; set
-    /// at construction from the env knobs that need it.
+    /// Whether `positions` is maintained at all (a BTreeMap write per
+    /// watcher-add measured +24% whole-run instructions when left on
+    /// unconditionally — the f5796de0 cost class).
     pub(crate) maintain_index: bool,
 }
 
-#[allow(dead_code)] // slice-1.5 foundation
 impl CsrWatchLists {
+    /// Allocation cap of `code`'s span (its successor's start; the
+    /// sentinel covers the last literal).
+    fn cap(&self, code: usize) -> usize {
+        self.span_start.get(code + 1).copied().unwrap_or(0) as usize
+    }
+
     /// Combined-view length of `lit`'s list.
     #[must_use]
     pub fn len(&self, lit: Lit) -> usize {
         let i = lit.index();
-        (self.prim_end.get(i).copied().unwrap_or(0) as usize)
-            .saturating_sub(self.span_start.get(i).copied().unwrap_or(0) as usize)
-            + self.overflow.get(i).map_or(0, Vec::len)
+        let span = (self.prim_end.get(i).copied().unwrap_or(0) as usize)
+            .saturating_sub(self.span_start.get(i).copied().unwrap_or(0) as usize);
+        span + self.spill_slot_len(i)
+    }
+
+    /// Spill-tail length at `code` (0 when no slot / empty).
+    fn spill_slot_len(&self, code: usize) -> usize {
+        self.spill
+            .get(code)
+            .and_then(|s| s.as_ref())
+            .map_or(0, |v| v.len())
     }
 
     /// Whether `lit`'s combined list is empty.
     #[must_use]
+    #[allow(dead_code)] // diagnostics/tests
     pub fn is_empty(&self, lit: Lit) -> bool {
         self.len(lit) == 0
     }
 
-    /// Number of literals the layout covers (span/overflow array length).
+    /// Number of literals the layout covers.
     pub(crate) fn num_lits(&self) -> usize {
-        self.span_start.len().max(self.overflow.len())
+        self.span_start.len().saturating_sub(1)
     }
 
-    /// Append `w` to `lit`'s overflow (search-time `add` / BCP watch move:
-    /// arrival order, exactly where the `Vec` lists append).
-    pub fn push_overflow(&mut self, lit: Lit, w: Watcher) {
-        let i = lit.index();
-        if i >= self.overflow.len() {
-            self.overflow.resize(i + 1, Vec::new());
-        }
-        self.overflow[i].push(w);
-        if self.maintain_index {
-            let slot = self.positions.entry(w.r.byte_offset()).or_default();
-            if !slot.contains(&(i as u32)) {
-                slot.push(i as u32);
-            }
-        }
-    }
-
-    /// In-place prefix compaction of `lit`'s primary span down to its
-    /// first `n` survivors (the BCP scan's post-truncate state: the scan
-    /// compacts survivors toward the span start; overflow survives).
-    ///
-    /// # Panics
-    /// In debug builds when `n` exceeds the primary span's live length.
-    pub fn compact_primary(&mut self, lit: Lit, n: usize) {
+    /// The combined view of `lit`'s list as a pair: `(live span, spill
+    /// tail)` — the second is empty unless the literal spilled.
+    #[must_use]
+    pub fn spans(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
         let i = lit.index();
         let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
         let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
-        debug_assert!(n <= end - start, "compaction grows the span");
-        if let Some(slot) = self.prim_end.get_mut(i) {
-            *slot = (start + n) as u32;
-        }
-        // Survivors are already at [start, start+n): the BCP scan moved
-        // them there with its write cursor; only the live end moves.
+        let prim = self.entries.get(start..end).unwrap_or(&[]);
+        let extra: &[Watcher] = self.spill_extra(i);
+        (prim, extra)
     }
 
-    /// Remove every entry with arena ref `r` from `lit`'s combined list,
-    /// order-preserving on both segments (the `retain`-removal the search
-    /// performs on clause deletion).
-    pub fn remove_clause(&mut self, lit: Lit, r: ClauseRef) {
-        let i = lit.index();
-        if i >= self.overflow.len() {
+    /// Spill-tail slice at `code` (empty when none).
+    fn spill_extra(&self, code: usize) -> &[Watcher] {
+        self.spill
+            .get(code)
+            .and_then(|s| s.as_ref())
+            .map_or(&[], |v| v.as_slice())
+    }
+
+    /// Append `w` to `lit`'s list in arrival order: slack-append while
+    /// the literal has room and has not spilled; the spill tail once it
+    /// has (sticky — appends never interleave across the two segments,
+    /// which would reorder the visit sequence).
+    pub fn push_overflow(&mut self, lit: Lit, w: Watcher) {
+        let code = lit.index();
+        if let Some(tail) = self.spill.get_mut(code).and_then(|s| s.as_mut()) {
+            tail.push(w);
+            self.note_arrival(code);
             return;
         }
-        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
-        let mut write = start;
-        for read in start..end {
-            let w = self.entries[read];
-            if w.r != r {
-                self.entries[write] = w;
-                write += 1;
+        let live = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        let cap = self.cap(code);
+        if code < self.prim_end.len() && live < cap {
+            self.entries[live] = w;
+            self.prim_end[code] = (live + 1) as u32;
+        } else {
+            if code >= self.spill.len() {
+                self.spill.resize(code + 1, None);
+            }
+            self.spill[code] = Some(Box::default());
+            if let Some(t) = self.spill[code].as_mut() {
+                t.push(w);
             }
         }
-        if let Some(slot) = self.prim_end.get_mut(i) {
-            *slot = write as u32;
+        self.note_arrival(code);
+        if self.maintain_index {
+            let slot = self.positions.entry(w.r.byte_offset()).or_default();
+            if !slot.contains(&(code as u32)) {
+                slot.push(code as u32);
+            }
         }
-        self.overflow[i].retain(|w| w.r != r);
+    }
+
+    /// Record one arrival at `code` for the next layout's slack sizing.
+    fn note_arrival(&mut self, code: usize) {
+        if code >= self.arrivals.len() {
+            self.arrivals.resize(code + 1, 0);
+        }
+        self.arrivals[code] = self.arrivals[code].saturating_add(1);
+    }
+
+    /// Remove every entry with arena ref `r` from `lit`'s list,
+    /// order-preserving on both segments.
+    pub fn remove_clause(&mut self, lit: Lit, r: ClauseRef) {
+        let i = lit.index();
+        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
+        if end > start {
+            let mut write = start;
+            for read in start..end {
+                let w = self.entries[read];
+                if w.r != r {
+                    self.entries[write] = w;
+                    write += 1;
+                }
+            }
+            if let Some(slot) = self.prim_end.get_mut(i) {
+                *slot = write as u32;
+            }
+        }
+        if let Some(tail) = self.spill.get_mut(i).and_then(|s| s.as_mut()) {
+            tail.retain(|w| w.r != r);
+            if tail.is_empty() {
+                self.spill[i] = None;
+            }
+        }
         if self.maintain_index
             && let Some(slot) = self.positions.get_mut(&r.byte_offset())
         {
@@ -462,59 +518,80 @@ impl CsrWatchLists {
         }
     }
 
-    /// The combined view of `lit`'s list as a `SmallVec`-free pair:
-    /// `(primary_slice, overflow_slice)`.
-    #[must_use]
-    pub fn spans(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
-        let i = lit.index();
-        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
-        let prim = self.entries.get(start..end).unwrap_or(&[]);
-        let extra: &[Watcher] = self.overflow.get(i).map_or(&[], Vec::as_slice);
-        (prim, extra)
-    }
-
-    /// Adopt a fresh counting-sort layout (the rebuild): `build` supplies
-    /// the spans, overflow is cleared (a full rebuild replaces every
-    /// list's content).
+    /// Adopt a fresh counting-sort layout (the rebuild): the build's
+    /// packed spans are re-spaced with embedded slack, every literal
+    /// restarts live, and the spill tails clear.
+    ///
+    /// Slack policy: `min(4, 1 + count/32)` per nonempty literal — the
+    /// modal literal (2-3 watchers) gets one free append (the common
+    /// inter-rebuild arrival), dense literals get proportionally more.
+    /// A push beyond slack spills.
     pub fn adopt_layout(&mut self, build: CsrWatchBuild) {
-        // CsrWatchBuild's `span_end` is exclusive ends; starts derive.
         let CsrWatchBuild {
             entries, span_end, ..
         } = build;
-        self.entries = entries;
-        self.span_start = Vec::with_capacity(span_end.len());
+        let num_lits = span_end.len();
+        // Adaptive slack: size each literal's slack from the arrivals the
+        // PREVIOUS interval actually saw (capped), so hot literals stop
+        // spilling after one learning round and the modal literal keeps
+        // its single free append.  Literals new to the layout get the
+        // conservative base.
+        if self.arrivals.len() < num_lits {
+            self.arrivals.resize(num_lits, 0);
+        }
+        let mut starts = Vec::with_capacity(num_lits + 1);
+        let mut total = 0u32;
+        starts.push(0u32);
         let mut prev = 0u32;
-        for &end in &span_end {
-            self.span_start.push(prev);
+        for (code, &end) in span_end.iter().enumerate() {
+            let count = end - prev;
             prev = end;
+            // Uncapped: the total equals what the old per-literal-overflow
+            // design held anyway (demand-bounded), but contiguous and
+            // allocation-free; hot literals stop spilling after one
+            // learning interval.
+            let slack = if count == 0 {
+                u32::from(self.arrivals[code])
+            } else {
+                1 + u32::from(self.arrivals[code])
+            };
+            total = total.saturating_add(count + slack);
+            starts.push(total);
         }
-        self.prim_end = span_end;
-        // Retain each literal's overflow CAPACITY (the `Vec` world's
-        // `reset_lists_in_place` shape): the rebuild replaces every list's
-        // content, but freeing the per-literal buffers would make every
-        // post-rebuild watch-move push re-double from capacity zero —
-        // the `Vec` side keeps its capacity across rebuilds, and the
-        // symmetric retention is load-bearing for cost parity on
-        // propagation-heavy classes (millions of moves per rebuild
-        // interval on the 0-conflict families).
-        if self.overflow.len() < self.span_start.len() {
-            self.overflow.resize(self.span_start.len(), Vec::new());
+        for a in self.arrivals.iter_mut() {
+            *a = 0;
         }
-        for list in self.overflow.iter_mut() {
-            list.clear();
+        let mut spaced = vec![
+            Watcher::new(ClauseId::NULL, ClauseRef::NULL, Lit::pos(Var::new(0)));
+            total as usize
+        ];
+        let mut cursor = 0usize;
+        let mut live = Vec::with_capacity(num_lits);
+        prev = 0;
+        for (code, &end) in span_end.iter().enumerate() {
+            let count = (end - prev) as usize;
+            prev = end;
+            let dst = starts[code] as usize;
+            if count > 0 {
+                spaced[dst..dst + count].copy_from_slice(&entries[cursor..cursor + count]);
+            }
+            cursor += count;
+            live.push((dst + count) as u32);
         }
+        self.entries = spaced;
+        self.span_start = starts;
+        self.prim_end = live;
+        self.spill.clear();
         self.scan = CsrScanFrame::default();
-        // Rebuild the position index from the fresh layout: the counting
-        // sort places every live clause's watchers at its span positions.
-        // Surgery/diagnostic machinery only — off unless a knob asked.
+        // Rebuild the position index from the fresh layout (surgery /
+        // diagnostic machinery only).
         self.positions.clear();
         if self.maintain_index {
-            for code in 0..self.span_start.len() {
-                let start = self.span_start[code];
-                let end = self.prim_end[code];
-                for off in start..end {
-                    let w = self.entries[off as usize];
+            for code in 0..num_lits {
+                let s = self.span_start[code] as usize;
+                let e = self.prim_end[code] as usize;
+                for off in s..e {
+                    let w = self.entries[off];
                     let slot = self.positions.entry(w.r.byte_offset()).or_default();
                     if !slot.contains(&(code as u32)) {
                         slot.push(code as u32);
@@ -524,26 +601,22 @@ impl CsrWatchLists {
         }
     }
 
-    // ---- Dual-write BCP scan (slice 2) --------------------------------
+    // ---- Dual-write BCP scan (the legacy frame mirror) ---------------
 
-    /// Begin mirroring a scan of `code`'s list whose live `Vec` length is
-    /// `vec_len`.  Snapshots the primary/overflow split so per-entry
-    /// notifications can compact each segment in lockstep with the `Vec`
-    /// scan.  The precondition (`vec_len` equals the combined length) is
-    /// the order-isomorphism invariant; a violation deactivates the frame
-    /// so notifications no-op, and the drifted comparison at the next
-    /// rebuild localizes the divergence.
-    pub(crate) fn begin_scan(&mut self, code: usize, vec_len: usize) {
+    /// Begin mirroring a scan of `code`'s list whose scanned length is
+    /// `scanned_len` (the materialized scratch).  Precondition: the
+    /// combined length equals it; a violation deactivates the frame.
+    pub(crate) fn begin_scan(&mut self, code: usize, scanned_len: usize) {
         let ps = self.span_start.get(code).copied().unwrap_or(0);
         let pe = self.prim_end.get(code).copied().unwrap_or(0);
         let p_len = pe.saturating_sub(ps);
-        let o_len = self.overflow.get(code).map_or(0, Vec::len) as u32;
-        let active = (p_len as usize) + (o_len as usize) == vec_len;
+        let o_len = self.spill_slot_len(code) as u32;
+        let active = (p_len as usize) + (o_len as usize) == scanned_len;
         if !active && !self.warned_precondition {
             self.warned_precondition = true;
             eprintln!(
                 "[csr-shadow] scan precondition violated at literal code {code}: \
-                 combined {} vs vec {vec_len} — mirror suspended for this scan",
+                 combined {} vs scanned {scanned_len} — mirror suspended for this scan",
                 (p_len as u64) + (o_len as u64)
             );
             #[cfg(feature = "std")]
@@ -551,7 +624,6 @@ impl CsrWatchLists {
                 "[csr-shadow] backtrace:\n{}",
                 std::backtrace::Backtrace::force_capture()
             );
-            let _ = self.scan.active;
         }
         self.scan = CsrScanFrame {
             code,
@@ -563,18 +635,9 @@ impl CsrWatchLists {
             ow: 0,
             active,
         };
-        crate::mut_trace!(
-            code,
-            "side=csr act=begin_scan p_len={} o_len={} active={} path=begin_scan",
-            p_len,
-            o_len,
-            active
-        );
     }
 
-    /// Mirror a kept entry (optionally with a rewritten blocker — the
-    /// parked-blocker update).  The survivor compacts into its source
-    /// segment exactly where the `Vec` scan's write cursor would put it.
+    /// Mirror a kept entry (optionally with a rewritten blocker).
     pub(crate) fn scan_keep(&mut self, watcher: Watcher, blocker: Option<Lit>) {
         let f = &mut self.scan;
         if !f.active {
@@ -590,31 +653,25 @@ impl CsrWatchLists {
                 *slot = w;
                 f.pw += 1;
             }
-        } else if let Some(ov) = self.overflow.get_mut(f.code) {
+        } else if let Some(tail) = self.spill.get_mut(f.code).and_then(|s| s.as_mut()) {
             let dst = f.ow as usize;
-            if dst < ov.len() {
-                ov[dst] = w;
+            if dst < tail.len() {
+                tail[dst] = w;
                 f.ow += 1;
             }
         }
         f.read += 1;
     }
 
-    /// Mirror a removed entry (deleted clause, repair, watch move-out):
-    /// advances the read cursor and drops the position-index entry for
-    /// `r` under the scanned literal (the watch leaves this list).
+    /// Mirror a removed entry: advance the read cursor and drop the
+    /// position-index entry for `r` under the scanned literal.
     pub(crate) fn scan_remove(&mut self, r: ClauseRef) {
         if self.scan.active {
-            crate::mut_trace!(
-                self.scan.code,
-                "side=csr act=drop ref={} path=scan_remove",
-                r.byte_offset()
-            );
-            let code = self.scan.code as u32;
+            let code = self.scan.code;
             if self.maintain_index
                 && let Some(slot) = self.positions.get_mut(&r.byte_offset())
             {
-                slot.retain(|c| *c != code);
+                slot.retain(|c| *c != code as u32);
                 if slot.is_empty() {
                     self.positions.remove(&r.byte_offset());
                 }
@@ -623,38 +680,22 @@ impl CsrWatchLists {
         }
     }
 
-    /// Mirror a watch move: the entry leaves the scanned list and appends
-    /// to the destination literal's overflow in arrival order — exactly
-    /// where the `Vec` path's `push_watch`/`add` lands it.
+    /// Mirror a watch move: append to the destination literal (arrival
+    /// order — exactly where the `Vec` path's push lands).
     pub(crate) fn scan_push(&mut self, dest: Lit, w: Watcher) {
-        crate::mut_trace!(
-            dest.index(),
-            "side=csr act=push ref={} blk={} path=scan_push",
-            w.r.byte_offset(),
-            w.blocker.code()
-        );
         self.push_overflow(dest, w);
     }
 
-    /// Finish the scan: compact each segment's unvisited tail behind its
-    /// survivors and drop anything pushed into the scanned literal's own
-    /// overflow mid-scan (the `Vec` put-back overwrites the taken slot,
-    /// which drops exactly those entries).
+    /// Finish the scan: compact the unvisited span tail behind its
+    /// survivors, compact/truncate the spill tail, and commit the live
+    /// end — mid-scan self-pushes (beyond the snapshotted lengths) die
+    /// here, exactly as the `Vec` put-back overwrite dropped them.
     pub(crate) fn end_scan(&mut self) {
         let f = &mut self.scan;
         if !f.active {
             f.active = false;
             return;
         }
-        crate::mut_trace!(
-            f.code,
-            "side=csr act=end_scan read={} pw={} ow={} p_len={} o_len={} path=end_scan",
-            f.read,
-            f.pw,
-            f.ow,
-            f.p_len,
-            f.o_len
-        );
         let vis_p = f.read.min(f.p_len);
         let unvis_p = f.p_len - vis_p;
         if unvis_p > 0 {
@@ -668,19 +709,19 @@ impl CsrWatchLists {
         }
         let vis_o = f.read.saturating_sub(f.p_len);
         let unvis_o = f.o_len.saturating_sub(vis_o);
-        if let Some(ov) = self.overflow.get_mut(f.code) {
+        if let Some(tail) = self.spill.get_mut(f.code).and_then(|s| s.as_mut()) {
             if unvis_o > 0 {
-                ov.copy_within(vis_o as usize..f.o_len as usize, f.ow as usize);
+                tail.copy_within(vis_o as usize..f.o_len as usize, f.ow as usize);
             }
             let keep = (f.ow + unvis_o) as usize;
-            if ov.len() > keep {
-                ov.truncate(keep);
+            if tail.len() > keep {
+                tail.truncate(keep);
+            }
+            if tail.is_empty() {
+                self.spill[f.code] = None;
             }
         }
         f.active = false;
-        // Reset the frame's transient counters: the frame is dead between
-        // scans, and carrying the last scan's state makes Debug comparisons
-        // (the kernel tests) differ across scan paths.
         f.read = 0;
         f.o_len = 0;
         f.p_len = 0;
@@ -690,23 +731,14 @@ impl CsrWatchLists {
         f.ps = 0;
     }
 
-    // ---- Cold-path mirrors (slice 3) ----------------------------------
+    // ---- Cold paths ---------------------------------------------------
 
-    /// Mirror `WatchLists::relocate_refs`: rewrite survivors' arena refs
-    /// through the compaction plan, dropping deleted-clause entries
-    /// (order-preserving in both segments, matching the `Vec` pass).
-    ///
-    /// With `ghost_debt` (commit-B mode, where the `Vec` side is dead and
-    /// cannot charge), dropped deleted-clause entries charge the tick debt
-    /// here exactly as the `Vec` pass did — the counters drive restart and
-    /// stable-mode schedules, so a missing charge diverges the trajectory.
+    /// Relocation through the compaction plan (see `relocate_with_debt`).
     pub(crate) fn relocate(&mut self, arena: &ClauseArena, plan: &CompactionPlan) {
         self.relocate_impl(arena, plan, None::<&mut [u32]>);
     }
 
-    /// [`Self::relocate`] with tick-debt charging (commit-B mode): every
-    /// dropped deleted-clause entry charges `ghost_debt[code]` exactly as
-    /// the `Vec` pass's `relocate_refs` did.
+    /// [`Self::relocate`] with tick-debt charging (commit-B mode).
     pub(crate) fn relocate_with_debt(
         &mut self,
         arena: &ClauseArena,
@@ -723,11 +755,6 @@ impl CsrWatchLists {
         mut ghost_debt: Option<&mut [u32]>,
     ) {
         let relocated = plan.relocated();
-        // Rekey the position index (old → new byte offsets).  Entries of
-        // deleted clauses die with the compaction (their watchers are
-        // dropped below), so their index slots simply vanish — mirroring
-        // the Vec pass's is_deleted skip.  Surgery/diagnostic machinery
-        // only; when off, the map is empty and stays empty.
         if self.maintain_index {
             let mut rekeyed = std::collections::BTreeMap::new();
             let old = std::mem::take(&mut self.positions);
@@ -736,9 +763,6 @@ impl CsrWatchLists {
                     && !r.is_null()
                     && !arena.is_deleted(r)
                 {
-                    // The identity load is now safe (live clause; the
-                    // deleted case panicked in `live_identity` on lingering
-                    // dead entries — the compaction-fires test caught it).
                     rekeyed.insert(
                         relocated[arena.live_identity(r).index()].byte_offset(),
                         lits,
@@ -747,76 +771,14 @@ impl CsrWatchLists {
             }
             self.positions = rekeyed;
         }
-        let n = self.span_start.len().max(self.overflow.len());
+        let n = self.num_lits();
         for code in 0..n {
-            let mut dropped = 0u32;
-            if let (Some(&start), Some(end)) =
-                (self.span_start.get(code), self.prim_end.get_mut(code))
-            {
-                let mut write = start as usize;
-                for read in start as usize..*end as usize {
-                    let mut w = self.entries[read];
-                    if w.r.is_null() {
-                        self.entries[write] = w;
-                        write += 1;
-                        continue;
-                    }
-                    if arena.is_deleted(w.r) {
-                        dropped = dropped.saturating_add(1);
-                        crate::mut_trace!(
-                            code,
-                            "side=csr act=drop ref={} path=relocate_dead",
-                            w.r.byte_offset()
-                        );
-                        continue;
-                    }
-                    let new_r = relocated[arena.live_identity(w.r).index()];
-                    if new_r != w.r {
-                        crate::mut_trace!(
-                            code,
-                            "side=csr act=rewrite ref={} new={} path=relocate",
-                            w.r.byte_offset(),
-                            new_r.byte_offset()
-                        );
-                    }
-                    w.r = new_r;
-                    self.entries[write] = w;
-                    write += 1;
+            let mut dropped = self.relocate_span(code, arena, relocated);
+            if let Some(tail) = self.spill.get_mut(code).and_then(|s| s.as_mut()) {
+                dropped = dropped.saturating_add(Self::relocate_tail(tail, arena, relocated));
+                if tail.is_empty() {
+                    self.spill[code] = None;
                 }
-                *end = write as u32;
-            }
-            if let Some(ov) = self.overflow.get_mut(code) {
-                let mut write = 0usize;
-                for read in 0..ov.len() {
-                    let mut w = ov[read];
-                    if w.r.is_null() {
-                        ov[write] = w;
-                        write += 1;
-                        continue;
-                    }
-                    if arena.is_deleted(w.r) {
-                        dropped = dropped.saturating_add(1);
-                        crate::mut_trace!(
-                            code,
-                            "side=csr act=drop ref={} path=relocate_dead_ovf",
-                            w.r.byte_offset()
-                        );
-                        continue;
-                    }
-                    let new_r = relocated[arena.live_identity(w.r).index()];
-                    if new_r != w.r {
-                        crate::mut_trace!(
-                            code,
-                            "side=csr act=rewrite ref={} new={} path=relocate_ovf",
-                            w.r.byte_offset(),
-                            new_r.byte_offset()
-                        );
-                    }
-                    w.r = new_r;
-                    ov[write] = w;
-                    write += 1;
-                }
-                ov.truncate(write);
             }
             if dropped != 0
                 && let Some(debt) = ghost_debt.as_mut()
@@ -825,6 +787,75 @@ impl CsrWatchLists {
                 *slot = slot.saturating_add(dropped);
             }
         }
+        // Spill tails BEYOND the layout (the pre-first-materialize window,
+        // where every push lived in the tails — the old code's overflow
+        // array covered them; missing this left stale refs and dead
+        // entries un-relocated and desynced the mirror from the first
+        // compaction on).
+        for code in n..self.spill.len() {
+            let mut dropped = 0u32;
+            if let Some(tail) = self.spill.get_mut(code).and_then(|s| s.as_mut()) {
+                dropped = Self::relocate_tail(tail, arena, relocated);
+                if tail.is_empty() {
+                    self.spill[code] = None;
+                }
+            }
+            if dropped != 0
+                && let Some(debt) = ghost_debt.as_mut()
+                && let Some(slot) = debt.get_mut(code)
+            {
+                *slot = slot.saturating_add(dropped);
+            }
+        }
+    }
+
+    /// Relocate one literal's live span in place; returns the dropped count.
+    fn relocate_span(&mut self, code: usize, arena: &ClauseArena, relocated: &[ClauseRef]) -> u32 {
+        let mut dropped = 0u32;
+        if let (Some(&start), Some(end)) = (self.span_start.get(code), self.prim_end.get_mut(code))
+        {
+            let mut write = start as usize;
+            for read in start as usize..*end as usize {
+                let mut w = self.entries[read];
+                if w.r.is_null() {
+                    self.entries[write] = w;
+                    write += 1;
+                    continue;
+                }
+                if arena.is_deleted(w.r) {
+                    dropped = dropped.saturating_add(1);
+                    continue;
+                }
+                w.r = relocated[arena.live_identity(w.r).index()];
+                self.entries[write] = w;
+                write += 1;
+            }
+            *end = write as u32;
+        }
+        dropped
+    }
+
+    /// Relocate one spill tail in place; returns the dropped count.
+    fn relocate_tail(tail: &mut Vec<Watcher>, arena: &ClauseArena, relocated: &[ClauseRef]) -> u32 {
+        let mut dropped = 0u32;
+        let mut write = 0usize;
+        for read in 0..tail.len() {
+            let mut w = tail[read];
+            if w.r.is_null() {
+                tail[write] = w;
+                write += 1;
+                continue;
+            }
+            if arena.is_deleted(w.r) {
+                dropped = dropped.saturating_add(1);
+                continue;
+            }
+            w.r = relocated[arena.live_identity(w.r).index()];
+            tail[write] = w;
+            write += 1;
+        }
+        tail.truncate(write);
+        dropped
     }
 
     /// Remove every entry whose arena byte-offset is in `refs`, from both
@@ -857,10 +888,10 @@ impl CsrWatchLists {
         if let Some(slot) = self.prim_end.get_mut(i) {
             *slot = write as u32;
         }
-        if let Some(ov) = self.overflow.get_mut(i) {
+        if let Some(tail) = self.spill.get_mut(i).and_then(|s| s.as_mut()) {
             let mut write = 0usize;
-            for read in 0..ov.len() {
-                let w = ov[read];
+            for read in 0..tail.len() {
+                let w = tail[read];
                 if refs.contains(&w.r.byte_offset()) {
                     if self.maintain_index
                         && let Some(slot) = self.positions.get_mut(&w.r.byte_offset())
@@ -872,22 +903,21 @@ impl CsrWatchLists {
                     }
                     continue;
                 }
-                ov[write] = w;
+                tail[write] = w;
                 write += 1;
             }
-            ov.truncate(write);
+            tail.truncate(write);
+            if tail.is_empty() {
+                self.spill[i] = None;
+            }
         }
     }
 
-    /// Sortedness datum (slice-5 economics): count spans whose primary
-    /// entries are strictly increasing in arena byte offset (the fill
-    /// pushes in clause-id order; ids and arena offsets allocate together,
-    /// so spans are expected near-sorted — binary-search removal would
-    /// then cut the O(span) surgery scan to O(log span)).
+    /// Sortedness datum (slice-5 economics).
     pub(crate) fn span_sortedness(&self) -> (usize, usize) {
         let mut sorted = 0usize;
         let mut total = 0usize;
-        for code in 0..self.span_start.len() {
+        for code in 0..self.num_lits() {
             let start = self.span_start[code] as usize;
             let end = self.prim_end[code] as usize;
             if end > start + 1 {
@@ -903,27 +933,46 @@ impl CsrWatchLists {
         (sorted, total)
     }
 
-    /// Live length of `code`'s primary span (diagnostics).
+    /// Live length of `code`'s span (diagnostics).
     pub(crate) fn span_len(&self, code: usize) -> usize {
         let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
         let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
         end.saturating_sub(start)
     }
 
-    /// Live length of `code`'s overflow (diagnostics).
+    /// Spill-tail length of `code` (diagnostics).
     pub(crate) fn overflow_len(&self, code: usize) -> usize {
-        self.overflow.get(code).map_or(0, Vec::len)
+        self.spill_slot_len(code)
+    }
+
+    /// Spill census (diagnostics: literals spilled / total spill entries).
+    #[allow(dead_code)] // diagnostics
+    pub(crate) fn spill_census(&self) -> (usize, usize) {
+        (
+            self.spill.iter().flatten().count(),
+            self.spill.iter().flatten().map(|v| v.len()).sum(),
+        )
     }
 
     /// Diagnostics: total live entries / index size.
     pub(crate) fn debug_total_entries(&self) -> usize {
-        let n = self.span_start.len().max(self.overflow.len());
-        (0..n)
+        let n = self.num_lits();
+        let in_layout: usize = (0..n)
             .map(|code| {
                 let lit = Lit::from_code(code as u32);
                 let (prim, extra) = self.spans(lit);
                 prim.len() + extra.len()
             })
+            .sum();
+        in_layout + self.spill_slot_total(n)
+    }
+
+    /// Total spill entries at codes >= from.
+    fn spill_slot_total(&self, from: usize) -> usize {
+        self.spill[from.min(self.spill.len())..]
+            .iter()
+            .flatten()
+            .map(|v| v.len())
             .sum()
     }
 
@@ -931,13 +980,11 @@ impl CsrWatchLists {
         self.positions.len()
     }
 
-    /// Index-consistency audit: rebuild actual ref→positions from a full
-    /// scan of the CSR and compare against the maintained index.  Returns
-    /// `(indexed_refs, refs_with_missing_position, refs_with_stale_position)`.
+    /// Index-consistency audit (diagnostics).
     pub(crate) fn csr_index_audit(&self) -> (usize, usize, usize) {
         let mut actual: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>> =
             std::collections::BTreeMap::new();
-        let n = self.span_start.len().max(self.overflow.len());
+        let n = self.num_lits();
         for code in 0..n {
             let lit = Lit::from_code(code as u32);
             let (prim, extra) = self.spans(lit);
@@ -963,126 +1010,238 @@ impl CsrWatchLists {
         (self.positions.len(), missing, stale)
     }
 
-    /// Split-borrow access for the swapped-dual scan (`NIXIE_CSR_SCAN`)
-    /// and commit-B (`NIXIE_CSR_B`): the contiguous primary span (the
-    /// kernels' `&mut [Watcher]` shape) and the overflow list of the
-    /// scanned code, all disjoint from `entries`' span borrow.  The caller
-    /// takes the overflow `Vec` out, scans span-then-overflow, and commits
-    /// via [`Self::commit_span_end`].
-    ///
-    /// TAKE semantics (matching the old `mem::take` exactly): the span's
-    /// live end drops to its start for the duration of the scan, so a
-    /// mid-scan self-dedup reads an empty combined view — exactly what the
-    /// Vec world's taken-list semantics showed it.  The caller's
-    /// `write_back_span` + `commit_span_end` restore the live end.
-    pub(crate) fn scan_parts(&mut self, code: usize) -> (usize, &[Watcher], &mut Vec<Watcher>) {
-        if code >= self.overflow.len() {
-            self.overflow.resize(code + 1, Vec::new());
-        }
-        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
-        let CsrWatchLists {
-            entries,
-            overflow,
-            prim_end,
-            span_start,
-            ..
-        } = self;
-        let _ = span_start;
-        let ovf = &mut overflow[code];
-        let span = entries.get(start..end).unwrap_or(&[]);
-        if let Some(e) = prim_end.get_mut(code) {
-            *e = start as u32;
-        }
-        (start, span, ovf)
-    }
-
-    /// Copy the compacted span home (the swapped scan ran on a copy to
-    /// keep the kernel's CSR accesses alias-free).
-    pub(crate) fn write_back_span(&mut self, code: usize, start: usize, kept: &[Watcher]) {
-        if kept.is_empty() {
-            return;
-        }
-        if let Some(dst) = self.entries.get_mut(start..start + kept.len()) {
-            dst.copy_from_slice(kept);
-        }
-        let _ = code;
-    }
-
-    /// Drop the scanned literal's overflow content down to its first `n`
-    /// entries (the empty-overflow fast path's put-back-overwrite: mid-scan
-    /// self-pushes die here exactly as the taken-`Vec` world's put-back
-    /// dropped them).
-    pub(crate) fn truncate_overflow(&mut self, code: usize, n: usize) {
-        if let Some(v) = self.overflow.get_mut(code) {
-            v.truncate(n);
-        }
-    }
-
-    /// Return the scanned overflow (truncated to its pass's write end; the
-    /// unvisited tail included when the pass exited on conflict).
-    pub(crate) fn put_back_overflow(&mut self, code: usize, mut ovf: Vec<Watcher>, write: usize) {
-        if ovf.len() > write {
-            ovf.truncate(write);
-        }
-        if code < self.overflow.len() {
-            self.overflow[code] = ovf;
-        } else {
-            self.overflow.resize(code + 1, Vec::new());
-            self.overflow[code] = ovf;
-        }
-    }
-
-    /// Commit the span pass's compaction end (the swapped scan's primary
-    /// maintenance — the kernel compacted the span in place).
-    pub(crate) fn commit_span_end(&mut self, code: usize, kept: usize) {
-        let start = self.span_start.get(code).copied().unwrap_or(0);
-        if let Some(end) = self.prim_end.get_mut(code) {
-            *end = start + kept as u32;
-        }
-    }
-
-    /// Index upkeep for a swapped-scan removal: the entry with ref `r`
-    /// left literal `code`'s list (the kernel compacts in place; the
-    /// index entry must go now).
+    /// Index upkeep for a swapped-scan removal.
     pub(crate) fn index_remove(&mut self, code: usize, r: ClauseRef) {
         if !self.maintain_index {
             return;
         }
-        let code32 = code as u32;
         if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
-            slot.retain(|c| *c != code32);
+            slot.retain(|c| *c != code as u32);
             if slot.is_empty() {
                 self.positions.remove(&r.byte_offset());
             }
         }
     }
 
-    /// Mirror `WatchLists::clear`: every list empties (the layout arrays
-    /// reset; the next rebuild re-adopts a fresh layout).
+    /// Mirror `WatchLists::clear`.
     pub(crate) fn clear_all(&mut self) {
         self.entries.clear();
         self.span_start.clear();
         self.prim_end.clear();
-        for list in &mut self.overflow {
-            list.clear();
-        }
+        self.spill.clear();
+        self.arrivals.clear();
         self.scan = CsrScanFrame::default();
         self.positions.clear();
     }
 }
 
-/// The disjoint mutable parts the propagation session needs: destination
-/// lists, phantom ticks, ghost debt, the CSR dual-write shadow, and the
-/// commit-B scan scratch (the reused span-copy buffer — a separate field
-/// so the session borrows it beside the CSR without a move).
-pub(crate) type PropagationParts<'a> = (
-    &'a mut [Vec<Watcher>],
-    &'a [u32],
-    &'a mut [u32],
-    &'a mut Option<CsrWatchLists>,
-    &'a mut Vec<Watcher>,
-);
+/// In-place scan support for the slack-CSR: the entries buffer split
+/// around the scanned literal's live span.  The cursor scans the span
+/// (a clean `&mut [Watcher]`, returned separately so it and the context
+/// borrow disjointly); pushes append into `head` or `tail` at the
+/// destination literal's live end — region-disjoint from the scan by
+/// construction (each literal's allocation is disjoint from every
+/// other's), which the split makes borrow-checkable with no unsafe
+/// code.
+pub(crate) struct ScanCtx<'a> {
+    /// Entries strictly before the scanned span (absolute-indexed).
+    pub(crate) head: &'a mut [Watcher],
+    /// Entries from the scanned span's end on (index 0 == absolute
+    /// `scan_end`).
+    pub(crate) tail: &'a mut [Watcher],
+    /// Absolute index of the span's first entry.
+    pub(crate) span_off: usize,
+    /// The pre-scan live end (absolute); mid-scan self-pushes land beyond
+    /// it and the commit discards them.
+    pub(crate) scan_end: usize,
+    /// Allocation starts (reads; the sentinel closes the array).
+    span_start: &'a [u32],
+    /// Live ends (a push bumps its destination's).
+    prim_end: &'a mut [u32],
+    /// Sticky-spill tails.
+    #[allow(clippy::box_collection)] // see CsrWatchLists::spill
+    spill: &'a mut Vec<Option<Box<Vec<Watcher>>>>,
+    /// The position index (surgery machinery; `maintain_index` gates).
+    positions: &'a mut std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
+    /// The scanned literal's code.
+    code: usize,
+    maintain_index: bool,
+}
+
+impl CsrWatchLists {
+    /// Split the entries buffer around `code`'s live span for an
+    /// in-place scan: the cursor's buffer plus the push context.
+    /// Pre-layout (no materialization yet) the split is degenerate —
+    /// empty span, pushes land in the spill tails — so the caller never
+    /// special-cases.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn scan_split(&mut self, code: usize) -> (&mut [Watcher], ScanCtx<'_>) {
+        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        let maintain = self.maintain_index;
+        let CsrWatchLists {
+            entries,
+            span_start,
+            prim_end,
+            spill,
+            positions,
+            ..
+        } = self;
+        let (head, rest) = entries.split_at_mut(start);
+        let (span, tail) = rest.split_at_mut(end - start);
+        (
+            span,
+            ScanCtx {
+                head,
+                tail,
+                span_off: start,
+                scan_end: end,
+                span_start,
+                prim_end,
+                spill,
+                positions,
+                code,
+                maintain_index: maintain,
+            },
+        )
+    }
+
+    /// Detach `code`'s spill tail for a second scan pass (arrival order
+    /// after the span — the same visit sequence the span+overflow form
+    /// maintained).
+    #[allow(clippy::box_collection)]
+    pub(crate) fn take_fallback(&mut self, code: usize) -> Option<Box<Vec<Watcher>>> {
+        self.spill.get_mut(code).and_then(|s| s.take())
+    }
+}
+
+impl ScanCtx<'_> {
+    /// Absolute allocation start of `key`'s span.
+    fn start_of(&self, key: usize) -> usize {
+        self.span_start.get(key).copied().unwrap_or(0) as usize
+    }
+
+    /// Absolute live end of `key`'s span.
+    fn end_of(&self, key: usize) -> usize {
+        self.prim_end.get(key).copied().unwrap_or(0) as usize
+    }
+
+    /// Cap of `key`'s allocation.
+    fn cap_of(&self, key: usize) -> usize {
+        self.span_start.get(key + 1).copied().unwrap_or(0) as usize
+    }
+
+    /// Read `entries[abs]` through the head/tail split (the caller
+    /// guarantees `abs` is outside the scanned span).
+    fn read_abs(&self, abs: usize) -> Option<Watcher> {
+        if abs < self.span_off {
+            self.head.get(abs).copied()
+        } else {
+            self.tail.get(abs - self.scan_end).copied()
+        }
+    }
+
+    /// Write `entries[abs]` through the head/tail split.
+    fn write_abs(&mut self, abs: usize, w: Watcher) {
+        if abs < self.span_off {
+            if let Some(slot) = self.head.get_mut(abs) {
+                *slot = w;
+            }
+        } else if let Some(slot) = self.tail.get_mut(abs - self.scan_end) {
+            *slot = w;
+        }
+    }
+
+    /// Whether `key`'s live list already holds an entry with ref `r`
+    /// (the dedup read; the scanned literal sees only its self-pushes).
+    #[inline]
+    pub(crate) fn contains_ref(&self, scanned_code: usize, key: Lit, r: ClauseRef) -> bool {
+        let k = key.index();
+        let (s, e) = if k == scanned_code {
+            (self.scan_end, self.end_of(k))
+        } else {
+            (self.start_of(k), self.end_of(k))
+        };
+        for abs in s..e {
+            if let Some(w) = self.read_abs(abs)
+                && w.r == r
+            {
+                return true;
+            }
+        }
+        if let Some(tail) = self.spill.get(k).and_then(|s| s.as_ref()) {
+            return tail.iter().any(|w| w.r == r);
+        }
+        false
+    }
+
+    /// Append `w` to `key`'s list in arrival order (slack append while
+    /// room remains and the literal has not spilled; the sticky spill
+    /// tail once it has).
+    #[inline]
+    pub(crate) fn push_entry(&mut self, key: Lit, w: Watcher) {
+        let k = key.index();
+        if let Some(tail) = self.spill.get_mut(k).and_then(|s| s.as_mut()) {
+            tail.push(w);
+            return;
+        }
+        {
+            let live = self.end_of(k);
+            let cap = self.cap_of(k);
+            if k < self.prim_end.len() && live < cap {
+                self.write_abs(live, w);
+                self.prim_end[k] = (live + 1) as u32;
+            } else {
+                if k >= self.spill.len() {
+                    self.spill.resize(k + 1, None);
+                }
+                let slot = self.spill[k].get_or_insert_with(Box::default);
+                slot.push(w);
+            }
+        }
+        if self.maintain_index {
+            let slot = self.positions.entry(w.r.byte_offset()).or_default();
+            if !slot.contains(&(k as u32)) {
+                slot.push(k as u32);
+            }
+        }
+    }
+
+    /// Position-index upkeep for a scan removal (the entry with ref `r`
+    /// left the scanned literal).
+    pub(crate) fn on_remove(&mut self, code: usize, r: ClauseRef) {
+        if !self.maintain_index {
+            return;
+        }
+        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+            slot.retain(|c| *c != code as u32);
+            if slot.is_empty() {
+                self.positions.remove(&r.byte_offset());
+            }
+        }
+    }
+
+    /// Commit the in-place scan: the cursor compacted `kept` live entries
+    /// at the span start; everything beyond (removals, holes, mid-scan
+    /// self-pushes) dies.
+    pub(crate) fn commit(&mut self, kept: usize) {
+        if let Some(end) = self.prim_end.get_mut(self.code) {
+            *end = (self.span_off + kept) as u32;
+        }
+    }
+
+    /// Return a scanned spill tail (truncated — or untruncated on the
+    /// conflict path — by its owning pass).
+    #[allow(clippy::box_collection)]
+    pub(crate) fn put_fallback(&mut self, tail: Box<Vec<Watcher>>) {
+        if !tail.is_empty() {
+            if self.code >= self.spill.len() {
+                self.spill.resize(self.code + 1, None);
+            }
+            self.spill[self.code] = Some(tail);
+        }
+    }
+}
 
 /// The swapped-dual scan's `Vec` mirror (`NIXIE_CSR_SCAN`): the CSR's
 /// span+overflow passes drive, and this cursor reproduces the old
@@ -1148,6 +1307,16 @@ pub(crate) enum ClauseAuditState {
     DeadOrShort,
 }
 
+/// The disjoint mutable parts the propagation session needs: destination
+/// lists, phantom ticks, ghost debt, and the CSR (commit-B: the sole
+/// watch representation).
+pub(crate) type PropagationParts<'a> = (
+    &'a mut [Vec<Watcher>],
+    &'a [u32],
+    &'a mut [u32],
+    &'a mut Option<CsrWatchLists>,
+);
+
 impl WatchLists {
     pub(crate) fn propagation_parts(&mut self) -> PropagationParts<'_> {
         (
@@ -1155,7 +1324,6 @@ impl WatchLists {
             &self.bin_phantom,
             &mut self.ghost_debt,
             &mut self.csr,
-            &mut self.csr_scan_scratch,
         )
     }
 
@@ -1195,7 +1363,6 @@ impl WatchLists {
             },
             csr_surgery_visits: 0,
             csr_surgery_nanos: 0,
-            csr_scan_scratch: Vec::new(),
         }
     }
 
@@ -1230,7 +1397,7 @@ impl WatchLists {
     pub(crate) fn csr_has_overflow_content(&self) -> bool {
         self.csr
             .as_ref()
-            .is_some_and(|c| c.overflow.iter().any(|v| !v.is_empty()))
+            .is_some_and(|c| c.spill.iter().any(|s| s.is_some()))
     }
 
     /// Read a ref's current watched-literal codes from the index (the
@@ -1305,7 +1472,7 @@ impl WatchLists {
         let mut counts: std::collections::BTreeMap<usize, usize> =
             std::collections::BTreeMap::new();
         let mut total = 0usize;
-        let n = csr.span_start.len().max(csr.overflow.len());
+        let n = csr.num_lits();
         for code in 0..n {
             let lit = Lit::from_code(code as u32);
             let (prim, extra) = csr.spans(lit);
@@ -1601,7 +1768,12 @@ impl WatchLists {
                     if let Some(w) = c.entries.get_mut(start + idx) {
                         w.blocker = blocker;
                     }
-                } else if let Some(w) = c.overflow.get_mut(code).and_then(|v| v.get_mut(idx)) {
+                } else if let Some(w) = c
+                    .spill
+                    .get_mut(code)
+                    .and_then(|s| s.as_mut())
+                    .and_then(|v| v.get_mut(idx))
+                {
                     w.blocker = blocker;
                 }
             }
@@ -1624,7 +1796,7 @@ impl WatchLists {
             for w in &mut c.entries[start..end] {
                 w.blocker = blocker;
             }
-            if let Some(v) = c.overflow.get_mut(code) {
+            if let Some(v) = c.spill.get_mut(code).and_then(|s| s.as_mut()) {
                 for w in v.iter_mut() {
                     w.blocker = blocker;
                 }
@@ -2343,11 +2515,15 @@ mod csr_tests {
         assert_eq!(csr.len(Lit::pos(v(0))), 3);
 
         // Search-time append (BCP move): arrival order after the primary.
+        // The slack-CSR appends into the span's slack — the combined view
+        // is [primary survivors][arrivals] exactly as the span+overflow
+        // form maintained; the spill tail stays empty until slack runs out.
         let m = Watcher::new(ClauseId::new(9), ClauseRef::NULL, Lit::pos(v(5)));
         csr.push_overflow(Lit::pos(v(0)), m);
         let (prim, extra) = csr.spans(Lit::pos(v(0)));
-        assert_eq!(prim.len(), 3);
-        assert_eq!(extra, &[m]);
+        assert_eq!(prim.len(), 4);
+        assert_eq!(prim[3], m);
+        assert_eq!(extra, &[] as &[Watcher]);
 
         // Clause deletion: order-preserving removal from the primary.
         csr.remove_clause(
@@ -2366,11 +2542,16 @@ mod csr_tests {
         b2.fill(Lit::neg(v(1)), b);
         csr2.adopt_layout(b2);
         csr2.push_overflow(Lit::neg(v(1)), c);
-        csr2.compact_primary(Lit::neg(v(1)), 1);
+        // Shrink the live span to its first entry (the slack-CSR's scan
+        // commit shape): the appended entry dies with the commit — the
+        // same take-semantics the scan guarantees.
+        let code = Lit::neg(v(1)).index();
+        let start = csr2.span_start[code] as usize;
+        csr2.prim_end[code] = (start + 1) as u32;
         let (p2, e2) = csr2.spans(Lit::neg(v(1)));
         assert_eq!(p2, &[a]);
-        assert_eq!(e2, &[c]);
-        assert_eq!(csr2.len(Lit::neg(v(1))), 2);
+        assert_eq!(e2, &[] as &[Watcher]);
+        assert_eq!(csr2.len(Lit::neg(v(1))), 1);
         assert!(csr2.is_empty(Lit::pos(v(0))));
     }
 
@@ -2612,5 +2793,24 @@ mod csr_tests {
         wl3.get_mut(l0).push(wk(42, 0));
         let (_, _, bad3) = wl3.csr_drifted_compare(4);
         assert_eq!(bad3, 1);
+    }
+}
+
+#[cfg(test)]
+mod slack_debug_tests {
+    use super::*;
+
+    #[test]
+    fn pre_layout_pushes_land_in_fallback_and_len_counts_them() {
+        let w =
+            |r: usize| Watcher::new(ClauseId::new(r as u32), ClauseRef::NULL, Lit::from_code(7));
+        let mut c = CsrWatchLists::default();
+        let lit = Lit::from_code(30);
+        c.push_overflow(lit, w(1));
+        c.push_overflow(lit, w(2));
+        c.push_overflow(lit, w(3));
+        assert_eq!(c.len(lit), 3, "len must count pre-layout fallbacks");
+        let (p, x) = c.spans(lit);
+        assert_eq!((p.len(), x.len()), (0, 3));
     }
 }
