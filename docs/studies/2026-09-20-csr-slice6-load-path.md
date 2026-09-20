@@ -159,3 +159,55 @@ is +450 MB against a −450 MB header win pending the Vec deletion —
 the flip (delete `Vec<Vec<Watcher>>`, make B the default, convert the
 18 scaffolding tests) is now a clean deletion with every prerequisite
 landed and validated.
+
+## Addendum (fifth increment): THE FLIP — landed `032b687f`
+
+`csr_b_enabled()` defaults TRUE: the slack-CSR is the primary on the
+default path, the dead `Vec<Vec<Watcher>>` side is not allocated, and
+`NIXIE_CSR_B=0` restores the legacy world as the A/B escape hatch.
+
+**The flip's honest ledger** (the user asked the right question — "it's
+trading speed for memory?" — and the measurements agreed):
+
+| | legacy | flipped |
+|---|---|---|
+| 14.normalised instructions | 69.0G | 72.7G (**+5.5%**, from +8.2% pre-optimization) |
+| GP_190 instructions | 58.8G | 60.4G (+2.7%) |
+| peak RSS (both classes) | — | **wash** (±1%) |
+| trajectory | — | bit-identical everywhere (gate 1.000) |
+
+So the flip is a ~5% cost on the propagation-heaviest class for a wash
+on memory.  What it BUYS: the load path's allocation profile (zero
+per-literal allocations at any scale), one representation instead of
+two, and the surgery design space (slice 5's measured 46×).  If the
+surgery never lands, the honest verdict is that the flip should be
+reverted to the opt-out — the escape hatch makes that a one-line
+decision.
+
+**The SIMD exploration's three findings** (kept in the code + traps):
+
+19. **std::arch's gather family addresses through TYPED pointers** —
+    `i32gather(base: *const i32)` computes `base + 4*idx*SCALE` bytes;
+    a byte-indexed gather DOES NOT EXIST in the intrinsic family.  The
+    4-byte-scaled misuse read wild addresses — a 98%-sys fault storm
+    that looked like an infinite loop.  The randomized differential
+    unit test caught it on trial 3.
+20. **Mid-scan cursor surgery on raw pointers across the prefix/compact
+    phase recursion had a use-after-free** — lldb pinned the fault to
+    `kept_run4` reading a DEAD entries pointer.  Root cause not fully
+    isolated; the machinery was REMOVED in favor of a safe slice-based
+    leading-run prefilter in `scan_list` (monotone-safe: values only go
+    undefined->assigned within a scan, so a pre-read satisfied blocker
+    cannot become false).
+21. **The lists are ~3 entries long on the dominant classes** — block
+    SIMD cannot pay there at any implementation quality; the dense
+    circuit class shows the kernel at 16.7% but its leading runs are
+    short and mixed, and the safe prefilter measured ±0.05% (neutral).
+    Kept (correct, free, and the shape a future
+    gather-block-over-long-runs would extend), with `NIXIE_NO_SIMD=1`
+    as the runtime opt-out.
+
+The 18 legacy-scaffolding tests are pinned to the legacy world they
+assert against (`pin_legacy_watch_world` — nextest's per-test process
+isolation makes the env pin sound); the suite is 1116/1116 in both
+worlds.
