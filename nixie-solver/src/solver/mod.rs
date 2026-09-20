@@ -856,6 +856,13 @@ pub struct Solver {
     /// case-splitting within the current `check`.  Capped by
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
     pub(super) case_split_rounds: u32,
+    /// Reset-and-re-solve rounds spent on the LIA branch channel (the
+    /// CDCL-visible `int_branch` splits); bounded by
+    /// [`Self::MAX_LIA_BRANCH_ROUNDS`].
+    pub(super) lia_branch_rounds: u32,
+    /// Split clauses already emitted this check (`(term, k)` keys) — the
+    /// same clause twice is a spin, not progress.
+    pub(super) emitted_lia_branches: FxHashSet<(TermId, i64)>,
     /// How many refuted candidate models have been excluded by
     /// [`model_blocking::Solver::block_refuted_model`] at the *current*
     /// context scope, and equivalently how many model-blocking clauses are
@@ -1069,6 +1076,13 @@ impl Drop for DeadlineGuard {
 }
 
 impl Solver {
+    /// Round cap for the LIA branch channel: each split costs a
+    /// reset-and-re-solve (theories rebuilt; the SAT core keeps its
+    /// learned clauses).  Z3's branch needs are single digits on the CAV
+    /// family; the cap bounds pathological wander far above that while
+    /// staying far below any meaningful search budget.
+    const MAX_LIA_BRANCH_ROUNDS: u32 = 2_000;
+
     /// Record a nullary `define-fun` alias (`name ≡ body`) for the solver's
     /// unit-equality representative machinery, without asserting anything.
     ///
@@ -1318,6 +1332,8 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
+            lia_branch_rounds: 0,
+            emitted_lia_branches: FxHashSet::default(),
             model_blocking_active: 0,
             model_blocks_nongenuine: 0,
             dt_derived_size_vars: rustc_hash::FxHashSet::default(),
@@ -2451,6 +2467,8 @@ impl Solver {
         // the live formula still needs it.  See [`int_case_split`].
         self.case_split_terms.clear();
         self.case_split_rounds = 0;
+        self.lia_branch_rounds = 0;
+        self.emitted_lia_branches.clear();
         // Check for trivial unsat (false assertion)
         if self.has_false_assertion {
             self.build_unsat_core_trivial_false();
@@ -3131,6 +3149,24 @@ impl Solver {
         // congruence they enable.
         self.intern_compound_uf_args_into_arith(manager);
 
+        // Arm the LIA branch channel for this CDCL(T) round — gated OFF by
+        // default: the channel's machinery is complete and tested, but the
+        // measured blocker (the pivot-storm addendum's per-LP churn: ~2 s
+        // per degenerate re-feasibilization post-cuts) dominates every
+        // split round-trip on the CAV/slack family, and arming it trades a
+        // measured solve (v20_problem__019) for slower split cycles.  Flip
+        // to always-on once the LP-cost layer (fraction-free rows) lands;
+        // `NIXIE_LIA_BRANCH=1` opts in for measurement (OnceLock-cached —
+        // never a per-check getenv).
+        {
+            static ARM: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if *ARM
+                .get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH").is_some_and(|v| !v.is_empty()))
+            {
+                self.arith.arm_branch_channel();
+            }
+        }
+
         // Run SAT solver with theory integration
         let zero_term = manager.mk_int(0);
         let mut theory_manager = TheoryManager::new(
@@ -3332,6 +3368,74 @@ impl Solver {
                         theory_manager.debug_scan_congruence_gaps(8);
                     }
                     if resource_exhausted {
+                        // The LIA branch channel (Z3 `int_branch`'s CDCL-visible
+                        // shape): when the arithmetic search declined at a
+                        // FRACTIONAL point, it left a split request — the
+                        // valid clause `(<= t k) ∨ (>= t k+1)` over the
+                        // integers.  Assert it and re-solve so CDCL owns the
+                        // branch tree (learning from each side's theory
+                        // conflicts — the pruning the internal B&B
+                        // structurally lacks; the pivot-storm study's map,
+                        // item 1).  Other exhaustion causes (dropped
+                        // conflicts, LP budgets, unjustified conflicts)
+                        // carry no request and fall through to `Unknown`.
+                        if let Some((term, k)) = theory_manager.take_arith_branch_split()
+                            && self.lia_branch_rounds < Self::MAX_LIA_BRANCH_ROUNDS
+                            && !self.emitted_lia_branches.contains(&(term, k))
+                        {
+                            self.lia_branch_rounds += 1;
+                            self.emitted_lia_branches.insert((term, k));
+                            let int_k = manager.mk_int(k);
+                            let k1 = manager.mk_int(k.saturating_add(1));
+                            let le = manager.mk_le(term, int_k);
+                            let ge = manager.mk_ge(term, k1);
+                            let le_lit = self.encode_depth(le, manager, 0);
+                            let ge_lit = self.encode_depth(ge, manager, 0);
+                            self.sat.add_clause([le_lit, ge_lit]);
+                            // The established refinement restart (the
+                            // colocated-split pattern verbatim): root, reset
+                            // theories, rebuild the manager; the SAT core
+                            // KEEPS its learned clauses, so CDCL restarts
+                            // warm with the split literal pair live.
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.arith.arm_branch_channel();
+                            self.reset_bv_theory_for_round();
+                            self.diff.reset();
+                            let zero_term = manager.mk_int(0);
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &mut self.diff,
+                                &mut self.array_theory,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                &self.numarg_proxies,
+                                &self.interface_const_pins,
+                                zero_term,
+                                &self.ite_result_terms,
+                                &mut self.derived_reasons,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.has_array_ops,
+                                self.config.timeout_ms,
+                                self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
+                                self.has_injective_distinct,
+                                &self.injective_distinct_specs,
+                            );
+                            continue;
+                        }
                         // A real theory conflict was dropped at the conflict
                         // limit; never fabricate Sat over a suppressed conflict.
                         self.unsat_core = None;

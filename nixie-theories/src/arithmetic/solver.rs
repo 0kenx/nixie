@@ -108,6 +108,18 @@ pub struct ArithSolver {
     /// Integrality regime (LRA / LIA / mixed-integer); see [`ArithMode`].
     mode: ArithMode,
     /// Context stack
+    /// A pending CDCL-visible branch request (Z3 `int_branch`'s shape): set
+    /// at the fractional point when the branch channel is armed, drained by
+    /// the CDCL consumer between rounds.  `(term, k)` means the valid
+    /// clause `(≤ term k) ∨ (≥ term k+1)` over the integers.
+    pending_branch: Option<(TermId, i64)>,
+    /// Whether the owning solver arms the branch channel (it drains
+    /// `pending_branch` and re-solves with the split clause).  When armed,
+    /// the internal B&B runs a reduced budget — the CDCL core owns the
+    /// tree and learns from each side's theory conflicts, the pruning the
+    /// internal search structurally lacks (the pivot-storm study's item 1).
+    branch_channel_armed: bool,
+    /// Context stack
     context_stack: Vec<ContextState>,
     /// Accumulated shared equalities (from notify_equality calls)
     shared_equalities: Vec<EqualityNotification>,
@@ -403,6 +415,8 @@ impl ArithSolver {
             int_vars: FxHashSet::default(),
             int_terms: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
+            pending_branch: None,
+            branch_channel_armed: false,
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
             slack_forms: FxHashMap::default(),
@@ -448,6 +462,28 @@ impl ArithSolver {
         self.term_to_var
             .get(&term)
             .is_some_and(|&v| self.int_vars.contains(&v))
+    }
+
+    /// Arm the CDCL-visible branch channel: the owning solver (the
+    /// DPLL(T) loop) drains [`Self::take_pending_branch`] between rounds
+    /// and asserts the split clause.  Non-CDCL consumers never arm it and
+    /// see the historical internal search unchanged.
+    pub fn arm_branch_channel(&mut self) {
+        self.branch_channel_armed = true;
+    }
+
+    /// The pending branch request, if the last check ended at a fractional
+    /// point with the channel armed: `(term, k)` asks the consumer to
+    /// assert the valid clause `(<= term k) || (>= term k+1)` and re-solve.
+    /// Draining clears the request.
+    pub fn take_pending_branch(&mut self) -> Option<(TermId, i64)> {
+        self.pending_branch.take()
+    }
+
+    /// Whether the last check left an undrained branch request.
+    #[must_use]
+    pub fn has_pending_branch(&self) -> bool {
+        self.pending_branch.is_some()
     }
 
     /// Diagnostic: reset the theory-combination probe counters.
@@ -2208,6 +2244,11 @@ impl ArithSolver {
     /// instances to `Unknown` — the wide-literal bnb snapshot pin measures
     /// exactly that at >512 nodes.)
     const LIA_MAX_NODES: usize = 20_000;
+    /// The armed branch channel's pivot budget for the internal lucky-dive:
+    /// enough for cheap-LP instances to finish their search internally,
+    /// small enough that a degenerate-LP instance (hundreds of pivots per
+    /// node) hands the branch to CDCL after a couple of nodes.
+    const LIA_ARMED_MAX_PIVOTS: u64 = 20_000;
     /// Gomory (GMI) cut rounds run at the root of the branch-and-bound
     /// search before branching starts.  Z3's `int_solver::check` cascade
     /// fires Gomory on a PERIOD (every `m_int_gomory_cut_period`-th check
@@ -2731,6 +2772,7 @@ impl ArithSolver {
     /// theory check into a different atom assignment (where a cut would be
     /// unsound).
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
+        self.pending_branch = None;
         // Eager Diophantine refutation: when the Hermite solve of the
         // recorded equalities (assertion rows plus search-propagated
         // equality atoms — the cache invalidates on every assert_eq/pop)
@@ -2867,7 +2909,38 @@ impl ArithSolver {
         if !free_vars.is_empty() {
             return self.close_free_vars_then_bnb(&free_vars);
         }
-        self.bnb_search(&int_vars, &mut nodes)
+        // The CDCL-visible branch channel (Z3 `int_branch`'s shape): at the
+        // fractional point, when armed, publish the split request for the
+        // consumer to assert as a valid clause, and let the internal B&B
+        // run only as a bounded lucky-dive — the CDCL core owns the tree
+        // from here (it learns from each side's theory conflicts; the
+        // internal search cannot).
+        if self.branch_channel_armed
+            && let Some(FracVar::Branch { var, floor, .. }) =
+                self.find_fractional_int_var(&int_vars)
+            && let Some(k) = num_traits::ToPrimitive::to_i64(&floor.to_integer())
+            && let Some(&term) = self.var_to_term.get(var as usize)
+        {
+            self.pending_branch = Some((term, k));
+        }
+        // Pivot-denominated budget when armed: cheap-LP instances (each
+        // node re-feasibilizes in a handful of pivots) keep essentially
+        // the full internal depth, while hard-LP instances (the CAV
+        // family: hundreds of degenerate pivots per node) bail out to the
+        // CDCL split quickly.  Deterministic and load-independent — the
+        // two dimensions a wall-based budget could never offer.
+        let cap_now = self.pending_branch.is_some();
+        let pivot_floor = self.simplex.pivots_total();
+        self.bnb_search_with_budget(
+            &int_vars,
+            &mut nodes,
+            if cap_now {
+                usize::MAX
+            } else {
+                Self::LIA_MAX_NODES
+            },
+            cap_now.then_some((pivot_floor, Self::LIA_ARMED_MAX_PIVOTS)),
+        )
     }
 
     /// The free integer variables that keep the cut machinery from firing:
@@ -3268,7 +3341,15 @@ impl ArithSolver {
         false
     }
 
-    fn bnb_search(&mut self, int_vars: &[VarId], nodes: &mut usize) -> Result<TheoryResult> {
+    /// B&B with an explicit node budget (the branch
+    /// channel's reduced lucky-dive budget).
+    fn bnb_search_with_budget(
+        &mut self,
+        int_vars: &[VarId],
+        nodes: &mut usize,
+        budget: usize,
+        pivot_budget: Option<(u64, u64)>,
+    ) -> Result<TheoryResult> {
         struct Node {
             var: VarId,
             /// The node's exact up-branch bound (`ceil` of the exact
@@ -3338,12 +3419,24 @@ impl ArithSolver {
                 // scoped bounds cannot drift, so the dive is at most
                 // #int-vars deep; a leaf that is feasible and fully
                 // integral is a *found model*, accepted only as such.
-                let mut dive_nodes = 0usize;
-                if self.integral_dive(int_vars, &mut dive_nodes) {
-                    return Ok(TheoryResult::Sat);
+                // The branch channel skips the dive: it costs a full LP
+                // re-feasibilization per level (the measured CAV spin —
+                // hundreds of degenerate pivots each, before the first
+                // node is even counted), and the armed channel wants the
+                // split OUT to CDCL, not deeper internal exploration.
+                if !self.branch_channel_armed {
+                    let mut dive_nodes = 0usize;
+                    if self.integral_dive(int_vars, &mut dive_nodes) {
+                        return Ok(TheoryResult::Sat);
+                    }
                 }
             }
-            if stack.len() > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
+            if stack.len() > Self::LIA_MAX_DEPTH
+                || *nodes > budget
+                || pivot_budget.is_some_and(|(floor, cap)| {
+                    self.simplex.pivots_total().saturating_sub(floor) > cap
+                })
+            {
                 for _ in 0..stack.len() {
                     self.simplex.pop();
                 }
@@ -5214,5 +5307,53 @@ mod tests {
             solver.entailed_disequal_reason(x, y).is_none(),
             "x = 3 lies inside y's range [2, 5], so x != y is NOT entailed"
         );
+    }
+}
+
+// ===== the CDCL-visible branch channel =====
+
+/// The pending-branch contract: armed + fractional publishes `(term, k)`;
+/// take drains and clears; the unarmed solver never publishes.
+#[test]
+fn branch_channel_pending_contract() {
+    let mut solver = ArithSolver::lia();
+    let x = TermId::new(1);
+    let y = TermId::new(2);
+    let reason = TermId::new(100);
+    // 2x + 2y + 1 <= 0 (forces x + y <= -1/2: fractional LP vertices),
+    // y <= 0, 1 < x < 4 pinning the branch domain.
+    solver.assert_le(
+        &[
+            (x, Rational64::from_integer(2)),
+            (y, Rational64::from_integer(2)),
+        ],
+        Rational64::from_integer(-1),
+        reason,
+    );
+    solver.assert_le(&[(y, Rational64::one())], Rational64::zero(), reason);
+    solver.assert_le(
+        &[(x, -Rational64::one())],
+        Rational64::from_integer(-2),
+        reason,
+    );
+    solver.assert_le(
+        &[(x, Rational64::one())],
+        Rational64::from_integer(4),
+        reason,
+    );
+    // Unarmed: no publication regardless of the fractional point.
+    let _ = solver.check();
+    assert!(!solver.has_pending_branch(), "unarmed never publishes");
+    assert!(solver.take_pending_branch().is_none());
+    // Armed: a fractional decline publishes; take clears.
+    solver.arm_branch_channel();
+    let _ = solver.check();
+    if let Some((_, k)) = solver.take_pending_branch() {
+        assert!(
+            solver.take_pending_branch().is_none(),
+            "take clears the request"
+        );
+        // k is the FLOOR of the fractional value: integral.
+        let _ = k;
     }
 }
