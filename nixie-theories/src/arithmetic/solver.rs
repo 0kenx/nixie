@@ -145,9 +145,9 @@ pub struct ArithSolver {
     /// `lia_move::branch` channel — see `LiaBranchRequest`).  Recorded at
     /// the internal integrality search's budget decline (the branch-walk
     /// ray class, item 96) and drained by the solver layer, which mints the
-    /// `(>= form k)` atoms for the SAT core to decide.  Empty unless
-    /// `NIXIE_LIA_BRANCH_LEMMA=1` (the channel is flag-gated pending its
-    /// matched-null campaign).
+    /// `(>= form k)` atoms for the SAT core to decide.  Empty when the
+    /// channel is disarmed (`NIXIE_LIA_BRANCH_LEMMA=0`; armed by default
+    /// since the rung-3 campaign).
     pub(crate) lia_branch_requests: Vec<LiaBranchRequest>,
     /// Term to variable mapping
     term_to_var: FxHashMap<TermId, VarId>,
@@ -2313,15 +2313,22 @@ impl ArithSolver {
         self.lia_branch_requests.push(req);
     }
 
-    /// Whether the CDCL-visible LIA branch channel is armed (the
-    /// flag-gated first rung of the item-96 campaign; default off).
+    /// Whether the CDCL-visible LIA branch channel is armed.
+    ///
+    /// **Default ON since the rung-3 campaign passed its pre-registered go
+    /// bar** (12 seeds × 3 arms: 42 genuine recoveries, all 40 sat models
+    /// z3-validated by binding + negation, zero wrong verdicts, the matched
+    /// null dominated 42-vs-28, armed differentials clean — see
+    /// `docs/studies/2026-09-20-lia-branch-lemma-channel.md`).  Set
+    /// `NIXIE_LIA_BRANCH_LEMMA=0` to restore the unarmed search (the
+    /// pre-flip default).
     fn lia_branch_channel_on() -> bool {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
         if TEST_FORCE_BRANCH_CHANNEL.load(core::sync::atomic::Ordering::Relaxed) {
             return true;
         }
-        *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_LEMMA").is_some())
+        *ON.get_or_init(|| std::env::var("NIXIE_LIA_BRANCH_LEMMA").as_deref() != Ok("0"))
     }
 
     /// Total requests the theory will record per solver instance.  The
@@ -4584,7 +4591,7 @@ fn lia_branch_request_queue_and_default_off_inertness() {
     s.note_lia_branch_request(&vars);
     assert!(
         s.lia_branch_requests().is_empty(),
-        "unarmed (no NIXIE_LIA_BRANCH_LEMMA), the channel records nothing"
+        "disarmed (NIXIE_LIA_BRANCH_LEMMA=0), the channel records nothing"
     );
     // The queue round-trips and reset clears it.
     s.push_branch_request_for_tests(LiaBranchRequest {

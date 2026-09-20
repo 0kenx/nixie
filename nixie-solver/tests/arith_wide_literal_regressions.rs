@@ -1689,22 +1689,19 @@ fn unrecognized_command_is_answered_not_swallowed() {
     );
 }
 
-/// Item 96's CDCL-visible branch channel (`NIXIE_LIA_BRANCH_LEMMA=1`): the
-/// recovered ray-class survey instance verbatim (seed 20261000, index 142;
-/// z3: `sat`).  UNARMED the search walks the branch-walk ray to its depth
-/// budget and answers honest `unknown` (the item-96 dose-response measured
-/// the ray immune to every budget); ARMED the theory requests a branch atom
-/// at the decline, CDCL learns the region's refutations, and the search
-/// finds the model (measured ~12 s here; the survey's 10 s cap flips it to
-/// a timeout — the channel's cost side in miniature).  The model
-/// z3-validates by binding + negation (the ledger discipline).  The env set
-/// requires a per-process test (nextest runs each test in its own process —
-/// the documented verification bar).
+/// Item 96's CDCL-visible branch channel (armed by default since the
+/// rung-3 flip; `NIXIE_LIA_BRANCH_LEMMA=0` restores the unarmed search):
+/// the recovered ray-class survey instance verbatim (seed 20261000, index
+/// 142; z3: `sat`).  DISARMED the search walks the branch-walk ray to its
+/// depth budget and answers honest `unknown` (the item-96 dose-response
+/// measured the ray immune to every budget); armed the theory requests a
+/// branch atom at the decline, CDCL learns the region's refutations, and
+/// the search finds the model (measured ~12 s here).  The model
+/// z3-validates by binding + negation (the ledger discipline).
 #[test]
 fn lia_branch_lemma_channel_recovers_the_ray_class_instance() {
-    // Armed FIRST: the channel's OnceLock caches per process.  Safety
-    // (test-only): this runs before any solver exists in the process.
-    unsafe { std::env::set_var("NIXIE_LIA_BRANCH_LEMMA", "1") };
+    // The channel is ARMED BY DEFAULT since the rung-3 flip; no env set
+    // needed (the pin therefore also guards the default itself).
     use nixie_solver::Context;
     let mut ctx = Context::new();
     let out = ctx

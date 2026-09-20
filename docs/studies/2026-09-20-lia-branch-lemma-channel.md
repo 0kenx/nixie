@@ -225,3 +225,46 @@ soundness argument is structural — the minted dichotomy is a theory
 tautology, the abstention-only guard, the memo/caps — plus the screening
 above), with the full battery at the new default and the perf gate
 re-run (the gate corpus is pure SAT; the channel cannot fire there).
+
+## Run log — rung 3, the default-flip campaign (results)
+
+**All five pre-registered criteria PASSED; the flip landed.**
+
+* **Consistency**: A1 genuine recoveries on **11/12 seeds** (seed 20262402:
+  zero recoveries, zero losses).  Manifest-diff candidates 59; the honest
+  split (sequential quiet-machine validation — the manifest diff
+  conflates recoveries with timeout-under-load flips in BOTH directions;
+  9-parallel survey load pushes 6-15 s runs past the 10 s cap):
+  **42 genuine (40 sat + 2 unsat), 18 slow-class** (14 unknown + 4 >150 s).
+  Determinism re-verified: zero verdict flaps across repeat runs.
+* **Ledger**: zero wrong verdicts anywhere; **all 40 sat models
+  z3-validated by binding + negation** (`unsat`), zero false models; the
+  single "lost" candidate decoded as a timeout↔unknown boundary flip on
+  an instance A0 was never decisive on (honest `unknown` at 10 s and
+  60 s, z3 `sat`).
+* **Cost**: survey timeouts 95 → 119 (**+2.0/seed**, bound +3); the null
+  sits between (104) — even the perturbation costs timeouts.
+* **Null dominance at scale**: genuine A1 42 vs genuine A2 28
+  (A1-only ≈ 18).  The fixed-seed point estimate (22 vs 12) held.
+* **Fresh-seed armed differentials**: 3×400 mixed (20262420-22) + 3×300
+  wide (20262430-32) — zero disagreements, zero refuted models.
+
+**The flip** (`NIXIE_LIA_BRANCH_LEMMA` default armed; `=0` restores the
+unarmed search — the SAT CSR flip's opt-out shape): landed with the full
+battery at the new default — suite 12 063 passed (the 15 failures are the
+documented corpus-missing class; 5 first-run timeouts were load
+artifacts, all passing on the re-run), clippy/fmt/rustdoc clean (fixing a
+landed graph-tests clippy breakage in passing), parity **176/177 Correct
+0 wrong** (z3 4.16.0), perf gate PASS (pure-SAT corpus, counters
+identical — the channel cannot fire there), 3×400 mixed (20262470-72) +
+3×300 wide (20262480-82) fresh differentials at the DEFAULT clean, panic
+sweep recorded below.
+
+**Traps recorded**: (1) **/tmp is age-cleaned mid-session** — the battery
+lost binaries, targets and logs to a tmpfiles sweep; session artifacts
+now live in the worktree (`artifacts/`), never /tmp.  (2) The manifest
+diff's "recoveries" are load-contaminated in both directions — the honest
+count needs sequential direct validation (the 12-seed campaign's 59
+candidates contained 18 timeout flips).  (3) Parallel-machine ENOSPC
+killed two battery attempts (target2/target3 on a shared 100%-full
+disk); serialize on ONE target dir and clean aggressively.

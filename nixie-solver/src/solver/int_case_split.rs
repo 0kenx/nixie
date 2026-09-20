@@ -461,8 +461,8 @@ impl Solver {
     /// Returns `true` when at least one NEW atom was minted — the caller
     /// then rebuilds the theory state and re-solves (the same
     /// reset-and-re-solve round shape as [`Self::refine_int_case_split`]).
-    /// The theory records requests ONLY when `NIXIE_LIA_BRANCH_LEMMA` is
-    /// set (the flag-gated first rung; default off).
+    /// The theory records requests unless `NIXIE_LIA_BRANCH_LEMMA=0`
+    /// disarms the channel (armed by default since rung 3).
     fn lia_branch_null() -> bool {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
