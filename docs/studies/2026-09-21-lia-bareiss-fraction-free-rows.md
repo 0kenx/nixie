@@ -64,6 +64,14 @@ VarId never owns a row again (ids are not recycled).
 
 ## Evidence
 
+* **Standing table (the landing snapshot, `0963911e`):** QF_LIA 32/60
+  held with **bit-identical counters** (5517 conflicts — the third
+  full-corpus identity checkpoint), geomean-all **246 → 144 ms** (−41 %,
+  now under z3's 164.7), both-solved median nixie/z3 **1.71 → 0.55**
+  (~1.8× faster than z3 on the common LIA mass, n=32); par2 9449 → 9429
+  (timeout-dominated — the branch channel owns the count).  This is the
+  aggregate the completing-cell medians pointed at, at calm load.
+
 * **Bit-identity:** perf gate PASS — conflicts 1.000, decisions 1.000
   (n=9 SAT corpus); the 40-cell CAV 30/45-vars sweep: zero verdict
   disagreements, zero conflict-count differences.
