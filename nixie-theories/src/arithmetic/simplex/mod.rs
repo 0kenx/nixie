@@ -25,6 +25,35 @@ struct LinKey {
     constant: Rational64,
 }
 
+/// Canonical identity of an EXACT (wide) linear form: terms sorted by
+/// VarId with zero coefficients dropped, plus the exact constant.  The
+/// content-addressing key for the wide store — the wide channel's
+/// counterpart of [`LinKey`]: without it every rebuild round's re-assert
+/// minted a FRESH wide row for identical content (measured ~150
+/// near-duplicates on one gap-survey member, each pivoted and classified
+/// by every convergence pass — item 91's zoo).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct BigLinKey {
+    terms: Vec<(VarId, num_rational::BigRational)>,
+    constant: num_rational::BigRational,
+}
+
+impl BigLinKey {
+    fn of(expr: &BigLinExpr) -> Self {
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = expr
+            .terms
+            .iter()
+            .filter(|(_, c)| !c.is_zero())
+            .cloned()
+            .collect();
+        terms.sort_by_key(|(v, _)| *v);
+        BigLinKey {
+            terms,
+            constant: expr.constant.clone(),
+        }
+    }
+}
+
 /// Throwaway diagnostic counters for the theory-combination probe-cost
 /// investigation (gated on `std`; print on `NIXIE_DIAG`).
 #[cfg(feature = "std")]
@@ -1071,6 +1100,11 @@ pub struct Simplex {
     /// are REMOVED by that scope's `pop` (see `row_scope_trail`), and a cache
     /// entry naming a removed row simply misses and re-interns.
     row_ids: FxHashMap<LinKey, VarId>,
+    /// Content addressing for the WIDE store (`wide_rows`): identical
+    /// exact rows intern once, mirroring [`Self::row_ids`] for the narrow
+    /// tableau.  Rebuild rounds re-assert the same atoms; without this
+    /// each round minted a duplicate wide row (item 91).
+    wide_row_ids: FxHashMap<BigLinKey, VarId>,
     /// Rows (slack ids) interned inside the current decision scope, in
     /// insertion order; `pop` removes them (and, transitively, any surviving
     /// row that references them) from the tableau, mirroring the old
@@ -1156,6 +1190,7 @@ impl Simplex {
             wide_pending: false,
             columns: FxHashMap::default(),
             row_ids: FxHashMap::default(),
+            wide_row_ids: FxHashMap::default(),
             row_scope_trail: Vec::new(),
             row_scope_marks: vec![0],
             basic: Vec::new(),
@@ -1612,6 +1647,30 @@ impl Simplex {
     pub fn is_wide_basic(&self, var: VarId) -> bool {
         self.wide_rows.contains_key(&var)
     }
+    /// Whether the assignment vector is current (the atom-row canary's
+    /// freshness gate: a stale basic entry is not evidence of anything).
+    pub fn assignment_is_current(&self) -> bool {
+        self.assignment_current
+    }
+
+    /// Whether `var` currently carries any bound (the atom-row canary's
+    /// liveness gate).
+    pub fn has_live_bound(&self, var: VarId) -> bool {
+        let i = var as usize;
+        self.lower.get(i).is_some_and(Option::is_some)
+            || self.upper.get(i).is_some_and(Option::is_some)
+    }
+
+    /// A slack's narrow defining row (the atom-row canary).
+    pub fn row_of(&self, slack: VarId) -> Option<std::sync::Arc<LinExpr>> {
+        self.tableau.get(&slack).cloned()
+    }
+
+    /// A slack's wide defining row (the atom-row canary).
+    pub fn wide_row_of(&self, slack: VarId) -> Option<BigLinExpr> {
+        self.wide_rows.get(&slack).cloned()
+    }
+
     /// Whether `var` rests at a WIDE POINT (a non-basic snapped to a bound
     /// beyond `Rational64` width — its `assignment` entry is stale by
     /// design, exactly a wide basic's is).  The honest-value guards in the
@@ -2190,6 +2249,17 @@ impl Simplex {
     /// the skip semantics wide rows want.
     fn intern_wide_row(&mut self, expr: LinExpr) -> VarId {
         let big = self.intern_substitute_big(&expr);
+        // Content addressing: an identical EXACT row already in the wide
+        // store IS the row — return its slack (the bounds on it carry
+        // every constraint ever asserted over this form).  Without this,
+        // every rebuild round's re-assert minted a duplicate (item 91's
+        // ~150-row zoo), each one pivoted and classified forever after.
+        let key = BigLinKey::of(&big);
+        if let Some(&slack) = self.wide_row_ids.get(&key)
+            && self.wide_rows.contains_key(&slack)
+        {
+            return slack;
+        }
         for (v, _) in &big.terms {
             self.ensure_var(*v as usize);
         }
@@ -2220,6 +2290,7 @@ impl Simplex {
             }
         }
         self.rows_ver = self.rows_ver.wrapping_add(1);
+        self.wide_row_ids.insert(key, slack);
         self.wide_rows.insert(slack, big);
         slack
     }
