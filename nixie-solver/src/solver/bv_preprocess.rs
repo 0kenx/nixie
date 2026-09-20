@@ -505,11 +505,109 @@ impl BvPreprocessor {
                 if high == 0 && low == 0 && bv_width_opt(manager, &ra) == Some(1) {
                     return ra;
                 }
+                // Full-width extraction is the identity (`extract[w-1:0](X)
+                // = X`): completes the product-narrowing fixed point below —
+                // a `lo = 0` window over an all-`hi+1`-wide product drops
+                // the wrapper and leaves the bare product.
+                if low == 0
+                    && let Some(w) = bv_width_opt(manager, &ra)
+                    && w == high + 1
+                {
+                    return ra;
+                }
+                // Extract-over-extract fusion (`extract[hi:lo](extract[h2:
+                // l2](X)) = extract[hi+l2:lo+l2](X)`, typing guarantees the
+                // composed window is in range): kills the double-window
+                // shapes the product narrowing produces on piece-wise
+                // concat operands (BuchwaldFried's `extract[7:0](extract[
+                // 34:27](v|c))` pieces).
+                let inner_window: Option<(u32, u32, TermId)> =
+                    manager.get(ra).and_then(|td| match &td.kind {
+                        TermKind::BvExtract {
+                            high: h2,
+                            low: l2,
+                            arg,
+                        } => Some((*h2, *l2, *arg)),
+                        _ => None,
+                    });
+                if let Some((h2, l2, inner)) = inner_window {
+                    let _ = h2;
+                    return self
+                        .rewrite(manager.mk_bv_extract(high + l2, low + l2, inner), manager);
+                }
                 // Constant extraction folds.
                 if let Some(v) = const_bits(&ra, manager) {
                     let shifted = v >> low as usize;
                     let extracted = shifted % (BigInt::one() << (high - low + 1) as usize);
                     return manager.mk_bitvec(extracted, high - low + 1);
+                }
+                // Extract-over-concat pushback (Z3 `bv_rewriter::mk_extract`): a
+                // window entirely inside one concat arm reads that arm; a
+                // spanning window splits into the corresponding arms' windows.
+                // This folds the `extract[w-1:0](zext x)` = `x` shape on the
+                // spot (the zero arm's window folds to a numeral constant).
+                let concat_parts: Option<(TermId, TermId)> =
+                    manager.get(ra).and_then(|td| match &td.kind {
+                        TermKind::BvConcat(a, b) => Some((*a, *b)),
+                        _ => None,
+                    });
+                if let Some((a, b)) = concat_parts
+                    && let Some(wb) = bv_width_opt(manager, &b)
+                {
+                    let (hi, lo) = (high as i64, low as i64);
+                    let wb = wb as i64;
+                    if hi < wb {
+                        return self.rewrite(manager.mk_bv_extract(high, low, b), manager);
+                    }
+                    if lo >= wb {
+                        return self.rewrite(
+                            manager.mk_bv_extract((hi - wb) as u32, (lo - wb) as u32, a),
+                            manager,
+                        );
+                    }
+                    // Spans the seam: `concat(extract[hi:wb](A), extract[wb-1:lo](B))`.
+                    let hi_arm =
+                        self.rewrite(manager.mk_bv_extract((hi - wb) as u32, 0, a), manager);
+                    let lo_arm =
+                        self.rewrite(manager.mk_bv_extract(wb as u32 - 1, low, b), manager);
+                    return self.rewrite(manager.mk_bv_concat(hi_arm, lo_arm), manager);
+                }
+                // Extract-window narrowing over products (the multiplier-
+                // identity class, `2017-BuchwaldFried`/`Sage2`/`sage-app*`):
+                // product bits `[hi:lo]` depend only on operand bits `[hi:0]`
+                // — `(A·B) mod 2^(hi+1) = ((A mod 2^(hi+1))·(B mod 2^(hi+1)))
+                // mod 2^(hi+1)` — so every factor may be read at width
+                // `hi+1`: wider factors truncate, narrower factors zero-
+                // extend, and the product itself runs at `hi+1`.  This
+                // canonicalizes products modulo the zero-extension width,
+                // turning `low32(zextᵁ(a)·zextᵁ(b)) = a·b` and the
+                // extension-width-invariance of shared windows into
+                // syntactic identities (both equalities of the BuchwaldFried
+                // counterexample residual rewrite to `true` with this one
+                // rule).
+                let is_mul = manager
+                    .get(ra)
+                    .is_some_and(|td| matches!(td.kind, TermKind::BvMul(..)));
+                if is_mul {
+                    let n = high + 1;
+                    let mut factors: Vec<TermId> = Vec::new();
+                    flatten_product(ra, manager, &mut factors);
+                    let widths: Option<Vec<u32>> =
+                        factors.iter().map(|f| bv_width_opt(manager, f)).collect();
+                    if let Some(widths) = widths
+                        && widths.iter().any(|w| *w != n)
+                    {
+                        let narrowed: Vec<TermId> = factors
+                            .iter()
+                            .zip(widths.iter())
+                            .map(|(f, w)| resize_to_width(*f, *w, n, manager))
+                            .collect();
+                        let mut product = narrowed[0];
+                        for f in narrowed.iter().skip(1) {
+                            product = manager.mk_bv_mul(product, *f);
+                        }
+                        return self.rewrite(manager.mk_bv_extract(high, low, product), manager);
+                    }
                 }
                 manager.mk_bv_extract(high, low, ra)
             }
@@ -733,6 +831,22 @@ fn common_width(manager: &TermManager, a: &TermId, b: &TermId) -> Option<u32> {
         (Some(wa), Some(wb)) if wa == wb => Some(wa),
         _ => None,
     }
+}
+
+/// Read `f` (width `w`) at width `n`: truncate when wider, zero-extend
+/// when narrower, identity when equal.  The truncation is a fresh
+/// `extract` so the concat/constant folding in the rewrite pass applies
+/// to it.
+fn resize_to_width(f: TermId, w: u32, n: u32, manager: &mut TermManager) -> TermId {
+    use num_traits::Zero as _;
+    if w == n {
+        return f;
+    }
+    if w > n {
+        return manager.mk_bv_extract(n - 1, 0, f);
+    }
+    let zeros = manager.mk_bitvec(BigInt::zero(), n - w);
+    manager.mk_bv_concat(zeros, f)
 }
 
 /// The monomial for a bare non-constant, non-sum atom.
@@ -2657,5 +2771,154 @@ mod tests {
         // tautology, so this is satisfiable; the point is it terminates.
         let verdict = solve_str(&script);
         assert!(verdict == "sat" || verdict == "unsat");
+    }
+
+    // ===== extract normal form: window arithmetic (this session's rules) =====
+
+    /// Product narrowing: the low window of a product of zero-extensions is the
+    /// truncated product — `extract[w-1:0](zext(a)·zext(b)) = a·b` (the
+    /// BuchwaldFried low-half residual).
+    #[test]
+    fn extract_low_window_of_extended_product_is_truncated_product() {
+        for width in [2u32, 8, 16] {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun a () (_ BitVec {width}))
+             (declare-fun b () (_ BitVec {width}))
+             (declare-fun za () (_ BitVec {mul}))
+             (declare-fun zb () (_ BitVec {mul}))
+             (assert (= za (concat (_ bv0 {zpad}) a)))
+             (assert (= zb (concat (_ bv0 {zpad}) b)))
+             (assert (not (= ((_ extract {low} 0) (bvmul za zb)) (bvmul a b))))
+             (check-sat)",
+                mul = width * 2,
+                zpad = width,
+                low = width - 1
+            );
+            assert_eq!(solve_str(&script), "unsat", "width {width}");
+        }
+    }
+
+    /// Extension-width invariance: a shared window of products of zero-extended
+    /// operands does not depend on the extension width (the BuchwaldFried
+    /// high-half residual).
+    #[test]
+    fn extract_window_is_extension_width_invariant() {
+        for width in [2u32, 8] {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun a () (_ BitVec {width}))
+             (declare-fun b () (_ BitVec {width}))
+             (declare-fun p1 () (_ BitVec {w1}))
+             (declare-fun q1 () (_ BitVec {w1}))
+             (declare-fun p2 () (_ BitVec {w2}))
+             (declare-fun q2 () (_ BitVec {w2}))
+             (assert (= p1 (concat (_ bv0 {z1}) a)))
+             (assert (= q1 (concat (_ bv0 {z1}) b)))
+             (assert (= p2 (concat (_ bv0 {z2}) a)))
+             (assert (= q2 (concat (_ bv0 {z2}) b)))
+             (assert (not (= ((_ extract {hi} {lo}) (bvmul p1 q1))
+                             ((_ extract {hi} {lo}) (bvmul p2 q2)))))
+             (check-sat)",
+                w1 = width * 3,
+                z1 = width * 2,
+                w2 = width * 5,
+                z2 = width * 4,
+                hi = width * 2 - 1,
+                lo = width
+            );
+            assert_eq!(solve_str(&script), "unsat", "width {width}");
+        }
+    }
+
+    /// Extract-over-extract fusion: `extract[hi:lo](extract[h2:l2](x))` is
+    /// `extract[hi+l2:lo+l2](x)`.
+    #[test]
+    fn extract_over_extract_fuses() {
+        let script = "(set-logic QF_BV)
+        (declare-fun x () (_ BitVec 16))
+        (assert (not (= ((_ extract 3 2) ((_ extract 7 1) x)) ((_ extract 4 3) x))))
+        (check-sat)";
+        assert_eq!(solve_str(script), "unsat");
+    }
+
+    /// Full-width extraction is the identity (completes the narrowing fixed
+    /// point so equal extended products meet the `=` normalizer bare).
+    #[test]
+    fn full_width_extract_is_identity() {
+        let script = "(set-logic QF_BV)
+        (declare-fun a () (_ BitVec 8))
+        (declare-fun b () (_ BitVec 8))
+        (assert (not (= ((_ extract 7 0) (bvmul a b)) (bvmul a b))))
+        (check-sat)";
+        assert_eq!(solve_str(script), "unsat");
+    }
+
+    /// Extract-over-concat pushback: a window inside the low arm reads the arm;
+    /// a spanning window splits at the seam.  Both checked as identities
+    /// against concrete re-assemblies.
+    #[test]
+    fn extract_over_concat_pushes_into_arms() {
+        let low_arm = "(set-logic QF_BV)
+        (declare-fun h () (_ BitVec 8))
+        (declare-fun l () (_ BitVec 8))
+        (assert (not (= ((_ extract 5 2) (concat h l)) ((_ extract 5 2) l))))
+        (check-sat)";
+        assert_eq!(solve_str(low_arm), "unsat");
+        let spanning = "(set-logic QF_BV)
+        (declare-fun h () (_ BitVec 8))
+        (declare-fun l () (_ BitVec 8))
+        (assert (not (= ((_ extract 9 4) (concat h l))
+                        (concat ((_ extract 1 0) h) ((_ extract 7 4) l)))))
+        (check-sat)";
+        assert_eq!(solve_str(spanning), "unsat");
+        let high_arm = "(set-logic QF_BV)
+        (declare-fun h () (_ BitVec 8))
+        (declare-fun l () (_ BitVec 8))
+        (assert (not (= ((_ extract 13 9) (concat h l)) ((_ extract 5 1) h))))
+        (check-sat)";
+        assert_eq!(solve_str(high_arm), "unsat");
+    }
+
+    /// The BuchwaldFried counterexample shape end-to-end: both equalities of
+    /// the residual are ring identities — the negated conjunction is unsat
+    /// with zero search.
+    #[test]
+    fn buchwaldfried_residual_both_equalities_fold() {
+        let script = "(set-logic QF_BV)
+        (declare-fun a () (_ BitVec 32))
+        (declare-fun m () (_ BitVec 32))
+        (declare-fun p64l () (_ BitVec 64))
+        (declare-fun p64r () (_ BitVec 64))
+        (declare-fun p96l () (_ BitVec 96))
+        (declare-fun p96r () (_ BitVec 96))
+        (assert (= p64l (concat (_ bv0 32) a)))
+        (assert (= p64r (concat (_ bv0 32) m)))
+        (assert (= p96l (concat (_ bv0 64) a)))
+        (assert (= p96r (concat (_ bv0 64) m)))
+        (assert (not (and
+            (= ((_ extract 31 0) (bvmul p64l p64r)) (bvmul a m))
+            (= ((_ extract 63 32) (bvmul p64l p64r)) ((_ extract 63 32) (bvmul p96l p96r))))))
+        (check-sat)";
+        assert_eq!(solve_str(script), "unsat");
+    }
+
+    /// Narrowing must not overfold: the HIGH window of a wide product of
+    /// TRUNCATED operands genuinely differs from the high window of the full
+    /// product's low half — the rewrites leave it decidable (sat for the
+    /// distinction).
+    #[test]
+    fn narrowing_keeps_high_windows_decidable() {
+        let script = "(set-logic QF_BV)
+        (declare-fun a () (_ BitVec 16))
+        (declare-fun b () (_ BitVec 16))
+        (declare-fun w () (_ BitVec 32))
+        (declare-fun u () (_ BitVec 32))
+        (assert (= w (concat (_ bv0 16) a)))
+        (assert (= u (concat (_ bv0 16) b)))
+        (assert (not (= ((_ extract 31 16) (bvmul w u)) (_ bv0 16))))
+        (check-sat)";
+        // a·b ≥ 2^16 has solutions (e.g. a = b = 0x100): satisfiable.
+        assert_eq!(solve_str(script), "sat");
     }
 }
