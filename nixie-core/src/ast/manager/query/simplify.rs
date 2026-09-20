@@ -241,13 +241,129 @@ impl TermManager {
     /// rewrite would exceed `CTX_GROWTH_LIMIT` × the input's DAG size.
     pub fn ctx_simplify(&mut self, root: TermId) -> TermId {
         let size_in = self.subtree_dag_size(root);
+        // The per-subtree Boolean-atom sets (the memo's relevance
+        // domains): the walk of `t` can only consult context entries for
+        // atoms OCCURRING in `t`'s subtree, so results memoize per
+        // (term, relevant-atoms signature) — without this, shared
+        // subchains re-walk multiplicatively (the nec-smt member burned
+        // the whole 200k-step fuel on a 662-node term).
+        let sub_atoms = self.subtree_bool_atoms(root);
         let mut fuel = CTX_FUEL_BUDGET;
-        let out = self.ctx_walk(root, &mut FxHashMap::default(), &mut fuel);
+        let mut memo: FxHashMap<(TermId, u64), TermId> = FxHashMap::default();
+        let out = self.ctx_walk(
+            root,
+            &mut FxHashMap::default(),
+            &mut fuel,
+            &sub_atoms,
+            &mut memo,
+        );
         let size_out = self.subtree_dag_size(out);
         if size_out > size_in.saturating_mul(CTX_GROWTH_LIMIT) {
             return root;
         }
         out
+    }
+
+    /// Boolean-sorted atom sets per subtree, bottom-up over the DAG
+    /// (children's sets unioned; a node's own id included when it is
+    /// Boolean-sorted — any Boolean node can serve as a context atom
+    /// key).  `None` for a node whose set exceeds
+    /// [`MAX_MEMO_ATOM_SET`]: such subtrees simply do not memoize (the
+    /// walk stays correct, only slower).
+    fn subtree_bool_atoms(&self, root: TermId) -> FxHashMap<TermId, Option<FxHashSet<TermId>>> {
+        /// Beyond this many distinct atoms a subtree's set is stored as
+        /// `None` (no memoization for it) — the set itself would cost
+        /// more than the re-walk it saves on typical inputs.
+        const MAX_MEMO_ATOM_SET: usize = 1024;
+        let mut out: FxHashMap<TermId, Option<FxHashSet<TermId>>> = FxHashMap::default();
+        // Two-phase Expand/Combine (children's sets exist before the
+        // parent unions them — the post-order trap the share-for-printing
+        // pass already recorded once).
+        enum Frame {
+            Expand(TermId),
+            Combine(TermId),
+        }
+        let mut stack = vec![Frame::Expand(root)];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(f) = stack.pop() {
+            match f {
+                Frame::Expand(t) => {
+                    if !seen.insert(t) {
+                        continue;
+                    }
+                    let Some(data) = self.get(t).cloned() else {
+                        continue;
+                    };
+                    let children = crate::ast::traversal::get_children(&data.kind);
+                    stack.push(Frame::Combine(t));
+                    for c in children.iter().rev() {
+                        stack.push(Frame::Expand(*c));
+                    }
+                }
+                Frame::Combine(t) => {
+                    let Some(data) = self.get(t) else { continue };
+                    let children = crate::ast::traversal::get_children(&data.kind);
+                    let mut set: Option<FxHashSet<TermId>> = if data.sort == self.sorts.bool_sort {
+                        let mut s = FxHashSet::default();
+                        s.insert(t);
+                        Some(s)
+                    } else {
+                        Some(FxHashSet::default())
+                    };
+                    for c in children {
+                        match (out.get(&c), &mut set) {
+                            (Some(Some(cs)), Some(s)) => {
+                                for x in cs {
+                                    s.insert(*x);
+                                }
+                            }
+                            (Some(None), _) | (None, _) => {
+                                set = None;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(s) = &set
+                        && s.len() > MAX_MEMO_ATOM_SET
+                    {
+                        set = None;
+                    }
+                    out.insert(t, set);
+                }
+            }
+        }
+        out
+    }
+
+    /// The memo signature for walking `t` under `ctx`: a hash of the
+    /// context's entries restricted to `t`'s relevant atoms.  Two
+    /// contexts agreeing on those entries walk `t` identically — the
+    /// walk consults nothing else.
+    fn ctx_signature(
+        &self,
+        t: TermId,
+        ctx: &FxHashMap<TermId, bool>,
+        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+    ) -> Option<u64> {
+        let relevant = sub_atoms.get(&t)?;
+        let set = relevant.as_ref()?;
+        // Iterate the CONTEXT (small: it grows only along the walk's
+        // case-split/conjunct path) and test subtree membership — the
+        // intersection is what the walk can consult.
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::Hash;
+        let mut entries: SmallVec<[(TermId, bool); 8]> = SmallVec::new();
+        for (&atom, &pol) in ctx.iter() {
+            if set.contains(&atom) {
+                entries.push((atom, pol));
+            }
+        }
+        entries.sort_unstable_by_key(|(a, _)| a.0);
+        for (atom, pol) in entries {
+            atom.0.hash(&mut h);
+            pol.hash(&mut h);
+        }
+        Some(std::hash::Hasher::finish(&h))
     }
 
     /// DAG node count of `t`'s subtree (the growth guard's metric).
@@ -294,7 +410,35 @@ impl TermManager {
         Some(if positive { known } else { !known })
     }
 
-    fn ctx_walk(&mut self, t: TermId, ctx: &mut FxHashMap<TermId, bool>, fuel: &mut u32) -> TermId {
+    fn ctx_walk(
+        &mut self,
+        t: TermId,
+        ctx: &mut FxHashMap<TermId, bool>,
+        fuel: &mut u32,
+        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        memo: &mut FxHashMap<(TermId, u64), TermId>,
+    ) -> TermId {
+        let sig = self.ctx_signature(t, ctx, sub_atoms);
+        if let Some(s) = sig
+            && let Some(&r) = memo.get(&(t, s))
+        {
+            return r;
+        }
+        let out = self.ctx_walk_inner(t, ctx, fuel, sub_atoms, memo);
+        if let Some(s) = sig {
+            memo.insert((t, s), out);
+        }
+        out
+    }
+
+    fn ctx_walk_inner(
+        &mut self,
+        t: TermId,
+        ctx: &mut FxHashMap<TermId, bool>,
+        fuel: &mut u32,
+        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        memo: &mut FxHashMap<(TermId, u64), TermId>,
+    ) -> TermId {
         if *fuel == 0 {
             return t;
         }
@@ -308,10 +452,10 @@ impl TermManager {
         };
         match data.kind {
             TermKind::Not(inner) => {
-                let s = self.ctx_walk(inner, ctx, fuel);
+                let s = self.ctx_walk(inner, ctx, fuel, sub_atoms, memo);
                 self.mk_not(s)
             }
-            TermKind::And(args) => self.ctx_and(args, ctx, fuel),
+            TermKind::And(args) => self.ctx_and(args, ctx, fuel, sub_atoms, memo),
             TermKind::Or(args) => {
                 // Drop disjuncts the context refutes; recurse the rest.
                 let mut kept: SmallVec<[TermId; 4]> = SmallVec::new();
@@ -319,25 +463,25 @@ impl TermManager {
                     if let Some(false) = self.ctx_value(a, ctx) {
                         continue;
                     }
-                    let s = self.ctx_walk(a, ctx, fuel);
+                    let s = self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
                     kept.push(s);
                 }
                 self.mk_or(kept)
             }
             TermKind::Ite(c, a, b) => {
                 // Case split: each branch under its own guard.
-                let cs = self.ctx_walk(c, ctx, fuel);
+                let cs = self.ctx_walk(c, ctx, fuel, sub_atoms, memo);
                 if let Some(TermKind::True) = self.get(cs).map(|d| &d.kind) {
-                    return self.ctx_walk(a, ctx, fuel);
+                    return self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
                 }
                 if let Some(TermKind::False) = self.get(cs).map(|d| &d.kind) {
-                    return self.ctx_walk(b, ctx, fuel);
+                    return self.ctx_walk(b, ctx, fuel, sub_atoms, memo);
                 }
                 let (as_, bs) = if let Some((atom, pol)) = self.atom_polarity(cs) {
                     let prev = ctx.insert(atom, pol);
-                    let as_ = self.ctx_walk(a, ctx, fuel);
+                    let as_ = self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
                     ctx.insert(atom, !pol);
-                    let bs = self.ctx_walk(b, ctx, fuel);
+                    let bs = self.ctx_walk(b, ctx, fuel, sub_atoms, memo);
                     match prev {
                         Some(p) => {
                             ctx.insert(atom, p);
@@ -348,7 +492,10 @@ impl TermManager {
                     }
                     (as_, bs)
                 } else {
-                    (self.ctx_walk(a, ctx, fuel), self.ctx_walk(b, ctx, fuel))
+                    (
+                        self.ctx_walk(a, ctx, fuel, sub_atoms, memo),
+                        self.ctx_walk(b, ctx, fuel, sub_atoms, memo),
+                    )
                 };
                 // The ite-on-Boolean connections (z3's `ite_extra_rules`
                 // core): a Boolean ite with a constant branch connects to
@@ -376,10 +523,22 @@ impl TermManager {
                         return self.mk_or([not_cs, as_]);
                     }
                     if t_false {
-                        return self.ctx_and(SmallVec::from_iter([not_cs, bs]), ctx, fuel);
+                        return self.ctx_and(
+                            SmallVec::from_iter([not_cs, bs]),
+                            ctx,
+                            fuel,
+                            sub_atoms,
+                            memo,
+                        );
                     }
                     if e_false {
-                        return self.ctx_and(SmallVec::from_iter([cs, as_]), ctx, fuel);
+                        return self.ctx_and(
+                            SmallVec::from_iter([cs, as_]),
+                            ctx,
+                            fuel,
+                            sub_atoms,
+                            memo,
+                        );
                     }
                 }
                 self.mk_ite(cs, as_, bs)
@@ -401,20 +560,20 @@ impl TermManager {
                     let (k, ite) = if lk { (l, r) } else { (r, l) };
                     if let Some(TermKind::Ite(c, a, b)) = self.get(ite).map(|d| d.kind.clone()) {
                         let ka_eq = self.mk_eq(k, a);
-                        let ka = self.ctx_walk(ka_eq, ctx, fuel);
+                        let ka = self.ctx_walk(ka_eq, ctx, fuel, sub_atoms, memo);
                         let kb_eq = self.mk_eq(k, b);
-                        let kb = self.ctx_walk(kb_eq, ctx, fuel);
-                        let cs = self.ctx_walk(c, ctx, fuel);
+                        let kb = self.ctx_walk(kb_eq, ctx, fuel, sub_atoms, memo);
+                        let cs = self.ctx_walk(c, ctx, fuel, sub_atoms, memo);
                         // Re-enter the walk so the ITE arm's connection
                         // folds see the pushed shape (a constant branch
                         // connects into and/or where the context absorbs
                         // it) — returning the raw `mk_ite` bypassed them.
                         let pushed = self.mk_ite(cs, ka, kb);
-                        return self.ctx_walk(pushed, ctx, fuel);
+                        return self.ctx_walk(pushed, ctx, fuel, sub_atoms, memo);
                     }
                 }
-                let ls = self.ctx_walk(l, ctx, fuel);
-                let rs = self.ctx_walk(r, ctx, fuel);
+                let ls = self.ctx_walk(l, ctx, fuel, sub_atoms, memo);
+                let rs = self.ctx_walk(r, ctx, fuel, sub_atoms, memo);
                 self.mk_eq(ls, rs)
             }
             // Every other kind: keep the node (its children were already
@@ -428,6 +587,8 @@ impl TermManager {
         args: SmallVec<[TermId; 4]>,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
+        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        memo: &mut FxHashMap<(TermId, u64), TermId>,
     ) -> TermId {
         // Each conjunct asserts its atom's polarity; the REST simplify
         // under it.  The extensions unwind exactly: fresh entries are
@@ -445,7 +606,7 @@ impl TermManager {
             if let Some(true) = self.ctx_value(a, ctx) {
                 continue;
             }
-            let s = self.ctx_walk(a, ctx, fuel);
+            let s = self.ctx_walk(a, ctx, fuel, sub_atoms, memo);
             match self.get(s).map(|d| &d.kind) {
                 Some(TermKind::False) => {
                     for (atom, prev) in unwind.into_iter().rev().flatten() {
