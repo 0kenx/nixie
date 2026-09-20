@@ -2396,6 +2396,87 @@ impl ArithSolver {
             let bt = std::backtrace::Backtrace::force_capture();
             eprintln!("[inv-viol] at snapshot: {v}\n{bt}");
         }
+        // Leaf tripwire (env `NIXIE_LEAF_TRIPWIRE=1`, release-runnable —
+        // the NIXIE_BOUND_TRIPWIRE precedent): at the dive's leaf, every
+        // live atom row's slack entry must equal its KEY form evaluated at
+        // the current exact points.  A divergence here is FORM CORRUPTION
+        // (the definitional invariant holds — entry == own row — while the
+        // row no longer entails the atom's constraint): the search's Sat
+        // then rests on a system that silently dropped a committed
+        // constraint, and the downstream gates catch it only as a
+        // refuted-candidate `unknown` (item 93's proof chain: absent at
+        // check() entry, present at the leaf — the corruption window is
+        // the dive's branch-bound pushes and their re-feasibility pivots;
+        // the victims include wide slacks).
+        if std::env::var("NIXIE_LEAF_TRIPWIRE").is_ok() {
+            use num_rational::BigRational as BR;
+            use std::fmt::Write as _;
+            let mut broken = String::new();
+            for ((key, reason), &slack) in self.atom_rows.iter() {
+                if !self.simplex.has_live_bound(slack) {
+                    continue;
+                }
+                let mut floating = false;
+                for &(term, _) in &key.terms {
+                    if let Some(&v) = self.term_to_var.get(&term)
+                        && self.simplex.is_wide_point(v)
+                        && !self.simplex.has_live_bound(v)
+                    {
+                        floating = true;
+                        break;
+                    }
+                }
+                if floating {
+                    continue;
+                }
+                let Some(sv) = self.simplex.point_value_exact(slack) else {
+                    continue;
+                };
+                let mut want = BR::new(
+                    num_bigint::BigInt::from(*key.constant.numer()),
+                    num_bigint::BigInt::from(*key.constant.denom()),
+                );
+                let mut ok = true;
+                for &(term, coef) in &key.terms {
+                    let Some(&var) = self.term_to_var.get(&term) else {
+                        ok = false;
+                        break;
+                    };
+                    let Some(v) = self.simplex.point_value_exact(var) else {
+                        ok = false;
+                        break;
+                    };
+                    want += v.real
+                        * BR::new(
+                            num_bigint::BigInt::from(*coef.numer()),
+                            num_bigint::BigInt::from(*coef.denom()),
+                        );
+                }
+                if !ok || want.is_zero() {
+                    continue;
+                }
+                let r = &sv.real / &want;
+                let is_eq = self
+                    .slack_forms
+                    .get(&slack)
+                    .is_some_and(|f| f.dir == SlackDir::Eq);
+                let good = if is_eq { !r.is_zero() } else { r.is_positive() };
+                if !good {
+                    let own = self.simplex.row_eval_exact(slack);
+                    let _ = writeln!(
+                        &mut broken,
+                        "  v{slack} reason={reason:?}: entry {:?} own-row {own:?} key-form {want:?} (r={r:?})",
+                        sv.real
+                    );
+                }
+            }
+            if !broken.is_empty() {
+                eprintln!(
+                    "[leaf-tripwire] atom rows detached at the leaf:
+{broken}"
+                );
+            }
+        }
         self.lia_model.clear();
         for &var in int_vars {
             // The honest NARROW integral value: the exact point value
