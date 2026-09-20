@@ -24,6 +24,14 @@ def main() -> None:
                     help="max reach atoms per graph (default random 1..4)")
     ap.add_argument("--graphs", type=int, default=1, choices=[1, 2])
     ap.add_argument("--polarity-bias", type=float, default=0.5)
+    ap.add_argument("--unit-prob", type=float, default=0.35,
+                    help="probability a theory variable gets a fixing unit clause")
+    ap.add_argument("--clause-size", type=int, default=0,
+                    help="literal count of the coupling clauses (default random 2); "
+                         "3+ forces real CDCL search with backtracking, exercising the "
+                         "propagator's post-backtrack re-read path")
+    ap.add_argument("--coupling", type=int, default=0,
+                    help="number of coupling clauses (default random 0..4)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -68,16 +76,17 @@ def main() -> None:
         if acyclic_var is not None:
             theory_vars.append(acyclic_var)
         for tv in theory_vars:
-            if rng.random() < 0.35:
+            if rng.random() < args.unit_prob:
                 lit = tv if rng.random() < args.polarity_bias else -tv
                 clauses.append([lit])
-        for _ in range(rng.randint(0, 4)):
-            if len(theory_vars) < 2:
+        coupling = args.coupling if args.coupling else rng.randint(0, 4)
+        clause_size = args.clause_size if args.clause_size else 2
+        for _ in range(coupling):
+            k = min(clause_size, len(theory_vars))
+            if k < 2:
                 break
-            a, b = rng.sample(theory_vars, 2)
-            la = a if rng.random() < 0.5 else -a
-            lb = b if rng.random() < 0.5 else -b
-            clauses.append([la, lb])
+            chosen = rng.sample(theory_vars, k)
+            clauses.append([v if rng.random() < 0.5 else -v for v in chosen])
         del total_vars_needed
 
     header = f"p cnf {var} {len(clauses)}"
