@@ -133,19 +133,32 @@ default decisions are complete for this fragment.
   connectivity, spanning trees, unbounded or dynamic vertex universes, and
   edge forcing (MonoSAT's `buildForcedEdgeReason`).
 - **Zero-length paths** are excluded from `reach`; see above.
-- **Performance**: recomputation per event, memoized through a
-  content-addressed view cache (per-source forced BFS, per-target backward
-  BFS and cycle checks are reused whenever the packed true-/non-false-edge
-  bits are unchanged — false assignments keep the forced view, true
-  assignments keep the possible view, backjumps often revisit seen keys);
-  no incremental algorithms. Measured against MonoSAT (see the studies
-  below): on the release corpus (n ≤ 150) Nixie runs at ≈1.65× MonoSAT's
-  geomean after the 2026-09-20/21 throughput passes (was 5.1×). The
-  propagator maintains its views **incrementally from edge events** (O(1)
-  per event; BFS trees merge on edge additions; backtracks re-read from
-  scratch), so recomputation is paid only after backtracking — the
-  remaining gap is term interning + the general SMT stack, not the graph
-  theory.
+- **Performance**: both views are maintained incrementally from edge
+  events (O(1) per event): the forced view grows rows and merges memoized
+  BFS trees on true additions; the possible view is **epoch-static** —
+  the all-edges CSRs are built once per backtrack epoch and every query
+  traverses them skipping currently-false edges, so nothing is ever
+  rebuilt on events. Backward closures and possible-cycle memos are kept
+  exactly valid by precise dirty-marking: disabling an edge drops a
+  closure memo only when its head lies in the closure *and* the tail's
+  surviving route to the target is refuted by a closure-bounded probe
+  (`still_reaches_closure`) — a full recompute happens only when the
+  closure genuinely shrank. An all-fixed exactness gate re-verifies the
+  `Sat` certificate as defense in depth. Measured against MonoSAT on
+  deterministic instruction counts (pinned `perf stat -e instructions:u`,
+  medians-free, ±0.001% stable — see the 2026-09-22 study): **geomean
+  0.97× (parity), totals 1.22×, worst instance 2.82×** on the 61-instance
+  n∈{25..150} corpus; 32/61 instances execute *fewer* instructions than
+  MonoSAT. Search counters are bit-identical to the pre-change
+  propagator on every corpus instance, so the restructure is
+  trajectory-inert. The remaining gap is term interning + the general SMT
+  stack, not the graph theory.
+- **Watch terms**: registration rejects watch lists in which two distinct
+  terms encode to the same SAT variable (e.g. a term and its negation
+  both watched) — the O(1) per-assignment event routing keeps one watch
+  per variable, and a collision would silently drop the other's fixations
+  (this also closes a latent hazard in the justification-truth lookup,
+  which reads through the same index).
 - **Certification**: graph registrations are trusted client callbacks
   without independently checkable certificates. Proof-producing and
   certified checks fail closed to `Unknown` for them (the same boundary as

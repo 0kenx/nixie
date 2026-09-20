@@ -1124,7 +1124,7 @@ fn validate_generated_state(
             _ => {}
         }
     }
-    if let Some(a) = acyclic {
+    if acyclic.is_some() {
         let k = shadow.atoms.len() - 1;
         let forced_cycle = (0..vertices).any(|i| forced[i][i]);
         let possible_acyclic = (0..vertices).all(|i| !possible[i][i]);
@@ -1267,4 +1267,144 @@ fn validate_generated_state(
             // Non-conflict with no satisfying completion: vacuously true.
         }
     }
+}
+
+/// Focused regression for the closure-preservation probe of the
+/// epoch-static possible view (`still_reaches_closure`): disabling an edge
+/// whose tail retains an alternative route to the target keeps the
+/// memoized backward closure (no recompute, identical answers); disabling
+/// the last route drops it and the newly determined ¬reach propagates with
+/// exactly the false in-edges of the recomputed closure as the cut.
+///
+/// The 1↔4 cycle exists to catch the probe's first (wrong) version, which
+/// exited at *any* closure member instead of at the target: after e1 and
+/// e3 die, vertex 1 still reaches members {1,4} of the stale closure, but
+/// only through the cycle that never gets back to 2 — a probe that
+/// accepts that keeps a too-large closure and misses the determined
+/// ¬reach(0,2) (the shape the exhaustive oracle caught).
+#[test]
+fn closure_probe_preserves_and_drops_exactly() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let v = |i| VertexId(i);
+    let _ = model.add_vertex(g).unwrap(); // 0
+    let _ = model.add_vertex(g).unwrap(); // 1
+    let _ = model.add_vertex(g).unwrap(); // 2
+    let _ = model.add_vertex(g).unwrap(); // 3
+    let _ = model.add_vertex(g).unwrap(); // 4
+    let e0 = model.new_edge(g, v(0), v(1), &mut tm).unwrap();
+    let e1 = model.new_edge(g, v(1), v(2), &mut tm).unwrap();
+    let e3 = model.new_edge(g, v(1), v(2), &mut tm).unwrap();
+    let _e2 = model.new_edge(g, v(3), v(1), &mut tm).unwrap();
+    let e4 = model.new_edge(g, v(1), v(4), &mut tm).unwrap();
+    let e5 = model.new_edge(g, v(4), v(1), &mut tm).unwrap();
+    let r02 = model.reach(g, v(0), v(2), &mut tm).unwrap();
+    let (propagator, watches) = model.into_propagator();
+    let mut manager = UserPropagatorManager::new();
+    for &w in &watches {
+        manager.watch_term(w);
+    }
+    manager.register_propagator(propagator);
+    let true_term = tm.mk_bool(true);
+    let false_term = tm.mk_bool(false);
+    let neg_r02 = tm.mk_not(r02);
+
+    // Stage 1: only e1 dies. Vertex 1 keeps its parallel route e3 to 2, so
+    // the closure is preserved and 0 may still reach 2 — no propagation.
+    manager.notify_fixed(e1, false_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    let consequences = manager.get_consequences();
+    assert!(
+        consequences.iter().all(|c| c.term != neg_r02),
+        "reach(0,2) is still possible; ¬reach must not propagate"
+    );
+
+    // Stage 2: e3 dies too. Vertex 1's only remaining routes into the
+    // stale closure are the 1↔4 cycle, which never reaches 2 — the probe
+    // must reject that (exit only at the target!) and the recomputed
+    // closure {2} makes ¬reach(0,2) determined, cut = {¬e1, ¬e3}.
+    manager.notify_fixed(e3, false_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    let consequences = manager.get_consequences();
+    let cut = consequences
+        .iter()
+        .find(|c| c.term == neg_r02)
+        .expect("¬reach(0,2) is determined and must propagate");
+    let expected = [tm.mk_not(e1), tm.mk_not(e3)];
+    assert_eq!(cut.justification.len(), expected.len());
+    for &want in &expected {
+        assert!(cut.justification.contains(&want));
+    }
+
+    // Stage 3: all edges fixed (e0, e4, e5 true) — still no 0→2 route; the
+    // all-fixed state stays consistent with ¬reach (no conflict), and
+    // re-fixing after a push/pop cycle re-derives the same state.
+    manager.push();
+    manager.notify_fixed(e0, true_term);
+    manager.notify_fixed(e4, true_term);
+    manager.notify_fixed(e5, true_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    manager.pop(1);
+    // After the pop everything re-reads from the manager; the earlier
+    // determinations replay identically.
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+}
+
+/// All-edges-fixed determined propagation: with every edge fixed, an
+/// undecided reach atom must receive its determined value (the state the
+/// exhaustive oracle pins with "determined atom did not propagate").
+#[test]
+fn all_fixed_determined_reach_propagates() {
+    let mut tm = TermManager::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let v = |i| VertexId(i);
+    for i in 0..4 {
+        let _ = model.add_vertex(g).unwrap();
+        let _ = i;
+    }
+    let e0 = model.new_edge(g, v(0), v(1), &mut tm).unwrap();
+    let e1 = model.new_edge(g, v(1), v(2), &mut tm).unwrap();
+    let e2 = model.new_edge(g, v(2), v(3), &mut tm).unwrap();
+    let e3 = model.new_edge(g, v(3), v(1), &mut tm).unwrap();
+    let r03 = model.reach(g, v(0), v(3), &mut tm).unwrap();
+    let (propagator, watches) = model.into_propagator();
+    let mut manager = UserPropagatorManager::new();
+    for &w in &watches {
+        manager.watch_term(w);
+    }
+    manager.register_propagator(propagator);
+    let true_term = tm.mk_bool(true);
+    let false_term = tm.mk_bool(false);
+    let neg_r03 = tm.mk_not(r03);
+
+    // 0→1 and 3→1 are true, but both exits toward 3 are false: 0 cannot
+    // reach 3 in any completion — and with all edges fixed the value is
+    // determined, so it must propagate.
+    manager.notify_fixed(e0, true_term);
+    manager.notify_fixed(e1, false_term);
+    manager.notify_fixed(e2, false_term);
+    manager.notify_fixed(e3, true_term);
+    assert_eq!(
+        manager.final_check(),
+        crate::user_propagator::PropagatorResult::Unknown
+    );
+    let consequences = manager.get_consequences();
+    assert!(
+        consequences.iter().any(|c| c.term == neg_r03),
+        "determined ¬reach(0,3) must propagate at the all-fixed state"
+    );
 }

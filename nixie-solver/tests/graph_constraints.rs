@@ -1048,3 +1048,33 @@ fn multiple_registrations_are_enforced() {
     solver2.assert(r3, &mut tm2);
     assert_eq!(solver2.check(&mut tm2), SolverResult::Sat);
 }
+
+/// A watch list in which two distinct terms encode to the same SAT
+/// variable (a term and its negation, both used as edge atoms) must be
+/// rejected at registration: the O(1) `by_var` routing keeps one watch per
+/// variable, and silently dropping the other would lose its fixations
+/// (this also closes the pre-existing latent hazard in `truth`, which
+/// reads through the same index).
+#[test]
+fn negated_duplicate_watch_terms_are_rejected() {
+    let mut tm = TermManager::new();
+    let mut solver = Solver::new();
+    let mut model = GraphModel::new(&tm);
+    let g = model.new_graph();
+    let v0 = model.add_vertex(g).unwrap();
+    let v1 = model.add_vertex(g).unwrap();
+    let x = tm.mk_var("x", tm.sorts.bool_sort);
+    let not_x = tm.mk_not(x);
+    model.add_edge(g, v0, v1, x, &mut tm).unwrap();
+    model
+        .add_edge(g, v1, v0, not_x, &mut tm)
+        .expect("edge construction itself is legal");
+    let err = solver
+        .register_graph(model, &mut tm)
+        .expect_err("negated duplicate watch terms must fail loudly");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("share a SAT variable"),
+        "unexpected error message: {msg}"
+    );
+}

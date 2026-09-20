@@ -131,6 +131,18 @@ impl Solver {
             let negation = tm.mk_not(term);
             self.user_state.literals.insert(negation, !lit);
             if seen.insert(term) {
+                // One watch per SAT variable keeps `by_var` exactly
+                // equivalent to a watch-list scan (the routing below and
+                // `truth` both read through it). Two distinct terms on one
+                // variable (a term and its negation both watched) would
+                // silently drop one of them — reject loudly instead.
+                if let Some(&(_, existing)) = self.user_state.by_var.get(&lit.var()) {
+                    if existing != lit {
+                        return Err(CpError(
+                            "watch terms must not share a SAT variable (negated duplicates)",
+                        ));
+                    }
+                }
                 self.user_state.watches.push((term, lit));
                 self.user_state.by_var.insert(lit.var(), (term, lit));
             }
@@ -344,22 +356,22 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
     }
     fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
         let result = self.inner.on_assignment(lit);
-        for &(term, watched) in &self.state.watches {
-            if watched.var() == lit.var() {
-                let value = if watched == lit {
-                    self.true_term
-                } else {
-                    self.false_term
-                };
-                if let Some(old) = self.state.manager.get_fixed_value(term) {
-                    if old == value {
-                        continue;
-                    }
-                    // A client cannot retract a fixation without a pop.
-                    self.invalid = true;
-                    continue;
-                }
-                self.state.manager.notify_fixed(term, value);
+        // O(1) routing through `by_var`: the registration guard keeps one
+        // watch per SAT variable, so this is exactly the previous scan
+        // over `watches` minus its linear cost (quadratic once models
+        // register thousands of watches — graph constraints).
+        if let Some(&(term, watched)) = self.state.by_var.get(&lit.var()) {
+            let value = if watched == lit {
+                self.true_term
+            } else {
+                self.false_term
+            };
+            match self.state.manager.get_fixed_value(term) {
+                // Idempotent re-assignment of the same fixation.
+                Some(old) if old == value => {}
+                // A client cannot retract a fixation without a pop.
+                Some(_) => self.invalid = true,
+                None => self.state.manager.notify_fixed(term, value),
             }
         }
         if self.invalid {

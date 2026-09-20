@@ -219,31 +219,28 @@ struct Csr {
 }
 
 impl Csr {
-    /// Rebuild from the current edge assignment. `forced` selects the
-    /// true-edge view; otherwise the non-false (possible) view. `incoming`
-    /// builds the reverse adjacency (row = destination).
-    fn rebuild(&mut self, spec: &GraphSpec, values: &[EdgeValue], forced: bool, incoming: bool) {
+    /// Build over **every** edge (declaration order within each row),
+    /// `incoming` selecting the reverse adjacency (row = destination).
+    ///
+    /// The possible view is *epoch-static*: it contains all edges, and
+    /// queries skip currently-false edges at traversal time (see
+    /// [`bfs_skip_false`]). Within an epoch fixations only accumulate
+    /// (the manager rejects re-fixation without a pop, and every pop ends
+    /// the epoch), so a CSR built once per epoch answers every later
+    /// query in that epoch — there is nothing to rebuild.
+    fn rebuild_all(&mut self, spec: &GraphSpec, incoming: bool) {
         self.offsets.clear();
         self.offsets.resize(spec.vertices + 1, 0);
-        self.neighbours.clear();
-        self.edges.clear();
         // Pass 1: row sizes.
-        for (i, edge) in spec.edges.iter().enumerate() {
-            if in_view(values[i], forced) {
-                let row = if incoming { edge.to.0 } else { edge.from.0 };
-                self.offsets[row as usize + 1] += 1;
-            }
+        for edge in &spec.edges {
+            let row = if incoming { edge.to.0 } else { edge.from.0 };
+            self.offsets[row as usize + 1] += 1;
         }
         // Prefix sums.
         for v in 0..spec.vertices {
             self.offsets[v + 1] += self.offsets[v];
         }
-        let count = spec
-            .edges
-            .iter()
-            .zip(values)
-            .filter(|&(_, &v)| in_view(v, forced))
-            .count();
+        let count = spec.edges.len();
         self.neighbours.clear();
         self.neighbours.resize(count, 0);
         self.edges.clear();
@@ -252,13 +249,11 @@ impl Csr {
         // order within each row (bit-identity with the uncached propagator).
         let mut cursor = self.offsets.clone();
         for (i, edge) in spec.edges.iter().enumerate() {
-            if in_view(values[i], forced) {
-                let row = if incoming { edge.to.0 } else { edge.from.0 };
-                let k = cursor[row as usize] as usize;
-                cursor[row as usize] += 1;
-                self.neighbours[k] = if incoming { edge.from.0 } else { edge.to.0 };
-                self.edges[k] = i as u32;
-            }
+            let row = if incoming { edge.to.0 } else { edge.from.0 };
+            let k = cursor[row as usize] as usize;
+            cursor[row as usize] += 1;
+            self.neighbours[k] = if incoming { edge.from.0 } else { edge.to.0 };
+            self.edges[k] = i as u32;
         }
     }
 
@@ -338,9 +333,20 @@ fn bfs_rows(adj: &[Vec<(u32, u32)>], vertices: usize, source: VertexId) -> Bfs {
     }
 }
 
-/// BFS from `source` over `adj`, seeding the source itself. Iterative: no
-/// native recursion over user-controlled graphs.
-fn bfs(adj: &Csr, vertices: usize, source: VertexId) -> Bfs {
+/// BFS from `source` over `adj`, skipping edges whose current value is
+/// `False` — i.e. over the exact possible (non-false) view at the time of
+/// the call. Traversal order is identical to a BFS over a CSR built with
+/// only the non-false edges (rows keep declaration order; skipping false
+/// entries preserves the relative order of the rest), so discovery order,
+/// visited sets, and parent edges are bit-identical to the rebuilt-CSR
+/// design at the moment of computation.
+fn bfs_filter(
+    adj: &Csr,
+    vertices: usize,
+    source: VertexId,
+    values: &[EdgeValue],
+    skip: impl Fn(&[EdgeValue], u32) -> bool,
+) -> Bfs {
     let mut visited = vec![false; vertices];
     let mut parent_edge = vec![None; vertices];
     let s = source.0 as usize;
@@ -354,10 +360,14 @@ fn bfs(adj: &Csr, vertices: usize, source: VertexId) -> Bfs {
         let v = queue[head];
         head += 1;
         for k in adj.row(v) {
+            let edge = adj.edges[k];
+            if skip(values, edge) {
+                continue;
+            }
             let t = adj.neighbours[k] as usize;
             if !visited[t] {
                 visited[t] = true;
-                parent_edge[t] = Some(adj.edges[k]);
+                parent_edge[t] = Some(edge);
                 queue.push(t);
             }
         }
@@ -442,12 +452,81 @@ struct Backward {
     seen: Vec<bool>,
 }
 
-fn backward_seen(possible_in: &Csr, vertices: usize, target: VertexId) -> Backward {
-    let search = bfs(possible_in, vertices, target);
+fn backward_seen(
+    possible_in: &Csr,
+    vertices: usize,
+    target: VertexId,
+    values: &[EdgeValue],
+) -> Backward {
+    let search = bfs_filter(possible_in, vertices, target, values, |values, edge| {
+        values[edge as usize] == EdgeValue::False
+    });
     Backward {
         target: search.source,
         seen: search.visited,
     }
+}
+
+/// Does `from` reach `target` through currently non-false edges other
+/// than `except`, using only `seen` as intermediate vertices? `seen` is
+/// the exactly-maintained backward closure of `target` *before* the
+/// disabled edge is applied: every vertex of any surviving path to
+/// `target` (other than `from` itself) reaches `target` in the pre-event
+/// graph, hence lies in `seen` — so pruning the search at non-`seen`
+/// vertices is both sound and bounds the probe by the closure. Returns
+/// true exactly when `from` still reaches `target`, which (see
+/// [`ViewCache::apply_edge_event`]) is the precise condition under which
+/// the closure is unchanged by the disabled edge. Iterative BFS over the
+/// static forward CSR.
+fn still_reaches_closure(
+    possible_out: &Csr,
+    values: &[EdgeValue],
+    from: VertexId,
+    except: u32,
+    seen: &[bool],
+    target: VertexId,
+) -> bool {
+    let vertices = seen.len();
+    let s = from.0 as usize;
+    let t = target.0 as usize;
+    if s >= vertices || t >= vertices {
+        return false;
+    }
+    if s == t {
+        // The disabled edge leaves the target itself; any path through it
+        // already reached `target` before using it, so the closure cannot
+        // have changed for this edge.
+        return true;
+    }
+    let mut visited = vec![false; vertices];
+    // Note: `from ∈ seen` does *not* short-circuit true — membership was
+    // established through a path that may be exactly the disabled edge.
+    // A witness requires a real (≥ 1 edge) path of surviving edges.
+    let mut queue = Vec::new();
+    queue.push(s);
+    visited[s] = true;
+    let mut head = 0;
+    while head < queue.len() {
+        let v = queue[head];
+        head += 1;
+        for k in possible_out.row(v) {
+            let edge = possible_out.edges[k];
+            if edge == except || values[edge as usize] == EdgeValue::False {
+                continue;
+            }
+            let w = possible_out.neighbours[k] as usize;
+            if w == t {
+                return true;
+            }
+            // Prune at non-closure vertices: they provably cannot lie on
+            // any surviving path to `target`.
+            if seen[w] && !visited[w] {
+                visited[w] = true;
+                queue.push(w);
+            }
+        }
+    }
+    false
 }
 
 impl Backward {
@@ -494,26 +573,14 @@ impl Backward {
     }
 }
 
-/// Iterative DFS cycle search over one adjacency view. Returns the edge
-/// indices of a directed cycle, if one exists. Explicit heap stack: no
-/// native recursion over user-controlled graphs.
-/// Content-addressed cache of one graph's derived results, keyed by the
-/// exact packed membership bits of the view they were computed from.
-///
-/// This is memoization, not incremental state: validity is re-checked
-/// against the *full* current edge assignment on every run (the packed key
-/// must match bit-for-bit), so no event history, trail, or push/pop
-/// bookkeeping is involved. A key match means the derived results are
-/// literally the same function outputs as a fresh recomputation, which
-/// keeps every emitted consequence bit-identical (semantics-inert).
+/// Derived-state cache for one graph's two views (forced and possible);
+/// see the field docs for the maintenance scheme of each side.
 impl ViewCache {
     /// Size the per-vertex tables for a graph with `vertices` vertices and
     /// `edges` edges; everything starts invalid/empty.
     fn sized(vertices: usize, edges: usize) -> Self {
         Self {
             forced_valid: false,
-            forced_bits: vec![0; edges / 64 + 1],
-            possible_bits: vec![u64::MAX; edges / 64 + 1],
             values: vec![EdgeValue::Unknown; edges],
             forced_rows: vec![Vec::new(); vertices],
             forced_searches: (0..vertices).map(|_| None).collect(),
@@ -535,18 +602,12 @@ impl ViewCache {
         self.pending.clear();
     }
 
-    fn bit_write(bits: &mut [u64], i: usize, value: bool) {
-        if value {
-            bits[i / 64] |= 1u64 << (i % 64);
-        } else {
-            bits[i / 64] &= !(1u64 << (i % 64));
-        }
-    }
-
     /// Apply one edge event to the maintained state. Must only be called
     /// while `forced_valid`. A true addition appends the adjacency row and
-    /// merges every memoized search whose reachable set can grow; a false
-    /// assignment only shrinks the possible view.
+    /// merges every memoized search whose reachable set can grow. A false
+    /// assignment leaves the possible-side structures alone and instead
+    /// drops exactly the memos the disabled edge can affect (see the
+    /// matching block); everything else stays exact.
     fn apply_edge_event(&mut self, spec: &GraphSpec, edge: u32, value: EdgeValue) {
         let i = edge as usize;
         let previous = self.values[i];
@@ -554,19 +615,51 @@ impl ViewCache {
             return;
         }
         self.values[i] = value;
-        let was_true = previous == EdgeValue::True;
-        let now_true = value == EdgeValue::True;
-        let now_false = value == EdgeValue::False;
-        Self::bit_write(&mut self.forced_bits, i, now_true);
-        Self::bit_write(&mut self.possible_bits, i, !now_false);
-        if now_true && !was_true {
-            let e = &spec.edges[i];
+        if previous == EdgeValue::True && value != EdgeValue::True {
+            // Unreachable under the manager invariant (no re-fixation
+            // without a pop, and every pop ends the epoch). Fail closed to
+            // a full re-read rather than corrupt the grow-only forced view.
+            self.invalidate();
+            return;
+        }
+        let e = &spec.edges[i];
+        if value == EdgeValue::True {
             self.forced_rows[e.from.0 as usize].push((e.to.0, edge));
             self.forced_cycle = None;
             self.merge_new_edge(spec, e.from, e.to, edge);
-        }
-        if now_false && previous != EdgeValue::False {
-            self.possible_dirty = true;
+        } else if value == EdgeValue::False {
+            // A disabled edge e = (a -> b) can shrink a memoized backward
+            // closure C_t only if b lies in C_t (otherwise e contributed
+            // no path to t). Given b ∈ C_t, the closure is provably
+            // **unchanged** exactly when a still reaches C_t without e:
+            // any old member's path through e reroutes through a's
+            // surviving path, so C_t ⊆ C_t' ⊆ C_t. That side condition is
+            // a local probe (early-exit BFS from a, see
+            // [`still_reaches_closure`]) — typically a handful of vertices
+            // — and only its failure justifies the full closure recompute
+            // (the memo is dropped and rebuilt lazily on the next query).
+            // A memoized possible cycle dies only if it uses this edge; a
+            // memoized cycle *absence* is stable under shrinking.
+            for memo in self.backward_searches.iter_mut() {
+                if let Some(backward) = memo
+                    && backward.sees(e.to)
+                    && !still_reaches_closure(
+                        &self.possible_out,
+                        &self.values,
+                        e.from,
+                        edge,
+                        &backward.seen,
+                        VertexId(backward.target as u32),
+                    )
+                {
+                    *memo = None;
+                }
+            }
+            if let Some(Some(cycle)) = &self.possible_cycle
+                && cycle.contains(&edge)
+            {
+                self.possible_cycle = None;
+            }
         }
     }
 
@@ -605,20 +698,15 @@ impl ViewCache {
 
 struct ViewCache {
     /// **Incrementally maintained forced view.** `forced_valid` is false
-    /// until the first full read; afterwards the packed true-edge bits, the
-    /// per-edge values, and the growable adjacency rows are updated from
-    /// `(term, value)` events in O(1) per event, and memoized BFS trees are
-    /// *merged* (not recomputed) when an added edge extends a source's
-    /// reachable set. A backtrack (`UserPropagator::pop`) clears
-    /// `forced_valid`: the next run re-reads everything from the manager.
-    /// While valid, the derived state is exactly a function of the
-    /// manager's current fixations — the same fixations the full read
-    /// would observe.
+    /// until the first full read; afterwards the per-edge values and the
+    /// growable adjacency rows are updated from `(term, value)` events in
+    /// O(1) per event, and memoized BFS trees are *merged* (not recomputed)
+    /// when an added edge extends a source's reachable set. A backtrack
+    /// (`UserPropagator::pop`) clears `forced_valid`: the next run re-reads
+    /// everything from the manager. While valid, the derived state is
+    /// exactly a function of the manager's current fixations — the same
+    /// fixations the full read would observe.
     forced_valid: bool,
-    /// Packed true-edge bits (edge i is true iff bit set).
-    forced_bits: Vec<u64>,
-    /// Packed non-false-edge bits (edge i is false iff bit clear).
-    possible_bits: Vec<u64>,
     /// Per-edge assignment state derived from events.
     values: Vec<EdgeValue>,
     /// Growable per-vertex rows of (neighbour, edge index) over true edges,
@@ -629,20 +717,55 @@ struct ViewCache {
     /// `find_cycle` over the forced view (`Some(None)` = computed, acyclic).
     /// Any true-edge addition invalidates it.
     forced_cycle: Option<Option<Vec<u32>>>,
-    /// True when the possible view changed since the possible-side CSR and
-    /// memos were built (false-edge assignments shrink it).
+    /// **Epoch-static possible view.** `possible_dirty` marks the epoch
+    /// unbuilt (construction or a backtrack); the first needing run builds
+    /// the all-edges CSRs once (see [`Csr::rebuild_all`]) and clears the
+    /// possible-side memos. False-edge events never rebuild anything:
+    /// queries run as skip-false traversals over the static CSR, and each
+    /// memo is dropped precisely when a disabled edge can affect it (see
+    /// [`ViewCache::apply_edge_event`]), so every answer a query returns
+    /// is **exact** for the current fixation state — the contract the
+    /// exhaustive oracles pin (eager conflict detection and determined
+    /// propagation, not just eventual detection). The all-fixed gate at
+    /// the end of [`GraphModel::run_graph`] re-verifies the `Sat`
+    /// certificate as defense in depth.
     possible_dirty: bool,
+    /// All-edges forward CSR (serves the possible-cycle search and the
+    /// closure-preservation probes).
     possible_out: Csr,
+    /// All-edges reverse CSR (serves the backward closures).
     possible_in: Csr,
-    /// Possible-view backward BFS by target vertex.
+    /// Possible-view backward BFS by target vertex. Recomputed exactly
+    /// (skip-false BFS over the static CSR) after a disabled edge whose
+    /// head lies in the closure; untouched memos stay exactly valid.
     backward_searches: Vec<Option<Backward>>,
+    /// `find_cycle` over the possible view; recomputed exactly after a
+    /// disabled edge on the memoized cycle. A memoized cycle *absence*
+    /// is stable under shrinking and never needs recomputation within
+    /// the epoch.
     possible_cycle: Option<Option<Vec<u32>>>,
     /// Edge events waiting to be applied at the next run:
     /// (edge index, new value).
     pending: Vec<(u32, EdgeValue)>,
 }
 
+/// Iterative DFS cycle search over one adjacency view. Returns the edge
+/// indices of a directed cycle, if one exists. Explicit heap stack: no
+/// native recursion over user-controlled graphs.
 fn find_cycle(adj: &Csr, vertices: usize) -> Option<Vec<u32>> {
+    find_cycle_filter(adj, vertices, &[], |_, _| false)
+}
+
+/// Iterative DFS cycle search as [`find_cycle`], skipping edges for which
+/// `skip` holds — used over the epoch-static all-edges CSR to search the
+/// exact possible (non-false) view without materializing it. Cycle choice
+/// is bit-identical to a search over the filtered CSR.
+fn find_cycle_filter(
+    adj: &Csr,
+    vertices: usize,
+    values: &[EdgeValue],
+    skip: impl Fn(&[EdgeValue], u32) -> bool,
+) -> Option<Vec<u32>> {
     // colors: 0 = white (unvisited), 1 = gray (on the DFS path), 2 = black.
     let mut color = vec![0u8; vertices];
     let mut parent_edge = vec![None::<u32>; vertices];
@@ -657,14 +780,19 @@ fn find_cycle(adj: &Csr, vertices: usize) -> Option<Vec<u32>> {
         let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
         while let Some(&mut (v, ref mut next)) = stack.last_mut() {
             let row = adj.row(v);
-            let Some(k) = row.clone().nth(*next) else {
+            let Some(k) = row
+                .clone()
+                .skip(*next)
+                .find(|&k| !skip(values, adj.edges[k]))
+            else {
                 color[v] = 2;
                 stack.pop();
                 continue;
             };
+            let advance = k + 1 - row.start;
             let to = adj.neighbours[k];
             let edge = adj.edges[k];
-            *next += 1;
+            *next = advance;
             let t = to as usize;
             match color[t] {
                 0 => {
@@ -995,11 +1123,15 @@ impl GraphModel {
         }
     }
 
-    /// One graph's check. The maintained forced view (bits, values,
-    /// adjacency, memoized searches) is trusted only while `forced_valid`;
-    /// the first run after construction or a backtrack re-reads every edge
-    /// from the manager. Afterwards each event was applied in O(1) and the
-    /// memoized trees were merged, so this scan is lookups only.
+    /// One graph's check. The maintained forced view (values, adjacency,
+    /// memoized searches) is trusted only while `forced_valid`; the first
+    /// run after construction or a backtrack re-reads every edge from the
+    /// manager. Afterwards each event was applied in O(1) and the memoized
+    /// trees were merged, so this scan is lookups only. The possible view
+    /// is epoch-static (all-edges CSRs built once per epoch) with exact
+    /// skip-false queries and precisely dirty-marked memos; see
+    /// [`ViewCache`]. The all-fixed gate at the end re-verifies the `Sat`
+    /// certificate as defense in depth.
     fn run_graph(&mut self, g: usize, ctx: &mut PropagatorContext) -> PropagatorResult {
         let spec = &self.graphs[g];
         let vertices = spec.vertices;
@@ -1012,10 +1144,6 @@ impl GraphModel {
                 // Full re-read path (first run, or after a backtrack).
                 cache.values.clear();
                 cache.values.resize(edge_count, EdgeValue::Unknown);
-                cache.forced_bits.clear();
-                cache.forced_bits.resize(edge_count / 64 + 1, 0);
-                cache.possible_bits.clear();
-                cache.possible_bits.resize(edge_count / 64 + 1, u64::MAX);
                 for row in cache.forced_rows.iter_mut() {
                     row.clear();
                 }
@@ -1029,20 +1157,18 @@ impl GraphModel {
                         }
                         Some(v) if v == self.true_term => {
                             cache.values[i] = EdgeValue::True;
-                            ViewCache::bit_write(&mut cache.forced_bits, i, true);
                             cache.forced_rows[edge.from.0 as usize].push((edge.to.0, i as u32));
                         }
                         Some(v) if v == self.false_term => {
                             cache.values[i] = EdgeValue::False;
-                            ViewCache::bit_write(&mut cache.possible_bits, i, false);
                         }
                         Some(_) => return PropagatorResult::Unknown,
                     }
                 }
                 cache.pending.clear();
                 cache.forced_valid = true;
-                // The possible view may have changed relative to whatever
-                // was cached before invalidation.
+                // The epoch starts: possible-side memos from a previous
+                // epoch no longer describe this edge universe's view.
                 cache.possible_dirty = true;
             } else {
                 // Apply queued edge events (recorded by on_fixed).
@@ -1057,12 +1183,12 @@ impl GraphModel {
         // are read-only below; the memos fill in lazily.
         let cache = &mut self.caches[g];
         if cache.possible_dirty {
-            let mut possible_out = core::mem::take(&mut cache.possible_out);
-            let mut possible_in = core::mem::take(&mut cache.possible_in);
-            possible_out.rebuild(spec, &cache.values, false, false);
-            possible_in.rebuild(spec, &cache.values, false, true);
-            cache.possible_out = possible_out;
-            cache.possible_in = possible_in;
+            // Epoch start: rebuild the all-edges CSRs once (both sides —
+            // the forward CSR also serves the closure-preservation probes
+            // in [`ViewCache::apply_edge_event`]) and reset the
+            // possible-side memos.
+            cache.possible_out.rebuild_all(spec, false);
+            cache.possible_in.rebuild_all(spec, true);
             cache.backward_searches.clear();
             cache.backward_searches.extend((0..vertices).map(|_| None));
             cache.possible_cycle = None;
@@ -1114,8 +1240,11 @@ impl GraphModel {
                     Some(false) => {}
                 }
             } else {
-                let possible_result =
-                    possible_cycle.get_or_insert_with(|| find_cycle(possible_out, vertices));
+                let possible_result = possible_cycle.get_or_insert_with(|| {
+                    find_cycle_filter(possible_out, vertices, values, |values, edge| {
+                        values[edge as usize] == EdgeValue::False
+                    })
+                });
                 if possible_result.clone().is_none() {
                     let reasons: Vec<TermId> = spec
                         .edges
@@ -1172,7 +1301,9 @@ impl GraphModel {
                 }
                 Some(true) => {
                     let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| backward_seen(possible_in, vertices, reach.to))
+                        slot.get_or_insert_with(|| {
+                            backward_seen(possible_in, vertices, reach.to, values)
+                        })
                     });
                     let Some(backward) = backward else {
                         continue;
@@ -1200,7 +1331,9 @@ impl GraphModel {
                         continue;
                     }
                     let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| backward_seen(possible_in, vertices, reach.to))
+                        slot.get_or_insert_with(|| {
+                            backward_seen(possible_in, vertices, reach.to, values)
+                        })
                     });
                     let Some(backward) = backward else {
                         continue;
@@ -1213,7 +1346,63 @@ impl GraphModel {
             }
         }
 
+        // 3. All-fixed exactness gate (defense in depth). Every per-check
+        // answer above is exact by construction (precise dirty-marking, see
+        // [`ViewCache`]); this gate independently re-verifies the atoms a
+        // `Sat` certificate depends on, so a memo-dirty-marking defect can
+        // never hand back a wrong model — it would surface here as a
+        // conflict instead. With all edges fixed the possible view *is*
+        // the forced view, so the re-verification is exact and cheap.
         if all_fixed && values.iter().all(|v| *v != EdgeValue::Unknown) {
+            for reach in &spec.reach {
+                if ctx.get_fixed_value(reach.atom) != Some(self.true_term) {
+                    continue;
+                }
+                // Exact: does the forced (== possible) view actually
+                // witness the demanded reachability?
+                let tree = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
+                    slot.get_or_insert_with(|| bfs_rows(forced_rows, vertices, reach.from))
+                });
+                let reaches = tree.is_some_and(|t| t.reaches_forced(spec, values, reach.to));
+                if reaches {
+                    continue;
+                }
+                // Refuted: the exact backward closure over the all-fixed
+                // possible view (skip-false == true edges here) supplies
+                // the cut.
+                let backward = backward_seen(possible_in, vertices, reach.to, values);
+                debug_assert!(!backward.possible_reaches(spec, values, reach.from));
+                let mut conflict = backward.cut_negations(spec, values);
+                conflict.push(reach.atom);
+                return PropagatorResult::Unsat(conflict);
+            }
+            if let Some((atom, negation)) = spec.acyclic
+                && ctx.get_fixed_value(atom) == Some(self.false_term)
+            {
+                // A cycle is demanded; `forced_cycle` was populated
+                // above, exactly (the memo is recomputed in this run if
+                // any true addition cleared it).
+                let has_cycle = forced_cycle
+                    .get_or_insert_with(|| {
+                        forced_csr.rebuild_from_rows(forced_rows, vertices);
+                        find_cycle(&forced_csr, vertices)
+                    })
+                    .is_some();
+                if !has_cycle {
+                    // No true cycle exists, and with all edges fixed
+                    // that means no possible cycle either: the demanded
+                    // cycle cannot exist in any completion.
+                    let mut conflict: Vec<TermId> = spec
+                        .edges
+                        .iter()
+                        .zip(values.iter())
+                        .filter(|&(_, v)| *v == EdgeValue::False)
+                        .map(|(edge, _)| edge.negation)
+                        .collect();
+                    conflict.push(negation);
+                    return PropagatorResult::Unsat(conflict);
+                }
+            }
             PropagatorResult::Sat
         } else {
             PropagatorResult::Unknown
