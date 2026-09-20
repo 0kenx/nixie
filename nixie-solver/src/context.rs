@@ -1533,7 +1533,8 @@ impl Context {
                     // bindings (z3's printing convention); the body and the
                     // binding terms are then linear in the DAG and the
                     // stock printer suffices.
-                    let simplified = self.terms.simplify(term);
+                    let bottom_up = self.terms.simplify(term);
+                    let simplified = self.terms.ctx_simplify(bottom_up);
                     let (bindings, body) = self.terms.share_for_printing(simplified);
                     let printer = nixie_core::smtlib::Printer::new(&self.terms);
                     let mut text = printer.print_term(body);

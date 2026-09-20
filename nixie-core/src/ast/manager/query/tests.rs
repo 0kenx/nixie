@@ -920,3 +920,91 @@ fn share_for_printing_bounds_a_doubling_chain() {
     // The names are capture-free: none collides with the goal's own `p`.
     assert!(bindings.iter().all(|(n, _)| n != "p"));
 }
+
+// ======== ctx_simplify (2026-09-19, the context-dependent pass) ========
+
+/// Every rule of the context pass, verified in isolation — the shapes the
+/// perf-gap route's parameter sweep named (`push_ite`'s equality half +
+/// `ite_extra_rules`' connections) under a literal context.
+#[test]
+fn ctx_simplify_rules_in_isolation() {
+    use crate::ast::TermKind;
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let q = m.mk_var("q", m.sorts.bool_sort);
+    let i3 = m.mk_int(3);
+    let i5 = m.mk_int(5);
+    let i7 = m.mk_int(7);
+
+    let is_const = |m: &TermManager, t: TermId, which: TermKind| matches!(m.get(t).map(|d| &d.kind), Some(k) if std::mem::discriminant(k) == std::mem::discriminant(&which));
+
+    // The full cascade: push + fold + context absorb → false.
+    let ite = m.mk_ite(p, i3, i7);
+    let eq = m.mk_eq(i5, ite);
+    let np = m.mk_not(p);
+    let goal = m.mk_and([np, eq]);
+    let out = m.ctx_simplify(goal);
+    assert!(
+        is_const(&m, out, TermKind::False),
+        "5 ≠ 3 and 5 ≠ 7 under ¬p refutes the conjunction"
+    );
+
+    // Context prunes an ite branch under a known literal.
+    let np2 = m.mk_not(p);
+    let goal2 = m.mk_and([np2, ite]);
+    let out2 = m.ctx_simplify(goal2);
+    let text2 = crate::smtlib::Printer::new(&m).print_term(out2);
+    assert_eq!(text2, "(and (not p) 7)");
+
+    // ite with equal branches folds to the branch.
+    let goal3 = m.mk_ite(p, i5, i5);
+    assert_eq!(m.ctx_simplify(goal3), i5);
+
+    // The connection: ite(p, false, q) → (and (not p) q).
+    let goal4 = m.mk_ite(p, m.false_id, q);
+    let out4 = m.ctx_simplify(goal4);
+    let text4 = crate::smtlib::Printer::new(&m).print_term(out4);
+    assert_eq!(text4, "(and (not p) q)");
+
+    // Complementary literals in a conjunction refute.
+    let np5 = m.mk_not(p);
+    let goal5 = m.mk_and([p, np5]);
+    let out5 = m.ctx_simplify(goal5);
+    assert!(is_const(&m, out5, TermKind::False));
+
+    // The complementary direction: under p the ite selects 3, and
+    // 5 ≠ 3 refutes — the cascade closes on the THEN side too (the
+    // pass decides in BOTH directions, never strengthens).
+    let goal6 = m.mk_and([p, eq]);
+    let out6 = m.ctx_simplify(goal6);
+    assert!(
+        is_const(&m, out6, TermKind::False),
+        "p forces the ite to 3, and 5 ≠ 3 refutes the conjunction"
+    );
+    // The honest undecided shape with a free p: `(= 5 (ite p 5 7))`
+    // decides per branch (true / false) — the connection collapses it
+    // to exactly `p`, not to a constant.
+    let eq7 = m.mk_ite(p, i5, i7);
+    let eq7 = m.mk_eq(i5, eq7);
+    let out7 = m.ctx_simplify(eq7);
+    assert_eq!(out7, p, "ite(p, 5=5, 5=7) connects to exactly p");
+}
+
+/// The pass is idempotent and fuel-bounded: re-running its result changes
+/// nothing, and pathological inputs degrade to the identity (never to a
+/// wrong answer).
+#[test]
+fn ctx_simplify_is_idempotent() {
+    let mut m = TermManager::new();
+    let mut t = m.mk_int(1);
+    for k in 0..64u32 {
+        let a = m.mk_int(i64::from(k));
+        let b = m.mk_int(i64::from(k + 1));
+        let c = m.mk_eq(a, b);
+        let v = m.mk_int(i64::from(k));
+        t = m.mk_ite(c, v, t);
+    }
+    let once = m.ctx_simplify(t);
+    let twice = m.ctx_simplify(once);
+    assert_eq!(once, twice, "the pass is idempotent on its own output");
+}

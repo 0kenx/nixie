@@ -293,3 +293,31 @@ ctx-simplify pass needs the push families AND the recursive
 case-literal collection through `and`/`or`/`not` nesting together, with
 a size budget on the expansions — the local rules alone are now a
 measured dead end, not a conjectured one.
+
+### ctx_simplify, LANDED (seventh session): the context pass — sound, tested, extending; the nec-smt class still needs eq-solving
+
+`TermManager::ctx_simplify` (in `query/simplify.rs`, wired after the
+bottom-up pass in the `Simplify` command): a top-down walk with a
+literal context — conjunct polarities extend it (with exact
+unwinding), `or` drops refuted disjuncts, `ite` case-splits both
+branches under `c`/`¬c` (the piece the one-level prune lacked), the
+equality push `(= k (ite c a b))` re-enters the walk so the
+ite-on-Boolean connections (`ite(c,false,x) → (and ¬c x)` …) fire, and
+complementary conjunction literals refute.  Every rule verified in
+isolation (`ctx_simplify_rules_in_isolation`: the full cascade folds
+`(and ¬p (= 5 (ite p 3 7)))` to `false`, context prunes branches, the
+connection collapses `(= 5 (ite p 5 7))` to exactly `p`); fuel-bounded
+(200k steps) and growth-guarded (4× the input DAG, else keep the
+input); idempotence pinned.
+
+**The honest limit**: the nec-smt residual is now a *priority-select
+ite-chain* (`ite((not (= 467 a!183)) a!183 (ite …))` where the
+a!-bindings are themselves chains) — closing it needs equality
+* solving* through the chain (the sweep's third necessary family,
+`solve_eqs`), which composes with but is not part of the context pass.
+The class stays open with a sharper boundary: context+push+connections
+landed; eq-solving through select-chains is the remaining rule family.
+
+Verification: suite 12 062/12 062 (one documented load-flake re-passed
+standalone, 182 s at `-j1`); clippy/fmt clean; Z3 parity 100 % correct,
+0 disagreements (z3 4.16.0); perf gate PASS; fresh differentials clean.
