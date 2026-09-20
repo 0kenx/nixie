@@ -1616,3 +1616,33 @@ fn simplify_output_shares_dag_repetition_with_lets() {
     );
     assert!(echo.len() < 20_000, "the shared print is kilobytes");
 }
+
+/// A wide point must never shadow a wide row (2026-09-19, the item-95
+/// defect — the corruption at the bottom of the J5 cert-false class): a
+/// variable parked at a wide bound as a NONBASIC keeps its `wide_points`
+/// entry; when it later becomes wide-BASIC (a defining wide row), every
+/// exact read (`point_value_exact`, consulted first by the snapshot, the
+/// key-form evaluations, and model publication) returned the FROZEN point
+/// while the constraint machinery composed through the LIVE row — the two
+/// drift apart as the search moves the row's terms (observed: a parked
+/// point ...842 vs a row evaluating ...864+, off by the 22/44-delta
+/// family).  The published model then violated its own committed atoms
+/// and the exact evaluator correctly refuted it, degrading a decidable
+/// `sat` to `unknown`.  Both wide-store reads now take the row first, and
+/// gaining a defining row retires any parked point.  Pre-fix: `unknown`;
+/// z3: `sat`.
+#[test]
+fn wide_point_never_shadows_a_wide_row() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const xi Int)\n\
+             (declare-const yi Int)\n\
+             (assert (and (and (> (+ (* 5 yi) (+ (mod (* 5 yi) 1) (- (* 10 xi) 3) (+ 3 0)) (* 1 xi)) 4) (<= (+ (* 1 xi) (- (* 10 yi) 2) (* 5 yi)) (+ (div (+ (* 5 yi) -7 (* 10 yi)) 5) (- 7 -2)))) (or (not (or (> (+ (div 9223372036854775808 3) (div (+ -9 (* -2 yi)) 5)) (* 2 xi)) (>= (+ (div (+ (* -1 xi) (* 5 xi) (* 2 xi)) 1) (* 2 xi)) (div (+ (+ -9223372036854775809 -8) (* 5 yi) (* 1 xi)) 4)))) (> xi 9223372036854775807) (and (> (* -2 xi) 4) (> (+ (+ (* 1 xi) (+ (* -2 xi) (* 5 xi) 9223372036854775809) (+ (* 5 yi) (* 10 yi))) 3 (+ (- (* -2 xi) 3) (+ (* 3 yi) (* 1 yi) 9223372036854775807) (- 27 3))) (* -1 xi)))) (= (+ (* 5 yi) (mod (+ (* 3 yi) -8) 5) (* 2 xi)) 4611686018427387905)))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
+}

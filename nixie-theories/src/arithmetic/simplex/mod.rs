@@ -1537,6 +1537,7 @@ impl Simplex {
     /// honest narrow value exists (the caller must decline, never guess).
     #[must_use]
     pub fn delta_value_exact(&self, var: VarId) -> Option<DeltaRational> {
+        // Row over point — see `point_value_exact`'s priority note.
         if let Some(wexpr) = self.wide_rows.get(&var) {
             return self.eval_big_expr(wexpr);
         }
@@ -1554,12 +1555,19 @@ impl Simplex {
     /// narrowed form does not exist.
     #[must_use]
     pub fn point_value_exact(&self, var: VarId) -> Option<BigDeltaRational> {
-        if let Some(w) = self.wide_points.get(&var) {
-            return Some(w.clone());
-        }
+        // A variable with a DEFINING WIDE ROW is basic: its value is the
+        // row's live evaluation.  A wide point parked from a previous
+        // nonbasic life is a leftover — reading it first would shadow the
+        // row with a frozen stale value that drifts apart as the search
+        // moves the row's terms (the item-95 defect: the J5 cert-false
+        // class's mechanism).  The row wins; a lone point (a genuine
+        // nonbasic at a wide bound) is unchanged.
         if let Some(wexpr) = self.wide_rows.get(&var) {
             let (real, delta) = self.eval_big_raw(wexpr)?;
             return Some(BigDeltaRational { real, delta });
+        }
+        if let Some(w) = self.wide_points.get(&var) {
+            return Some(w.clone());
         }
         self.assignment
             .get(var as usize)
@@ -1672,6 +1680,22 @@ impl Simplex {
     /// freshness gate: a stale basic entry is not evidence of anything).
     pub fn assignment_is_current(&self) -> bool {
         self.assignment_current
+    }
+
+    /// Retire any wide POINT parked for `var`: the variable is gaining (or
+    /// already has) a DEFINING ROW, and a leftover point from a previous
+    /// nonbasic life would shadow the row in every exact read
+    /// (`point_value_exact` consults the point store first) — a frozen
+    /// stale value disagreeing with the live row's evaluation, drifting
+    /// apart as the search moves the row's terms (the item-95 defect:
+    /// a parked point 842 vs a row evaluating 864+ over its own reads;
+    /// every snapshot, key-form evaluation, and model publication read
+    /// the frozen point while the constraint machinery composed through
+    /// the row — the J5 cert-false class's mechanism).
+    fn retire_wide_point(&mut self, var: VarId) {
+        if self.wide_points.remove(&var).is_some() {
+            self.assignment_current = false;
+        }
     }
 
     /// Whether `var` currently has a defining row (the tripwire's
@@ -2308,6 +2332,9 @@ impl Simplex {
         if let Some(&slack) = self.wide_row_ids.get(&key)
             && self.wide_rows.contains_key(&slack)
         {
+            // The hit slack is BASIC with its defining row — a wide point
+            // parked from an earlier nonbasic life would shadow it.
+            self.retire_wide_point(slack);
             return slack;
         }
         for (v, _) in &big.terms {
@@ -2341,6 +2368,7 @@ impl Simplex {
         }
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_row_ids.insert(key, slack);
+        self.retire_wide_point(slack);
         self.wide_rows.insert(slack, big);
         slack
     }
@@ -3914,6 +3942,9 @@ impl Simplex {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     new_expr.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
+                // The entering variable is now BASIC with this defining row:
+                // retire any wide point from a previous nonbasic life.
+                self.retire_wide_point(nonbasic_var);
                 self.tableau.insert(nonbasic_var, Arc::new(new_expr));
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
@@ -3930,6 +3961,9 @@ impl Simplex {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     wide.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
+                // Entering and wide-basic: same retirement (the wide point
+                // would shadow this row in every exact read).
+                self.retire_wide_point(nonbasic_var);
                 self.wide_rows.insert(nonbasic_var, wide);
                 for v in entering_terms {
                     self.column_push_known(v, nonbasic_var);
