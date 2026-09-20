@@ -3521,6 +3521,98 @@ impl Theory for ArithSolver {
             }
         }
 
+        // Debug canary (item 91): every interned atom row's slack must
+        // still satisfy `slack = r · (key form)` AT THE CURRENT POINT for
+        // some positive scalar r (the intern's rescale-into-width mode
+        // mints r = 1/λ; Eq rows' sign normalization allows r < 0).  A
+        // detached row — the pivot zoo's corruption, observed as an
+        // equality's row reduced to a trivial variable while the
+        // candidate violated the atom by 34 — yields r = 0 or an
+        // inconsistent r, and fires loudly.
+        #[cfg(all(debug_assertions, feature = "std"))]
+        {
+            use num_rational::BigRational as BR;
+            use std::fmt::Write as _;
+            let mut broken = String::new();
+            // Freshness gate: a stale assignment vector makes every basic
+            // entry unreliable — the canary's evidence must come from a
+            // current state (the third false-positive class).
+            if self.simplex.assignment_is_current() {
+                for ((key, reason), &slack) in self.atom_rows.iter() {
+                    // Only rows whose CONSTRAINT is live at this scope can
+                    // detach: rows are search-global, but the bound on the
+                    // slack comes and goes with the asserting polarity — a
+                    // popped atom's row legitimately rests anywhere (the
+                    // false-positive class of the canary's first version).
+                    if !self.simplex.has_live_bound(slack) {
+                        continue;
+                    }
+                    // A key over a CONSTANT COLUMN (the big-const abstraction)
+                    // is only equivalent to its row while the column's PIN is
+                    // live — a floating column's stale entry poisons the key
+                    // form's evaluation (the second false-positive class).
+                    let mut floating_column = false;
+                    for &(term, _) in &key.terms {
+                        if let Some(&v) = self.term_to_var.get(&term)
+                            && self.simplex.is_wide_point(v)
+                            && !self.simplex.has_live_bound(v)
+                        {
+                            floating_column = true;
+                            break;
+                        }
+                    }
+                    if floating_column {
+                        continue;
+                    }
+                    let Some(slack_val) = self.simplex.point_value_exact(slack) else {
+                        continue;
+                    };
+                    let mut want = BR::new(
+                        num_bigint::BigInt::from(*key.constant.numer()),
+                        num_bigint::BigInt::from(*key.constant.denom()),
+                    );
+                    let mut ok = true;
+                    for &(term, coef) in &key.terms {
+                        let Some(&var) = self.term_to_var.get(&term) else {
+                            ok = false;
+                            break;
+                        };
+                        let Some(v) = self.simplex.point_value_exact(var) else {
+                            ok = false;
+                            break;
+                        };
+                        want += v.real
+                            * BR::new(
+                                num_bigint::BigInt::from(*coef.numer()),
+                                num_bigint::BigInt::from(*coef.denom()),
+                            );
+                    }
+                    if !ok || want.is_zero() {
+                        continue; // undecidable at this point; not evidence
+                    }
+                    let r = &slack_val.real / &want;
+                    let is_eq = self
+                        .slack_forms
+                        .get(&slack)
+                        .is_some_and(|f| f.dir == SlackDir::Eq);
+                    let good = if is_eq { !r.is_zero() } else { r.is_positive() };
+                    if !good {
+                        let _ = writeln!(
+                            broken,
+                            "  atom row v{slack} reason={reason:?}: slack {:?} is not a positive multiple of its key form's {:?} (r = {r:?})",
+                            slack_val.real, want
+                        );
+                    }
+                }
+                if !broken.is_empty() {
+                    debug_assert!(
+                        false,
+                        "atom-row equivalence broken (detached constraints):\n{broken}"
+                    );
+                }
+            }
+        }
+
         // Step 1: solve the LP (real) relaxation.
         match self.simplex.check() {
             Ok(()) => {

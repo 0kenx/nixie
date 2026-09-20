@@ -235,3 +235,36 @@ first probe).  Sizing: the pass is self-contained in
 `query/simplify.rs`'s harness (memoized driver already correct), an
 own-session project — with the printer's let-sharing fix as its
 companion (any folded-but-large result still cannot be printed).
+
+### The let-sharing printer, LANDED (fifth session): the `(simplify)` command prints shared DAGs in kilobytes
+
+`TermManager::share_for_printing` + the `Simplify` command wiring:
+multiply-referenced compound subtrees lift into `let` bindings
+(capture-free `a!N` names minted against the term's own symbol
+vocabulary; bindings ordered children-first so each RHS references only
+earlier names), and the stock printer handles the rest.  Measured on the
+12.5 KB nec-smt member: `(simplify …)` went from 90 s+ at 10 GB of
+string churn to a 10 KB let-shared echo.
+
+Two traps worth recording:
+
+1. **The analysis's first version had a post-order bug**: sizes were
+   combined over a reversed DFS *pre*-order — parents before children —
+   so every subtree read `unwrap_or(1)` for not-yet-sized children and
+   every size was undercounted (the root's true tree size is
+   **~10^16 nodes**; the buggy analysis reported 21,760).  The symptom
+   was exquisite: a 407-DAG-node binding whose print exploded to
+   gigabytes, because the mis-ordered candidate set left un-cut shared
+   subtrees inside the bindings' RHS.  A two-phase Expand/Combine walk
+   is the fix; reversed-pre-order is NOT post-order.
+2. **The share threshold is correctness-bearing, not cosmetic**: the
+   compounding fan-out runs through small compounds (an `(ite c 0 65536)`
+   is 4 nodes), so any size threshold above 2 leaves live sharing below
+   the cuts and the print re-explodes.  Only compounds bind — shared
+   leaves keep their plain spelling, and no existing test's output
+   changed (suite 12 051/12 051 clean).
+
+Regressions: `share_for_printing_bounds_a_doubling_chain` (unit: the
+2^26-unfolding chain binds, every RHS is DAG-linear, names are
+capture-free) and `simplify_output_shares_dag_repetition_with_lets`
+(e2e).  The ctx-simplify fold pass remains the other half of the route.

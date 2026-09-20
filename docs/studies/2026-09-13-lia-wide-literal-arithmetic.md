@@ -2841,3 +2841,39 @@ corpus run, a differential, or a user can actually hear.
     * No code landed this item — the two defects named above are real
       but the fix touches the wide-pivot core and must land with its
       own battery; nothing here should land unverified.
+
+## Continuation 48 (2026-09-19): item 92 — item 91's defects executed: the wide intern content-addressed, the atom-row canary landed (silent), and the detachment's status
+
+92. **Both item 91 fixes landed (`6d8ee66f`)**:
+    * **Content-addressed wide rows** (`BigLinKey` over the substituted
+    exact form, mirroring the narrow channel's `row_ids`/`LinKey`): the
+    rebuild rounds' re-asserts no longer mint duplicates.  Survey 75 →
+    **73**, every new verdict agreeing with z3; the arc's cumulative run:
+    **150 → 110 → 91 → 79 → 75 → 73**.
+    * **The atom-row equivalence canary** (debug, at `check()` entry):
+    every interned atom row's slack must satisfy `slack = r·(key form)`
+    at the current point for positive `r` (Eq sign-normalization allows
+    negative).  Three false-positive classes found and gated, each
+    verified against a live false positive it eliminated: popped atoms
+    (the live-bound gate — rows are search-global, their constraints
+    are not), floating constant columns (the pin-liveness gate — the
+    big-const abstraction's column poisons the key-form evaluation when
+    its pin is down), and stale assignment vectors (the freshness gate —
+    a mid-search basic entry is not evidence).
+    * **The canary is SILENT post-gates**: across the full debug arith
+    suite (4689/4703, the 14 the documented corpus-missing class) and
+    the 224-file debug panic sweep — zero fires, including on the i423
+    reproducer.  Two readings, unresolved at landing: (a) the dedup
+    removed the corruption's vector (the duplicate-zoo churn), and
+    i423's residual `unknown` is a later blocker (budget/S3-class), or
+    (b) the detachment happens in states the gates exclude and the
+    canary needs a convergence-point placement.  The pre-gate canary's
+    firing vocabulary (r = 0 detachments, r = −1/43 sign flips) is the
+    decode tool for whichever it is.
+    * **Battery**: 6 fresh differential seeds clean; parity 176/177
+    (z3 4.16.0); the perf gate PASS 1.000/1.000 vs the re-pinned
+    baseline `1710e125` (NOTE: `bench/perf_gate/BASELINE` was re-pinned
+    by a parallel session mid-run — an explicit GATE_BASELINE override
+    against a stale pin produces spurious `base=none` mismatches when
+    the old binary is cleaned; always re-read BASELINE before gating);
+    debug panic sweep 0; clippy/fmt/rustdoc clean.

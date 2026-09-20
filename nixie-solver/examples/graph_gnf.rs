@@ -359,4 +359,14 @@ fn main() {
             std::process::exit(1);
         }
     }
+    // STATS=1 prints the deterministic solver counters on stderr so A/B
+    // builds can be verified bit-identical (the propagator optimizations
+    // must be semantics-inert: same propagations, same conflicts).
+    if std::env::var_os("STATS").is_some() {
+        let stats = solver.stats();
+        eprintln!(
+            "c conflicts={} decisions={} propagations={}",
+            stats.conflicts, stats.decisions, stats.propagations
+        );
+    }
 }

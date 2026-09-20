@@ -23,6 +23,138 @@ use num_bigint::BigInt;
 use smallvec::SmallVec;
 
 impl TermManager {
+    /// Re-share a term for PRINTING: the DAG's multiply-referenced
+    /// compound subtrees are lifted into `let` bindings, so printing the
+    /// body and the bindings (with the stock printer) produces
+    /// `let`-shared SMT-LIB text instead of tree-unfolding the sharing —
+    /// which is exponential for fan-out chains (the nec-smt residual:
+    /// 662 DAG nodes whose tree unfolding never finishes printing;
+    /// `2026-09-19-smt-perf-gap-attribution.md`'s printer addendum).
+    ///
+    /// Returns `(bindings, body)` with `bindings` ordered
+    /// children-before-parents (each binding's term may reference the
+    /// names bound before it); printing
+    /// `(let ((n1 b1)) (let ((n2 b2)) ... body))` is the shared
+    /// spelling.  Two safety properties:
+    /// * **Name capture is impossible**: candidate names are chosen
+    ///   from the term's own symbol vocabulary's complement (every free
+    ///   variable and function symbol name in the DAG is collected
+    ///   first), so a user variable cannot collide with a binding name.
+    /// * **Only compound subtrees bind** (size ≥
+    ///   [`MIN_SHARED_SUBTREE_SIZE`]): shared leaves (variables,
+    ///   constants) keep their plain spelling, so small terms print
+    ///   exactly as before — the pass engages only where the unfolding
+    ///   would actually repeat real content.
+    pub fn share_for_printing(&mut self, root: TermId) -> (Vec<(String, TermId)>, TermId) {
+        /// A subtree smaller than this is never let-bound: re-printing a
+        /// shared leaf or a tiny atom is cheaper than a binding, and the
+        /// threshold keeps ordinary terms' printed form unchanged.
+        const MIN_SHARED_SUBTREE_SIZE: usize = 2;
+        /// Bound on the number of bindings: pathological inputs must not
+        /// mint unbounded names.
+        const MAX_SHARED_BINDINGS: usize = 1000;
+
+        // ---- 1. DAG walk: in-degree-with-multiplicity, subtree size,
+        //         and the symbol vocabulary (for capture-free naming). ----
+        let mut refs: FxHashMap<TermId, usize> = FxHashMap::default();
+        let mut size: FxHashMap<TermId, usize> = FxHashMap::default();
+        let mut vocab: FxHashSet<crate::interner::Spur> = FxHashSet::default();
+        // DAG walk, two-phase (Expand/Combine) so sizes combine in TRUE
+        // post-order — children's sizes are always inserted before their
+        // parents read them.  (A reversed pre-order is NOT post-order:
+        // this analysis's first version combined parents first, reading
+        // `unwrap_or(1)` for not-yet-sized children — every size was
+        // undercounted, the candidate order was not topological, and the
+        // bindings' RHS kept un-cut shared subtrees whose printing
+        // exploded.  The bug's signature: a 407-DAG-node RHS printing
+        // gigabytes.)
+        enum Frame {
+            Expand(TermId),
+            Combine(TermId),
+        }
+        let mut stack: Vec<Frame> = vec![Frame::Expand(root)];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Expand(t) => {
+                    if !seen.insert(t) {
+                        continue;
+                    }
+                    let Some(data) = self.get(t).cloned() else {
+                        continue;
+                    };
+                    if let crate::ast::term::TermKind::Var(name) = &data.kind {
+                        vocab.insert(*name);
+                    }
+                    if let crate::ast::term::TermKind::Apply { func, .. } = &data.kind {
+                        vocab.insert(*func);
+                    }
+                    let children = crate::ast::traversal::get_children(&data.kind);
+                    for c in children.iter() {
+                        *refs.entry(*c).or_default() += 1;
+                    }
+                    stack.push(Frame::Combine(t));
+                    for c in children.iter().rev() {
+                        stack.push(Frame::Expand(*c));
+                    }
+                }
+                Frame::Combine(t) => {
+                    let Some(data) = self.get(t) else { continue };
+                    let children = crate::ast::traversal::get_children(&data.kind);
+                    let s = 1 + children
+                        .iter()
+                        .map(|c| size.get(c).copied().unwrap_or(1))
+                        .sum::<usize>();
+                    size.insert(t, s);
+                }
+            }
+        }
+        let root_size = size.get(&root).copied().unwrap_or(1);
+
+        // ---- 2. Candidates: multiply-referenced compound subtrees. ----
+        let mut candidates: Vec<TermId> = refs
+            .iter()
+            .filter(|&(t, &r)| {
+                r >= 2 && size.get(t).copied().unwrap_or(1) >= MIN_SHARED_SUBTREE_SIZE && *t != root
+            })
+            .map(|(&t, _)| t)
+            .collect();
+        // Children before parents: a candidate's candidate children are
+        // strictly smaller, so ascending size is a valid topological
+        // order.
+        candidates.sort_by_key(|t| size.get(t).copied().unwrap_or(1));
+        candidates.truncate(MAX_SHARED_BINDINGS);
+        if candidates.is_empty() || root_size < 2 * MIN_SHARED_SUBTREE_SIZE {
+            return (Vec::new(), root);
+        }
+
+        // ---- 3. Name minting against the vocabulary's complement. ----
+        let mut names: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut bindings: Vec<(String, TermId)> = Vec::new();
+        let mut counter = 1u32;
+        for cand in candidates {
+            let name = loop {
+                let candidate = format!("a!{counter}");
+                counter += 1;
+                let spur = self.intern_str(&candidate);
+                if !vocab.contains(&spur) {
+                    break candidate;
+                }
+            };
+            // The binding's RHS: the candidate with its already-named
+            // (smaller) candidate children replaced by their names.
+            let rhs = self.substitute(cand, &names);
+            let sort = self
+                .get(cand)
+                .map(|t| t.sort)
+                .unwrap_or(self.sorts.bool_sort);
+            let var = self.mk_var(&name, sort);
+            bindings.push((name, rhs));
+            names.insert(cand, var);
+        }
+        let body = self.substitute(root, &names);
+        (bindings, body)
+    }
     /// Simplify a term by applying rewrite rules.
     ///
     /// This performs bottom-up simplification including:

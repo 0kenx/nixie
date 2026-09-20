@@ -1267,7 +1267,18 @@ impl Solver {
         // by conjunction rather than by a recursive `assert` so the reduction
         // cannot re-enter itself on the atoms it just created.
         // See `super::set_theory`.
-        {
+        // Set/bag eager survey: only when such a term exists anywhere.
+        // With no set- or bag-sorted subterm in any root, both reductions
+        // return empty results (and no honesty gates can trigger), so the
+        // block is a provable no-op — while costing a full walk of the
+        // assertion stack per `assert` (quadratic in assertions; pure
+        // Boolean workloads like graph models paid it on every clause).
+        // The current assertion is scanned first because its terms are
+        // encoded (and the flag set) only later, below.
+        if !self.has_set_or_bag_terms && self.subtree_has_set_or_bag_sort(term, manager) {
+            self.has_set_or_bag_terms = true;
+        }
+        if self.has_set_or_bag_terms {
             // Surveyed over **every** assertion, not just this one: an element
             // introduced here must meet an equality asserted earlier, and vice
             // versa. Doing it per-assertion answers `Sat` to `a = b /\ x \in a
@@ -3468,6 +3479,32 @@ impl Solver {
         lit
     }
 
+    /// Whether any subterm of `term` has a set- or bag-sorted type.
+    /// Explicit-stack walk with a `seen` memo (linear in the term's unique
+    /// DAG nodes); used to gate the per-assertion set/bag survey.
+    fn subtree_has_set_or_bag_sort(&self, term: TermId, manager: &TermManager) -> bool {
+        let mut stack = vec![term];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Some(data) = manager.get(t) else { continue };
+            if manager.sorts.get(data.sort).is_some_and(|s| {
+                matches!(
+                    s.kind,
+                    nixie_core::SortKind::Set(_) | nixie_core::SortKind::Bag(_)
+                )
+            }) {
+                return true;
+            }
+            for child in nixie_core::ast::traversal::get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
     /// The bag-sorted equality atoms the *user* wrote: in this term and in
     /// every earlier certificate assertion (the untouched copies). Used by
     /// the bag reduction to exempt user equalities from the
@@ -3630,6 +3667,12 @@ impl Solver {
                     && sort.is_bitvec()
                     && !self.bv_terms.contains(&term)
                 {
+                    if matches!(
+                        sort.kind,
+                        nixie_core::SortKind::Set(_) | nixie_core::SortKind::Bag(_)
+                    ) {
+                        self.has_set_or_bag_terms = true;
+                    }
                     self.bv_terms.insert(term);
                     self.trail.push(TrailOp::BvTermAdded { term });
                     // Register with BV solver if not already registered

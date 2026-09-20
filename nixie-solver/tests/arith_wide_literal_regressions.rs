@@ -1586,3 +1586,33 @@ fn leaf_snapshot_covers_real_variables() {
         "xr publishes the leaf's δ-instantiated value, never the sort default 0; got: {model}"
     );
 }
+
+/// The `(simplify …)` output is LET-SHARED (the nec-smt printer fix): a
+/// let-chain goal whose DAG sharing compounds (each binding doubling the
+/// next) unfolds to 2^n tree nodes — printing it unshared never finishes
+/// (the 12.5 KB nec-smt member's `(simplify)` ran 90 s+ at 10 GB of
+/// string churn; its true tree size is ~10^16 nodes).  The command now
+/// lifts the shared compounds into `let` bindings and prints kilobytes.
+#[test]
+fn simplify_output_shares_dag_repetition_with_lets() {
+    use nixie_solver::Context;
+    let mut inner = String::from("(ite p 0 65536)");
+    for k in 0..26 {
+        inner = format!("(let ((x{k} {inner})) (+ x{k} x{k}))");
+    }
+    let script = format!(
+        "(set-logic QF_LIRA)\n(declare-const p Bool)\n(assert (= {inner} 1))\n(check-sat)\n(simplify {inner})\n"
+    );
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(&script).expect("script executes");
+    // Every doubling is even, so `= 1` is genuinely unsat — the pin is
+    // the simplification echo, but the verdict must stay honest too.
+    assert_eq!(out.first().map(String::as_str), Some("unsat"));
+    let echo = out.get(1).map(String::as_str).unwrap_or("");
+    assert!(
+        echo.contains("(let ((a!"),
+        "the shared compounds print as let bindings, got {} bytes",
+        echo.len()
+    );
+    assert!(echo.len() < 20_000, "the shared print is kilobytes");
+}

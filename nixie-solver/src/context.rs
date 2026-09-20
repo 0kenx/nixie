@@ -1522,10 +1522,25 @@ impl Context {
                     output.extend(out);
                 }
                 Command::Simplify(term) => {
-                    // Simplify and output the term
+                    // Simplify and output the term.  The output is
+                    // LET-SHARED: a simplified result can carry DAG sharing
+                    // whose tree unfolding is exponentially larger (the
+                    // nec-smt let-chain residual unfolds to ~10^16 nodes —
+                    // printing it unshared never finishes;
+                    // `2026-09-19-smt-perf-gap-attribution.md`'s printer
+                    // addendum).  `share_for_printing` lifts the
+                    // multiply-referenced compound subtrees into `let`
+                    // bindings (z3's printing convention); the body and the
+                    // binding terms are then linear in the DAG and the
+                    // stock printer suffices.
                     let simplified = self.terms.simplify(term);
+                    let (bindings, body) = self.terms.share_for_printing(simplified);
                     let printer = nixie_core::smtlib::Printer::new(&self.terms);
-                    output.push(printer.print_term(simplified));
+                    let mut text = printer.print_term(body);
+                    for (name, rhs) in bindings.iter().rev() {
+                        text = format!("(let (({name} {})) {text})", printer.print_term(*rhs));
+                    }
+                    output.push(text);
                 }
                 Command::GetUnsatCore => {
                     // SMT-LIB 2.6 §4.1.1: an unsat core exists only in `unsat`

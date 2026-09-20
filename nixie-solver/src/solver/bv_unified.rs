@@ -178,7 +178,14 @@ impl Solver {
             self.end_bv_unified_generation();
             return;
         }
-        self.collect_unified_constraint_atoms(manager, &mut bv_sorted, &mut bv_atoms);
+        // With no BV-sorted term anywhere, the constraint sweep can only
+        // match BV-operand atoms, so it is provably empty; skipping it keeps
+        // per-assertion cost O(assertion) instead of O(all encoded
+        // constraints) for pure non-BV goals (e.g. graph models asserting
+        // thousands of Boolean clauses).
+        if !self.bv_terms.is_empty() {
+            self.collect_unified_constraint_atoms(manager, &mut bv_sorted, &mut bv_atoms);
+        }
         // A Bool-selector-only sweep (no BV atoms or operands in *this*
         // assertion) is worth a window only when the generation already
         // blasted circuits – a later `(not c)` must tie the selector of an

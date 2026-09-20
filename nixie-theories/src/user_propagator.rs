@@ -83,6 +83,8 @@ impl Consequence {
 pub struct PropagatorContext<'a> {
     /// Queue of consequences to propagate
     consequences: &'a mut VecDeque<Consequence>,
+    /// Undo journal for the consequence queue (see [`UserPropagatorManager`]).
+    journal: &'a mut Vec<ConsequenceOp>,
     /// Fixed terms
     fixed_terms: &'a HashMap<TermId, TermId>,
     /// Equalities
@@ -93,11 +95,13 @@ impl<'a> PropagatorContext<'a> {
     /// Create a new propagator context
     pub(crate) fn new(
         consequences: &'a mut VecDeque<Consequence>,
+        journal: &'a mut Vec<ConsequenceOp>,
         fixed_terms: &'a HashMap<TermId, TermId>,
         equalities: &'a HashSet<(TermId, TermId)>,
     ) -> Self {
         Self {
             consequences,
+            journal,
             fixed_terms,
             equalities,
         }
@@ -105,6 +109,7 @@ impl<'a> PropagatorContext<'a> {
 
     /// Propagate a consequence
     pub fn propagate(&mut self, consequence: Consequence) {
+        self.journal.push(ConsequenceOp::Pushed);
         self.consequences.push_back(consequence);
     }
 
@@ -230,17 +235,41 @@ pub struct UserPropagatorManager {
     watched_terms: HashSet<TermId>,
     /// Statistics
     stats: UserPropagatorStats,
-    /// Context stack for push/pop
-    context_stack: Vec<PropagatorScope>,
+    /// Context stack for push/pop: exact undo journals. Each observable
+    /// mutation appends the previous state of the touched entry, so a `pop`
+    /// replays backward to the recorded mark. This restores precisely the
+    /// same state a full snapshot would (including overwritten fixations
+    /// and retracted watches) while costing O(changes) instead of
+    /// O(total state) per push — the snapshot design cloned every watched
+    /// term per SAT decision level, which dominated solving once models
+    /// registered thousands of watches (graph constraints).
+    context_stack: Vec<PropagatorMark>,
+    /// Journal of fixed-term mutations: `(term, previous value)`.
+    fixed_journal: Vec<(TermId, Option<TermId>)>,
+    /// Journal of equality insertions (pairs; never overwritten, so a
+    /// journal entry only records that the pair must be removed on pop).
+    equality_journal: Vec<(TermId, TermId)>,
+    /// Journal of watched-term insertions.
+    watch_journal: Vec<TermId>,
+    /// Journal of consequence-queue mutations, replayed exactly (pushed
+    /// entries pop back off; drained entries return to the front).
+    consequence_journal: Vec<ConsequenceOp>,
 }
 
-// Snapshot all observable callback state, including overwritten values and pending
-// consequences. Hash-map length is not an undo journal.
-struct PropagatorScope {
-    fixed_terms: HashMap<TermId, TermId>,
-    equalities: HashSet<(TermId, TermId)>,
-    consequences: VecDeque<Consequence>,
-    watched_terms: HashSet<TermId>,
+/// One mutation of the pending-consequence queue.
+pub(crate) enum ConsequenceOp {
+    /// `push_back` happened; undo = `pop_back` (the entry itself is not
+    /// needed to undo it).
+    Pushed,
+    /// front-drain happened; undo = `push_front` of the drained entry.
+    Drained(Consequence),
+}
+
+struct PropagatorMark {
+    fixed_journal: usize,
+    equality_journal: usize,
+    watch_journal: usize,
+    consequence_journal: usize,
     propagators: usize,
 }
 
@@ -255,6 +284,10 @@ impl UserPropagatorManager {
             watched_terms: HashSet::new(),
             stats: UserPropagatorStats::default(),
             context_stack: Vec::new(),
+            fixed_journal: Vec::new(),
+            equality_journal: Vec::new(),
+            watch_journal: Vec::new(),
+            consequence_journal: Vec::new(),
         }
     }
 
@@ -265,7 +298,17 @@ impl UserPropagatorManager {
 
     /// Watch a term (trigger callbacks for this term)
     pub fn watch_term(&mut self, term: TermId) {
-        self.watched_terms.insert(term);
+        if self.watched_terms.insert(term) {
+            self.watch_journal.push(term);
+        }
+    }
+
+    /// Queue a consequence directly (journaled like `PropagatorContext::
+    /// propagate`; in-module white-box tests use this to seed the queue).
+    #[cfg(test)]
+    fn queue_consequence(&mut self, consequence: Consequence) {
+        self.consequence_journal.push(ConsequenceOp::Pushed);
+        self.consequences.push_back(consequence);
     }
 
     /// Notify that a term has a fixed value
@@ -274,11 +317,20 @@ impl UserPropagatorManager {
             return;
         }
 
-        self.fixed_terms.insert(term, value);
+        let previous = self.fixed_terms.insert(term, value);
+        // Idempotent re-fixation needs no undo entry; a real mutation
+        // records the overwritten state exactly once.
+        if previous != Some(value) {
+            self.fixed_journal.push((term, previous));
+        }
         self.stats.num_fixed_callbacks = self.stats.num_fixed_callbacks.saturating_add(1);
 
-        let mut ctx =
-            PropagatorContext::new(&mut self.consequences, &self.fixed_terms, &self.equalities);
+        let mut ctx = PropagatorContext::new(
+            &mut self.consequences,
+            &mut self.consequence_journal,
+            &self.fixed_terms,
+            &self.equalities,
+        );
 
         for prop in &mut self.propagators {
             prop.on_fixed(term, value, &mut ctx);
@@ -291,11 +343,17 @@ impl UserPropagatorManager {
             return;
         }
 
-        self.equalities.insert((lhs, rhs));
+        if self.equalities.insert((lhs, rhs)) {
+            self.equality_journal.push((lhs, rhs));
+        }
         self.stats.num_eq_callbacks = self.stats.num_eq_callbacks.saturating_add(1);
 
-        let mut ctx =
-            PropagatorContext::new(&mut self.consequences, &self.fixed_terms, &self.equalities);
+        let mut ctx = PropagatorContext::new(
+            &mut self.consequences,
+            &mut self.consequence_journal,
+            &self.fixed_terms,
+            &self.equalities,
+        );
 
         for prop in &mut self.propagators {
             prop.on_equality(lhs, rhs, &mut ctx);
@@ -310,8 +368,12 @@ impl UserPropagatorManager {
 
         self.stats.num_diseq_callbacks = self.stats.num_diseq_callbacks.saturating_add(1);
 
-        let mut ctx =
-            PropagatorContext::new(&mut self.consequences, &self.fixed_terms, &self.equalities);
+        let mut ctx = PropagatorContext::new(
+            &mut self.consequences,
+            &mut self.consequence_journal,
+            &self.fixed_terms,
+            &self.equalities,
+        );
 
         for prop in &mut self.propagators {
             prop.on_disequality(lhs, rhs, &mut ctx);
@@ -331,8 +393,12 @@ impl UserPropagatorManager {
     pub fn final_check(&mut self) -> PropagatorResult {
         self.stats.num_final_checks = self.stats.num_final_checks.saturating_add(1);
 
-        let mut ctx =
-            PropagatorContext::new(&mut self.consequences, &self.fixed_terms, &self.equalities);
+        let mut ctx = PropagatorContext::new(
+            &mut self.consequences,
+            &mut self.consequence_journal,
+            &self.fixed_terms,
+            &self.equalities,
+        );
 
         for prop in &mut self.propagators {
             match prop.final_check(&mut ctx) {
@@ -360,7 +426,14 @@ impl UserPropagatorManager {
 
     /// Get pending consequences to propagate
     pub fn get_consequences(&mut self) -> Vec<Consequence> {
-        let consequences: Vec<_> = self.consequences.drain(..).collect();
+        let consequences: Vec<_> = self
+            .consequences
+            .drain(..)
+            .inspect(|c| {
+                self.consequence_journal
+                    .push(ConsequenceOp::Drained(c.clone()))
+            })
+            .collect();
         self.stats.num_propagations = self
             .stats
             .num_propagations
@@ -375,11 +448,11 @@ impl UserPropagatorManager {
 
     /// Push a new context level
     pub fn push(&mut self) {
-        self.context_stack.push(PropagatorScope {
-            fixed_terms: self.fixed_terms.clone(),
-            equalities: self.equalities.clone(),
-            consequences: self.consequences.clone(),
-            watched_terms: self.watched_terms.clone(),
+        self.context_stack.push(PropagatorMark {
+            fixed_journal: self.fixed_journal.len(),
+            equality_journal: self.equality_journal.len(),
+            watch_journal: self.watch_journal.len(),
+            consequence_journal: self.consequence_journal.len(),
             propagators: self.propagators.len(),
         });
         for prop in &mut self.propagators {
@@ -394,17 +467,54 @@ impl UserPropagatorManager {
         }
 
         for _ in 0..levels {
-            let Some(scope) = self.context_stack.pop() else {
+            let Some(mark) = self.context_stack.pop() else {
                 break;
             };
-            self.propagators.truncate(scope.propagators);
+            self.propagators.truncate(mark.propagators);
             for prop in &mut self.propagators {
                 prop.pop(1);
             }
-            self.fixed_terms = scope.fixed_terms;
-            self.equalities = scope.equalities;
-            self.consequences = scope.consequences;
-            self.watched_terms = scope.watched_terms;
+            // Replay the consequence-queue journal backward.
+            while self.consequence_journal.len() > mark.consequence_journal {
+                match self.consequence_journal.pop() {
+                    Some(ConsequenceOp::Pushed) => {
+                        self.consequences.pop_back();
+                    }
+                    Some(ConsequenceOp::Drained(consequence)) => {
+                        self.consequences.push_front(consequence);
+                    }
+                    None => break,
+                }
+            }
+            // Replay the fixed-value journal backward.
+            while self.fixed_journal.len() > mark.fixed_journal {
+                match self.fixed_journal.pop() {
+                    Some((term, Some(previous))) => {
+                        self.fixed_terms.insert(term, previous);
+                    }
+                    Some((term, None)) => {
+                        self.fixed_terms.remove(&term);
+                    }
+                    None => break,
+                }
+            }
+            // Equality and watch insertions are removal-only journals.
+            while self.equality_journal.len() > mark.equality_journal {
+                match self.equality_journal.pop() {
+                    Some(pair) => {
+                        self.equalities.remove(&pair);
+                    }
+                    None => break,
+                }
+            }
+            while self.watch_journal.len() > mark.watch_journal {
+                match self.watch_journal.pop() {
+                    Some(term) => {
+                        self.watched_terms.remove(&term);
+                    }
+                    None => break,
+                }
+            }
         }
     }
 
@@ -420,6 +530,10 @@ impl UserPropagatorManager {
         self.consequences.clear();
         self.watched_terms.clear();
         self.context_stack.clear();
+        self.fixed_journal.clear();
+        self.equality_journal.clear();
+        self.watch_journal.clear();
+        self.consequence_journal.clear();
         self.stats.reset();
 
         for prop in &mut self.propagators {
@@ -587,14 +701,14 @@ mod tests {
         manager.watch_term(a);
         manager.notify_fixed(a, b);
         manager.notify_equality(a, b);
-        manager.consequences.push_back(Consequence::new(a, vec![]));
+        manager.queue_consequence(Consequence::new(a, vec![]));
         manager.push();
         manager.notify_fixed(a, c);
         manager.notify_equality(a, c);
         manager.watch_term(c);
         manager.notify_fixed(c, b);
         manager.get_consequences();
-        manager.consequences.push_back(Consequence::new(c, vec![a]));
+        manager.queue_consequence(Consequence::new(c, vec![a]));
         manager.push();
         manager.notify_fixed(a, a);
         manager.pop(1);

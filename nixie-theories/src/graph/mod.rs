@@ -207,40 +207,74 @@ impl GraphSpec {
     }
 }
 
-/// Adjacency views of one graph under the current edge assignment.
-///
-/// `forced_out` lists edges assigned **true** (the under-approximation);
-/// `possible_out`/`possible_in` list edges **not assigned false** (the
-/// over-approximation), as outgoing and incoming adjacency. Edge entries
-/// are `(neighbour vertex, edge index)`.
-struct GraphViews {
-    forced_out: Vec<Vec<(u32, u32)>>,
-    possible_out: Vec<Vec<(u32, u32)>>,
-    possible_in: Vec<Vec<(u32, u32)>>,
+/// Flat CSR adjacency over one view: `offsets[v]..offsets[v+1]` indexes
+/// into `neighbours` (the adjacent vertex) and `edges` (the edge index),
+/// with each row's entries in edge declaration order. Rebuilt in place
+/// (buffers are reused across rebuilds — no per-edge allocations).
+#[derive(Default)]
+struct Csr {
+    offsets: Vec<u32>,
+    neighbours: Vec<u32>,
+    edges: Vec<u32>,
 }
 
-fn build_views(spec: &GraphSpec, values: &[EdgeValue]) -> GraphViews {
-    let mut views = GraphViews {
-        forced_out: vec![Vec::new(); spec.vertices],
-        possible_out: vec![Vec::new(); spec.vertices],
-        possible_in: vec![Vec::new(); spec.vertices],
-    };
-    for (i, edge) in spec.edges.iter().enumerate() {
-        let idx = i as u32;
-        if in_view(values[i], true) {
-            views.forced_out[edge.from.0 as usize].push((edge.to.0, idx));
+impl Csr {
+    /// Rebuild from the current edge assignment. `forced` selects the
+    /// true-edge view; otherwise the non-false (possible) view. `incoming`
+    /// builds the reverse adjacency (row = destination).
+    fn rebuild(&mut self, spec: &GraphSpec, values: &[EdgeValue], forced: bool, incoming: bool) {
+        self.offsets.clear();
+        self.offsets.resize(spec.vertices + 1, 0);
+        self.neighbours.clear();
+        self.edges.clear();
+        // Pass 1: row sizes.
+        for (i, edge) in spec.edges.iter().enumerate() {
+            if in_view(values[i], forced) {
+                let row = if incoming { edge.to.0 } else { edge.from.0 };
+                self.offsets[row as usize + 1] += 1;
+            }
         }
-        if in_view(values[i], false) {
-            views.possible_out[edge.from.0 as usize].push((edge.to.0, idx));
-            views.possible_in[edge.to.0 as usize].push((edge.from.0, idx));
+        // Prefix sums.
+        for v in 0..spec.vertices {
+            self.offsets[v + 1] += self.offsets[v];
+        }
+        let count = spec
+            .edges
+            .iter()
+            .zip(values)
+            .filter(|&(_, &v)| in_view(v, forced))
+            .count();
+        self.neighbours.clear();
+        self.neighbours.resize(count, 0);
+        self.edges.clear();
+        self.edges.resize(count, 0);
+        // Pass 2: fill rows through a moving cursor, preserving declaration
+        // order within each row (bit-identity with the uncached propagator).
+        let mut cursor = self.offsets.clone();
+        for (i, edge) in spec.edges.iter().enumerate() {
+            if in_view(values[i], forced) {
+                let row = if incoming { edge.to.0 } else { edge.from.0 };
+                let k = cursor[row as usize] as usize;
+                cursor[row as usize] += 1;
+                self.neighbours[k] = if incoming { edge.from.0 } else { edge.to.0 };
+                self.edges[k] = i as u32;
+            }
         }
     }
-    views
+
+    fn row(&self, v: usize) -> Range<usize> {
+        let lo = self.offsets.get(v).copied().unwrap_or(0) as usize;
+        let hi = self.offsets.get(v + 1).copied().unwrap_or(lo as u32) as usize;
+        lo..hi
+    }
 }
+
+use core::ops::Range;
 
 /// Result of a breadth-first search over one adjacency view. `visited`
 /// includes the source itself (the zero-length closure); paths of length
 /// ≥ 1 are recovered through `parent_edge` and in-edge tests.
+#[derive(Default)]
 struct Bfs {
     source: usize,
     visited: Vec<bool>,
@@ -251,7 +285,7 @@ struct Bfs {
 
 /// BFS from `source` over `adj`, seeding the source itself. Iterative: no
 /// native recursion over user-controlled graphs.
-fn bfs(adj: &[Vec<(u32, u32)>], vertices: usize, source: VertexId) -> Bfs {
+fn bfs(adj: &Csr, vertices: usize, source: VertexId) -> Bfs {
     let mut visited = vec![false; vertices];
     let mut parent_edge = vec![None; vertices];
     let s = source.0 as usize;
@@ -264,11 +298,11 @@ fn bfs(adj: &[Vec<(u32, u32)>], vertices: usize, source: VertexId) -> Bfs {
     while head < queue.len() {
         let v = queue[head];
         head += 1;
-        for &(to, edge) in &adj[v] {
-            let t = to as usize;
+        for k in adj.row(v) {
+            let t = adj.neighbours[k] as usize;
             if !visited[t] {
                 visited[t] = true;
-                parent_edge[t] = Some(edge);
+                parent_edge[t] = Some(adj.edges[k]);
                 queue.push(t);
             }
         }
@@ -347,13 +381,14 @@ impl Bfs {
 /// Negative ("possible") reachability over the backward closure, following
 /// MonoSAT's `buildNonReachReason`: `seen` is the set of vertices that can
 /// reach the target through possible edges (paths of length ≥ 0).
+#[derive(Default)]
 struct Backward {
     target: usize,
     seen: Vec<bool>,
 }
 
-fn backward_seen(views: &GraphViews, vertices: usize, target: VertexId) -> Backward {
-    let search = bfs(&views.possible_in, vertices, target);
+fn backward_seen(possible_in: &Csr, vertices: usize, target: VertexId) -> Backward {
+    let search = bfs(possible_in, vertices, target);
     Backward {
         target: search.source,
         seen: search.visited,
@@ -407,7 +442,50 @@ impl Backward {
 /// Iterative DFS cycle search over one adjacency view. Returns the edge
 /// indices of a directed cycle, if one exists. Explicit heap stack: no
 /// native recursion over user-controlled graphs.
-fn find_cycle(adj: &[Vec<(u32, u32)>], vertices: usize) -> Option<Vec<u32>> {
+/// Content-addressed cache of one graph's derived results, keyed by the
+/// exact packed membership bits of the view they were computed from.
+///
+/// This is memoization, not incremental state: validity is re-checked
+/// against the *full* current edge assignment on every run (the packed key
+/// must match bit-for-bit), so no event history, trail, or push/pop
+/// bookkeeping is involved. A key match means the derived results are
+/// literally the same function outputs as a fresh recomputation, which
+/// keeps every emitted consequence bit-identical (semantics-inert).
+#[derive(Default)]
+struct ViewCache {
+    /// Packed true-edge bits of the forced view the cached results belong to.
+    /// An empty key is an empty graph's key (no true edges packed), which is
+    /// exactly what a fresh graph produces, so it is always valid.
+    forced_key: Vec<u64>,
+    forced_adjacency: Csr,
+    /// Forced-view BFS by source vertex.
+    forced_searches: Vec<Option<Bfs>>,
+    /// `find_cycle` over the forced view (`Some(None)` = computed, acyclic).
+    forced_cycle: Option<Option<Vec<u32>>>,
+    /// Packed non-false-edge bits of the possible view.
+    possible_key: Vec<u64>,
+    possible_out: Csr,
+    possible_in: Csr,
+    /// Possible-view backward BFS by target vertex.
+    backward_searches: Vec<Option<Backward>>,
+    possible_cycle: Option<Option<Vec<u32>>>,
+}
+
+impl ViewCache {
+    fn new(vertices: usize) -> Self {
+        Self {
+            forced_searches: (0..vertices).map(|_| None).collect(),
+            backward_searches: (0..vertices).map(|_| None).collect(),
+            ..Self::default()
+        }
+    }
+
+    fn reset(&mut self, vertices: usize) {
+        *self = Self::new(vertices);
+    }
+}
+
+fn find_cycle(adj: &Csr, vertices: usize) -> Option<Vec<u32>> {
     // colors: 0 = white (unvisited), 1 = gray (on the DFS path), 2 = black.
     let mut color = vec![0u8; vertices];
     let mut parent_edge = vec![None::<u32>; vertices];
@@ -421,11 +499,14 @@ fn find_cycle(adj: &[Vec<(u32, u32)>], vertices: usize) -> Option<Vec<u32>> {
         // along the stack.
         let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
         while let Some(&mut (v, ref mut next)) = stack.last_mut() {
-            let Some(&(to, edge)) = adj[v].get(*next) else {
+            let row = adj.row(v);
+            let Some(k) = row.clone().nth(*next) else {
                 color[v] = 2;
                 stack.pop();
                 continue;
             };
+            let to = adj.neighbours[k];
+            let edge = adj.edges[k];
             *next += 1;
             let t = to as usize;
             match color[t] {
@@ -476,6 +557,8 @@ fn next_model_uid() -> u64 {
 pub struct GraphModel {
     uid: u64,
     graphs: Vec<GraphSpec>,
+    /// One content-addressed cache per graph (see [`ViewCache`]).
+    caches: Vec<ViewCache>,
     /// Every term used as an edge atom (across graphs), for uniqueness.
     edge_terms: FxHashSet<TermId>,
     /// Terms created by this model (reach/acyclicity atoms), which edge
@@ -501,6 +584,7 @@ impl GraphModel {
         Self {
             uid: next_model_uid(),
             graphs: Vec::new(),
+            caches: Vec::new(),
             edge_terms: FxHashSet::default(),
             system_terms: FxHashSet::default(),
             true_term: tm.mk_bool(true),
@@ -523,15 +607,22 @@ impl GraphModel {
     /// Create a new, initially empty graph.
     pub fn new_graph(&mut self) -> GraphHandle {
         self.graphs.push(GraphSpec::new(0));
+        self.caches.push(ViewCache::new(0));
         GraphHandle(self.graphs.len() - 1)
     }
 
     /// Extend graph `g`'s fixed vertex universe by one; returns the new
     /// vertex's index.
     pub fn add_vertex(&mut self, g: GraphHandle) -> Result<VertexId, GraphError> {
-        let spec = self.graph_mut(g)?;
-        let id = VertexId(spec.vertices as u32);
-        spec.vertices += 1;
+        if g.0 >= self.graphs.len() {
+            return Err(GraphError("unknown graph handle"));
+        }
+        let id = VertexId(self.graphs[g.0].vertices as u32);
+        self.graphs[g.0].vertices += 1;
+        // The graph grew: any cached per-vertex tables are the wrong size.
+        if g.0 < self.caches.len() {
+            self.caches[g.0].reset(self.graphs[g.0].vertices);
+        }
         Ok(id)
     }
 
@@ -745,22 +836,76 @@ impl GraphModel {
         let spec = &self.graphs[g];
 
         // 1. Read the edge assignment; fail closed on non-Boolean fixations.
+        // While reading, pack each view's membership bits so the caches can
+        // be validated by exact comparison against the current assignment.
         let mut values = Vec::with_capacity(spec.edges.len());
+        let mut forced_bits = Vec::with_capacity(spec.edges.len() / 64 + 1);
+        let mut possible_bits = Vec::with_capacity(spec.edges.len() / 64 + 1);
         let mut all_fixed = true;
-        for edge in &spec.edges {
+        let mut forced_word = 0u64;
+        let mut possible_word = 0u64;
+        for (i, edge) in spec.edges.iter().enumerate() {
+            let bit = 1u64 << (i % 64);
             match ctx.get_fixed_value(edge.atom) {
                 None => {
                     values.push(EdgeValue::Unknown);
                     all_fixed = false;
+                    possible_word |= bit;
                 }
-                Some(v) if v == self.true_term => values.push(EdgeValue::True),
-                Some(v) if v == self.false_term => values.push(EdgeValue::False),
+                Some(v) if v == self.true_term => {
+                    values.push(EdgeValue::True);
+                    forced_word |= bit;
+                    possible_word |= bit;
+                }
+                Some(v) if v == self.false_term => {
+                    values.push(EdgeValue::False);
+                }
                 Some(_) => return PropagatorResult::Unknown,
             }
+            if i % 64 == 63 {
+                forced_bits.push(forced_word);
+                possible_bits.push(possible_word);
+                forced_word = 0;
+                possible_word = 0;
+            }
         }
-        let views = build_views(spec, &values);
+        let tail = spec.edges.len() % 64;
+        if tail != 0 || spec.edges.is_empty() {
+            forced_bits.push(forced_word);
+            possible_bits.push(possible_word);
+        }
 
-        // 2. Acyclicity atom. `forced ⊆ possible`, so a forced cycle makes
+        // Split borrows: the adjacency tables are immutable for the rest of
+        // the run, while the per-vertex memos fill in lazily — disjoint
+        // fields of the same cache, borrowed through one destructuring.
+        let ViewCache {
+            forced_key,
+            forced_adjacency,
+            forced_searches,
+            forced_cycle,
+            possible_key,
+            possible_out,
+            possible_in,
+            backward_searches,
+            possible_cycle,
+        } = &mut self.caches[g];
+        if forced_key != &forced_bits {
+            forced_adjacency.rebuild(spec, &values, true, false);
+            *forced_key = forced_bits;
+            forced_searches.clear();
+            forced_searches.extend((0..spec.vertices).map(|_| None));
+            *forced_cycle = None;
+        }
+        if possible_key != &possible_bits {
+            possible_out.rebuild(spec, &values, false, false);
+            possible_in.rebuild(spec, &values, false, true);
+            *possible_key = possible_bits;
+            backward_searches.clear();
+            backward_searches.extend((0..spec.vertices).map(|_| None));
+            *possible_cycle = None;
+        }
+
+        // 3. Acyclicity atom. `forced ⊆ possible`, so a forced cycle makes
         // the possible-cycle test moot; the two cases below are exclusive.
         if let Some((atom, negation)) = spec.acyclic {
             let fixed = match ctx.get_fixed_value(atom) {
@@ -772,7 +917,10 @@ impl GraphModel {
                 Some(v) if v == self.false_term => Some(false),
                 Some(_) => return PropagatorResult::Unknown,
             };
-            if let Some(cycle) = find_cycle(&views.forced_out, spec.vertices) {
+            let forced_cycle = forced_cycle
+                .get_or_insert_with(|| find_cycle(forced_adjacency, spec.vertices))
+                .clone();
+            if let Some(cycle) = forced_cycle {
                 // The graph already contains a cycle. `acyclic = false` is
                 // the correct value; anything else conflicts or propagates.
                 let reasons: Vec<TermId> =
@@ -788,32 +936,37 @@ impl GraphModel {
                     }
                     Some(false) => {}
                 }
-            } else if find_cycle(&views.possible_out, spec.vertices).is_none() {
-                // Even the possible graph is acyclic: no completion can
-                // contain a cycle, so `acyclic` must be true. The trivial
-                // all-false-edges explanation follows MonoSAT.
-                let reasons: Vec<TermId> = spec
-                    .edges
-                    .iter()
-                    .zip(&values)
-                    .filter(|&(_, v)| *v == EdgeValue::False)
-                    .map(|(edge, _)| edge.negation)
-                    .collect();
-                match fixed {
-                    Some(false) => {
-                        let mut conflict = reasons;
-                        conflict.push(negation);
-                        return PropagatorResult::Unsat(conflict);
+            } else {
+                let possible_cycle = possible_cycle
+                    .get_or_insert_with(|| find_cycle(possible_out, spec.vertices))
+                    .clone();
+                if possible_cycle.is_none() {
+                    // Even the possible graph is acyclic: no completion can
+                    // contain a cycle, so `acyclic` must be true. The
+                    // trivial all-false-edges explanation follows MonoSAT.
+                    let reasons: Vec<TermId> = spec
+                        .edges
+                        .iter()
+                        .zip(&values)
+                        .filter(|&(_, v)| *v == EdgeValue::False)
+                        .map(|(edge, _)| edge.negation)
+                        .collect();
+                    match fixed {
+                        Some(false) => {
+                            let mut conflict = reasons;
+                            conflict.push(negation);
+                            return PropagatorResult::Unsat(conflict);
+                        }
+                        None => {
+                            ctx.propagate(Consequence::new(atom, reasons));
+                        }
+                        Some(true) => {}
                     }
-                    None => {
-                        ctx.propagate(Consequence::new(atom, reasons));
-                    }
-                    Some(true) => {}
                 }
             }
         }
 
-        // 3. Reachability atoms.
+        // 4. Reachability atoms.
         for reach in &spec.reach {
             let fixed = match ctx.get_fixed_value(reach.atom) {
                 None => {
@@ -827,9 +980,18 @@ impl GraphModel {
             match fixed {
                 // Atom says unreachable: the forced graph must agree.
                 Some(false) => {
-                    let search = bfs(&views.forced_out, spec.vertices, reach.from);
-                    if search.reaches_forced(spec, &values, reach.to) {
-                        let Some(mut conflict) = search.path_atoms(spec, &values, reach.to) else {
+                    let search = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
+                        slot.get_or_insert_with(|| bfs(forced_adjacency, spec.vertices, reach.from))
+                    });
+                    let (search_reaches, path) = match search {
+                        Some(s) => (
+                            s.reaches_forced(spec, &values, reach.to),
+                            s.path_atoms(spec, &values, reach.to),
+                        ),
+                        None => (false, None),
+                    };
+                    if search_reaches {
+                        let Some(mut conflict) = path else {
                             // Reachability was witnessed but its path could
                             // not be extracted; fail closed rather than emit
                             // an unjustified conflict.
@@ -841,7 +1003,14 @@ impl GraphModel {
                 }
                 // Atom says reachable: the possible graph must agree.
                 Some(true) => {
-                    let backward = backward_seen(&views, spec.vertices, reach.to);
+                    let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
+                        slot.get_or_insert_with(|| {
+                            backward_seen(possible_in, spec.vertices, reach.to)
+                        })
+                    });
+                    let Some(backward) = backward else {
+                        continue;
+                    };
                     if !backward.possible_reaches(spec, &values, reach.from) {
                         let mut conflict = backward.cut_negations(spec, &values);
                         conflict.push(reach.atom);
@@ -850,14 +1019,29 @@ impl GraphModel {
                 }
                 // Undetermined: propagate once either approximation decides.
                 None => {
-                    let forced = bfs(&views.forced_out, spec.vertices, reach.from);
-                    if forced.reaches_forced(spec, &values, reach.to) {
-                        if let Some(reasons) = forced.path_atoms(spec, &values, reach.to) {
+                    let forced = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
+                        slot.get_or_insert_with(|| bfs(forced_adjacency, spec.vertices, reach.from))
+                    });
+                    let mut forced_reaches = false;
+                    let mut forced_path = None;
+                    if let Some(f) = forced {
+                        forced_reaches = f.reaches_forced(spec, &values, reach.to);
+                        forced_path = f.path_atoms(spec, &values, reach.to);
+                    }
+                    if forced_reaches {
+                        if let Some(reasons) = forced_path {
                             ctx.propagate(Consequence::new(reach.atom, reasons));
                         }
                         continue;
                     }
-                    let backward = backward_seen(&views, spec.vertices, reach.to);
+                    let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
+                        slot.get_or_insert_with(|| {
+                            backward_seen(possible_in, spec.vertices, reach.to)
+                        })
+                    });
+                    let Some(backward) = backward else {
+                        continue;
+                    };
                     if !backward.possible_reaches(spec, &values, reach.from) {
                         let reasons = backward.cut_negations(spec, &values);
                         ctx.propagate(Consequence::new(reach.negation, reasons));
@@ -881,6 +1065,14 @@ impl UserPropagator for GraphModel {
 
     fn final_check(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
         self.run(ctx)
+    }
+
+    fn reset(&mut self) {
+        // The caches are content-addressed and self-validating, so clearing
+        // them is pure hygiene (e.g. a reset between unrelated problems).
+        for cache in &mut self.caches {
+            cache.reset(0);
+        }
     }
 }
 

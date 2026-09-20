@@ -179,3 +179,55 @@ mechanism and is separated from a false `sat` by trajectory luck.
    as it goes — this addendum supersedes the "reconstruction bug"
    framing: the walk cannot repair an obligation set that is
    unsatisfiable by construction.
+
+## Addendum 3 (2026-09-19): ROOT CAUSE FOUND AND FIXED — the dedup retired originals for LEARNED owners; the sound version lands at 0.9946 / +7 solved
+
+The last unattributed step — twin `213141`'s retirement — fell to
+site-by-site instrumentation of every `retire_clause` caller with a
+global event sequence: `EV71 TWIN-RETIRED @ eliminate.rs elim_retire`
+and, one event earlier, **`EV70 TWIN-DOOMED-PURGE learned=Some(true)`**.
+ClauseId(213141) — the "owner" my dedup had kept — **was a LEARNED
+binary**, not an original.  The full causal chain, every link now
+verified:
+
+1. Fold round at c=39968: the learned binary `(¬2990∨¬15955)` iterated
+   before the ORIGINAL resolvent `260971` (identical mapped vector);
+   **my dedup retired the ORIGINAL and kept the LEARNED clause as
+   owner**.
+2. At 15955's elimination (c=44371), the learned owner mentions the
+   eliminated variable — and `mark_redundant_clauses_with_eliminated_
+   variables_as_garbage` **correctly purges it** (learned clauses must
+   not survive elimination: `save_model` reconstructs from original
+   obligations only — the purge is a *soundness requirement*, commented
+   as such since the `crn_11_99_u` fix).
+3. The resolvent's last live carrier died with **no extension
+   obligation** → the folded formula lost `(¬2990∨¬15955)` → strictly
+   weaker → satisfiable → `sat` on UNSAT b21.
+
+**The bug was entirely mine** (the unlanded dedup experiment): retiring
+an original clause because a *learned* clause holds the same literals is
+unsound — learned clauses are optional and get purged.  The base build
+was never exposed; "trajectory luck" was wrong — the base build cannot
+hit this because only the dedup created learned-owner retirements.
+
+**The fix** (landed with this addendum): the dedup retires only
+**original-for-original**; an original encountering a learned owner
+*takes the ownership over*; learned clauses never own and never retire
+anything.  b21/b22/s38584/bv_ILA at seeds 1-3: all `unsat` again;
+1,500 fresh structured-fuzz instances (equivalence seeds + gate twins +
+near-duplicate bait): **0 mismatches**; crate suite 1082/1082.
+
+**The honest re-measurement** (10 seeds × 30 instances, the sound
+version): conflicts geomean **0.9946** — the parked 0.8066 was mostly
+clause-loss inflation, exactly as suspected — **solved-at-cap 243 →
+250 (+7 cells)**, 0 verdict mismatches.  Per-family: 5447072093nw
+0.644, Carry 0.807, WS_500 0.935, Break_12_30 0.940, b22 0.956, b21
+0.957, oddball 0.970 vs x9 1.744, circuit 1.119, nla 1.105.  Modest,
+honest, and net-positive at the cap: landed.
+
+The extension-walk forensics of Addendum 1-2 stand as the method that
+isolated the corner (the consistency-instance experiment remains the
+tool that proved *verdict-level* wrongness — which is what justified
+spending the session hunting a retire path rather than patching the
+walk); the walk's bounded fixpoint wrapper (already landed) stays as
+harmless hardening.
