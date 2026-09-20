@@ -143,3 +143,23 @@ timeout-class cost flips; matched null (k=0): 12 recoveries, treatment-only
 campaign: ≥10 seeds, per-family, benchstore, the 6-slow-flip cost
 decision)**, and the J5-certify class is the next blocker IN SERIES on the
 members the armed search now reaches (i116's decode: ray → J5).
+
+## Update (final): rung 3 EXECUTED — the channel is the DEFAULT
+
+`0edc05fc` flips the default (`NIXIE_LIA_BRANCH_LEMMA=0` restores the
+unarmed search).  The campaign (12 seeds × 3 arms, pre-registered): **42
+genuine recoveries on 11/12 seeds, all 40 sat models z3-validated by
+binding + negation, zero wrong verdicts, the matched null dominated
+(42-vs-28 genuine), timeout cost +2.0/seed** — every go-bar criterion
+passed.  Full battery at the new default: suite 12 063 (the 15 failures
+are the documented corpus class), clippy/fmt/rustdoc clean, parity
+176/177 (0 wrong, z3 4.16.0), perf gate PASS, 9 fresh-seed differentials
+clean, panic sweep 177/177.  **The combination with the Bareiss layer
+(landed concurrently) spot-checked**: the e2e pin, a fresh differential,
+and a default survey seed all behave as measured.
+
+The remaining gap map post-flip: the J5-certify class (the members whose
+armed searches still reach uncertifiable candidates — item 89/91's
+dive-leaf divergence), the ~18 slow-class members, and the timeout tails.
+Study: `docs/studies/2026-09-20-lia-branch-lemma-channel.md` (the
+campaign, the traps, the honest-counting method).
