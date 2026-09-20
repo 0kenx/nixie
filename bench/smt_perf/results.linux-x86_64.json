@@ -1,13 +1,13 @@
 {
   "z3_version": "Z3 version 4.16.0 - 64 bit",
-  "nixie_sha": "2c4d1428",
+  "nixie_sha": "71ea492d",
   "cap_s": 10,
   "families": [
  {
   "family": "QF_LIA",
   "n": 60,
   "nixie_solved": 32,
-  "z3_solved": 54,
+  "z3_solved": 52,
   "verdict_disagreements": 0,
   "rows": [
    {
@@ -20,7 +20,7 @@
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 23
     }
    },
    {
@@ -28,12 +28,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 861
+     "wall_ms": 852
     },
     "z3": {
      "verdict": "sat",
-     "conflicts": 52,
-     "wall_ms": 7085
+     "conflicts": 46,
+     "wall_ms": 7190
     }
    },
    {
@@ -41,12 +41,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 106
+     "wall_ms": 91
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 639
+     "wall_ms": 690
     }
    },
    {
@@ -54,12 +54,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10010
+     "wall_ms": 10016
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10044
+     "wall_ms": 10035
     }
    },
    {
@@ -67,12 +67,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10122
+     "wall_ms": 10173
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10212
+     "wall_ms": 10206
     }
    },
    {
@@ -80,12 +80,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10101
+     "wall_ms": 10099
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 642,
-     "wall_ms": 1978
+     "wall_ms": 2128
     }
    },
    {
@@ -93,12 +93,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10026
+     "wall_ms": 10016
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 135
+     "wall_ms": 168
     }
    },
    {
@@ -106,12 +106,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 11
+     "wall_ms": 17
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 21
+     "wall_ms": 30
     }
    },
    {
@@ -119,12 +119,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 9
+     "wall_ms": 13
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 18
+     "wall_ms": 23
     }
    },
    {
@@ -132,12 +132,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 18,
-     "wall_ms": 35
+     "wall_ms": 38
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 21
+     "wall_ms": 28
     }
    },
    {
@@ -145,12 +145,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 742,
-     "wall_ms": 1380
+     "wall_ms": 1284
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 41
+     "wall_ms": 47
     }
    },
    {
@@ -158,12 +158,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10013
+     "wall_ms": 10028
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 106
+     "wall_ms": 359
     }
    },
    {
@@ -171,12 +171,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 13
+     "wall_ms": 20
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 30
     }
    },
    {
@@ -184,59 +184,7 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 2,
-     "wall_ms": 15
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 18
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-00020/RF-05.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 10
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 18
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-05000/RF-10.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 11
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-00010/RF-12.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 11
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-04000/RC-08.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 13
+     "wall_ms": 44
     },
     "z3": {
      "verdict": "sat",
@@ -245,16 +193,68 @@
     }
    },
    {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-00020/RF-05.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 30
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 32
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-05000/RF-10.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 17
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 27
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-00010/RF-12.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 25
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 25
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-04000/RC-08.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 45
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 66
+    }
+   },
+   {
     "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/IOTPpurchase-PT-C05M04P03D02/RC-07.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 22,
-     "wall_ms": 21
+     "wall_ms": 77
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 4,
-     "wall_ms": 23
+     "wall_ms": 55
     }
    },
    {
@@ -262,12 +262,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 17
+     "wall_ms": 33
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 19
+     "wall_ms": 23
     }
    },
    {
@@ -275,12 +275,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 8
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 22
     }
    },
    {
@@ -288,12 +288,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 8
+     "wall_ms": 15
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 18
+     "wall_ms": 27
     }
    },
    {
@@ -301,12 +301,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 11
+     "wall_ms": 14
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 18
+     "wall_ms": 21
     }
    },
    {
@@ -314,12 +314,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 12
+     "wall_ms": 10
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 18
+     "wall_ms": 23
     }
    },
    {
@@ -327,12 +327,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 7
+     "wall_ms": 10
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 19
+     "wall_ms": 21
     }
    },
    {
@@ -345,7 +345,7 @@
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 25
     }
    },
    {
@@ -353,12 +353,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10016
+     "wall_ms": 10053
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10017
+     "wall_ms": 10040
     }
    },
    {
@@ -366,12 +366,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10023
+     "wall_ms": 10065
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 606,
-     "wall_ms": 794
+     "wall_ms": 1468
     }
    },
    {
@@ -379,7 +379,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 13
+     "wall_ms": 12
     },
     "z3": {
      "verdict": "unsat",
@@ -392,12 +392,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 3,
-     "wall_ms": 14
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 20
+     "wall_ms": 22
     }
    },
    {
@@ -405,12 +405,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 10
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 24
+     "wall_ms": 18
     }
    },
    {
@@ -418,12 +418,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 11
+     "wall_ms": 7
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 20
     }
    },
    {
@@ -431,12 +431,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10016
+     "wall_ms": 10056
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 195,
-     "wall_ms": 237
+     "wall_ms": 260
     }
    },
    {
@@ -444,12 +444,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 879
+     "wall_ms": 1016
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 27
+     "wall_ms": 24
     }
    },
    {
@@ -462,7 +462,7 @@
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 24
     }
    },
    {
@@ -470,12 +470,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10007
+     "wall_ms": 10010
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 102
+     "wall_ms": 105
     }
    },
    {
@@ -483,12 +483,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10019
+     "wall_ms": 10016
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 789,
-     "wall_ms": 951
+     "wall_ms": 1003
     }
    },
    {
@@ -496,12 +496,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 2,
-     "wall_ms": 359
+     "wall_ms": 370
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 78
+     "wall_ms": 118
     }
    },
    {
@@ -509,12 +509,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10019
+     "wall_ms": 10047
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 1231,
-     "wall_ms": 885
+     "wall_ms": 1730
     }
    },
    {
@@ -522,12 +522,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 274,
-     "wall_ms": 338
+     "wall_ms": 626
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 14,
-     "wall_ms": 43
+     "wall_ms": 85
     }
    },
    {
@@ -535,12 +535,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10026
+     "wall_ms": 10013
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 415,
-     "wall_ms": 5261
+     "wall_ms": 5298
     }
    },
    {
@@ -548,12 +548,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 24
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 29
+     "wall_ms": 27
     }
    },
    {
@@ -561,12 +561,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 2133,
-     "wall_ms": 1158
+     "wall_ms": 1027
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1055,
-     "wall_ms": 84
+     "wall_ms": 108
     }
    },
    {
@@ -574,12 +574,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 66
+     "wall_ms": 81
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 1266
+     "wall_ms": 1650
     }
    },
    {
@@ -587,12 +587,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 77
+     "wall_ms": 54
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 1169
+     "wall_ms": 2115
     }
    },
    {
@@ -600,12 +600,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 46
+     "wall_ms": 54
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 129
+     "wall_ms": 181
     }
    },
    {
@@ -613,12 +613,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 25
+     "wall_ms": 23
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 17221,
-     "wall_ms": 3184
+     "wall_ms": 8574
     }
    },
    {
@@ -626,12 +626,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 49
+     "wall_ms": 75
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10025
+     "wall_ms": 10033
     }
    },
    {
@@ -639,12 +639,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 21
+     "wall_ms": 46
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 24549,
-     "wall_ms": 2740
+     "wall_ms": 5780
     }
    },
    {
@@ -652,12 +652,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 56
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 424,
-     "wall_ms": 1516
+     "wall_ms": 2845
     }
    },
    {
@@ -665,12 +665,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 38
+     "wall_ms": 55
     },
     "z3": {
-     "verdict": "unsat",
-     "conflicts": 8537,
-     "wall_ms": 6317
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10036
     }
    },
    {
@@ -678,12 +678,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 39
+     "wall_ms": 73
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10016
+     "wall_ms": 10014
     }
    },
    {
@@ -691,12 +691,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 30
+     "wall_ms": 23
     },
     "z3": {
-     "verdict": "unsat",
-     "conflicts": 31458,
-     "wall_ms": 5081
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10039
     }
    },
    {
@@ -704,12 +704,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 52
+     "wall_ms": 62
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10025
+     "wall_ms": 10073
     }
    },
    {
@@ -717,12 +717,12 @@
     "nixie": {
      "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 20
+     "wall_ms": 31
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 1057,
-     "wall_ms": 217
+     "wall_ms": 435
     }
    },
    {
@@ -730,12 +730,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1015,
-     "wall_ms": 771
+     "wall_ms": 938
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 23
+     "wall_ms": 20
     }
    },
    {
@@ -743,12 +743,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10017
+     "wall_ms": 10016
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 138,
-     "wall_ms": 69
+     "wall_ms": 60
     }
    },
    {
@@ -756,12 +756,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10021
+     "wall_ms": 10024
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1006,
-     "wall_ms": 523
+     "wall_ms": 547
     }
    },
    {
@@ -769,12 +769,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10015
+     "wall_ms": 10014
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 104,
-     "wall_ms": 41
+     "wall_ms": 43
     }
    },
    {
@@ -787,7 +787,7 @@
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 209
+     "wall_ms": 210
     }
    }
   ]
@@ -795,21 +795,21 @@
  {
   "family": "QF_BV",
   "n": 60,
-  "nixie_solved": 51,
-  "z3_solved": 55,
+  "nixie_solved": 54,
+  "z3_solved": 53,
   "verdict_disagreements": 0,
   "rows": [
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/2017-BuchwaldFried/counterexample.dump.ia32_Mul_base_disp--Add32.load32.Mul32.Mulh_u32.0005.smt2",
     "nixie": {
-     "verdict": "timeout",
+     "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 10026
+     "wall_ms": 25
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 30
+     "wall_ms": 28
     }
    },
    {
@@ -817,7 +817,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 37,
-     "wall_ms": 11
+     "wall_ms": 10
     },
     "z3": {
      "verdict": "unsat",
@@ -830,12 +830,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 10
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 24
+     "wall_ms": 14
     }
    },
    {
@@ -843,12 +843,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10074
+     "wall_ms": 10135
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10074
+     "wall_ms": 10076
     }
    },
    {
@@ -856,12 +856,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 77,
-     "wall_ms": 109
+     "wall_ms": 75
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 119
+     "wall_ms": 141
     }
    },
    {
@@ -869,12 +869,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 39
+     "wall_ms": 19
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 34
+     "wall_ms": 36
     }
    },
    {
@@ -882,12 +882,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 61
+     "wall_ms": 30
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 39
+     "wall_ms": 49
     }
    },
    {
@@ -895,59 +895,33 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 7,
-     "wall_ms": 207
+     "wall_ms": 92
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 156
+     "wall_ms": 159
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/RWS/Example_11.txt.smt2",
     "nixie": {
      "verdict": "sat",
-     "conflicts": 7667,
-     "wall_ms": 2011
+     "conflicts": 14106,
+     "wall_ms": 2550
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 1533
+     "wall_ms": 1706
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_11463.smt2",
     "nixie": {
      "verdict": "unsat",
-     "conflicts": 9818,
-     "wall_ms": 6756
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10018
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_13079.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 251,
-     "wall_ms": 485
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 6665
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_14592.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10032
+     "conflicts": 11398,
+     "wall_ms": 6462
     },
     "z3": {
      "verdict": "timeout",
@@ -956,37 +930,63 @@
     }
    },
    {
-    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_16217.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_13079.smt2",
     "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10118
+     "verdict": "unsat",
+     "conflicts": 202,
+     "wall_ms": 206
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 954
+     "wall_ms": 7340
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_14592.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10035
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10018
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_16217.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 39860,
+     "wall_ms": 9941
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 1067
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_1782.smt2",
     "nixie": {
      "verdict": "unsat",
-     "conflicts": 475,
-     "wall_ms": 296
+     "conflicts": 440,
+     "wall_ms": 153
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 480
+     "wall_ms": 503
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_3238.smt2",
     "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10025
+     "verdict": "sat",
+     "conflicts": 93517,
+     "wall_ms": 4128
     },
     "z3": {
      "verdict": "timeout",
@@ -999,12 +999,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10218
+     "wall_ms": 10216
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10107
+     "wall_ms": 10394
     }
    },
    {
@@ -1012,25 +1012,25 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 569
+     "wall_ms": 1790
     },
     "z3": {
-     "verdict": "unsat",
+     "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 8112
+     "wall_ms": 10071
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_840.smt2",
     "nixie": {
      "verdict": "unsat",
-     "conflicts": 118167,
-     "wall_ms": 3118
+     "conflicts": 107104,
+     "wall_ms": 3433
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 767
+     "wall_ms": 880
     }
    },
    {
@@ -1038,12 +1038,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10057
+     "wall_ms": 10042
     },
     "z3": {
-     "verdict": "unsat",
+     "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 9596
+     "wall_ms": 10026
     }
    },
    {
@@ -1051,25 +1051,25 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 467
+     "wall_ms": 107
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 73
+     "wall_ms": 81
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/bruttomesso/core/ext_con_048_016_0256.smt2",
     "nixie": {
      "verdict": "unsat",
-     "conflicts": 15859,
-     "wall_ms": 1616
+     "conflicts": 13125,
+     "wall_ms": 1482
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 186,
-     "wall_ms": 151
+     "wall_ms": 168
     }
    },
    {
@@ -1077,12 +1077,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 4,
-     "wall_ms": 12
+     "wall_ms": 13
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 27
     }
    },
    {
@@ -1090,12 +1090,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 9,
-     "wall_ms": 632
+     "wall_ms": 231
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 1080
+     "wall_ms": 1230
     }
    },
    {
@@ -1103,7 +1103,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 13
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "unsat",
@@ -1116,12 +1116,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 10
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 16
+     "wall_ms": 21
     }
    },
    {
@@ -1129,12 +1129,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 678
+     "wall_ms": 181
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 15
+     "wall_ms": 16
     }
    },
    {
@@ -1142,12 +1142,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 88
+     "wall_ms": 111
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 200
+     "wall_ms": 226
     }
    },
    {
@@ -1155,12 +1155,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 47,
-     "wall_ms": 16
+     "wall_ms": 17
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 25
+     "wall_ms": 28
     }
    },
    {
@@ -1168,12 +1168,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 11
+     "wall_ms": 14
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 21
+     "wall_ms": 29
     }
    },
    {
@@ -1181,12 +1181,12 @@
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10231
+     "wall_ms": 10184
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 305
+     "wall_ms": 322
     }
    },
    {
@@ -1194,12 +1194,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 10
+     "wall_ms": 14
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 33
+     "wall_ms": 25
     }
    },
    {
@@ -1207,20 +1207,7 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 12
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 24
-    }
-   },
-   {
-    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_486.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 10
+     "wall_ms": 8
     },
     "z3": {
      "verdict": "sat",
@@ -1229,16 +1216,29 @@
     }
    },
    {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_486.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 8
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 15
+    }
+   },
+   {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_5552.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 63
+     "wall_ms": 30
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 23
+     "wall_ms": 19
     }
    },
    {
@@ -1246,12 +1246,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 18
+     "wall_ms": 13
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 41
+     "wall_ms": 39
     }
    },
    {
@@ -1259,12 +1259,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 16
+     "wall_ms": 8
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 19
+     "wall_ms": 17
     }
    },
    {
@@ -1272,12 +1272,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 162,
-     "wall_ms": 29
+     "wall_ms": 28
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 35
+     "wall_ms": 29
     }
    },
    {
@@ -1285,7 +1285,20 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 9
+     "wall_ms": 8
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 14
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_1321.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 7
     },
     "z3": {
      "verdict": "unsat",
@@ -1294,29 +1307,16 @@
     }
    },
    {
-    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_1321.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 13
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 18
-    }
-   },
-   {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_2014.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 202
+     "wall_ms": 95
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 195
+     "wall_ms": 213
     }
    },
    {
@@ -1324,12 +1324,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 68
+     "wall_ms": 50
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 56
+     "wall_ms": 64
     }
    },
    {
@@ -1337,12 +1337,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 224
+     "wall_ms": 233
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 169
+     "wall_ms": 178
     }
    },
    {
@@ -1350,7 +1350,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 13
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "unsat",
@@ -1363,12 +1363,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 10
+     "wall_ms": 8
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 20
+     "wall_ms": 16
     }
    },
    {
@@ -1376,12 +1376,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 209
+     "wall_ms": 178
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 167
+     "wall_ms": 180
     }
    },
    {
@@ -1389,12 +1389,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 87
+     "wall_ms": 74
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 24
+     "wall_ms": 23
     }
    },
    {
@@ -1402,12 +1402,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 98,
-     "wall_ms": 15
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 29
+     "wall_ms": 26
     }
    },
    {
@@ -1415,12 +1415,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 294
+     "wall_ms": 183
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 167
+     "wall_ms": 172
     }
    },
    {
@@ -1428,12 +1428,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 14
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 20
+     "wall_ms": 17
     }
    },
    {
@@ -1441,25 +1441,25 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 86,
-     "wall_ms": 17
+     "wall_ms": 20
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 20
+     "wall_ms": 21
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_239.smt2",
     "nixie": {
      "verdict": "unsat",
-     "conflicts": 2305,
-     "wall_ms": 1171
+     "conflicts": 2278,
+     "wall_ms": 992
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 6076
+     "wall_ms": 6656
     }
    },
    {
@@ -1467,7 +1467,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 198
+     "wall_ms": 99
     },
     "z3": {
      "verdict": "unsat",
@@ -1480,12 +1480,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 12
+     "wall_ms": 7
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 21
+     "wall_ms": 15
     }
    },
    {
@@ -1493,12 +1493,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 16,
-     "wall_ms": 19
+     "wall_ms": 13
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 783
+     "wall_ms": 792
     }
    },
    {
@@ -1506,12 +1506,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 102
+     "wall_ms": 65
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 19
     }
    },
    {
@@ -1519,7 +1519,7 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 6
+     "wall_ms": 12
     },
     "z3": {
      "verdict": "unsat",
@@ -1532,12 +1532,12 @@
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 9
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 16
+     "wall_ms": 17
     }
    },
    {
@@ -1545,12 +1545,12 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 803,
-     "wall_ms": 220
+     "wall_ms": 181
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 524
+     "wall_ms": 546
     }
    },
    {
@@ -1558,25 +1558,25 @@
     "nixie": {
      "verdict": "sat",
      "conflicts": 1533,
-     "wall_ms": 4455
+     "wall_ms": 1619
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 1488
+     "wall_ms": 1594
     }
    },
    {
     "instance": "../nixie/smt-lib/non-incremental/QF_BV/stp_samples/run_03230.trace.cond_012091_0x4182b4_00.smt2",
     "nixie": {
      "verdict": "sat",
-     "conflicts": 30,
-     "wall_ms": 16
+     "conflicts": 16,
+     "wall_ms": 19
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 21
+     "wall_ms": 25
     }
    }
   ]
