@@ -146,6 +146,7 @@ for family in QF_LIA QF_BV; do
     python3 - "$family" "$TMP/nx.res" "$TMP/z3.res" "$CAP" <<'PYEOF'
 import sys, math
 fam, a, b, cap = sys.argv[1:5]
+cap = int(cap)
 rows = list(zip(open(a), open(b)))
 ns = sum(1 for x in rows if x[0].split()[1] in ("sat","unsat"))
 zs = sum(1 for x in rows if x[1].split()[1] in ("sat","unsat"))
