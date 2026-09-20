@@ -4421,6 +4421,146 @@ impl ArithSolver {
 mod fuzz_incremental;
 
 #[cfg(test)]
+mod strict_stranding_regressions {
+    use super::*;
+
+    /// The stranded-strict-slack precondition + rehome, shared by the Lt/Gt
+    /// pins: returns (old_stranded_var, fresh_var) after a successful
+    /// strict re-home of `atom`'s form.
+    fn strand_and_rehome(s: &mut ArithSolver, atom: TermId) -> (VarId, VarId) {
+        let stranded = s
+            .slack_forms
+            .iter()
+            .filter(|(v, f)| {
+                f.reason == atom && s.simplex.has_any_bound(**v) && !s.simplex.row_defines_var(**v)
+            })
+            .map(|(v, _)| *v)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            stranded.len(),
+            1,
+            "precondition: exactly the strict atom's slack is stranded"
+        );
+        let old = stranded[0];
+        let n = s.rehome_stranded_row_bounds();
+        assert!(n >= 1, "the stranded strict row must be re-homed");
+        // The fresh row: a slack whose recorded form is the atom's, which
+        // now DEFINES a row (the re-intern through the strict path).
+        let fresh = s
+            .slack_forms
+            .iter()
+            .filter(|(v, f)| f.reason == atom && s.simplex.row_defines_var(**v) && **v != old)
+            .map(|(v, _)| *v)
+            .collect::<Vec<_>>();
+        assert_eq!(fresh.len(), 1, "the strict re-intern minted a defining row");
+        (old, fresh[0])
+    }
+
+    /// Item 75's targeted reproducer (the handoff's open item: the strict
+    /// rehome was screened by differentials only).  A STRICT `<` atom whose
+    /// defining row is consumed by a pivot must re-home through the STRICT
+    /// interning path (`cached_row_slack_strict` — no normalizer sign flip)
+    /// and re-assert its OWN STRICT zero bound `slack < 0`: the delta
+    /// encoding survives, never weakened to `<= 0`, never flipped to a
+    /// lower bound.  Pre-item-75 (strict forms never recorded) this fails
+    /// at the stranded-slack precondition.
+    #[test]
+    fn strict_lt_stranded_row_rehomes_with_strict_bound() {
+        let mut s = ArithSolver::mixed();
+        let t = |i: u32| TermId::new(i);
+        let r = Rational64::from_integer;
+        // t1 < 5 (strict atom, goes basic with its row), then the equality
+        // t1 + t2 = 10 pivots the strict slack's defining row away.
+        s.assert_lt(&[(t(1), r(1))], r(5), t(100));
+        s.assert_eq(&[(t(1), r(1)), (t(2), r(1))], r(10), t(101));
+        s.assert_gt(&[(t(2), r(1))], r(2), t(102));
+        s.assert_ge(&[(t(1), r(1)), (t(2), r(2))], r(3), t(103));
+        let _ = s.check();
+
+        let (_old, fresh) = strand_and_rehome(&mut s, t(100));
+        // The re-asserted bound: STRICT upper at 0 (delta < 0), carrying a
+        // live reason id that resolves to the atom's own term.
+        let hi = s
+            .simplex
+            .get_upper(fresh)
+            .expect("the re-homed Lt row carries the atom's upper bound");
+        let narrow = hi
+            .value
+            .narrow()
+            .expect("the re-homed bound is narrow (delta-strict)");
+        assert!(
+            narrow.real.is_zero(),
+            "the atom's own bound re-asserts at zero"
+        );
+        assert!(
+            narrow.delta < Rational64::zero(),
+            "STRICT upper (slack < 0): delta < 0 — a weakened <= 0 (delta == 0) is the regression"
+        );
+        assert!(
+            s.simplex.get_lower(fresh).is_none(),
+            "an Lt atom never re-asserts a lower bound (direction flip)"
+        );
+        assert!(
+            hi.all_reasons()
+                .any(|rid| s.reasons.get(rid as usize).copied() == Some(t(100))),
+            "the re-asserted bound cites the atom's own reason"
+        );
+    }
+
+    /// The Gt twin: the strict slack is pivoted OUT of the basis by a
+    /// transient violation inside a popped scope (rows are search-global,
+    /// so the stranding survives the pop while the atom's bound stays
+    /// live).  The re-home must re-assert STRICT `slack > 0` (delta > 0,
+    /// lower side).
+    #[test]
+    fn strict_gt_stranded_row_rehomes_with_strict_bound() {
+        let mut s = ArithSolver::mixed();
+        let t = |i: u32| TermId::new(i);
+        let r = Rational64::from_integer;
+        s.assert_gt(&[(t(1), r(1))], r(0), t(100)); // t1 > 0
+        s.assert_eq(&[(t(1), r(1)), (t(2), r(1))], r(10), t(101)); // t1 + t2 = 10
+        s.assert_ge(&[(t(2), r(1))], r(0), t(102)); // t2 >= 0
+        let _ = s.check();
+        s.push();
+        // t2 > 10 => t1 = 10 - t2 < 0: transiently violates the Gt row and
+        // makes make_feasible pivot its slack out of the basis.
+        s.assert_gt(&[(t(2), r(1))], r(10), t(103));
+        let _ = s.check();
+        s.pop();
+        // The post-pop re-check re-derives the assignment and pivots the
+        // now-unpinned Gt slack out of the basis — the stranding event.
+        let _ = s.check();
+
+        let (_old, fresh) = strand_and_rehome(&mut s, t(100));
+        let lo = s
+            .simplex
+            .get_lower(fresh)
+            .expect("the re-homed Gt row carries the atom's lower bound");
+        let narrow = lo
+            .value
+            .narrow()
+            .expect("the re-homed bound is narrow (delta-strict)");
+        assert!(
+            narrow.real.is_zero(),
+            "the atom's own bound re-asserts at zero"
+        );
+        assert!(
+            narrow.delta > Rational64::zero(),
+            "STRICT lower (slack > 0): delta > 0 — a weakened >= 0 (delta == 0) is the regression"
+        );
+        assert!(
+            s.simplex.get_upper(fresh).is_none(),
+            "a Gt atom never re-asserts an upper bound (direction flip)"
+        );
+        assert!(
+            lo.all_reasons()
+                .any(|rid| s.reasons.get(rid as usize).copied() == Some(t(100))),
+            "the re-asserted bound cites the atom's own reason"
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use num_traits::{One, Zero};

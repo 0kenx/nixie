@@ -25,10 +25,10 @@ type DatatypeConstructorGroup = (
 enum CommandStep {
     /// End of input reached; there was no further form to read.
     Eof,
-    /// A recognized command was parsed.
+    /// A command was parsed (recognized commands directly;
+    /// unrecognized ones as [`Command::Unsupported`], so the consumer
+    /// can answer them per SMT-LIB instead of skipping silently).
     Parsed(Command),
-    /// An unrecognized command was balance-skipped and produced no command.
-    Skipped,
 }
 
 /// The rounding-mode argument of an `fp.*` operator, as written.
@@ -412,12 +412,9 @@ impl<'a> Parser<'a> {
     /// ("lenient interoperability") – therefore consumed N native stack
     /// frames and aborted the process well before N reached a million.
     pub fn parse_command(&mut self) -> Result<Option<Command>> {
-        loop {
-            match self.parse_command_step()? {
-                CommandStep::Eof => return Ok(None),
-                CommandStep::Parsed(cmd) => return Ok(Some(cmd)),
-                CommandStep::Skipped => {}
-            }
+        match self.parse_command_step()? {
+            CommandStep::Eof => Ok(None),
+            CommandStep::Parsed(cmd) => Ok(Some(cmd)),
         }
     }
 
@@ -957,8 +954,14 @@ impl<'a> Parser<'a> {
             _ => {
                 // Genuinely unrecognized (e.g. vendor/tooling-specific)
                 // commands are skipped for lenient interoperability, same
-                // as before. Commands with real solving-semantics impact
-                // are special-cased above and rejected honestly instead.
+                // as before — but now OBSERVABLY: the consumer receives
+                // [`Command::Unsupported`] and prints SMT-LIB's
+                // `unsupported` (z3's observable behavior) instead of the
+                // historical silent no-op (a script whose only `(check-sat)`
+                // sat inside a stray form executed nothing and exited 0
+                // silently — indistinguishable from success).
+                // Commands with real solving-semantics impact are
+                // special-cased above and rejected honestly instead.
                 let mut depth = 1;
                 while depth > 0 {
                     match self.lexer.next_token().map(|t| t.kind) {
@@ -968,7 +971,7 @@ impl<'a> Parser<'a> {
                         _ => {}
                     }
                 }
-                return Ok(CommandStep::Skipped);
+                return Ok(CommandStep::Parsed(Command::Unsupported(cmd_name.clone())));
             }
         };
 

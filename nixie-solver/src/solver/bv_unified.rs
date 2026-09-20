@@ -105,10 +105,15 @@ impl Solver {
     /// Whether unified bit-blasting is enabled (`NIXIE_BV_UNIFIED=0` disables;
     /// default on for eligible generations).
     pub(super) fn bv_unify_enabled() -> bool {
-        match std::env::var("NIXIE_BV_UNIFIED") {
+        // Memoized: this gate is consulted on every assertion (and every
+        // watch registration), and `std::env::var` is a linear scan over the
+        // environment — it measured at ~11 % of a graph-corpus solve.
+        // Environment variables cannot meaningfully change mid-process.
+        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FLAG.get_or_init(|| match std::env::var("NIXIE_BV_UNIFIED") {
             Ok(v) => !(v == "0" || v.is_empty()),
             Err(_) => true,
-        }
+        })
     }
 
     /// Whether pure QF_BV goals route through the unified main core instead
@@ -123,10 +128,12 @@ impl Solver {
     /// their existing general-path routing, and wide-`bvmul` goals keep the
     /// dispatch (its CEGAR machinery has no unified-path equivalent).
     pub(crate) fn bv_dispatch_unified() -> bool {
-        match std::env::var("NIXIE_BV_DISPATCH_UNIFIED") {
+        // Memoized for the same reason as `bv_unify_enabled`.
+        static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *FLAG.get_or_init(|| match std::env::var("NIXIE_BV_DISPATCH_UNIFIED") {
             Ok(v) => !(v == "0" || v.is_empty()),
             Err(_) => true,
-        }
+        })
     }
 
     /// Whether a unified build window may open **right now** (assertion

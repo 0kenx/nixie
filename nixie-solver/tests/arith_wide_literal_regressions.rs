@@ -1646,3 +1646,29 @@ fn wide_point_never_shadows_a_wide_row() {
         .expect("script executes");
     assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
 }
+
+/// An unrecognized top-level command is ANSWERED, not silently swallowed
+/// (SMT-LIB/z3's observable behavior).  The historical silent skip made an
+/// easy authoring mistake invisible: a script whose only `(check-sat)` sat
+/// inside a stray `(let …)` form — a command in term position — executed
+/// NOTHING and exited 0 with no output at all, indistinguishable from
+/// success-with-no-queries (found while generating select-chain repros;
+/// the trap is recorded in the perf-gap study's generation notes).
+#[test]
+fn unrecognized_command_is_answered_not_swallowed() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const i Int)\n\
+             (assert (= i 3))\n\
+             (let ((x 7)) (check-sat))\n",
+        )
+        .expect("script parses and runs");
+    assert_eq!(
+        out.last().map(String::as_str),
+        Some("unsupported (command let)"),
+        "the stray form must be answered loudly, not silently skipped"
+    );
+}

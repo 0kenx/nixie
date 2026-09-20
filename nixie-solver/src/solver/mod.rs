@@ -4933,9 +4933,13 @@ impl Solver {
     /// Whether unified-path assertions defer their blast to the next check
     /// (`NIXIE_BV_DEFER_BLAST=1`; default off — experimental).
     pub(super) fn bv_defer_blast_enabled() -> bool {
+        // Memoized: consulted per assertion; env reads are linear scans.
         #[cfg(feature = "std")]
         {
-            matches!(std::env::var("NIXIE_BV_DEFER_BLAST"), Ok(v) if !v.is_empty() && v != "0")
+            static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            *FLAG.get_or_init(|| {
+                matches!(std::env::var("NIXIE_BV_DEFER_BLAST"), Ok(v) if !v.is_empty() && v != "0")
+            })
         }
         #[cfg(not(feature = "std"))]
         {
@@ -5451,7 +5455,10 @@ impl Solver {
 /// `docs/studies/2026-08-freeze-set-collapse.md`); `NIXIE_FREEZE_COLLAPSE=0`
 /// disables it for A/B.
 pub(crate) fn freeze_collapse_enabled() -> bool {
-    std::env::var("NIXIE_FREEZE_COLLAPSE").as_deref() != Ok("0")
+    // Memoized: consulted per check over the constraint vocabulary, and env
+    // reads are linear scans over the environment.
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_FREEZE_COLLAPSE").as_deref() != Ok("0"))
 }
 
 mod branch_priority;
