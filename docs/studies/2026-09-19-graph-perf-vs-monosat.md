@@ -155,3 +155,32 @@ suite green (timeouts re-verified in isolation — load artifacts); Z3 4.16.0
 parity 176/176 decisive, 0 disagreements; perf gate **1.000** against the
 freshly re-pinned baseline (`a48d8464` re-pinned to `6853ba29`); graph
 differential spot-check 300/300 agree.
+
+## Closing attribution (2026-09-20, final build): where the residual 2.67x actually lives
+
+Re-profiled the worst corpus instance (`v150_r16_s1`) on the fully-optimized
+build to decide whether the recorded "incremental dynamic-graph algorithms"
+upgrade path would pay:
+
+- **The graph propagator no longer registers as a self-time hotspot** (<2 %;
+  its only profile presence is ~1.5 % of caller fragments under HashMap
+  lookups). The content-addressed memo plus CSR reduced it below measurement
+  noise at these scales.
+- The residual profile is **term-management infrastructure**: ~40 %
+  allocator/libc (`memmove` 14 %, `realloc` 12 %, `malloc`/`reserve_rehash`
+  ~12 %) driven by hash-consing ~22 k minted terms
+  (`encode_depth_memoized` 7.7 %, `TermManager::intern` 5.4 %) and the
+  Tseitin/var maps — the cost of the general SMT API and CDCL(T) stack that
+  every theory pays, versus MonoSAT's integer-only GNF loader that parses
+  variables straight into solver slots.
+
+**Re-scope of the upgrade path:** incremental reachability
+(Ramalingam–Reps et al.) would buy ≈nothing on this corpus — the recomputed
+BFS it would amortize is already <2 % of runtime. It becomes the right tool
+only for much larger graphs (hundreds of vertices and beyond), where
+per-event O(V·E) recompute dominates again; at today's scales the honest
+remaining gap is the SMT assertion pipeline itself, shared by all theories.
+
+Fresh corpus re-run on the final build: geomean ratio **2.67×**
+(monosat 0.0150 s vs nixie 0.0400 s), matching the recorded result —
+measurement reproducible end-to-end after the MonoSAT rebuild.
