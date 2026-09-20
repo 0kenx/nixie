@@ -82,6 +82,27 @@ and a 400-file stratified SMT-LIB verdict screen vs z3 across 8
 arithmetic families — **399 decisive-verdict pairs, 0 disagreements**.
 The wrong-verdict ledger stays empty.
 
+## Open-items closure ledger (2026-09-20, final)
+
+| item | verdict |
+|------|---------|
+| `eval_linear` exactness | **CLOSED** (`7ab21fb5`) |
+| Boundary SHAPES + ill-sortedness | **CLOSED** (`7ab21fb5`) |
+| The B&B leaf re-scan (false `sat`) | **CLOSED** (`7ab21fb5`); the parity twin closed by the Hermite widening (`33cb9418`) |
+| fi1 | **CLOSED by the arith owner** (item 95 + the widening; `sat` in 48 ms, z3-validated) |
+| Model-blocking reachability fixture | **CLOSED as fuzz-covered** — 12 shapes measured all-preempted; the white-box mechanics fixture landed (`153b1e1c`); no deterministic shape exists on this tree |
+| Bound-shadowing journal | **CLOSED as design-spec'd** — the trail's full-clone undos are pop-exact under LIFO (proven in study §F); the guarded writers + `NIXIE_BOUND_TRIPWIRE` stand; the journal's landing spec is recorded for whoever next touches `set_*_value` |
+| `get-value` Real-entry sort residual | **CLOSED** (`9bd34785`) — equality-extraction now consults the variable's sort |
+| Unrecognized-command silence | **CLOSED** (`8e0fa573`) |
+| nec-smt / `solve_eqs` pre-pass | **HANDED OFF with complete diagnosis** — the memo proved the residual cost is the case splits; the entry points (guard-equality elimination before the walk, or split ordering) are in the perf-gap study's addenda; see `2026-09-20-smt-perf-arc-executed.md` |
+| ndir2 re-measurement | **STILL GATED** — the gate BASELINE re-pinned three times during this arc (`1710e125` → `aa219f89` → the flip); re-measure only on a stable baseline |
+| Item 71's channel question, J5, the ray | **THE ARITH OWNER'S** (their item-96 handoff) |
+
+The CSR `scan_split` underflow (a landed panic on `pete_5s`, release
+included, from the slack-CSR flip) was found and unblock-repaired in the
+same landing (`9bd34785`, the `fa0d59c9` precedent class) — with both
+worlds verified `unsat` and the both-present invariant debug-asserted.
+
 ## Process notes from this landing
 
 * Two fresh-seed differential runs (six seeds total) around the merge;
