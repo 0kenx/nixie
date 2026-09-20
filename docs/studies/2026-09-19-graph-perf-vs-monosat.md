@@ -298,3 +298,30 @@ approached as a regression; the two easy-corpus wins (1.65× geomean) carry
 over. Fixed process overhead measured at 3.0 ms (Nixie) vs 2.3 ms
 (MonoSAT) on a trivial instance — ~0.7 ms of the residual gap, not its
 story.
+
+## Addendum (2026-09-21, generated-oracle campaign): adversarial event scripts against the incremental state
+
+The exhaustive small-graph oracles enumerate states but at tiny sizes, and
+the differential drives only linear notify sequences — neither reaches the
+incremental propagator's risk surface: long event sequences with **nested
+push/pop rollback** and re-fixation after backtrack. A generated campaign
+(now in-tree, `graph::tests::generated_oracle_random_event_scripts_with_
+nested_rollback`, landed in 0387eb02) closes that:
+
+- 200 seeded campaigns: random graphs (8–17 vertices, 4–31 edges with
+  self-loops and parallel edges, 2–9 reach atoms including self-pairs,
+  optional acyclicity atom) driven through random 120–240-operation scripts
+  (edge/atom fixations, pushes, multi-level pops, interleaved
+  final-checks) via the propagator manager directly.
+- Validation per check: verdict agreement with an independent violation
+  analysis over the driver's shadow state; every justification literal
+  currently true **by fixation** (not closure semantics — the distinction
+  that matters for conflict atom literals); every consequence a valid
+  implication over all concrete completions (≤ 12 unfixed edges) or a
+  64-sample.
+
+Result: **200/200 clean**. The campaign found one bug — in the harness
+itself (current-truth initially evaluated atom literals by closure
+semantics, exactly the conflation the small oracle avoids) — and zero in
+the propagator: post-backtrack re-reads, repeated invalidation, and
+re-fixation all maintain state identical to a from-scratch read.
