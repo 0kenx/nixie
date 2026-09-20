@@ -31,7 +31,7 @@ impl Default for ScanResult {
 
 #[inline]
 #[allow(clippy::too_many_arguments)]
-pub(super) fn scan_list<const MIRROR: bool>(
+pub(super) fn scan_list<const MIRROR: bool, const B: bool>(
     watches: &mut [Watcher],
     false_lit: Lit,
     values: &mut [i8],
@@ -45,7 +45,9 @@ pub(super) fn scan_list<const MIRROR: bool>(
     let begin = watches.as_mut_ptr();
     // MIRROR comes from the driver's specialization: the flag-off
     // instantiation compiles without a single CSR check (the screen bar).
-    let result = scan::<false, MIRROR>(
+    // B (commit-B, `NIXIE_CSR_B=1`) makes the CSR the sole destination:
+    // pushes/dedups target it directly and the Vec destinations are dead.
+    let result = scan::<false, MIRROR, B>(
         WatchCursor::new(watches),
         false_lit,
         values,
@@ -81,13 +83,21 @@ struct ScanEnd {
 /// never recurses; no input can increase native call depth beyond these two.
 /// A phase returns its final state; no caller-owned cursor stays live in it.
 #[allow(clippy::too_many_arguments)]
-fn push_watch<const MIRROR: bool>(
+fn push_watch<const MIRROR: bool, const B: bool>(
     csr: &mut Option<CsrWatchLists>,
     vec_present: bool,
     destinations: &mut [Vec<Watcher>],
     key: Lit,
     watcher: Watcher,
 ) {
+    if B {
+        // Commit-B: the CSR overflow IS the destination (arrival order,
+        // exactly where the Vec world's push lands).
+        if let Some(c) = csr.as_mut() {
+            c.push_overflow(key, watcher);
+        }
+        return;
+    }
     crate::mut_trace!(
         key.index(),
         "side=vec act=push ref={} blk={} path=push_watch",
@@ -104,13 +114,40 @@ fn push_watch<const MIRROR: bool>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn push_watch_unique<const MIRROR: bool>(
+fn push_watch_unique<const MIRROR: bool, const B: bool>(
     csr: &mut Option<CsrWatchLists>,
     vec_present: bool,
     destinations: &mut [Vec<Watcher>],
     key: Lit,
     watcher: Watcher,
 ) {
+    if B {
+        // Commit-B: the dedup reads the CSR's combined view.  With
+        // scan_parts' take semantics the scanned literal's own segments
+        // are empty for the duration (matching the old taken-Vec slot,
+        // self-pushes accumulating in the live overflow), and any other
+        // key's view is the drifted state — content-identical to the Vec
+        // list it replaced (the drift invariant the shadow proved).
+        if let Some(c) = csr.as_mut() {
+            let (prim, extra) = c.spans(key);
+            if prim.iter().chain(extra.iter()).any(|w| w.r == watcher.r) {
+                crate::mut_trace!(
+                    key.index(),
+                    "side=vec act=suppress ref={} path=push_watch_unique",
+                    watcher.r.byte_offset()
+                );
+                return;
+            }
+            crate::mut_trace!(
+                key.index(),
+                "side=vec act=push ref={} blk={} path=push_watch_unique",
+                watcher.r.byte_offset(),
+                watcher.blocker.code()
+            );
+            c.push_overflow(key, watcher);
+        }
+        return;
+    }
     let list = &mut destinations[key.index()];
     if list.iter().any(|w| w.r == watcher.r) {
         crate::mut_trace!(
@@ -136,7 +173,7 @@ fn push_watch_unique<const MIRROR: bool>(
 
 #[inline(never)]
 #[allow(clippy::too_many_arguments)]
-fn scan<const COMPACT: bool, const MIRROR: bool>(
+fn scan<const COMPACT: bool, const MIRROR: bool, const B: bool>(
     watches: WatchCursor<'_, COMPACT>,
     false_lit: Lit,
     values: &mut [i8],
@@ -165,7 +202,12 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         }
         if propagation_value(values, watcher.blocker) > 0 {
             entry.keep(None);
-            if MIRROR && let Some(c) = csr.as_mut() {
+            #[allow(clippy::if_not_else)]
+            if B {
+                // Commit-B: the segment write-backs are structural (the
+                // driver writes the compacted span copy home and truncates
+                // the taken overflow); keeps change no index position.
+            } else if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_keep(watcher, None);
             } else if let Some(vm) = vec_mirror.as_deref_mut() {
                 vm.keep(watcher, None);
@@ -187,7 +229,13 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 "side=scan act=drop ref={} path=scan_dead_clause",
                 watcher.r.byte_offset()
             );
-            if MIRROR && let Some(c) = csr.as_mut() {
+            if B {
+                // Commit-B: the segments compact structurally; only the
+                // position index must learn the entry left this literal.
+                if let Some(c) = csr.as_mut() {
+                    c.index_remove(scanned_code, watcher.r);
+                }
+            } else if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
                 vm.remove();
@@ -198,7 +246,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             if COMPACT {
                 continue;
             }
-            return scan::<true, MIRROR>(
+            return scan::<true, MIRROR, B>(
                 watches.compacting(),
                 false_lit,
                 values,
@@ -301,7 +349,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                                 {
                                     work.watch_moves += 1;
                                 }
-                                push_watch::<MIRROR>(
+                                push_watch::<MIRROR, B>(
                                     csr,
                                     vec_mirror.is_some(),
                                     destinations,
@@ -321,14 +369,14 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         if let Some(pair) = repair {
             if let Some((a, b)) = pair {
                 let cid = live.reason();
-                push_watch_unique::<MIRROR>(
+                push_watch_unique::<MIRROR, B>(
                     csr,
                     vec_mirror.is_some(),
                     destinations,
                     a.negate(),
                     Watcher::new(cid, watcher.r, b),
                 );
-                push_watch_unique::<MIRROR>(
+                push_watch_unique::<MIRROR, B>(
                     csr,
                     vec_mirror.is_some(),
                     destinations,
@@ -342,7 +390,13 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 "side=scan act=drop ref={} path=scan_repair",
                 watcher.r.byte_offset()
             );
-            if MIRROR && let Some(c) = csr.as_mut() {
+            if B {
+                // Commit-B: the segments compact structurally; only the
+                // position index must learn the entry left this literal.
+                if let Some(c) = csr.as_mut() {
+                    c.index_remove(scanned_code, watcher.r);
+                }
+            } else if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
                 vm.remove();
@@ -353,7 +407,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             if COMPACT {
                 continue;
             }
-            return scan::<true, MIRROR>(
+            return scan::<true, MIRROR, B>(
                 watches.compacting(),
                 false_lit,
                 values,
@@ -373,7 +427,9 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         if let Some(parked) = found {
             if let Some(blocker) = parked {
                 entry.keep(Some(blocker));
-                if MIRROR && let Some(c) = csr.as_mut() {
+                if B {
+                    // Commit-B: structural (see the keep(None) site).
+                } else if MIRROR && let Some(c) = csr.as_mut() {
                     c.scan_keep(watcher, Some(blocker));
                 } else if let Some(vm) = vec_mirror.as_deref_mut() {
                     vm.keep(watcher, Some(blocker));
@@ -394,7 +450,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                     }
                 }
                 if !COMPACT {
-                    return scan::<true, MIRROR>(
+                    return scan::<true, MIRROR, B>(
                         watches.compacting(),
                         false_lit,
                         values,
@@ -412,7 +468,9 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             continue;
         }
         entry.keep(Some(first));
-        if MIRROR && let Some(c) = csr.as_mut() {
+        if B {
+            // Commit-B: structural (see the keep(None) site).
+        } else if MIRROR && let Some(c) = csr.as_mut() {
             c.scan_keep(watcher, Some(first));
         } else if let Some(vm) = vec_mirror.as_deref_mut() {
             vm.keep(watcher, Some(first));
@@ -437,7 +495,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         unsafe {
             assign_undefined(values, queue, first, live.reason())
         };
-        if let Some(list) = destinations.get(first.index()) {
+        if !B && let Some(list) = destinations.get(first.index()) {
             prefetch_watch_payload(list);
         }
         #[cfg(feature = "bcp-work")]

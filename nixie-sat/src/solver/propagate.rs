@@ -280,7 +280,7 @@ impl Solver {
             // the put-back keeps the `Vec` shadow equal for the drift
             // oracle.
             let mut watches = self.watches.take_combined_vec(lit);
-            self.watches.shadow_begin_scan(lit);
+            self.watches.shadow_begin_scan(lit, watches.len());
             #[cfg(feature = "bcp-work")]
             {
                 let work = &mut self.stats.propagation_work;

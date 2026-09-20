@@ -6,7 +6,7 @@ mod conflict;
 mod congruence;
 mod decide;
 mod eliminate;
-mod equiv;
+pub(crate) mod equiv;
 use self::equiv::EquivScratch;
 mod factor;
 pub mod heuristic;

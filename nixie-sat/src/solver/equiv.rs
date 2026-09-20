@@ -18,6 +18,12 @@ use super::*;
 use crate::literal::LBool;
 use smallvec::SmallVec;
 
+/// Public re-export target for `watched.rs`'s index-maintenance wiring
+/// (the surgery experiment needs the position index maintained).
+pub(crate) fn equiv_surgery_enabled() -> bool {
+    els_surgery_enabled()
+}
+
 /// `NIXIE_ELS_CSR_SURGERY=1` (slice-5 experiment, developed inside the
 /// shadow): re-point the CSR shadow's watchers surgically at each ELS
 /// rewrite (retire/shrink) instead of letting the rebuild replace them —
@@ -849,9 +855,12 @@ impl Solver {
                 // The shadow is detached for the whole rebuild (csr_take
                 // above), so the fill uses the mirror-free push — the CSR
                 // baseline is adopted wholesale from the fresh layout at
-                // the end of this function.
-                watches.push_only(a.negate(), Watcher::new(cid, r, b));
-                watches.push_only(b.negate(), Watcher::new(cid, r, a));
+                // the end of this function.  Commit-B: the Vec side is
+                // dead — only the CSR layout below is filled.
+                if !crate::watched::csr_b_enabled() {
+                    watches.push_only(a.negate(), Watcher::new(cid, r, b));
+                    watches.push_only(b.negate(), Watcher::new(cid, r, a));
+                }
             }
             learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
         }
@@ -868,7 +877,7 @@ impl Solver {
         // becomes the new dual-write baseline the next drift interval
         // maintains from.  Zero cost and zero reads when the flag is off.
         #[cfg(feature = "std")]
-        if crate::watched::csr_shadow_enabled() {
+        if crate::watched::csr_shadow_enabled() || crate::watched::csr_b_enabled() {
             use crate::watched::CsrWatchBuild;
             let t0 = std::time::Instant::now();
             let num_lits = num_vars * 2;
@@ -903,12 +912,14 @@ impl Solver {
                     csr.fill(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
                 }
             }
-            let (lits, entries, bad) = self.watches.csr_shadow_compare(num_vars, &csr);
-            eprintln!(
-                "[csr-shadow] rebuild@{}: lits={lits} entries={entries} mismatched={bad} build={}us",
-                self.stats.conflicts,
-                t0.elapsed().as_micros()
-            );
+            if crate::watched::csr_shadow_enabled() {
+                let (lits, entries, bad) = self.watches.csr_shadow_compare(num_vars, &csr);
+                eprintln!(
+                    "[csr-shadow] rebuild@{}: lits={lits} entries={entries} mismatched={bad} build={}us",
+                    self.stats.conflicts,
+                    t0.elapsed().as_micros()
+                );
+            }
             // The ELS surgery experiment's equivalence oracle: the shadow
             // holds the SURGICALLY updated state; the Vec lists above hold
             // the rebuilt ground truth.  Multiset equality per literal
@@ -954,6 +965,9 @@ impl Solver {
                 self.csr_surgery_ops = 0;
             }
             let mut adopted = crate::watched::CsrWatchLists::default();
+            adopted.maintain_index = crate::watched::csr_shadow_enabled()
+                || crate::watched::csr_index_enabled()
+                || els_surgery_enabled();
             adopted.adopt_layout(csr);
             self.watches.csr_set(adopted);
         }

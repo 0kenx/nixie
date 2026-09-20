@@ -297,6 +297,13 @@ pub struct CsrWatchLists {
     /// watchers actually live (the watch-position-drift finding,
     /// 2026-09-14).
     positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
+    /// Whether `positions` is maintained at all: the index is surgery /
+    /// diagnostic machinery (read by `csr_positions_of` and the audit
+    /// prints), never by the default path — and a BTreeMap write per
+    /// watcher-add measured +24% whole-run instructions in commit-B mode
+    /// (the f5796de0 cost class).  A plain field read per mutation; set
+    /// at construction from the env knobs that need it.
+    pub(crate) maintain_index: bool,
 }
 
 #[allow(dead_code)] // slice-1.5 foundation
@@ -316,6 +323,11 @@ impl CsrWatchLists {
         self.len(lit) == 0
     }
 
+    /// Number of literals the layout covers (span/overflow array length).
+    pub(crate) fn num_lits(&self) -> usize {
+        self.span_start.len().max(self.overflow.len())
+    }
+
     /// Append `w` to `lit`'s overflow (search-time `add` / BCP watch move:
     /// arrival order, exactly where the `Vec` lists append).
     pub fn push_overflow(&mut self, lit: Lit, w: Watcher) {
@@ -324,9 +336,11 @@ impl CsrWatchLists {
             self.overflow.resize(i + 1, Vec::new());
         }
         self.overflow[i].push(w);
-        let slot = self.positions.entry(w.r.byte_offset()).or_default();
-        if !slot.contains(&(i as u32)) {
-            slot.push(i as u32);
+        if self.maintain_index {
+            let slot = self.positions.entry(w.r.byte_offset()).or_default();
+            if !slot.contains(&(i as u32)) {
+                slot.push(i as u32);
+            }
         }
     }
 
@@ -370,7 +384,9 @@ impl CsrWatchLists {
             *slot = write as u32;
         }
         self.overflow[i].retain(|w| w.r != r);
-        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+        if self.maintain_index
+            && let Some(slot) = self.positions.get_mut(&r.byte_offset())
+        {
             slot.retain(|c| *c != i as u32);
             if slot.is_empty() {
                 self.positions.remove(&r.byte_offset());
@@ -411,15 +427,18 @@ impl CsrWatchLists {
         self.scan = CsrScanFrame::default();
         // Rebuild the position index from the fresh layout: the counting
         // sort places every live clause's watchers at its span positions.
+        // Surgery/diagnostic machinery only — off unless a knob asked.
         self.positions.clear();
-        for code in 0..self.span_start.len() {
-            let start = self.span_start[code];
-            let end = self.prim_end[code];
-            for off in start..end {
-                let w = self.entries[off as usize];
-                let slot = self.positions.entry(w.r.byte_offset()).or_default();
-                if !slot.contains(&(code as u32)) {
-                    slot.push(code as u32);
+        if self.maintain_index {
+            for code in 0..self.span_start.len() {
+                let start = self.span_start[code];
+                let end = self.prim_end[code];
+                for off in start..end {
+                    let w = self.entries[off as usize];
+                    let slot = self.positions.entry(w.r.byte_offset()).or_default();
+                    if !slot.contains(&(code as u32)) {
+                        slot.push(code as u32);
+                    }
                 }
             }
         }
@@ -512,7 +531,9 @@ impl CsrWatchLists {
                 r.byte_offset()
             );
             let code = self.scan.code as u32;
-            if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+            if self.maintain_index
+                && let Some(slot) = self.positions.get_mut(&r.byte_offset())
+            {
                 slot.retain(|c| *c != code);
                 if slot.is_empty() {
                     self.positions.remove(&r.byte_offset());
@@ -594,31 +615,61 @@ impl CsrWatchLists {
     /// Mirror `WatchLists::relocate_refs`: rewrite survivors' arena refs
     /// through the compaction plan, dropping deleted-clause entries
     /// (order-preserving in both segments, matching the `Vec` pass).
+    ///
+    /// With `ghost_debt` (commit-B mode, where the `Vec` side is dead and
+    /// cannot charge), dropped deleted-clause entries charge the tick debt
+    /// here exactly as the `Vec` pass did — the counters drive restart and
+    /// stable-mode schedules, so a missing charge diverges the trajectory.
     pub(crate) fn relocate(&mut self, arena: &ClauseArena, plan: &CompactionPlan) {
+        self.relocate_impl(arena, plan, None::<&mut [u32]>);
+    }
+
+    /// [`Self::relocate`] with tick-debt charging (commit-B mode): every
+    /// dropped deleted-clause entry charges `ghost_debt[code]` exactly as
+    /// the `Vec` pass's `relocate_refs` did.
+    pub(crate) fn relocate_with_debt(
+        &mut self,
+        arena: &ClauseArena,
+        plan: &CompactionPlan,
+        ghost_debt: &mut [u32],
+    ) {
+        self.relocate_impl(arena, plan, Some(ghost_debt));
+    }
+
+    fn relocate_impl(
+        &mut self,
+        arena: &ClauseArena,
+        plan: &CompactionPlan,
+        mut ghost_debt: Option<&mut [u32]>,
+    ) {
         let relocated = plan.relocated();
         // Rekey the position index (old → new byte offsets).  Entries of
         // deleted clauses die with the compaction (their watchers are
         // dropped below), so their index slots simply vanish — mirroring
-        // the Vec pass's is_deleted skip.
-        let mut rekeyed = std::collections::BTreeMap::new();
-        let old = std::mem::take(&mut self.positions);
-        for (off, lits) in old {
-            if let Some(r) = ClauseRef::from_byte_offset(off)
-                && !r.is_null()
-                && !arena.is_deleted(r)
-            {
-                // The identity load is now safe (live clause; the deleted
-                // case panicked in `live_identity` on lingering dead
-                // entries — the compaction-fires test caught it).
-                rekeyed.insert(
-                    relocated[arena.live_identity(r).index()].byte_offset(),
-                    lits,
-                );
+        // the Vec pass's is_deleted skip.  Surgery/diagnostic machinery
+        // only; when off, the map is empty and stays empty.
+        if self.maintain_index {
+            let mut rekeyed = std::collections::BTreeMap::new();
+            let old = std::mem::take(&mut self.positions);
+            for (off, lits) in old {
+                if let Some(r) = ClauseRef::from_byte_offset(off)
+                    && !r.is_null()
+                    && !arena.is_deleted(r)
+                {
+                    // The identity load is now safe (live clause; the
+                    // deleted case panicked in `live_identity` on lingering
+                    // dead entries — the compaction-fires test caught it).
+                    rekeyed.insert(
+                        relocated[arena.live_identity(r).index()].byte_offset(),
+                        lits,
+                    );
+                }
             }
+            self.positions = rekeyed;
         }
-        self.positions = rekeyed;
         let n = self.span_start.len().max(self.overflow.len());
         for code in 0..n {
+            let mut dropped = 0u32;
             if let (Some(&start), Some(end)) =
                 (self.span_start.get(code), self.prim_end.get_mut(code))
             {
@@ -631,6 +682,7 @@ impl CsrWatchLists {
                         continue;
                     }
                     if arena.is_deleted(w.r) {
+                        dropped = dropped.saturating_add(1);
                         crate::mut_trace!(
                             code,
                             "side=csr act=drop ref={} path=relocate_dead",
@@ -663,6 +715,7 @@ impl CsrWatchLists {
                         continue;
                     }
                     if arena.is_deleted(w.r) {
+                        dropped = dropped.saturating_add(1);
                         crate::mut_trace!(
                             code,
                             "side=csr act=drop ref={} path=relocate_dead_ovf",
@@ -685,6 +738,12 @@ impl CsrWatchLists {
                 }
                 ov.truncate(write);
             }
+            if dropped != 0
+                && let Some(debt) = ghost_debt.as_mut()
+                && let Some(slot) = debt.get_mut(code)
+            {
+                *slot = slot.saturating_add(dropped);
+            }
         }
     }
 
@@ -702,7 +761,9 @@ impl CsrWatchLists {
         for read in start..end {
             let w = self.entries[read];
             if refs.contains(&w.r.byte_offset()) {
-                if let Some(slot) = self.positions.get_mut(&w.r.byte_offset()) {
+                if self.maintain_index
+                    && let Some(slot) = self.positions.get_mut(&w.r.byte_offset())
+                {
                     slot.retain(|c| *c != i as u32);
                     if slot.is_empty() {
                         self.positions.remove(&w.r.byte_offset());
@@ -721,7 +782,9 @@ impl CsrWatchLists {
             for read in 0..ov.len() {
                 let w = ov[read];
                 if refs.contains(&w.r.byte_offset()) {
-                    if let Some(slot) = self.positions.get_mut(&w.r.byte_offset()) {
+                    if self.maintain_index
+                        && let Some(slot) = self.positions.get_mut(&w.r.byte_offset())
+                    {
                         slot.retain(|c| *c != i as u32);
                         if slot.is_empty() {
                             self.positions.remove(&w.r.byte_offset());
@@ -820,11 +883,18 @@ impl CsrWatchLists {
         (self.positions.len(), missing, stale)
     }
 
-    /// Split-borrow access for the swapped-dual scan (`NIXIE_CSR_SCAN`):
-    /// the contiguous primary span (the kernels' `&mut [Watcher]` shape)
-    /// and the overflow list of the scanned code, all disjoint from
-    /// `entries`' span borrow.  The caller takes the overflow `Vec` out,
-    /// scans span-then-overflow, and commits via [`Self::commit_span_end`].
+    /// Split-borrow access for the swapped-dual scan (`NIXIE_CSR_SCAN`)
+    /// and commit-B (`NIXIE_CSR_B`): the contiguous primary span (the
+    /// kernels' `&mut [Watcher]` shape) and the overflow list of the
+    /// scanned code, all disjoint from `entries`' span borrow.  The caller
+    /// takes the overflow `Vec` out, scans span-then-overflow, and commits
+    /// via [`Self::commit_span_end`].
+    ///
+    /// TAKE semantics (matching the old `mem::take` exactly): the span's
+    /// live end drops to its start for the duration of the scan, so a
+    /// mid-scan self-dedup reads an empty combined view — exactly what the
+    /// Vec world's taken-list semantics showed it.  The caller's
+    /// `write_back_span` + `commit_span_end` restore the live end.
     pub(crate) fn scan_parts(&mut self, code: usize) -> (usize, &[Watcher], &mut Vec<Watcher>) {
         if code >= self.overflow.len() {
             self.overflow.resize(code + 1, Vec::new());
@@ -832,10 +902,18 @@ impl CsrWatchLists {
         let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
         let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
         let CsrWatchLists {
-            entries, overflow, ..
+            entries,
+            overflow,
+            prim_end,
+            span_start,
+            ..
         } = self;
+        let _ = span_start;
         let ovf = &mut overflow[code];
         let span = entries.get(start..end).unwrap_or(&[]);
+        if let Some(e) = prim_end.get_mut(code) {
+            *e = start as u32;
+        }
         (start, span, ovf)
     }
 
@@ -878,6 +956,9 @@ impl CsrWatchLists {
     /// left literal `code`'s list (the kernel compacts in place; the
     /// index entry must go now).
     pub(crate) fn index_remove(&mut self, code: usize, r: ClauseRef) {
+        if !self.maintain_index {
+            return;
+        }
         let code32 = code as u32;
         if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
             slot.retain(|c| *c != code32);
@@ -1004,8 +1085,17 @@ impl WatchLists {
             // bit-identical conflict counts — a 3-6x wall inflation on
             // watch-dense instances with zero semantic effect.  Attach only
             // when one of the CSR knobs actually asks for it.
-            csr: if csr_shadow_enabled() || csr_scan_enabled() || csr_read_enabled() {
-                Some(CsrWatchLists::default())
+            csr: if csr_shadow_enabled()
+                || csr_scan_enabled()
+                || csr_read_enabled()
+                || csr_b_enabled()
+            {
+                Some(CsrWatchLists {
+                    maintain_index: csr_shadow_enabled()
+                        || csr_index_enabled()
+                        || crate::solver::equiv::equiv_surgery_enabled(),
+                    ..CsrWatchLists::default()
+                })
             } else {
                 None
             },
@@ -1197,11 +1287,15 @@ impl WatchLists {
 
     /// Begin mirroring a scan of `lit`'s list (dual-write BCP scan, slice
     /// 2): snapshot the primary/overflow split before the list is taken.
-    pub(crate) fn shadow_begin_scan(&mut self, lit: Lit) {
+    pub(crate) fn shadow_begin_scan(&mut self, lit: Lit, scanned_len: usize) {
         if self.csr.is_some() {
-            let n = self.get(lit).len();
+            // The scan target's length is the CALLER's scratch — in flip-A
+            // the CSR materialized into it, in commit-B the Vec side is dead
+            // and the CSR's own view is what the caller scanned.  Reading
+            // `self.get(lit)` here compares against the dead Vec (0) and
+            // wrongly suspends the mirror.
             if let Some(csr) = &mut self.csr {
-                csr.begin_scan(lit.index(), n);
+                csr.begin_scan(lit.index(), scanned_len);
             }
         }
     }
@@ -1286,7 +1380,12 @@ impl WatchLists {
             watcher.r.byte_offset(),
             watcher.blocker.code()
         );
-        self.push_only(lit, watcher);
+        // Commit-B mode: the CSR overflow is the only representation — the
+        // Vec side is dead weight (its lists must stay empty so any read
+        // surfaces as a bug, not a silent divergence).
+        if !csr_b_enabled() {
+            self.push_only(lit, watcher);
+        }
         if let Some(csr) = &mut self.csr {
             csr.push_overflow(lit, watcher);
         }
@@ -1453,12 +1552,23 @@ impl WatchLists {
         self.csr.is_some()
     }
 
+    /// Combined iteration with NO env gate: the CSR's view whenever a CSR
+    /// is attached, the `Vec` list otherwise.  For structural audits that
+    /// must see the authoritative representation in every mode.
+    pub(crate) fn iter_combined_always(&self, lit: Lit) -> Box<dyn Iterator<Item = &Watcher> + '_> {
+        if let Some(c) = self.csr.as_ref() {
+            let (p, x) = c.spans(lit);
+            return Box::new(p.iter().chain(x.iter()));
+        }
+        Box::new(self.get(lit).iter())
+    }
+
     /// Flag-aware combined iteration for reader sites: the CSR view under
     /// `NIXIE_CSR_READ=1`, the `Vec` list otherwise (identical content by
     /// the drift invariant).
     pub fn iter_combined(&self, lit: Lit) -> Box<dyn Iterator<Item = &Watcher> + '_> {
         #[cfg(feature = "std")]
-        if crate::watched::csr_read_enabled()
+        if (crate::watched::csr_read_enabled() || crate::watched::csr_b_enabled())
             && let Some(c) = self.csr.as_ref()
         {
             let (p, x) = c.spans(lit);
@@ -1699,7 +1809,15 @@ impl WatchLists {
                 self.ghost_debt[idx] = self.ghost_debt[idx].saturating_add(dropped);
             }
         }
-        if let Some(csr) = &mut self.csr {
+        if csr_b_enabled() {
+            // Commit-B: the Vec side is dead — the CSR charges the debt.
+            let WatchLists {
+                csr, ghost_debt, ..
+            } = self;
+            if let Some(c) = csr.as_mut() {
+                c.relocate_with_debt(arena, plan, ghost_debt);
+            }
+        } else if let Some(csr) = &mut self.csr {
             csr.relocate(arena, plan);
         }
     }
@@ -1709,8 +1827,16 @@ impl WatchLists {
         refs: &[ClauseRef],
         arena: &ClauseArena,
     ) -> Result<(), String> {
-        for (lit_idx, list) in self.watches.iter().enumerate() {
-            for w in list {
+        // Combined-view iteration: the CSR's entries when one is attached
+        // (commit-B: the only representation), the Vec lists otherwise —
+        // identical content by the drift invariant.
+        for lit_idx in 0..self
+            .watches
+            .len()
+            .max(self.csr.as_ref().map_or(0, |c| c.num_lits()))
+        {
+            let lit = Lit::from_code(lit_idx as u32);
+            for w in self.iter_combined_always(lit) {
                 if w.r.is_null() {
                     continue;
                 }
@@ -1960,6 +2086,47 @@ pub fn csr_shadow_enabled() -> bool {
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_CSR_SHADOW")
                 .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Whether the CSR position index is maintained (`NIXIE_CSR_INDEX=1`):
+/// surgery/diagnostic machinery — a BTreeMap write per watcher-add
+/// measured +24% whole-run instructions when left on unconditionally.
+pub fn csr_index_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_INDEX")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Whether commit-B mode is active (`NIXIE_CSR_B=1`): the CSR is the
+/// ONLY live watch representation — the session kernel scans it as
+/// primary (span-copy + overflow-take roundtrip), pushes and dedups go
+/// straight to the CSR, and the `Vec<Vec<Watcher>>` side is dead (its
+/// lists stay empty; any read of them in this mode is a bug to flush
+/// out).  The divergence-hunt vehicle for the CSR-watches flip: A and B
+/// are the same binary, differing only in this env.
+pub fn csr_b_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_B").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         })
     }
     #[cfg(not(feature = "std"))]
@@ -2312,7 +2479,7 @@ mod csr_tests {
 
         // Scan drift through the WatchLists delegators. The scan body
         // writes the `Vec` itself; the delegator mirrors the same keep.
-        wl.shadow_begin_scan(l1);
+        wl.shadow_begin_scan(l1, 1);
         let parked = Lit::from_code(5);
         wl.get_mut(l1)[0].blocker = parked;
         wl.shadow_scan_keep(w2, Some(parked));

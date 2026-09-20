@@ -540,9 +540,10 @@ impl Preprocessor {
         use crate::literal::LBool;
 
         while let Some(lit) = trail.next_to_propagate() {
-            let watch_list = watches.get(lit);
-
-            for &watcher in watch_list {
+            // Commit-B / reader gate: the CSR's combined view when a CSR is
+            // attached (identical content to the Vec list by the drift
+            // invariant; the Vec side is dead in commit-B mode).
+            for &watcher in watches.iter_combined(lit) {
                 let blocker = watcher.blocker;
 
                 // Check blocker literal

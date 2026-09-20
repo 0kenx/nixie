@@ -118,8 +118,7 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
         if clause.lits.len() >= 3 {
             if !solver
                 .watches
-                .get(w0.negate())
-                .iter()
+                .iter_combined(w0.negate())
                 .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
@@ -129,8 +128,7 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
             }
             if !solver
                 .watches
-                .get(w1.negate())
-                .iter()
+                .iter_combined(w1.negate())
                 .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
@@ -150,13 +148,11 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
             }
             if solver
                 .watches
-                .get(w0.negate())
-                .iter()
+                .iter_combined(w0.negate())
                 .any(|w| Some(w.r) == solver.clauses.ref_of(id))
                 || solver
                     .watches
-                    .get(w1.negate())
-                    .iter()
+                    .iter_combined(w1.negate())
                     .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
