@@ -242,3 +242,36 @@ and the surgery was its hoped-for payback.
 Trap 22: `git stash` on the shared tree grabs other agents' in-flight
 files (caught and popped immediately this session — stage per-file
 instead, the worktree discipline the AGENTS.md prescribes).
+
+## Addendum (seventh increment): the revert + the deletion — landed `76d2db4e` + `52bfea70`
+
+**The corpus ledger killed the flip.**  14 paired cells (deterministic
+instruction counts, same binary): **geomean 1.16**.  Search-heavy cells
+pay +15-32% (SCPC +32%, x9 +31%, j3037 +27%, WS +24%, b21 +18%); the
+load-heavy instances that motivated the campaign were the flip's best
+case (+3-6%) — my spot-check sampling was biased toward the origin
+class.  Memory: wash.  Surgery payback: negative.  The default reverted
+to the legacy Vec world; `NIXIE_CSR_B=1` opts into the slack-CSR with
+every driver optimization intact.
+
+**The surgery/index machinery deleted** (752 lines): the position index
+and every maintenance funnel, the surgery experiment and production
+skip, the economics counters, the redundant test pins.  The designs and
+verdicts live in these studies; the code is gone because it is dead
+(the house rule: negative results are documented, not parked).
+
+**Why the flip slipped past the gates** (the process lesson, trap 23):
+the perf gate compares WALL (band 1.25/1.5) and counters (bit-identical
+1.000 — trajectory identity says nothing about cost); a uniform +16%
+instruction cost passes both.  The tool that caught it was the paired
+instruction-count corpus — run it on ANY default-path change that
+claims cost-neutrality, on the standing corpus, not on the motivating
+class.
+
+**The arc's final ledger**: the campaign delivered the deferred
+counting-sort load path, the slack-CSR (a structurally superior watch
+representation), the in-place split scans, the packed snapshot, and a
+fully-validated CSR-primary mode — all now opt-in (`NIXIE_CSR_B=1`),
+bit-identical, with the corpus-priced verdict that the default stays
+Vec.  The load-wall original motivation (item 1 of the handover)
+remains best addressed by the parser (its own session).
