@@ -33,6 +33,25 @@ pub(crate) fn equiv_surgery_enabled() -> bool {
 /// differ: a production surgery is a screen-gated heuristic change, and
 /// the order-sensitive drift comparison resumes only after the layout is
 /// re-adopted).  Requires `NIXIE_CSR_SHADOW=1`.
+/// Whether the production surgery skip is armed (NIXIE_SURGERY_PROD=1):
+/// rebuild-time audit-gated replacement of the watch-half rebuild by the
+/// window's surgical updates.
+pub(super) fn surgery_prod_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SURGERY_PROD")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 pub(super) fn els_surgery_enabled() -> bool {
     #[cfg(feature = "std")]
     {
@@ -750,7 +769,7 @@ impl Solver {
         // reconstruct the `Vec` lists wholesale and the fresh layout adopted
         // at the end replaces the shadow's baseline (mirroring the fill's
         // `add`s would double-maintain into a state that is discarded).
-        let drifted_shadow = self.watches.csr_take();
+        let mut drifted_shadow = self.watches.csr_take();
         #[cfg(feature = "std")]
         if crate::watched::csr_shadow_enabled()
             && let Some(dsh) = drifted_shadow.as_ref()
@@ -883,95 +902,146 @@ impl Solver {
             use crate::watched::CsrWatchBuild;
             let t0 = std::time::Instant::now();
             let num_lits = num_vars * 2;
-            let mut csr = CsrWatchBuild::default();
-            {
-                let Solver { clauses, .. } = self;
-                for cid in clauses.iter_ids() {
-                    let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
-                        continue;
-                    };
-                    if c.lits.len() < 3 {
-                        continue;
-                    }
-                    csr.count(c.lits[0].negate());
-                    csr.count(c.lits[1].negate());
-                }
-            }
-            csr.layout(num_lits);
-            {
-                let Solver { clauses, .. } = self;
-                for cid in clauses.iter_ids() {
-                    let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
-                        continue;
-                    };
-                    if c.lits.len() < 3 {
-                        continue;
-                    }
-                    let Some(r) = clauses.ref_of(cid) else {
-                        continue;
-                    };
-                    csr.fill(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
-                    csr.fill(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
-                }
-            }
-            if crate::watched::csr_shadow_enabled() {
-                let (lits, entries, bad) = self.watches.csr_shadow_compare(num_vars, &csr);
-                eprintln!(
-                    "[csr-shadow] rebuild@{}: lits={lits} entries={entries} mismatched={bad} build={}us",
-                    self.stats.conflicts,
-                    t0.elapsed().as_micros()
-                );
-            }
-            // The ELS surgery experiment's equivalence oracle: the shadow
-            // holds the SURGICALLY updated state; the Vec lists above hold
-            // the rebuilt ground truth.  Multiset equality per literal
-            // (order-insensitive — the production surgery accepts an
-            // order change, gated by the screen, not trajectory identity)
-            // proves the surgery produced exactly the rebuild's entry sets.
-            if self.csr_surgery_fired
+            // PRODUCTION SURGERY (NIXIE_SURGERY_PROD=1): when the window's
+            // surgical updates hold the watch contract (every live long
+            // clause exactly two watchers, dead/short none — audited here,
+            // one CSR sweep), the surgically-updated CSR IS the post-round
+            // watch state and the counting-sort build is skipped.  A failed
+            // audit falls back to the full rebuild — violations cost one
+            // extra build, never wrongness.  Note the STATE is contract-equal
+            // but the ORDER differs from the rebuild's id order (surgical
+            // edits preserve drift order) — a screen-gated heuristic change.
+            let mut surgery_skip = false;
+            if surgery_prod_enabled()
+                && self.csr_surgery_fired
                 && let Some(surg) = drifted_shadow.as_ref()
             {
-                use crate::watched::ClauseAuditState;
                 let clauses = &self.clauses;
                 let (total, wrong_live, stale_dead) =
                     self.watches.csr_surgery_contract_audit(surg, |off| {
                         match crate::memory::ClauseRef::from_byte_offset(off) {
                             Some(r) => match clauses.get_by_ref(r) {
                                 Some(c) if !c.deleted && c.lits.len() >= 3 => {
-                                    ClauseAuditState::LiveLong
+                                    crate::watched::ClauseAuditState::LiveLong
                                 }
-                                _ => ClauseAuditState::DeadOrShort,
+                                _ => crate::watched::ClauseAuditState::DeadOrShort,
                             },
-                            None => ClauseAuditState::DeadOrShort,
+                            None => crate::watched::ClauseAuditState::DeadOrShort,
                         }
                     });
-                eprintln!(
-                    "[csr-surgery] oracle@{}: ops={} entries={total} live-with-wrong-count={wrong_live} stale-on-dead-or-short={stale_dead}",
-                    self.stats.conflicts, self.csr_surgery_ops
-                );
-                let (irefs, imissing, istale) = surg.csr_index_audit();
-                eprintln!(
-                    "[csr-surgery] index: refs={irefs} with-missing-positions={imissing} with-stale-positions={istale}"
-                );
-                eprintln!(
-                    "[csr-surgery] economics: surgery={}us ({} entry visits) vs rebuild-build={}us",
-                    self.watches.csr_surgery_nanos / 1000,
-                    self.watches.csr_surgery_visits,
-                    t0.elapsed().as_micros()
-                );
-                let (sorted, total) = surg.span_sortedness();
-                eprintln!("[csr-surgery] spans sorted-by-ref: {sorted}/{total}");
-                self.watches.csr_surgery_visits = 0;
-                self.watches.csr_surgery_nanos = 0;
-                self.csr_surgery_fired = false;
-                self.csr_surgery_ops = 0;
+                if wrong_live == 0 {
+                    surgery_skip = true;
+                    if let Some(mut keep) = drifted_shadow.take() {
+                        keep.maintain_index = crate::watched::csr_shadow_enabled()
+                            || crate::watched::csr_index_enabled()
+                            || els_surgery_enabled();
+                        self.watches.csr_set(keep);
+                    }
+                    #[cfg(feature = "std")]
+                    eprintln!(
+                        "[surgery-prod] @{conflicts}: SKIP watch rebuild (audit green: {total} entries, {stale_dead} stale-on-dead)",
+                        conflicts = self.stats.conflicts
+                    );
+                } else {
+                    #[cfg(feature = "std")]
+                    eprintln!(
+                        "[surgery-prod] @{conflicts}: audit found {wrong_live} wrong-count clauses — full rebuild",
+                        conflicts = self.stats.conflicts
+                    );
+                }
             }
-            let mut adopted = crate::watched::CsrWatchLists::default();
-            adopted.maintain_index = crate::watched::csr_shadow_enabled()
-                || crate::watched::csr_index_enabled()
-                || els_surgery_enabled();
-            adopted.adopt_layout(csr);
-            self.watches.csr_set(adopted);
+            if !surgery_skip {
+                let mut csr = CsrWatchBuild::default();
+                {
+                    let Solver { clauses, .. } = self;
+                    for cid in clauses.iter_ids() {
+                        let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                            continue;
+                        };
+                        if c.lits.len() < 3 {
+                            continue;
+                        }
+                        csr.count(c.lits[0].negate());
+                        csr.count(c.lits[1].negate());
+                    }
+                }
+                csr.layout(num_lits);
+                {
+                    let Solver { clauses, .. } = self;
+                    for cid in clauses.iter_ids() {
+                        let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                            continue;
+                        };
+                        if c.lits.len() < 3 {
+                            continue;
+                        }
+                        let Some(r) = clauses.ref_of(cid) else {
+                            continue;
+                        };
+                        csr.fill(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
+                        csr.fill(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
+                    }
+                }
+                if crate::watched::csr_shadow_enabled() {
+                    let (lits, entries, bad) = self.watches.csr_shadow_compare(num_vars, &csr);
+                    eprintln!(
+                        "[csr-shadow] rebuild@{}: lits={lits} entries={entries} mismatched={bad} build={}us",
+                        self.stats.conflicts,
+                        t0.elapsed().as_micros()
+                    );
+                }
+                // The ELS surgery experiment's equivalence oracle: the shadow
+                // holds the SURGICALLY updated state; the Vec lists above hold
+                // the rebuilt ground truth.  Multiset equality per literal
+                // (order-insensitive — the production surgery accepts an
+                // order change, gated by the screen, not trajectory identity)
+                // proves the surgery produced exactly the rebuild's entry sets.
+                if self.csr_surgery_fired
+                    && !surgery_skip
+                    && let Some(surg) = drifted_shadow.as_ref()
+                {
+                    use crate::watched::ClauseAuditState;
+                    let clauses = &self.clauses;
+                    let (total, wrong_live, stale_dead) =
+                        self.watches.csr_surgery_contract_audit(surg, |off| {
+                            match crate::memory::ClauseRef::from_byte_offset(off) {
+                                Some(r) => match clauses.get_by_ref(r) {
+                                    Some(c) if !c.deleted && c.lits.len() >= 3 => {
+                                        ClauseAuditState::LiveLong
+                                    }
+                                    _ => ClauseAuditState::DeadOrShort,
+                                },
+                                None => ClauseAuditState::DeadOrShort,
+                            }
+                        });
+                    eprintln!(
+                        "[csr-surgery] oracle@{}: ops={} entries={total} live-with-wrong-count={wrong_live} stale-on-dead-or-short={stale_dead}",
+                        self.stats.conflicts, self.csr_surgery_ops
+                    );
+                    let (irefs, imissing, istale) = surg.csr_index_audit();
+                    eprintln!(
+                        "[csr-surgery] index: refs={irefs} with-missing-positions={imissing} with-stale-positions={istale}"
+                    );
+                    eprintln!(
+                        "[csr-surgery] economics: surgery={}us ({} entry visits) vs rebuild-build={}us",
+                        self.watches.csr_surgery_nanos / 1000,
+                        self.watches.csr_surgery_visits,
+                        t0.elapsed().as_micros()
+                    );
+                    let (sorted, total) = surg.span_sortedness();
+                    eprintln!("[csr-surgery] spans sorted-by-ref: {sorted}/{total}");
+                    self.watches.csr_surgery_visits = 0;
+                    self.watches.csr_surgery_nanos = 0;
+                    self.csr_surgery_fired = false;
+                    self.csr_surgery_ops = 0;
+                }
+                let mut adopted = crate::watched::CsrWatchLists::default();
+                adopted.maintain_index = crate::watched::csr_shadow_enabled()
+                    || crate::watched::csr_index_enabled()
+                    || els_surgery_enabled();
+                adopted.adopt_layout(csr);
+                self.watches.csr_set(adopted);
+            }
         }
         #[cfg(feature = "std")]
         if let Ok(prefix) = std::env::var("NIXIE_DUMP_WATCHES_POST") {
