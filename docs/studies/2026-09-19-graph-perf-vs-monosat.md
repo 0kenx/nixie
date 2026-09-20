@@ -222,3 +222,56 @@ Verification: conflicts/decisions/propagations **bit-identical on 40/40
 corpus instances** (old vs new binaries); full workspace suite 12 070/12 070;
 Z3 4.16.0 parity 176/176 decisive, 0 disagreements; perf gate **1.000**
 against the current pin; graph differential 500/500; clippy/fmt clean.
+
+## Addendum (2026-09-21): the radical one — event-driven incremental state, gap 2.33× → 1.65×
+
+With the shared paths fixed, re-profiling put the graph propagator back on
+top (`bfs` 24 %, `Csr::rebuild` 12 %, per-edge manager lookups 6 %). The
+content-addressed memo only survived *unchanged* views — every true-edge
+assignment changed the forced key, resetting all per-source BFS trees, and
+every event re-read every edge from the manager.
+
+The radical restructure makes the propagator **event-driven incremental**
+with a full-re-read fallback:
+
+- `on_fixed(term, value)` routes the term through an O(1) edge index and
+  records the event; no manager re-read, no recomputation.
+- The next run *applies* recorded events: packed true-/non-false-edge bits,
+  per-edge values, and growable adjacency rows update in O(1) per event.
+  A **true addition merges every memoized BFS tree whose reachable set can
+  grow** (discover the newly reachable component through the new edge;
+  parents stay real forced edges, so extracted paths remain valid
+  justifications). A false assignment only marks the possible view dirty.
+- `UserPropagator::pop` invalidates everything: backtracks retract
+  fixations without events, so the next run re-reads the manager from
+  scratch (the stateless design's safety, paid only after backtracking).
+- The possible side (backward BFS, cycle checks) rebuilds lazily on its own
+  dirty flag — only false assignments shrink it; true assignments leave it
+  untouched.
+
+**This is the first graph landing that is verdict-preserving but not
+counter-identical**: a merged tree can pick different (equally valid) path
+parents than a fresh BFS, so learned clauses differ while every consequence
+stays a valid implication. The validation burden therefore shifted to the
+soundness gates and passed in full:
+
+- the exhaustive **all-completions oracles** (27/27) — every emitted
+  justification checked against every concrete graph, the exact validator
+  for merged-tree paths;
+- **MonoSAT differential 1 600/1 600** re-run (0 disagreements, 0 skips);
+- **Z3 4.16.0 parity 176/176 decisive**, 0 disagreements;
+- **perf gate 1.000** (the module remains inert unless registered);
+- theories+solver suites show an *identical* failure set with and without
+  the change (14 pre-existing failures from another agent's concurrent
+  arithmetic work at that HEAD — not attributable to this diff).
+
+Measured (release, medians of 3, full 40-instance corpus):
+geomean ratio **2.33× → 1.65×**, totals 8.05 s → 3.35 s, worst per-instance
+18× → 6.3×. Single instances: `v150_r16_s1` 1.88 s → 0.154 s (12×),
+`v100_r32_s3` 0.42 s → 0.053 s (8×). Cumulative from the original landing:
+**5.1× → 1.65×**.
+
+Residual: term interning + Tseitin + the SAT/CDCL(T) stack — MonoSAT's
+integer-only loader territory. The next real lever would be incremental
+*decremental* handling for the possible view (currently a lazy rebuild on
+false-assignment batches); nothing in the corpus profile says it is due.
