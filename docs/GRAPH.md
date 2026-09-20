@@ -133,12 +133,18 @@ default decisions are complete for this fragment.
   connectivity, spanning trees, unbounded or dynamic vertex universes, and
   edge forcing (MonoSAT's `buildForcedEdgeReason`).
 - **Zero-length paths** are excluded from `reach`; see above.
-- **Performance**: stateless recomputation per event; no incremental
-  algorithms; no shared-source BFS caching across reach atoms. Measured
-  (see the study below): random instances at n = 100 / 6 224 edges solve
-  in ~0.3 s even in a debug build, so the guidance below is conservative;
-  workloads with very many reach atoms per check are the ones that feel the
-  O(V·E) per-event cost first.
+- **Performance**: recomputation per event, memoized through a
+  content-addressed view cache (per-source forced BFS, per-target backward
+  BFS and cycle checks are reused whenever the packed true-/non-false-edge
+  bits are unchanged — false assignments keep the forced view, true
+  assignments keep the possible view, backjumps often revisit seen keys);
+  no incremental algorithms. Measured against MonoSAT (see the studies
+  below): random instances at n = 100 / 6 224 edges solve in ~0.3 s even in
+  a debug build; on the release corpus (n ≤ 150) Nixie runs at ≈2.65×
+  MonoSAT's geomean after the 2026-09-20 throughput pass (was 5.1×), with
+  bit-identical solver counters — the remaining gap is MonoSAT's
+  incremental dynamic-graph algorithms plus the general per-assertion SMT
+  pipeline, the documented upgrade path.
 - **Certification**: graph registrations are trusted client callbacks
   without independently checkable certificates. Proof-producing and
   certified checks fail closed to `Unknown` for them (the same boundary as
@@ -210,6 +216,18 @@ segmentation policy *and* a deployment-order constraint in one query.
 The reference for the procedure is MonoSAT's source and the AAAI 2015 paper;
 semantics deviations (zero-length paths) are documented above rather than
 inherited silently.
+
+## Performance study
+
+`docs/studies/2026-09-19-graph-perf-vs-monosat.md` profiles the integration
+against MonoSAT, lands six semantics-inert optimizations (manager undo
+journals replacing per-level state clones, O(1) watch lookup, hash-set
+registration dedup, gated set/bag and BV per-assertion surveys, and the
+graph view cache), and verifies inertness by **bit-identical
+conflicts/decisions/propagations** on the whole corpus plus the full gate
+battery. Several fixes benefit every SMT workload, not just graphs: the
+set/bag re-survey was quadratic in the number of assertions for any goal
+without set/bag terms.
 
 ## Differential campaign against MonoSAT
 

@@ -683,3 +683,29 @@ impl Solver {
         }
     }
 }
+
+#[cfg(test)]
+mod dsplit_probe_tests {
+    use crate::solver::Solver;
+
+    #[test]
+    fn probe_deep_int_ite_chain_measures_deep() {
+        let solver = Solver::new();
+        let mut manager = nixie_core::ast::TermManager::new();
+        let int = manager.sorts.int_sort;
+        let bool_ = manager.sorts.bool_sort;
+        let c0 = manager.mk_var("c0", int);
+        let c1 = manager.mk_var("c1", int);
+        let b0 = manager.mk_var("b0", bool_);
+        let mut chain = c0;
+        for _ in 0..600 {
+            chain = manager.mk_ite(b0, c1, chain);
+        }
+        let eq = manager.mk_eq(c0, chain);
+        let deep = solver.term_exceeds_encode_depth(eq, &manager);
+        assert!(
+            deep,
+            "a 600-deep Int-ite chain under an eq must measure deep"
+        );
+    }
+}

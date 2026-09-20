@@ -1267,7 +1267,18 @@ impl Solver {
         // by conjunction rather than by a recursive `assert` so the reduction
         // cannot re-enter itself on the atoms it just created.
         // See `super::set_theory`.
-        {
+        // Set/bag eager survey: only when such a term exists anywhere.
+        // With no set- or bag-sorted subterm in any root, both reductions
+        // return empty results (and no honesty gates can trigger), so the
+        // block is a provable no-op — while costing a full walk of the
+        // assertion stack per `assert` (quadratic in assertions; pure
+        // Boolean workloads like graph models paid it on every clause).
+        // The current assertion is scanned first because its terms are
+        // encoded (and the flag set) only later, below.
+        if !self.has_set_or_bag_terms && self.subtree_has_set_or_bag_sort(term, manager) {
+            self.has_set_or_bag_terms = true;
+        }
+        if self.has_set_or_bag_terms {
             // Surveyed over **every** assertion, not just this one: an element
             // introduced here must meet an equality asserted earlier, and vice
             // versa. Doing it per-assertion answers `Sat` to `a = b /\ x \in a
@@ -1342,6 +1353,25 @@ impl Solver {
             let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
             if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
                 term = folded;
+            } else if super::deep_split::enabled()
+                && let Some(pieces) = super::deep_split::split_deep(term, manager)
+                && pieces
+                    .iter()
+                    .all(|p| !self.term_exceeds_encode_depth(*p, manager))
+            {
+                // The deep-split rescue: lift the deep subterms to fresh
+                // constants with defining equations (equi-satisfiable —
+                // depth traded for width; see `deep_split`).  Every piece
+                // passes the guard, so feed them through the full assert
+                // pipeline and keep this caller's term out of the books:
+                // the pieces ARE its meaning.  Measured unlock: the
+                // nec-smt class (2537-deep ite/=/let spines) — nine
+                // standing-table instances that answered an instant
+                // spurious `unknown` now get an honest search.
+                for piece in pieces {
+                    self.assert(piece, manager);
+                }
+                return;
             } else {
                 self.encode_depth_exceeded = true;
                 let index = self.assertions.len();
@@ -2180,6 +2210,24 @@ impl Solver {
             let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
             if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
                 term = folded;
+            } else if super::deep_split::enabled()
+                && let Some(pieces) = super::deep_split::split_deep(term, manager)
+                && pieces
+                    .iter()
+                    .all(|p| !self.term_exceeds_encode_depth(*p, manager))
+            {
+                // The deep-split rescue (see `assert`'s twin note).  For a
+                // NAMED assertion every piece carries the name: the named
+                // input denotes the conjunction of the pieces, so a core
+                // containing any piece legitimately involves the name
+                // (over-approximation — sound for cores, and the
+                // alternative of dropping the name from the definitions
+                // would let a core blame the caller's assertion without
+                // the pieces it actually needed).
+                for piece in pieces {
+                    self.assert_named(piece, name, manager);
+                }
+                return;
             } else {
                 self.encode_depth_exceeded = true;
                 self.record_assertion_identity(term, Some(name.to_string()), index);
@@ -3431,6 +3479,32 @@ impl Solver {
         lit
     }
 
+    /// Whether any subterm of `term` has a set- or bag-sorted type.
+    /// Explicit-stack walk with a `seen` memo (linear in the term's unique
+    /// DAG nodes); used to gate the per-assertion set/bag survey.
+    fn subtree_has_set_or_bag_sort(&self, term: TermId, manager: &TermManager) -> bool {
+        let mut stack = vec![term];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Some(data) = manager.get(t) else { continue };
+            if manager.sorts.get(data.sort).is_some_and(|s| {
+                matches!(
+                    s.kind,
+                    nixie_core::SortKind::Set(_) | nixie_core::SortKind::Bag(_)
+                )
+            }) {
+                return true;
+            }
+            for child in nixie_core::ast::traversal::get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
     /// The bag-sorted equality atoms the *user* wrote: in this term and in
     /// every earlier certificate assertion (the untouched copies). Used by
     /// the bag reduction to exempt user equalities from the
@@ -3593,6 +3667,12 @@ impl Solver {
                     && sort.is_bitvec()
                     && !self.bv_terms.contains(&term)
                 {
+                    if matches!(
+                        sort.kind,
+                        nixie_core::SortKind::Set(_) | nixie_core::SortKind::Bag(_)
+                    ) {
+                        self.has_set_or_bag_terms = true;
+                    }
                     self.bv_terms.insert(term);
                     self.trail.push(TrailOp::BvTermAdded { term });
                     // Register with BV solver if not already registered

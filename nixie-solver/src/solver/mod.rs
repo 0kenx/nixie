@@ -714,6 +714,13 @@ pub struct Solver {
     /// on an assignment no set satisfies, which is a wrong answer. This flag
     /// degrades exactly that case to `Unknown`.
     pub(super) set_terms_unconstrained: bool,
+    /// Monotonic "a set- or bag-sorted term was encoded at least once".
+    /// Gates the per-assertion set/bag re-survey (which walks the whole
+    /// assertion stack); with no such term anywhere the reductions are
+    /// provably empty, so the survey is skipped. Monotonic on purpose: a
+    /// `pop` that removes the last set term keeps the slow path — never
+    /// the reverse — so the gate can only be conservative.
+    pub(super) has_set_or_bag_terms: bool,
     /// Honesty gate (soundness) for finite fields: `true` once any FF-sorted
     /// term reaches the Tseitin encoder. The FF decision procedure
     /// (`check_ff.rs`) runs as an eager whole-problem dispatch; if an FF term
@@ -1288,6 +1295,7 @@ impl Solver {
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
             set_terms_unconstrained: false,
+            has_set_or_bag_terms: false,
             ff_terms_unconstrained: false,
             has_array_ops: false,
             array_select_terms: Vec::new(),
@@ -5449,6 +5457,7 @@ pub(crate) fn freeze_collapse_enabled() -> bool {
 mod branch_priority;
 mod bv_elim_uncnstr;
 mod bv_preprocess;
+mod deep_split;
 mod dispatch_pure_bv;
 mod fp_hybrid;
 #[cfg(test)]
