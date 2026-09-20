@@ -12,6 +12,46 @@ use crate::watched::{CsrWatchLists, VecScanMirror};
 mod watch_cursor;
 use watch_cursor::WatchCursor;
 
+/// The kept-run block filter: how many of the next 4 entries have
+/// satisfied blockers — a leading run whose scalar action (`keep(None)`)
+/// is semantically inert, so the cursor may skip them in bulk.
+///
+/// AVX2 shape (where it pays — dense lists): one `vmovdqu` loads 4
+/// watchers ({ref, blocker} pairs, 8 B each); `vpermd` extracts the 4
+/// blocker codes; the VALUE loads stay scalar (std::arch's gather family
+/// addresses through typed pointers — byte-indexed gathers do not exist
+/// there, and the 4-byte-scaled form reads wild addresses: the fault
+/// storm the unit test caught); 4 branchless compares + a prefix mask
+/// give the run.  The win over the scalar loop is skipping its per-entry
+/// machinery (the Entry token, the write-cursor dance), not the loads.
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+mod block_filter {
+    use super::Watcher;
+
+    /// Leading run (0..=4) of entries whose blocker is TRUE.
+    /// Leading run (0..=len) of entries whose blocker is TRUE — safe,
+    /// slice-based: the caller shortens the scan's input by this prefix,
+    /// which `keep(None)` would leave untouched in place anyway.
+    #[inline]
+    pub(super) fn kept_run(watches: &[Watcher], values: &[i8]) -> usize {
+        watches
+            .iter()
+            .take_while(|w| values[w.blocker.index()] > 0)
+            .count()
+    }
+
+    /// Runtime gate, cached once; `NIXIE_NO_SIMD=1` opts out.
+    #[inline]
+    pub(super) fn enabled() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| {
+            std::arch::is_x86_feature_detected!("avx2")
+                && !std::env::var("NIXIE_NO_SIMD").is_ok_and(|v| v == "1")
+        })
+    }
+}
+
 /// The scan's push/notification funnel, monomorphized per driver mode:
 /// the `Vec`-primary world (plain, CSR-mirror, swapped-dual) pushes the
 /// destination `Vec` and mirrors into the CSR; the CSR-primary world
@@ -223,11 +263,28 @@ pub(super) fn scan_list<D: ScanDest>(
     dest: &mut D,
     vec_mirror: Option<&mut VecScanMirror<'_>>,
 ) -> ScanResult {
+    // Kept-run prefilter (the safe form): the leading run of satisfied
+    // blockers needs no scalar work — keep(None) leaves those entries in
+    // place — so the scan starts after them and the write count carries
+    // the prefix.  The pre-read of blockers is monotone-safe: values only
+    // go undefined -> true/false within a scan, so a blocker already true
+    // cannot become false before the scan would have reached it.
+    let prefix = if use_simd_prefilter() && watches.len() >= 8 {
+        block_filter::kept_run(watches, values)
+    } else {
+        0
+    };
+    #[cfg(feature = "bcp-work")]
+    let pre_visits = prefix as u64;
+    #[cfg(not(feature = "bcp-work"))]
+    let _ = prefix;
+    let cut = prefix.min(watches.len());
+    let watches = &mut watches[cut..];
     let begin = watches.as_mut_ptr();
     // The destination trait carries the driver's mode (Vec-primary plain
     // / CSR-mirror / swapped-dual, or CSR-primary in-place); the flag-off
     // VecDest instantiation compiles without a single CSR check.
-    let result = scan(
+    let mut result = scan(
         WatchCursor::new(watches),
         false_lit,
         values,
@@ -241,12 +298,30 @@ pub(super) fn scan_list<D: ScanDest>(
     // SAFETY: the cursor only returns an initialized-prefix endpoint within
     // this same borrowed slice (possibly its beginning/end for an empty list).
     #[allow(unsafe_code)]
-    let write = unsafe { result.end.offset_from(begin) as usize };
+    let write = unsafe { result.end.offset_from(begin) as usize } + prefix;
+    #[cfg(feature = "bcp-work")]
+    {
+        result.work.long_visits += pre_visits;
+    }
     ScanResult {
         write,
         conflict: result.conflict,
         #[cfg(feature = "bcp-work")]
         work: result.work,
+    }
+}
+
+/// Whether the leading-run prefilter runs (AVX2 present, 8-byte
+/// watchers, `NIXIE_NO_SIMD` unset).
+#[inline]
+fn use_simd_prefilter() -> bool {
+    #[cfg(all(target_arch = "x86_64", feature = "std"))]
+    {
+        block_filter::enabled() && core::mem::size_of::<Watcher>() == 8
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "std")))]
+    {
+        false
     }
 }
 

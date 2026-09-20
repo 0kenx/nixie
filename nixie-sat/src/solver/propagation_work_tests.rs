@@ -3,6 +3,7 @@ use super::*;
 
 #[test]
 fn ledger_counts_live_and_deleted_misses_without_visiting_conflict_suffix() {
+    crate::watched::pin_legacy_watch_world();
     for legacy in [false, true] {
         for deleted_hole in [false, true] {
             for reverse in [false, true] {
