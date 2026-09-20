@@ -135,13 +135,9 @@ impl<const MIRROR: bool> ScanDest for VecDest<'_, MIRROR> {
     }
 
     #[inline]
-    fn remove(&mut self, scanned_code: usize, r: ClauseRef) {
+    fn remove(&mut self, _scanned_code: usize, r: ClauseRef) {
         if MIRROR && let Some(c) = self.csr.as_mut() {
             c.scan_remove(r);
-        } else if self.swapped
-            && let Some(c) = self.csr.as_mut()
-        {
-            c.index_remove(scanned_code, r);
         }
     }
 
@@ -226,8 +222,8 @@ impl ScanDest for CsrPartsDest<'_, '_> {
     }
 
     #[inline]
-    fn remove(&mut self, scanned_code: usize, r: ClauseRef) {
-        self.ctx.on_remove(scanned_code, r);
+    fn remove(&mut self, _scanned_code: usize, _r: ClauseRef) {
+        // Structural: the scan's commit publishes the compacted span.
     }
 
     #[inline]

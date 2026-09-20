@@ -1036,7 +1036,6 @@ mod normalization_tests {
 
     #[test]
     fn watched_pair_order_is_preserved_on_every_miss_exit() {
-        crate::watched::pin_legacy_watch_world();
         for signs in 0..16 {
             let lits = core::array::from_fn::<_, 4, _>(|i| {
                 Lit::from_code(2 * i as u32 + ((signs >> i) & 1))

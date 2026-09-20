@@ -1950,27 +1950,6 @@ pub struct Solver {
     pub(super) elim_bound: i64,
     /// Elimination phases run so far (cadical `stats.elimphases`).
     pub(super) elim_phases: u64,
-    /// The ELS-rewatching surgery experiment (`NIXIE_ELS_CSR_SURGERY=1`):
-    /// whether this round's substitution loop edited the CSR shadow, and
-    /// how many surgical ops it applied.  Read (and reset) by the watch
-    /// rebuild, which then runs the multiset equivalence oracle before
-    /// re-adopting the fresh layout.
-    pub(super) csr_surgery_fired: bool,
-    /// The ELS-rewatching surgery experiment's scan-free window: surgery
-    /// edits desync the dual-write mirror, safe only inside the ELS rewrite
-    /// loop (nothing scans between the edits and the rebuilding adopt).
-    pub(super) els_surgery_window: bool,
-    /// Surgical ops applied since the last rebuild (diagnostics only).
-    pub(super) csr_surgery_ops: u64,
-    /// Batched surgery: removals collected during the ELS window, applied
-    /// once per round by `flush_csr_surgery` (one filtered pass per
-    /// distinct literal — the per-ref scan pays O(refs×span) on the
-    /// densest literals; the batch pays O(distinct spans)).
-    pub(super) csr_surgery_pending: Vec<(crate::memory::ClauseRef, smallvec::SmallVec<[u32; 2]>)>,
-    /// Deferred surgical adds (applied after the removal flush — a
-    /// re-point onto a literal the clause already watches must not have
-    /// its fresh entry deleted by the batch).
-    pub(super) csr_surgery_pending_adds: Vec<(crate::literal::Lit, crate::watched::Watcher)>,
     /// Conflict threshold for the next elimination phase (cadical `lim.elim`).
     pub(super) lim_elim: u64,
     /// Level-0 trail length at the last elimination phase (cadical
@@ -2471,11 +2450,6 @@ impl Solver {
             elim_mark_count: 0,
             elim_bound: 0,
             elim_phases: 0,
-            csr_surgery_fired: false,
-            csr_surgery_pending: Vec::new(),
-            csr_surgery_pending_adds: Vec::new(),
-            els_surgery_window: false,
-            csr_surgery_ops: 0,
             lim_elim: elim_interval,
             last_elim_fixed: 0,
             elim_finished: false,
@@ -3571,9 +3545,6 @@ impl Solver {
             }
         }
         let mut adopted = crate::watched::CsrWatchLists::default();
-        adopted.maintain_index = crate::watched::csr_shadow_enabled()
-            || crate::watched::csr_index_enabled()
-            || crate::solver::equiv::equiv_surgery_enabled();
         adopted.adopt_layout(csr);
         self.watches.csr_set(adopted);
     }
@@ -4969,23 +4940,6 @@ impl Solver {
         // deleted clause — the exact re-establishment the debug invariant
         // caught on Break_unsat_06_07.
         self.purge_binary_edges(cid);
-        // CSR-surgery coverage (NIXIE_ELS_CSR_SURGERY=1): the central retire
-        // drops the shadow's watchers for the pre-retire watched pair (the
-        // `Vec` side keeps its entries for lazy BCP removal — the rebuild
-        // is what drops them there; the surgery must drop them eagerly or
-        // the multiset oracle reports them stale).  Covers every retire
-        // site: subsume backward-subsumption, probing, sweep, vivify, ELS.
-        // Runs before `clauses.remove` frees the arena slot.
-        if self.els_surgery_window
-            && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
-            && c.lits.len() >= 3
-            && let Some(r) = self.clauses.ref_of(cid)
-            && let Some(pos) = self.watches.csr_positions_of(r)
-        {
-            self.csr_surgery_pending.push((r, pos));
-            self.csr_surgery_ops += 1;
-            self.csr_surgery_fired = true;
-        }
         if let Some(v) = self.clauses.get(cid).filter(|c| !c.deleted) {
             let lits: SmallVec<[Lit; 8]> = v.lits.iter().copied().collect();
             for l in lits {

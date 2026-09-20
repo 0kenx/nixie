@@ -891,7 +891,6 @@ mod tests {
 
     #[test]
     fn compact_flushes_deleted_watchers_and_records_tick_debt() {
-        crate::watched::pin_legacy_watch_world();
         use crate::watched::{WatchLists, Watcher};
         let mut db = ClauseDatabase::new();
         let l0 = Lit::pos(Var::new(0));
@@ -915,7 +914,6 @@ mod tests {
 
     #[test]
     fn test_compact_arena_rewrites_refs_and_watchers() {
-        crate::watched::pin_legacy_watch_world();
         use crate::watched::{WatchLists, Watcher};
 
         let mut db = ClauseDatabase::new();
@@ -1001,7 +999,6 @@ mod tests {
 
     #[test]
     fn direct_watch_identity_activity_and_ghosts_survive_repeated_compaction() {
-        crate::watched::pin_legacy_watch_world();
         use crate::watched::Watcher;
         let mut db = ClauseDatabase::new();
         let mut watches = WatchLists::new(3);
@@ -1046,7 +1043,6 @@ mod tests {
 
     #[test]
     fn invalid_watch_ref_aborts_collection_before_any_relocation() {
-        crate::watched::pin_legacy_watch_world();
         use crate::watched::Watcher;
         let mut db = ClauseDatabase::new();
         let mut watches = WatchLists::new(3);

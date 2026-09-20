@@ -111,11 +111,6 @@ pub struct WatchLists {
     /// `None` on default paths: every mirror below is a single None-check,
     /// and nothing on a default path constructs one.
     csr: Option<CsrWatchLists>,
-    /// Surgery-economics instrumentation (slice 5, diagnostics only):
-    /// entry visits (span+overflow scans) and wall nanos of the surgical
-    /// ops — compared against the rebuild's two-sweep `build=`us per round.
-    pub(crate) csr_surgery_visits: u64,
-    pub(crate) csr_surgery_nanos: u64,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -157,8 +152,6 @@ pub(crate) struct PackedCsrSnapshot {
     ovf_packed: Vec<Watcher>,
     /// (literal code, packed end offset) per nonempty spill tail.
     ovf_ends: Vec<(u32, u32)>,
-    maintain_index: bool,
-    positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
 }
 
 impl From<&CsrWatchLists> for PackedCsrSnapshot {
@@ -180,8 +173,6 @@ impl From<&CsrWatchLists> for PackedCsrSnapshot {
             prim_end: c.prim_end.clone(),
             ovf_packed,
             ovf_ends,
-            maintain_index: c.maintain_index,
-            positions: c.positions.clone(),
         }
     }
 }
@@ -206,8 +197,6 @@ impl From<&PackedCsrSnapshot> for CsrWatchLists {
             arrivals: Vec::new(),
             scan: CsrScanFrame::default(),
             warned_precondition: false,
-            positions: p.positions.clone(),
-            maintain_index: p.maintain_index,
         }
     }
 }
@@ -380,14 +369,6 @@ pub struct CsrWatchLists {
     scan: CsrScanFrame,
     /// Precondition-violation reporting is once per process.
     warned_precondition: bool,
-    /// ref → watched-literal codes (≤ 2 entries: one watcher per
-    /// (clause, literal)): the surgery experiment's position index.
-    /// Surgery/diagnostic machinery only — see `maintain_index`.
-    positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
-    /// Whether `positions` is maintained at all (a BTreeMap write per
-    /// watcher-add measured +24% whole-run instructions when left on
-    /// unconditionally — the f5796de0 cost class).
-    pub(crate) maintain_index: bool,
 }
 
 impl CsrWatchLists {
@@ -471,12 +452,6 @@ impl CsrWatchLists {
                 t.push(w);
             }
         }
-        if self.maintain_index {
-            let slot = self.positions.entry(w.r.byte_offset()).or_default();
-            if !slot.contains(&(code as u32)) {
-                slot.push(code as u32);
-            }
-        }
     }
 
     /// Remove every entry with arena ref `r` from `lit`'s list,
@@ -502,14 +477,6 @@ impl CsrWatchLists {
             tail.retain(|w| w.r != r);
             if tail.is_empty() {
                 self.spill[i] = None;
-            }
-        }
-        if self.maintain_index
-            && let Some(slot) = self.positions.get_mut(&r.byte_offset())
-        {
-            slot.retain(|c| *c != i as u32);
-            if slot.is_empty() {
-                self.positions.remove(&r.byte_offset());
             }
         }
     }
@@ -587,22 +554,6 @@ impl CsrWatchLists {
         self.prim_end = live;
         self.spill.clear();
         self.scan = CsrScanFrame::default();
-        // Rebuild the position index from the fresh layout (surgery /
-        // diagnostic machinery only).
-        self.positions.clear();
-        if self.maintain_index {
-            for code in 0..num_lits {
-                let s = self.span_start[code] as usize;
-                let e = self.prim_end[code] as usize;
-                for off in s..e {
-                    let w = self.entries[off];
-                    let slot = self.positions.entry(w.r.byte_offset()).or_default();
-                    if !slot.contains(&(code as u32)) {
-                        slot.push(code as u32);
-                    }
-                }
-            }
-        }
     }
 
     // ---- Dual-write BCP scan (the legacy frame mirror) ---------------
@@ -669,17 +620,8 @@ impl CsrWatchLists {
 
     /// Mirror a removed entry: advance the read cursor and drop the
     /// position-index entry for `r` under the scanned literal.
-    pub(crate) fn scan_remove(&mut self, r: ClauseRef) {
+    pub(crate) fn scan_remove(&mut self, _r: ClauseRef) {
         if self.scan.active {
-            let code = self.scan.code;
-            if self.maintain_index
-                && let Some(slot) = self.positions.get_mut(&r.byte_offset())
-            {
-                slot.retain(|c| *c != code as u32);
-                if slot.is_empty() {
-                    self.positions.remove(&r.byte_offset());
-                }
-            }
             self.scan.read += 1;
         }
     }
@@ -759,22 +701,6 @@ impl CsrWatchLists {
         mut ghost_debt: Option<&mut [u32]>,
     ) {
         let relocated = plan.relocated();
-        if self.maintain_index {
-            let mut rekeyed = std::collections::BTreeMap::new();
-            let old = std::mem::take(&mut self.positions);
-            for (off, lits) in old {
-                if let Some(r) = ClauseRef::from_byte_offset(off)
-                    && !r.is_null()
-                    && !arena.is_deleted(r)
-                {
-                    rekeyed.insert(
-                        relocated[arena.live_identity(r).index()].byte_offset(),
-                        lits,
-                    );
-                }
-            }
-            self.positions = rekeyed;
-        }
         let n = self.num_lits();
         for code in 0..n {
             let mut dropped = self.relocate_span(code, arena, relocated);
@@ -862,103 +788,7 @@ impl CsrWatchLists {
         dropped
     }
 
-    /// Remove every entry whose arena byte-offset is in `refs`, from both
-    /// segments, order-preserving (the batched surgery's per-literal pass).
-    pub(crate) fn remove_clause_batch(
-        &mut self,
-        lit: Lit,
-        refs: &std::collections::HashSet<usize>,
-    ) {
-        let i = lit.index();
-        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
-        let mut write = start;
-        for read in start..end {
-            let w = self.entries[read];
-            if refs.contains(&w.r.byte_offset()) {
-                if self.maintain_index
-                    && let Some(slot) = self.positions.get_mut(&w.r.byte_offset())
-                {
-                    slot.retain(|c| *c != i as u32);
-                    if slot.is_empty() {
-                        self.positions.remove(&w.r.byte_offset());
-                    }
-                }
-                continue;
-            }
-            self.entries[write] = w;
-            write += 1;
-        }
-        if let Some(slot) = self.prim_end.get_mut(i) {
-            *slot = write as u32;
-        }
-        if let Some(tail) = self.spill.get_mut(i).and_then(|s| s.as_mut()) {
-            let mut write = 0usize;
-            for read in 0..tail.len() {
-                let w = tail[read];
-                if refs.contains(&w.r.byte_offset()) {
-                    if self.maintain_index
-                        && let Some(slot) = self.positions.get_mut(&w.r.byte_offset())
-                    {
-                        slot.retain(|c| *c != i as u32);
-                        if slot.is_empty() {
-                            self.positions.remove(&w.r.byte_offset());
-                        }
-                    }
-                    continue;
-                }
-                tail[write] = w;
-                write += 1;
-            }
-            tail.truncate(write);
-            if tail.is_empty() {
-                self.spill[i] = None;
-            }
-        }
-    }
-
-    /// Sortedness datum (slice-5 economics).
-    pub(crate) fn span_sortedness(&self) -> (usize, usize) {
-        let mut sorted = 0usize;
-        let mut total = 0usize;
-        for code in 0..self.num_lits() {
-            let start = self.span_start[code] as usize;
-            let end = self.prim_end[code] as usize;
-            if end > start + 1 {
-                total += 1;
-                let w = &self.entries[start..end];
-                if w.windows(2)
-                    .all(|p| p[0].r.byte_offset() < p[1].r.byte_offset())
-                {
-                    sorted += 1;
-                }
-            }
-        }
-        (sorted, total)
-    }
-
-    /// Live length of `code`'s span (diagnostics).
-    pub(crate) fn span_len(&self, code: usize) -> usize {
-        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
-        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
-        end.saturating_sub(start)
-    }
-
-    /// Spill-tail length of `code` (diagnostics).
-    pub(crate) fn overflow_len(&self, code: usize) -> usize {
-        self.spill_slot_len(code)
-    }
-
-    /// Spill census (diagnostics: literals spilled / total spill entries).
-    #[allow(dead_code)] // diagnostics
-    pub(crate) fn spill_census(&self) -> (usize, usize) {
-        (
-            self.spill.iter().flatten().count(),
-            self.spill.iter().flatten().map(|v| v.len()).sum(),
-        )
-    }
-
-    /// Diagnostics: total live entries / index size.
+    /// Diagnostics: total live entries.
     pub(crate) fn debug_total_entries(&self) -> usize {
         let n = self.num_lits();
         let in_layout: usize = (0..n)
@@ -980,53 +810,6 @@ impl CsrWatchLists {
             .sum()
     }
 
-    pub(crate) fn debug_index_refs(&self) -> usize {
-        self.positions.len()
-    }
-
-    /// Index-consistency audit (diagnostics).
-    pub(crate) fn csr_index_audit(&self) -> (usize, usize, usize) {
-        let mut actual: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>> =
-            std::collections::BTreeMap::new();
-        let n = self.num_lits();
-        for code in 0..n {
-            let lit = Lit::from_code(code as u32);
-            let (prim, extra) = self.spans(lit);
-            for w in prim.iter().chain(extra.iter()) {
-                let slot = actual.entry(w.r.byte_offset()).or_default();
-                if !slot.contains(&(code as u32)) {
-                    slot.push(code as u32);
-                }
-            }
-        }
-        let mut missing = 0usize;
-        let mut stale = 0usize;
-        for (off, indexed) in &self.positions {
-            match actual.get(off) {
-                None => stale += 1,
-                Some(a) => {
-                    if !indexed.iter().all(|c| a.contains(c)) {
-                        missing += 1;
-                    }
-                }
-            }
-        }
-        (self.positions.len(), missing, stale)
-    }
-
-    /// Index upkeep for a swapped-scan removal.
-    pub(crate) fn index_remove(&mut self, code: usize, r: ClauseRef) {
-        if !self.maintain_index {
-            return;
-        }
-        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
-            slot.retain(|c| *c != code as u32);
-            if slot.is_empty() {
-                self.positions.remove(&r.byte_offset());
-            }
-        }
-    }
-
     /// Mirror `WatchLists::clear`.
     pub(crate) fn clear_all(&mut self) {
         self.entries.clear();
@@ -1035,7 +818,6 @@ impl CsrWatchLists {
         self.spill.clear();
         self.arrivals.clear();
         self.scan = CsrScanFrame::default();
-        self.positions.clear();
     }
 }
 
@@ -1065,11 +847,8 @@ pub(crate) struct ScanCtx<'a> {
     /// Sticky-spill tails.
     #[allow(clippy::box_collection)] // see CsrWatchLists::spill
     spill: &'a mut Vec<Option<Box<Vec<Watcher>>>>,
-    /// The position index (surgery machinery; `maintain_index` gates).
-    positions: &'a mut std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
     /// The scanned literal's code.
     code: usize,
-    maintain_index: bool,
 }
 
 impl CsrWatchLists {
@@ -1099,13 +878,11 @@ impl CsrWatchLists {
              (both entries present — a layout invariant violation, not the \
              missing-entry degenerate case)"
         );
-        let maintain = self.maintain_index;
         let CsrWatchLists {
             entries,
             span_start,
             prim_end,
             spill,
-            positions,
             ..
         } = self;
         let (head, rest) = entries.split_at_mut(start);
@@ -1120,9 +897,7 @@ impl CsrWatchLists {
                 span_start,
                 prim_end,
                 spill,
-                positions,
                 code,
-                maintain_index: maintain,
             },
         )
     }
@@ -1209,7 +984,7 @@ impl ScanCtx<'_> {
         let live = self.prim_end.get(k).copied().unwrap_or(0) as usize;
         let cap = self.cap_of(k);
         let no_spill = self.spill.get(k).is_none_or(|s| s.is_none());
-        if no_spill && !self.maintain_index && k < self.prim_end.len() && live < cap {
+        if no_spill && k < self.prim_end.len() && live < cap {
             self.write_abs(live, w);
             self.prim_end[k] = (live + 1) as u32;
             return;
@@ -1225,7 +1000,6 @@ impl ScanCtx<'_> {
         let k = key.index();
         if let Some(tail) = self.spill.get_mut(k).and_then(|s| s.as_mut()) {
             tail.push(w);
-            self.index_note(k, w);
             return;
         }
         let live = self.end_of(k);
@@ -1239,31 +1013,6 @@ impl ScanCtx<'_> {
             }
             let slot = self.spill[k].get_or_insert_with(Box::default);
             slot.push(w);
-        }
-        self.index_note(k, w);
-    }
-
-    /// Position-index note for an append under `k` (surgery machinery).
-    fn index_note(&mut self, k: usize, w: Watcher) {
-        if self.maintain_index {
-            let slot = self.positions.entry(w.r.byte_offset()).or_default();
-            if !slot.contains(&(k as u32)) {
-                slot.push(k as u32);
-            }
-        }
-    }
-
-    /// Position-index upkeep for a scan removal (the entry with ref `r`
-    /// left the scanned literal).
-    pub(crate) fn on_remove(&mut self, code: usize, r: ClauseRef) {
-        if !self.maintain_index {
-            return;
-        }
-        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
-            slot.retain(|c| *c != code as u32);
-            if slot.is_empty() {
-                self.positions.remove(&r.byte_offset());
-            }
         }
     }
 
@@ -1346,13 +1095,6 @@ impl<'a> VecScanMirror<'a> {
     }
 }
 
-/// Clause state for the surgery contract audit ([`WatchLists::
-/// csr_surgery_contract_audit`]).
-pub(crate) enum ClauseAuditState {
-    LiveLong,
-    DeadOrShort,
-}
-
 /// The disjoint mutable parts the propagation session needs: destination
 /// lists, phantom ticks, ghost debt, and the CSR (commit-B: the sole
 /// watch representation).
@@ -1405,17 +1147,10 @@ impl WatchLists {
                 || csr_read_enabled()
                 || csr_b_enabled()
             {
-                Some(CsrWatchLists {
-                    maintain_index: csr_shadow_enabled()
-                        || csr_index_enabled()
-                        || crate::solver::equiv::equiv_surgery_enabled(),
-                    ..CsrWatchLists::default()
-                })
+                Some(CsrWatchLists::default())
             } else {
                 None
             },
-            csr_surgery_visits: 0,
-            csr_surgery_nanos: 0,
         }
     }
 
@@ -1453,116 +1188,8 @@ impl WatchLists {
             .is_some_and(|c| c.spill.iter().any(|s| s.is_some()))
     }
 
-    /// Read a ref's current watched-literal codes from the index (the
-    /// pending-collection form of the batched surgery).
-    pub(crate) fn csr_positions_of(&self, r: ClauseRef) -> Option<smallvec::SmallVec<[u32; 2]>> {
-        self.csr.as_ref()?.positions.get(&r.byte_offset()).cloned()
-    }
-
-    /// Batched surgical removal (the production surgery shape): apply all
-    /// pending `(ref, positions)` removals with ONE filtered pass per
-    /// distinct literal, instead of a full span scan per ref — the ELS
-    /// re-points concentrate on the formula's densest literals (two
-    /// smallest-code literals per clause), so per-ref scans pay
-    /// O(refs × span) where the batch pays O(sum of distinct spans).
-    /// Index entries are dropped for every removed entry.
-    #[allow(clippy::type_complexity)]
-    pub(crate) fn csr_surgery_flush(
-        &mut self,
-        pending: &[(ClauseRef, smallvec::SmallVec<[u32; 2]>)],
-    ) {
-        let Some(csr) = &mut self.csr else {
-            return;
-        };
-        #[cfg(feature = "std")]
-        let t0 = std::time::Instant::now();
-        let mut by_lit: std::collections::BTreeMap<u32, std::collections::HashSet<usize>> =
-            std::collections::BTreeMap::new();
-        for (r, lits) in pending {
-            for &code in lits {
-                by_lit.entry(code).or_default().insert(r.byte_offset());
-            }
-        }
-        for (code, refs) in by_lit {
-            let lit = Lit::from_code(code);
-            let i = code as usize;
-            self.csr_surgery_visits += (csr.span_len(i) + csr.overflow_len(i)) as u64;
-            csr.remove_clause_batch(lit, &refs);
-        }
-        #[cfg(feature = "std")]
-        {
-            self.csr_surgery_nanos += t0.elapsed().as_nanos() as u64;
-        }
-    }
-
-    /// CSR-only surgical append (the ELS-rewatching experiment): the
-    /// arrival-order overflow push, shadow-only.
-    pub(crate) fn csr_surgery_add(&mut self, lit: Lit, w: Watcher) {
-        if let Some(csr) = &mut self.csr {
-            #[cfg(feature = "std")]
-            let t0 = std::time::Instant::now();
-            csr.push_overflow(lit, w);
-            #[cfg(feature = "std")]
-            {
-                self.csr_surgery_nanos += t0.elapsed().as_nanos() as u64;
-            }
-        }
-    }
-
-    /// The surgery experiment's equivalence oracle, per-clause contract
-    /// form: scan the detached (surgically updated) CSR once and count
-    /// watchers per arena ref.  The production surgery's invariant is that
-    /// every live long clause keeps exactly two live watchers (wherever
-    /// drift + surgery left them — the rebuild's re-normalization to
-    /// stored literal order is churn the surgery deliberately does NOT
-    /// reproduce) and every dead/binary clause keeps none.  Returns
-    /// `(total_entries, live_long_with_wrong_count, dead_or_short_with_entries)`.
-    pub(crate) fn csr_surgery_contract_audit(
-        &self,
-        csr: &CsrWatchLists,
-        mut clause_state: impl FnMut(usize) -> ClauseAuditState,
-    ) -> (usize, usize, usize) {
-        let mut counts: std::collections::BTreeMap<usize, usize> =
-            std::collections::BTreeMap::new();
-        let mut total = 0usize;
-        let n = csr.num_lits();
-        for code in 0..n {
-            let lit = Lit::from_code(code as u32);
-            let (prim, extra) = csr.spans(lit);
-            total += prim.len() + extra.len();
-            for w in prim.iter().chain(extra.iter()) {
-                *counts.entry(w.r.byte_offset()).or_insert(0) += 1;
-            }
-        }
-        let mut wrong_live = 0usize;
-        let mut stale_dead = 0usize;
-        let mut sampled = 0usize;
-        for (off, count) in counts {
-            match clause_state(off) {
-                ClauseAuditState::LiveLong => {
-                    if count != 2 {
-                        wrong_live += 1;
-                        if sampled < 5 {
-                            sampled += 1;
-                            eprintln!(
-                                "[csr-surgery] sample: ref {off} has {count} watchers, index says {:?}",
-                                csr.positions.get(&off)
-                            );
-                        }
-                    }
-                }
-                ClauseAuditState::DeadOrShort => stale_dead += 1,
-            }
-        }
-        (total, wrong_live, stale_dead)
-    }
-
     /// Order-insensitive (multiset) comparison of the shadow against the
-    /// live `Vec` lists — the surgery experiment's equivalence oracle.  The
-    /// order-sensitive drifted comparison cannot be used once surgery has
-    /// edited the shadow in drift order while the `Vec` rebuilt in id
-    /// order; a production surgery accepts (and screens) that order change,
-    /// so the oracle validates the ENTRY SETS per literal.
+    /// live `Vec` lists, order-insensitively.
     /// Returns `(literals, entries, mismatched_literals)`.
     /// Compare the CSR shadow against the live lists, order-insensitively
     /// (multiset of (ref, blocker) per literal) — see [`Self::csr_multiset_compare_with`].
@@ -2326,7 +1953,6 @@ mod tests {
 
     #[test]
     fn test_watch_lists() {
-        crate::watched::pin_legacy_watch_world();
         let mut wl = WatchLists::new(5);
 
         let lit = Lit::pos(Var::new(0));
@@ -2425,25 +2051,6 @@ pub fn csr_shadow_enabled() -> bool {
     }
 }
 
-/// Whether the CSR position index is maintained (`NIXIE_CSR_INDEX=1`):
-/// surgery/diagnostic machinery — a BTreeMap write per watcher-add
-/// measured +24% whole-run instructions when left on unconditionally.
-pub fn csr_index_enabled() -> bool {
-    #[cfg(feature = "std")]
-    {
-        use std::sync::OnceLock;
-        static FLAG: OnceLock<bool> = OnceLock::new();
-        *FLAG.get_or_init(|| {
-            std::env::var("NIXIE_CSR_INDEX")
-                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        })
-    }
-    #[cfg(not(feature = "std"))]
-    {
-        false
-    }
-}
-
 /// Whether commit-B mode is active (`NIXIE_CSR_B=1`): the CSR is the
 /// ONLY live watch representation — the session kernel scans it as
 /// primary (span-copy + overflow-take roundtrip), pushes and dedups go
@@ -2471,19 +2078,6 @@ pub fn csr_b_enabled() -> bool {
     #[cfg(not(feature = "std"))]
     {
         false
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn pin_legacy_watch_world() {
-    // The legacy `Vec<Vec<Watcher>>` world this test asserts against is
-    // now the `NIXIE_CSR_B=0` opt-out (the slack-CSR is the default).
-    // nextest isolates each test in its own process, so setting the env
-    // here pins the world before the first `csr_b_enabled()` read —
-    // single-threaded test main, nothing observes the race window.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("NIXIE_CSR_B", "0");
     }
 }
 
@@ -2543,7 +2137,6 @@ mod csr_tests {
 
     #[test]
     fn csr_shadow_compare_detects_divergence() {
-        crate::watched::pin_legacy_watch_world();
         use super::*;
         let mut wl = WatchLists::new(2);
         let w = Watcher::new(ClauseId::new(7), ClauseRef::NULL, Lit::neg(Var::new(1)));
@@ -2810,7 +2403,6 @@ mod csr_tests {
     /// detected (the diagnostic must never silently pass).
     #[test]
     fn watch_lists_dual_write_drifted_compare_round_trip() {
-        crate::watched::pin_legacy_watch_world();
         use super::*;
         let v = |n: usize| Var::new(n as u32);
         let l0 = Lit::pos(v(0));
