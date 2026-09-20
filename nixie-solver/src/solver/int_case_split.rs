@@ -443,6 +443,99 @@ impl Solver {
         let trail = self.sat.trail();
         trail.level(var) == 0 && trail.value(var).is_true()
     }
+
+    /// **Item 96's channel**: mint the CDCL-visible LIA branch atoms the
+    /// arithmetic theory requested at its integrality-search budget decline
+    /// (the branch-walk ray — Z3's `branch_infeasible_int_var` /
+    /// `lia_move::branch`, see the `LiaBranchRequest` type in the arithmetic solver).
+    ///
+    /// Each request spells `(>= sum(coef·term) rhs+k)`: a fresh Boolean atom
+    /// encoded into the SAT core, phase-hinted `true` (deciding it true
+    /// either finds the model above the branch point or teaches the
+    /// refutation clause for the region below it — the pruning the
+    /// internal B&B lacks).  The atom's dichotomy `(>= f k) ∨ (< f k)` is a
+    /// theory tautology, so minting can never change satisfiability; the
+    /// memo ([`Self::lia_branch_atoms`]) never re-mints, and the round
+    /// budget ([`Self::MAX_LIA_BRANCH_ROUNDS`]) bounds the re-solve cost.
+    ///
+    /// Returns `true` when at least one NEW atom was minted — the caller
+    /// then rebuilds the theory state and re-solves (the same
+    /// reset-and-re-solve round shape as [`Self::refine_int_case_split`]).
+    /// The theory records requests ONLY when `NIXIE_LIA_BRANCH_LEMMA` is
+    /// set (the flag-gated first rung; default off).
+        fn lia_branch_null() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_NULL").is_some())
+}
+
+    pub(super) fn refine_lia_branch_requests(&mut self, manager: &mut TermManager) -> bool {
+        if self.lia_branch_rounds >= Self::MAX_LIA_BRANCH_ROUNDS {
+            return false;
+        }
+        let requests = self.arith.take_lia_branch_requests();
+        if requests.is_empty() {
+            return false;
+        }
+        let mut minted = 0usize;
+        for req in requests {
+            // The atom's constant: `rhs + k`, exact at any width (the
+            // minter's `mk_int` takes `BigInt` natively; the ray family's
+            // branch points live beyond i64).
+            let rhs_big = req.rhs.to_integer();
+            // MATCHED NULL arm (NIXIE_LIA_BRANCH_NULL=1): the same minting
+            // machinery at the same decline cadence, with the branch point
+            // scrambled to zero — still a VALID dichotomy for any integral
+            // form ((>= f) (or) (< f)), carrying none of the LP-point
+            // information.  If the null recovers as much as the treatment,
+            // the recovery is the minting perturbation, not the branch
+            // semantics (docs/BENCHMARKING.md §2).
+            let k_total = if Self::lia_branch_null() {
+                num_bigint::BigInt::from(rhs_big)
+            } else {
+                num_bigint::BigInt::from(rhs_big) + req.k
+            };
+            // The polynomial term: `sum(coef_i · term_i)` with a unit
+            // shortcut so the common ±1 coefficients do not mint noise.
+            let mut parts: Vec<TermId> = Vec::with_capacity(req.lhs.len());
+            for (term, coef) in &req.lhs {
+                let c_big = coef.to_integer();
+                let part = if c_big == 1 {
+                    *term
+                } else {
+                    let cterm = manager.mk_int(c_big);
+                    manager.mk_mul([cterm, *term])
+                };
+                parts.push(part);
+            }
+            if parts.is_empty() {
+                continue;
+            }
+            let poly = if parts.len() == 1 {
+                parts[0]
+            } else {
+                manager.mk_add(parts)
+            };
+            let k_term = manager.mk_int(k_total);
+            let atom = manager.mk_ge(poly, k_term);
+            // Memo: the term is hash-consed, so a repeated (form, k)
+            // request is the SAME term — mint each atom once.
+            if !self.lia_branch_atoms.insert(atom) {
+                continue;
+            }
+            let lit = self.encode_depth(atom, manager, 0);
+            self.sat.set_preferred_phase(lit.var(), true);
+            minted += 1;
+            #[cfg(feature = "std")]
+            if std::env::var_os("NIXIE_LIA_BRANCH_TRACE").is_some() {
+                eprintln!("[lia-branch] minted atom {atom:?} k={k_term:?}");
+            }
+        }
+        if minted > 0 {
+            self.lia_branch_rounds += 1;
+        }
+        minted > 0
+    }
 }
 
 /// Apply one normalized fact `sum(coef_i·x_i) <dir> constant` to tighten the
@@ -634,6 +727,7 @@ fn ceil_div(num: i64, den: i64) -> Option<i64> {
         Some(-((-num).div_euclid(den)))
     }
 }
+
 
 #[cfg(test)]
 mod tests {

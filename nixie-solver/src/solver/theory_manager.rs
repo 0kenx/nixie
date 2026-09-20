@@ -507,6 +507,17 @@ pub(crate) struct TheoryManager<'a> {
     /// exists so that the *release* build degrades to `Unknown` instead of
     /// emitting the empty clause, which claims an unconditional refutation.
     unjustified_conflict: bool,
+    /// Set to `true` ONLY at the arith-abstention arm of the check cascade
+    /// (the theory returned `Unknown`: its internal search gave up, e.g.
+    /// item 96's branch-walk ray).  Unlike [`Self::resource_exhausted`],
+    /// this names the CAUSE: an abstention taints only its own assignment —
+    /// a later candidate whose own check verifies cleanly is legitimate —
+    /// while a dropped conflict (the conflict-limit arms) is a suppressed
+    /// refutation that must keep poisoning `Sat` for the instance's life.
+    /// Read by the LIA branch-lemma channel (`Solver::refine_lia_branch_requests`)
+    /// to decide whether a reset-and-re-solve round may clear the sticky
+    /// flags: only a pure abstention may.
+    abstention_exhausted: bool,
     /// Wall-clock deadline for this solve, derived from `timeout_ms`.  `None`
     /// means no timeout.  Checked in the theory callbacks so a single
     /// uninterruptible `solve_with_theory` call cannot run past the budget:
@@ -702,6 +713,7 @@ impl<'a> TheoryManager<'a> {
             bool_false_node: None,
             resource_exhausted: false,
             unjustified_conflict: false,
+            abstention_exhausted: false,
             array_theory,
             #[cfg(feature = "std")]
             deadline,
@@ -893,6 +905,13 @@ impl<'a> TheoryManager<'a> {
     /// current assignment is not a verified model.
     pub(crate) fn resource_exhausted(&self) -> bool {
         self.resource_exhausted
+    }
+
+    /// Returns `true` if the exhaustion was recorded at the arith-ABSTENTION
+    /// arm (the theory declined, nothing was suppressed).  See the field's
+    /// doc comment; read by the LIA branch-lemma channel.
+    pub(crate) fn abstention_exhausted(&self) -> bool {
+        self.abstention_exhausted
     }
 
     /// Returns `true` if a theory conflict was dropped because its justification
@@ -2108,7 +2127,15 @@ impl<'a> TheoryManager<'a> {
                     return self.conflict_from_terms(&conflict_terms);
                 }
                 Ok(_) => {
+                    // Arith ABSTENTION (the theory's search gave up on THIS
+                    // assignment): taints only this assignment.  A later
+                    // candidate checked cleanly is legitimate — the LIA
+                    // branch-lemma channel may clear this via a re-solve
+                    // round (see `abstention_exhausted`).  Everything else
+                    // that sets `resource_exhausted` (dropped conflicts,
+                    // errors, the deadline) stays sticky.
                     self.resource_exhausted = true;
+                    self.abstention_exhausted = true;
                     return TheoryCheckResult::Sat;
                 }
                 Err(_) => {
@@ -4526,7 +4553,11 @@ impl TheoryCallback for TheoryManager<'_> {
                             // the solver never verified – an unsound `Sat`.  Flag
                             // resource exhaustion so the owning solver answers
                             // `Unknown`, and stop the search by reporting Sat.
+                            // ABSTENTION (nothing suppressed — see
+                            // `abstention_exhausted`): the LIA branch-lemma
+                            // channel may clear this via a re-solve round.
                             self.resource_exhausted = true;
+                            self.abstention_exhausted = true;
                             return TheoryCheckResult::Sat;
                         }
                     }

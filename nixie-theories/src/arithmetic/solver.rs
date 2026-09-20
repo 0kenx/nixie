@@ -56,10 +56,18 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a
 }
 
+/// Deterministic arm of the branch channel consulted by
+/// [`ArithSolver::lia_branch_channel_on`] ahead of the env OnceLock (set
+/// by embedders/tests that cannot control the process env; always present
+/// because the production reader consults it).
+static TEST_FORCE_BRANCH_CHANNEL: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// The comparison flavour a slack's defining atom asserted — kept so the
 /// stranded-bound re-homing sweep can re-assert the ATOM's own bound on a
 /// rebuilt row (see [`ArithSolver::rehome_stranded_row_bounds`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+
 enum SlackDir {
     /// `lhs <= rhs`: the atom's own bound is `slack <= 0`.
     Le,
@@ -92,11 +100,56 @@ struct SlackForm {
     exact: bool,
 }
 
+/// A CDCL-visible LIA branch request (Z3's `branch_infeasible_int_var` /
+/// `lia_move::branch` channel).
+///
+/// When the internal integrality search gives up on a budget (item 96's
+/// branch-walk ray: mutually-defining unbounded basics whose every branch
+/// bound the LP re-satisfies along the ray, immune to any budget — the
+/// dose-response measured zero recovery at 65 536 depth / 300 000 nodes),
+/// the fractional variable's linear form and the branch point are handed
+/// to the SOLVER layer, which mints `(>= form k)` as a fresh Boolean atom
+/// for the SAT core to decide.  Each decided polarity flows back through
+/// the ordinary atom pipeline as a bound on the form's row — the same
+/// thing a user assertion of that literal does — so CDCL's clause
+/// learning prunes the walk the internal B&B cannot: this is exactly Z3's
+/// architecture (`theory_arith_int.h: branch_infeasible_int_var`, one
+/// atom per final check, `FC_CONTINUE`), and the reason Z3 decides the
+/// ray family at all.
+///
+/// The dichotomy `(>= form k) ∨ (< form k)` is a tautology over the
+/// theory, so the minted atom can never change satisfiability — the
+/// channel is pure search guidance.  The theory records; it cannot mint
+/// (no manager handle) — the solver drains via
+/// [`ArithSolver::take_lia_branch_requests`].
+#[derive(Clone, Debug)]
+pub struct LiaBranchRequest {
+    /// The linear form over user terms: `sum(coef_i · term_i) >= rhs + k`.
+    /// Coefficients are integers (the request is skipped otherwise — see
+    /// `note_lia_branch_request`).
+    pub lhs: Vec<(TermId, Rational64)>,
+    /// The form's original right-hand side.
+    pub rhs: Rational64,
+    /// The branch point: `ceil` of the exact fractional value at decline,
+    /// EXACT at any width (`BigInt` — the ray family walks beyond i64, and
+    /// the atom minter's `mk_int` takes big integers natively).
+    pub k: num_bigint::BigInt,
+}
+
+
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
 pub struct ArithSolver {
     /// Simplex instance
     simplex: Simplex,
+    /// CDCL-visible LIA branch requests (Z3's `branch_infeasible_int_var` /
+    /// `lia_move::branch` channel — see `LiaBranchRequest`).  Recorded at
+    /// the internal integrality search's budget decline (the branch-walk
+    /// ray class, item 96) and drained by the solver layer, which mints the
+    /// `(>= form k)` atoms for the SAT core to decide.  Empty unless
+    /// `NIXIE_LIA_BRANCH_LEMMA=1` (the channel is flag-gated pending its
+    /// matched-null campaign).
+    pub(crate) lia_branch_requests: Vec<LiaBranchRequest>,
     /// Term to variable mapping
     term_to_var: FxHashMap<TermId, VarId>,
     /// Variable to term mapping
@@ -403,6 +456,7 @@ impl ArithSolver {
             int_vars: FxHashSet::default(),
             int_terms: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
+            lia_branch_requests: Vec::new(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
             slack_forms: FxHashMap::default(),
@@ -2254,6 +2308,88 @@ impl ArithSolver {
     /// problems like `rings` it is the difference between closing the tree
     /// and never finishing), falling back to the first fractional variable
     /// when no fractional variable is bounded.
+    /// Push a synthetic request (the minter's unit pin).
+    #[cfg(test)]
+    pub fn push_branch_request_for_tests(&mut self, req: LiaBranchRequest) {
+        self.lia_branch_requests.push(req);
+    }
+
+    /// Whether the CDCL-visible LIA branch channel is armed (the
+    /// flag-gated first rung of the item-96 campaign; default off).
+    fn lia_branch_channel_on() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        if TEST_FORCE_BRANCH_CHANNEL.load(core::sync::atomic::Ordering::Relaxed) {
+            return true;
+        }
+        *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_LEMMA").is_some())
+    }
+
+    /// Total requests the theory will record per solver instance.  The
+    /// solver-side memo dedups by atom term; this bounds the recording
+    /// side so a pathological walk cannot grow the queue without limit.
+    const MAX_LIA_BRANCH_REQUESTS: usize = 512;
+
+    /// Record a CDCL-visible branch request at the internal search's
+    /// budget decline (the ray signature — see `LiaBranchRequest`).
+    /// Skipped unless the channel is armed, the fractional var's form is
+    /// representable (integer coefficients over user terms, an
+    /// i64-representable branch point, a non-`exact` row), or the queue is
+    /// full.  This is a REQUEST, never a constraint: nothing changes about
+    /// this check's verdict.
+    fn note_lia_branch_request(&mut self, int_vars: &[VarId]) {
+        if !Self::lia_branch_channel_on()
+            || self.lia_branch_requests.len() >= Self::MAX_LIA_BRANCH_REQUESTS
+        {
+            return;
+        }
+        let Some(FracVar::Branch { var, ceil, .. }) = self.find_fractional_int_var(int_vars)
+        else {
+            return;
+        };
+        // The branch point must be an i64 integer (the atom minter takes
+        // `mk_int`; the wide-value class is a later rung).
+        let k = ceil.to_integer();
+        // The form: a user term's own variable (the atom is `(>= t k)`),
+        // or an atom row's recorded slack form (`(>= sum(coef·term) rhs+k)`).
+        // NOTE: `var_to_term` is push-ordered by TERM intern, not indexed by
+        // var id (slack vars interleave in the same id space), so the var's
+        // term is found through `term_to_var` — never by indexing.
+        let term_of_var = self
+            .var_to_term
+            .iter()
+            .find(|&&t| self.term_to_var.get(&t) == Some(&var))
+            .copied();
+        let (lhs, rhs) = if let Some(term) = term_of_var {
+            (vec![(term, Rational64::one())], Rational64::zero())
+        } else if let Some(form) = self.slack_forms.get(&var) {
+            // `exact` rows are fine here: the minter builds an ATOM (a
+            // manager term whose constant is an exact `IntConst`), never a
+            // narrow re-intern — the `-rhs` wrap corner does not apply.
+            (form.lhs.clone(), form.rhs)
+        } else {
+            return;
+        };
+        // Integer coefficients only: the minted atom must spell a linear
+        // polynomial the parser can rebuild into the same row (fractional
+        // coefficients would need `(/ c d)` spelling — a later rung).
+        if lhs.iter().any(|(_, c)| c.denom() != &1) {
+            return;
+        }
+        self.lia_branch_requests.push(LiaBranchRequest { lhs, rhs, k });
+    }
+
+    /// The pending (undrained) request count — diagnostics only.
+    pub fn lia_branch_requests(&self) -> &[LiaBranchRequest] {
+        &self.lia_branch_requests
+    }
+
+    /// Drain the recorded CDCL-visible branch requests (the solver layer
+    /// mints the atoms; see `LiaBranchRequest`).
+    pub fn take_lia_branch_requests(&mut self) -> Vec<LiaBranchRequest> {
+        core::mem::take(&mut self.lia_branch_requests)
+    }
+
     fn find_fractional_int_var(&self, int_vars: &[VarId]) -> Option<FracVar> {
         let mut underivable: Option<VarId> = None;
         let mut best: Option<FracVar> = None;
@@ -3344,6 +3480,12 @@ impl ArithSolver {
                 }
             }
             if stack.len() > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
+                // Item 96's ray class: the internal walk cannot close this
+                // search (measured budget-immune).  Hand the fractional
+                // variable to the CDCL-visible branch channel — a REQUEST,
+                // not a constraint; the verdict is still `Unknown` for
+                // THIS check either way.
+                self.note_lia_branch_request(int_vars);
                 for _ in 0..stack.len() {
                     self.simplex.pop();
                 }
@@ -3865,6 +4007,7 @@ impl Theory for ArithSolver {
         self.prop_lower.clear();
         self.prop_upper.clear();
         self.prop_undo.clear();
+        self.lia_branch_requests.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
@@ -4419,6 +4562,47 @@ impl ArithSolver {
 
 #[cfg(test)]
 mod fuzz_incremental;
+
+#[cfg(test)]
+/// Item 96's channel, theory-side contract: UNARMED (the default), the
+/// decline-note records nothing regardless of state (the default-off
+/// inertness the landing's bit-identity bar measures end-to-end); the
+/// queue round-trips push/take and `reset` clears it.  (The ARMED
+/// recording path — form selection, `k = ceil(exact)` at any width — is
+/// pinned end-to-end by the armed-verdict regression over a recovered
+/// survey instance; the recording fires only at a budget decline, which
+/// at unit scale means constructing the branch-walk ray itself.)
+#[test]
+fn lia_branch_request_queue_and_default_off_inertness() {
+    use crate::theory::Theory as _;
+    let mut s = ArithSolver::lia();
+    let t = |i: u32| TermId::new(i);
+    let r = Rational64::from_integer;
+    // Any state — the unarmed note must record nothing.
+    s.assert_eq(&[(t(1), r(2))], r(-1), t(100));
+    let vars: Vec<VarId> = s.term_to_var.values().copied().collect();
+    let _ = s.check();
+    s.note_lia_branch_request(&vars);
+    assert!(
+        s.lia_branch_requests().is_empty(),
+        "unarmed (no NIXIE_LIA_BRANCH_LEMMA), the channel records nothing"
+    );
+    // The queue round-trips and reset clears it.
+    s.push_branch_request_for_tests(LiaBranchRequest {
+        lhs: vec![(t(1), Rational64::one())],
+        rhs: Rational64::zero(),
+        k: num_bigint::BigInt::from(0),
+    });
+    assert_eq!(s.lia_branch_requests().len(), 1);
+    let drained = s.take_lia_branch_requests();
+    assert_eq!(drained.len(), 1);
+    assert!(s.lia_branch_requests().is_empty(), "take drains");
+    if let Some(req) = drained.into_iter().next() {
+        s.push_branch_request_for_tests(req);
+        s.reset();
+    }
+    assert!(s.lia_branch_requests().is_empty(), "reset clears");
+}
 
 #[cfg(test)]
 mod strict_stranding_regressions {
