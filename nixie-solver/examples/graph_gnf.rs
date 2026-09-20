@@ -206,6 +206,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let t0 = std::time::Instant::now();
     let gnf = match parse_gnf(&text) {
         Ok(g) => g,
         Err(e) => {
@@ -213,6 +214,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    let t_parse = t0.elapsed();
 
     let mut tm = TermManager::new();
     let mut model = GraphModel::new(&tm);
@@ -335,11 +337,13 @@ fn main() {
     }
 
     let auxiliary = auxiliary_terms(&gnf.clauses, &terms, &mut tm);
+    let t1 = std::time::Instant::now();
     let mut solver = Solver::new();
     if let Err(e) = solver.register_graph(model, &mut tm) {
         eprintln!("registration error: {e}");
         std::process::exit(2);
     }
+    let t_register = t1.elapsed();
     for clause in &gnf.clauses {
         let mut lits: Vec<nixie_core::TermId> = Vec::new();
         for &lit in clause {
@@ -357,7 +361,19 @@ fn main() {
         let clause_term = tm.mk_or(lits);
         solver.assert(clause_term, &mut tm);
     }
-    match solver.check(&mut tm) {
+    let t_assert = t1.elapsed() - t_register;
+    let t2 = std::time::Instant::now();
+    let result = solver.check(&mut tm);
+    if std::env::var_os("TIMING").is_some() {
+        eprintln!(
+            "c timing parse={:?} register={:?} assert={:?} check={:?}",
+            t_parse,
+            t_register,
+            t_assert,
+            t2.elapsed()
+        );
+    }
+    match result {
         SolverResult::Sat => println!("s SATISFIABLE"),
         SolverResult::Unsat => println!("s UNSATISFIABLE"),
         SolverResult::Unknown => {
