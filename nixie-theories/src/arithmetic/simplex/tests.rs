@@ -1833,3 +1833,154 @@ fn derivation_through_a_crossed_window_declines_instead_of_fabricating() {
         );
     }
 }
+
+// ===== Z3 `patch_basic_columns` (the cheap integrality move) =====
+
+#[test]
+fn patching_deltas_solve_the_congruence() {
+    // x + α·δ must be integral for the returned δ: verified directly and
+    // against hand-solved cases.
+    // x = 1/2, α = 3/4: 1/2 + (3/4)δ ∈ ℤ ⟺ δ ≡ 2 (mod 4).
+    let (dp, dm) = Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::new(3, 4))
+        .expect("solution exists (denom 2 | 4)");
+    assert_eq!((dp, dm), (2, -2));
+    for d in [dp, dm] {
+        let v = Rational64::new(1, 2) + Rational64::new(3, 4) * Rational64::from_integer(d);
+        assert!(
+            v.is_integer(),
+            "δ={d} must make the value integral, got {v}"
+        );
+    }
+    // x = 2/3, α = 1/3: 2/3 + δ/3 ∈ ℤ ⟺ δ ≡ 1 (mod 3).
+    let (dp, dm) = Simplex::patching_deltas(&Rational64::new(2, 3), &Rational64::new(1, 3))
+        .expect("solution exists (denom 3 | 3)");
+    assert_eq!((dp, dm), (1, -2));
+    // No solution when denom(x) ∤ denom(α): x = 1/2, α = 1/3 (2 ∤ 3 —
+    // 1/2 + δ/3 is never an integer for integral δ).
+    assert!(Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::new(1, 3)).is_none());
+    // The divided case DOES solve (2 | 4): 1/2 + (1/4)δ ∈ ℤ at δ = 2.
+    let (dp, _) = Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::new(1, 4))
+        .expect("2 | 4 admits solutions");
+    let v = Rational64::new(1, 2) + Rational64::new(1, 4) * Rational64::from_integer(dp);
+    assert!(
+        v.is_integer(),
+        "δ={dp} must make the value integral, got {v}"
+    );
+    // α integral (no fractional part): the caller never asks, but the math
+    // degrades to δ ≡ 0 (mod 1) — decline rather than fabricate.
+    assert!(Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::one()).is_none());
+}
+
+#[test]
+fn patch_int_columns_makes_fractional_basic_integral() {
+    // The genuine patchable shape: after feasibility, the integer basic x
+    // sits at -1/3 with row `x = -1/3 + (1/3)·t1 - (2/3)·y`; moving the
+    // integer nonbasic y by -2 lands x on 1 — a pure value move, no
+    // pivot, no row added (Z3 `patch_basic_columns`).
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+    s.set_lower(x, Rational64::from_integer(-4), 0);
+    s.set_upper(x, Rational64::from_integer(4), 1);
+    s.set_lower(y, Rational64::from_integer(-4), 2);
+    s.set_upper(y, Rational64::from_integer(4), 3);
+    // 3x + 2y + 1 <= 0 ; y <= 0
+    let mut e1 = LinExpr::new();
+    e1.terms.push((x, Rational64::from_integer(3)));
+    e1.terms.push((y, Rational64::from_integer(2)));
+    e1.constant = Rational64::one();
+    let t1 = s.intern_row(e1);
+    s.set_upper(t1, Rational64::zero(), 4);
+    let mut e2 = LinExpr::new();
+    e2.terms.push((y, Rational64::one()));
+    let t2 = s.intern_row(e2);
+    s.set_upper(t2, Rational64::zero(), 5);
+    assert!(s.check().is_ok());
+    // The LP point has x fractional (x = -1/3): patchable via y.
+    assert!(!s.delta_value(x).real.is_integer());
+    let done = s.patch_int_columns(&|v| v == x || v == y);
+    assert!(done, "the point is patchable: y by -2 lands x on 1");
+    let xv = s.delta_value(x).real;
+    let yv = s.delta_value(y).real;
+    assert!(xv.is_integer() && yv.is_integer());
+    // The patched point satisfies the source row 3x + 2y + 1 <= 0.
+    let row_val =
+        Rational64::from_integer(3) * xv + Rational64::from_integer(2) * yv + Rational64::one();
+    assert!(
+        row_val <= Rational64::zero(),
+        "patched point violates the row: {row_val}"
+    );
+}
+
+#[test]
+fn patch_int_columns_declines_and_rolls_back_when_blocked() {
+    // Same shape, but y's window is pinned to {0} so both patching deltas
+    // are blocked: the pass must decline and RESTORE the pre-patch point.
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+    s.set_lower(x, Rational64::from_integer(-4), 0);
+    s.set_upper(x, Rational64::from_integer(4), 1);
+    s.set_lower(y, Rational64::zero(), 2);
+    s.set_upper(y, Rational64::zero(), 3);
+    let mut e1 = LinExpr::new();
+    e1.terms.push((x, Rational64::from_integer(3)));
+    e1.terms.push((y, Rational64::from_integer(2)));
+    e1.constant = Rational64::one();
+    let t1 = s.intern_row(e1);
+    s.set_upper(t1, Rational64::zero(), 4);
+    assert!(s.check().is_ok());
+    let before = s.delta_value(x).real;
+    let done = s.patch_int_columns(&|v| v == x || v == y);
+    assert!(!done, "y cannot move: no patch exists");
+    assert_eq!(
+        s.delta_value(x).real,
+        before,
+        "rollback must restore the point"
+    );
+}
+
+#[test]
+fn patch_int_columns_declines_without_fractional_int_coefficients() {
+    // x's row carries only INTEGRAL coefficients on integer nonbasics
+    // (2x + 2y + 1 <= 0, x - y <= 0): nothing to patch through — decline
+    // with the fractional value preserved.
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+    s.set_lower(x, Rational64::from_integer(-4), 0);
+    s.set_upper(x, Rational64::from_integer(4), 1);
+    s.set_lower(y, Rational64::from_integer(-4), 2);
+    s.set_upper(y, Rational64::from_integer(4), 3);
+    let mut e1 = LinExpr::new();
+    e1.terms.push((x, Rational64::from_integer(2)));
+    e1.terms.push((y, Rational64::from_integer(2)));
+    e1.constant = Rational64::one();
+    let t1 = s.intern_row(e1);
+    s.set_upper(t1, Rational64::zero(), 4);
+    let mut e2 = LinExpr::new();
+    e2.terms.push((x, Rational64::one()));
+    e2.terms.push((y, Rational64::from_integer(-1)));
+    let t2 = s.intern_row(e2);
+    s.set_upper(t2, Rational64::zero(), 5);
+    assert!(s.check().is_ok());
+    let done = s.patch_int_columns(&|v| v == x || v == y);
+    assert!(
+        !done,
+        "no fractional integer coefficient exists to patch through"
+    );
+    assert!(!s.delta_value(x).real.is_integer() || !s.delta_value(y).real.is_integer());
+}
+
+#[test]
+fn patch_int_columns_declines_on_fractional_nonbasic() {
+    // A fractional nonbasic integer column can never be repaired by an
+    // integral move — the pass must decline immediately.
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    s.set_lower(x, Rational64::new(1, 2), 0);
+    assert!(s.check().is_ok());
+    let done = s.patch_int_columns(&|v| v == x);
+    assert!(!done, "fractional nonbasic x = 1/2 must decline the pass");
+}
+// scratch debug appended as a test

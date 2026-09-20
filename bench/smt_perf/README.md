@@ -42,6 +42,19 @@ The scratch `results.json` is gitignored; commit the per-environment
 | QF_LIA | 32/60 | 54/60 | 0 |
 | QF_BV | 50/60 | 53/60 | 0 |
 
+## Second snapshot (2026-09-20, z3 4.16.0, the pivot-storm session)
+
+| family | nixie | z3 | disagreements |
+|---|---|---|---|
+| QF_LIA | 32/60 | 54/60 | 0 |
+| QF_BV | 51/60 | 55/60 | 0 |
+
+The only cell that moved: `Sage2/bench_11463` timeout -> unsat (the
+Z3-shaped per-firing cut budget hands control back to CDCL, which
+refutes at 9 818 conflicts).  The LIA class is unchanged — the
+`docs/studies/2026-09-20-lia-pivot-storm-dissected.md` map owns it
+(CDCL-visible branching + the wide-store arithmetic layer).
+
 The QF_LIA gap (−22) is simplex-side capacity — the arithmetic arc's
 active territory; QF_BV is within 3.  Re-run at landing-relevant shas
 and compare against this table.

@@ -1,6 +1,6 @@
 {
   "z3_version": "Z3 version 4.16.0 - 64 bit",
-  "nixie_sha": "7e5075db",
+  "nixie_sha": "2c4d1428",
   "cap_s": 10,
   "families": [
  {
@@ -11,180 +11,115 @@
   "verdict_disagreements": 0,
   "rows": [
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/coef-size/smt/size-10/c10_problem__001.smt2.slack.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/coef-size/smt/size-10/c10_problem__001.smt2.slack.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 26
+     "wall_ms": 12
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 18
+     "wall_ms": 22
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/smt/20-vars/v20_problem__019.smt2.slack.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/smt/20-vars/v20_problem__019.smt2.slack.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 907
+     "wall_ms": 861
     },
     "z3": {
      "verdict": "sat",
-     "conflicts": 47,
-     "wall_ms": 7083
+     "conflicts": 52,
+     "wall_ms": 7085
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/smt/35-vars/v35_problem__031.smt2.slack.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/CAV_2009_benchmarks/smt/35-vars/v35_problem__031.smt2.slack.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 255
+     "wall_ms": 106
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 658
+     "wall_ms": 639
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/cut_lemmas/20-vars/cut_lemma_03_005.smt2.slack.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20180326-Bromberger/more_slacked/cut_lemmas/20-vars/cut_lemma_03_005.smt2.slack.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10011
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10027
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/labyrinth/0190-labyrinth-18-0.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10111
+     "wall_ms": 10010
     },
     "z3": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10185
+     "wall_ms": 10044
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20210219-Dartagnan/ConcurrencySafety-Main/stack_longer-1-O0.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/2019-cmodelsdiff/labyrinth/0190-labyrinth-18-0.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10097
+     "wall_ms": 10122
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10212
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20210219-Dartagnan/ConcurrencySafety-Main/stack_longer-1-O0.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10101
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 642,
-     "wall_ms": 2202
+     "wall_ms": 1978
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/BART-PT-010/RC-05.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/BART-PT-010/RC-05.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10019
+     "wall_ms": 10026
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 124
+     "wall_ms": 135
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/CircularTrains-PT-024/RC-03.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/CircularTrains-PT-024/RC-03.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 24
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 22
+     "wall_ms": 21
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D05N100/RC-08.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D05N100/RC-08.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 46
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 27
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D10N050/RF-01.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 18,
-     "wall_ms": 62
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 30
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D20N150/RC-15.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 742,
-     "wall_ms": 1473
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 90
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D40N100/RC-13.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10023
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 120
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/ERK-PT-000010/RC-15.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 40
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 22
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Eratosthenes-PT-050/RF-04.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 2,
-     "wall_ms": 26
+     "wall_ms": 9
     },
     "z3": {
      "verdict": "sat",
@@ -193,20 +128,163 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-00020/RF-05.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D10N050/RF-01.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 18,
+     "wall_ms": 35
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 21
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D20N150/RC-15.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 742,
+     "wall_ms": 1380
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 41
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Diffusion2D-PT-D40N100/RC-13.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10013
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 106
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/ERK-PT-000010/RC-15.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
-     "wall_ms": 30
+     "wall_ms": 13
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 22
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Eratosthenes-PT-050/RF-04.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 2,
+     "wall_ms": 15
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 18
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-00020/RF-05.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 10
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 1,
+     "wall_ms": 18
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-05000/RF-10.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 11
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 20
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-00010/RF-12.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 11
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 20
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-04000/RC-08.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 13
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 22
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/IOTPpurchase-PT-C05M04P03D02/RC-07.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 22,
+     "wall_ms": 21
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 4,
+     "wall_ms": 23
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-00200/RC-06.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 17
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
      "wall_ms": 19
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/FMS-PT-05000/RF-10.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-50000/RC-12.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 8
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 17
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/MAPK-PT-00640/RC-12.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 1,
@@ -219,141 +297,63 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-00010/RF-12.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 43
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 23
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/HouseConstruction-PT-04000/RC-08.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 17
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/IOTPpurchase-PT-C05M04P03D02/RC-07.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 22,
-     "wall_ms": 57
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 4,
-     "wall_ms": 25
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-00200/RC-06.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 16
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Kanban-PT-50000/RC-12.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 19
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 21
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/MAPK-PT-00640/RC-12.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 31
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 22
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/NeighborGrid-PT-d3n3m1t11/RC-15.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/NeighborGrid-PT-d3n3m1t11/RC-15.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 13
+     "wall_ms": 11
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 22
+     "wall_ms": 18
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Referendum-PT-020/RC-14.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/Referendum-PT-020/RC-14.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 1,
-     "wall_ms": 34
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 1,
-     "wall_ms": 23
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RobotManipulation-PT-00010/RC-14.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 1,
-     "wall_ms": 31
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 27
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RobotManipulation-PT-02000/RF-11.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
      "wall_ms": 12
     },
     "z3": {
      "verdict": "unsat",
+     "conflicts": 1,
+     "wall_ms": 18
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RobotManipulation-PT-00010/RC-14.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 1,
+     "wall_ms": 7
+    },
+    "z3": {
+     "verdict": "sat",
      "conflicts": 0,
      "wall_ms": 19
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RwMutex-PT-r0010w1000/RC-00.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RobotManipulation-PT-02000/RF-11.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 9
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 17
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RwMutex-PT-r0010w1000/RC-00.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 10023
+     "wall_ms": 10016
     },
     "z3": {
      "verdict": "timeout",
@@ -362,7 +362,7 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RwMutex-PT-r2000w0010/RF-14.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/RwMutex-PT-r2000w0010/RF-14.smt2",
     "nixie": {
      "verdict": "timeout",
      "conflicts": 0,
@@ -371,869 +371,15 @@
     "z3": {
      "verdict": "sat",
      "conflicts": 606,
-     "wall_ms": 898
+     "wall_ms": 794
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT0032DC0008/RC-00.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 45
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 21
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT0256DC0128/RF-00.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 3,
-     "wall_ms": 66
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 21
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT4096DC2048/RC-04.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 1,
-     "wall_ms": 34
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 1,
-     "wall_ms": 19
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SwimmingPool-PT-03/RF-06.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 24
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 21
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/20231117-c_inference/30_30_18_15_sat.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10012
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 195,
-     "wall_ms": 222
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/15-vars/problem_2__014.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 361
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 32
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/30-vars/problem__011.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10009
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 31
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/45-vars/problem__022.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10010
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 114
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_random_LIA/ex13500_2600_100.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10020
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 789,
-     "wall_ms": 990
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex2100_2400_100.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 2,
-     "wall_ms": 512
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 1,
-     "wall_ms": 85
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex6540_2400_100.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10018
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 1231,
-     "wall_ms": 918
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/convert/convert-jpg2gif-query-1145.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 274,
-     "wall_ms": 418
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 14,
-     "wall_ms": 55
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/convert/convert-jpg2gif-query-1546.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10017
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 415,
-     "wall_ms": 5269
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/dillig/20-11.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 581
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 32
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/mathsat/FISCHER10-7-fair.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 2133,
-     "wall_ms": 2447
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 1055,
-     "wall_ms": 101
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/bftpd_login/prp-28-50.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 154
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 1301
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/bftpd_login/prp-71-50.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 350
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 1230
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass/prp-43-49.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 177
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 136
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-24-40.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 114
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 17221,
-     "wall_ms": 3295
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-39-50.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 130
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10022
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-7-34.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 40
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 24549,
-     "wall_ms": 3548
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_group/prp-28-42.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 39
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 424,
-     "wall_ms": 1867
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_group/prp-70-49.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 85
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 8537,
-     "wall_ms": 6796
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_user/prp-43-47.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 115
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10017
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/int_from_list/prp-17-49.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 205
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 31458,
-     "wall_ms": 5767
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/user_is_in_group/prp-2-50.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 196
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10029
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/med/checkpass_pwd/prp-5-23.smt2",
-    "nixie": {
-     "verdict": "unknown",
-     "conflicts": 0,
-     "wall_ms": 145
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 1057,
-     "wall_ms": 238
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/nec-smt/small/int_from_list/prp-3-18.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 1015,
-     "wall_ms": 859
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 21
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/rings/ring_2exp12_8vars_1ite_unsat.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10021
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 138,
-     "wall_ms": 62
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/rings/ring_2exp8_9vars_5ite_unsat.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10017
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 1006,
-     "wall_ms": 548
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/rings_preprocessed/ring_2exp6_5vars_1ite_unsat.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10012
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 104,
-     "wall_ms": 44
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_LIA/slacks/35-26.slack.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 253
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 205
-    }
-   }
-  ]
- },
- {
-  "family": "QF_BV",
-  "n": 60,
-  "nixie_solved": 50,
-  "z3_solved": 53,
-  "verdict_disagreements": 0,
-  "rows": [
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/2017-BuchwaldFried/counterexample.dump.ia32_Mul_base_disp--Add32.load32.Mul32.Mulh_u32.0005.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10023
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 37
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20190311-bv-term-small-rw-Noetzli/bv-term-small-rw_196.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 37,
-     "wall_ms": 11
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 15
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20190311-bv-term-small-rw-Noetzli/bv-term-small-rw_89.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 8
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 19
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20210312-Bouvier/vlsat3_a94.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10052
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10082
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/dualexecution_affine/dualexecution_affine.t1.i2.eb1c0387.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 77,
-     "wall_ms": 101
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 134
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i16.049314fa.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 30
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 30
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i42.e3eabc77.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 104
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 49
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t4.i8.18ee5e14.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 7,
-     "wall_ms": 823
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 155
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/RWS/Example_11.txt.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 7667,
-     "wall_ms": 2314
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 1710
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_11463.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10109
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10017
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_13079.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 251,
-     "wall_ms": 1442
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 9218
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_14592.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10035
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10015
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_16217.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10095
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 1042
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_1782.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 475,
-     "wall_ms": 475
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 493
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_3238.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10033
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10020
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_5003.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10250
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10095
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_6722.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 493
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10123
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_840.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 118167,
-     "wall_ms": 4193
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 912
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/asp/BlockedNQueens/156.48.1960.36.1721328612.dat.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10057
-    },
-    "z3": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10025
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/bmc-bv-svcomp14/jain_7_true.c.21.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 645
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 85
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/bruttomesso/core/ext_con_048_016_0256.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 15859,
-     "wall_ms": 2160
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 186,
-     "wall_ms": 161
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/dwp_formulas/try5_small_noof_functions_flanagansaxe_paste.quoting_options_from_style.il.flanagansaxe.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 4,
-     "wall_ms": 15
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 26
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/pspace/ndist.b.20000.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 9,
-     "wall_ms": 761
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 1626
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_1627.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT0032DC0008/RC-00.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
      "wall_ms": 13
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_232.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 8
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 19
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_604.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 1807
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 25
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app11/bench_352.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 98
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 199
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_1394.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 47,
-     "wall_ms": 16
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 24
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_2087.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 14
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 28
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_2780.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 10148
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 350
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_3473.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 11
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 22
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_4166.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 11
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 17
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_486.smt2",
-    "nixie": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 7
-    },
-    "z3": {
-     "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 14
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_5552.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 44
     },
     "z3": {
      "verdict": "unsat",
@@ -1242,46 +388,718 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app2/bench_1038.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT0256DC0128/RF-00.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 3,
+     "wall_ms": 14
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 20
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SmallOperatingSystem-PT-MT4096DC2048/RC-04.smt2",
     "nixie": {
      "verdict": "unsat",
+     "conflicts": 1,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 1,
+     "wall_ms": 24
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20220307-SMPT/SwimmingPool-PT-03/RF-06.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 11
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 17
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/20231117-c_inference/30_30_18_15_sat.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10016
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 195,
+     "wall_ms": 237
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/15-vars/problem_2__014.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 879
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 27
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/30-vars/problem__011.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10007
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 22
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/CAV_2009_benchmarks/smt/45-vars/problem__022.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10007
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 102
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_random_LIA/ex13500_2600_100.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10019
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 789,
+     "wall_ms": 951
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex2100_2400_100.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 2,
+     "wall_ms": 359
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 1,
+     "wall_ms": 78
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/bofill-scheduling/SMT_real_LIA/ex6540_2400_100.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10019
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 1231,
+     "wall_ms": 885
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/convert/convert-jpg2gif-query-1145.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 274,
+     "wall_ms": 338
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 14,
+     "wall_ms": 43
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/convert/convert-jpg2gif-query-1546.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10026
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 415,
+     "wall_ms": 5261
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/dillig/20-11.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 17
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 29
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/mathsat/FISCHER10-7-fair.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 2133,
+     "wall_ms": 1158
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 1055,
+     "wall_ms": 84
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/bftpd_login/prp-28-50.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 66
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 1266
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/bftpd_login/prp-71-50.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 77
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 1169
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass/prp-43-49.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 46
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 129
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-24-40.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 25
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 17221,
+     "wall_ms": 3184
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-39-50.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 49
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10025
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/checkpass_pwd/prp-7-34.smt2",
+    "nixie": {
+     "verdict": "unknown",
      "conflicts": 0,
      "wall_ms": 21
     },
     "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 32
+     "verdict": "sat",
+     "conflicts": 24549,
+     "wall_ms": 2740
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app2/bench_456.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_group/prp-28-42.smt2",
     "nixie": {
-     "verdict": "sat",
+     "verdict": "unknown",
      "conflicts": 0,
-     "wall_ms": 17
+     "wall_ms": 22
     },
     "z3": {
      "verdict": "sat",
-     "conflicts": 0,
-     "wall_ms": 17
+     "conflicts": 424,
+     "wall_ms": 1516
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app5/bench_1149.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_group/prp-70-49.smt2",
     "nixie": {
-     "verdict": "sat",
-     "conflicts": 162,
-     "wall_ms": 46
-    },
-    "z3": {
-     "verdict": "sat",
+     "verdict": "unknown",
      "conflicts": 0,
      "wall_ms": 38
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 8537,
+     "wall_ms": 6317
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app5/bench_85.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/getoption_user/prp-43-47.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 39
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10016
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/int_from_list/prp-17-49.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 30
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 31458,
+     "wall_ms": 5081
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/large/user_is_in_group/prp-2-50.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 52
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10025
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/med/checkpass_pwd/prp-5-23.smt2",
+    "nixie": {
+     "verdict": "unknown",
+     "conflicts": 0,
+     "wall_ms": 20
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 1057,
+     "wall_ms": 217
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/nec-smt/small/int_from_list/prp-3-18.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 1015,
+     "wall_ms": 771
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 23
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/rings/ring_2exp12_8vars_1ite_unsat.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10017
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 138,
+     "wall_ms": 69
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/rings/ring_2exp8_9vars_5ite_unsat.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10021
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 1006,
+     "wall_ms": 523
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/rings_preprocessed/ring_2exp6_5vars_1ite_unsat.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10015
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 104,
+     "wall_ms": 41
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_LIA/slacks/35-26.slack.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 182
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 209
+    }
+   }
+  ]
+ },
+ {
+  "family": "QF_BV",
+  "n": 60,
+  "nixie_solved": 51,
+  "z3_solved": 55,
+  "verdict_disagreements": 0,
+  "rows": [
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/2017-BuchwaldFried/counterexample.dump.ia32_Mul_base_disp--Add32.load32.Mul32.Mulh_u32.0005.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10026
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 30
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20190311-bv-term-small-rw-Noetzli/bv-term-small-rw_196.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 37,
+     "wall_ms": 11
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 18
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20190311-bv-term-small-rw-Noetzli/bv-term-small-rw_89.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 24
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20210312-Bouvier/vlsat3_a94.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10074
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10074
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/dualexecution_affine/dualexecution_affine.t1.i2.eb1c0387.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 77,
+     "wall_ms": 109
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 119
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i16.049314fa.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 39
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 34
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t1.i42.e3eabc77.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 61
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 39
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/20221012-MCMPC/millionaires/millionaires.t4.i8.18ee5e14.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 7,
+     "wall_ms": 207
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 156
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/RWS/Example_11.txt.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 7667,
+     "wall_ms": 2011
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 1533
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_11463.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 9818,
+     "wall_ms": 6756
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10018
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_13079.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 251,
+     "wall_ms": 485
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 6665
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_14592.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10032
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10017
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_16217.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10118
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 954
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_1782.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 475,
+     "wall_ms": 296
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 480
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_3238.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10025
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10019
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_5003.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10218
+    },
+    "z3": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10107
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_6722.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 569
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 8112
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/Sage2/bench_840.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 118167,
+     "wall_ms": 3118
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 767
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/asp/BlockedNQueens/156.48.1960.36.1721328612.dat.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10057
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 9596
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/bmc-bv-svcomp14/jain_7_true.c.21.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 467
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 73
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/bruttomesso/core/ext_con_048_016_0256.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 15859,
+     "wall_ms": 1616
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 186,
+     "wall_ms": 151
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/dwp_formulas/try5_small_noof_functions_flanagansaxe_paste.quoting_options_from_style.il.flanagansaxe.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 4,
+     "wall_ms": 12
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 22
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/pspace/ndist.b.20000.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 9,
+     "wall_ms": 632
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 1080
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_1627.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
@@ -1290,11 +1108,180 @@
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 14
+     "wall_ms": 19
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_1321.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_232.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 16
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app1/bench_604.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 678
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 15
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app11/bench_352.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 88
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 200
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_1394.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 47,
+     "wall_ms": 16
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 25
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_2087.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 11
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 21
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_2780.smt2",
+    "nixie": {
+     "verdict": "timeout",
+     "conflicts": 0,
+     "wall_ms": 10231
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 305
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_3473.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 33
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_4166.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 12
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 24
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_486.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 20
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app12/bench_5552.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 63
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 23
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app2/bench_1038.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 18
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 41
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app2/bench_456.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 16
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 19
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app5/bench_1149.smt2",
+    "nixie": {
+     "verdict": "sat",
+     "conflicts": 162,
+     "wall_ms": 29
+    },
+    "z3": {
+     "verdict": "sat",
+     "conflicts": 0,
+     "wall_ms": 35
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app5/bench_85.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
@@ -1307,46 +1294,7 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_2014.smt2",
-    "nixie": {
-     "verdict": "timeout",
-     "conflicts": 0,
-     "wall_ms": 147
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 217
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_2708.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 63
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 57
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_340.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 253
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 178
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_4093.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_1321.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
@@ -1355,184 +1303,184 @@
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 16
+     "wall_ms": 18
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_4787.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_2014.smt2",
     "nixie": {
-     "verdict": "unsat",
+     "verdict": "timeout",
      "conflicts": 0,
-     "wall_ms": 11
+     "wall_ms": 202
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 23
+     "wall_ms": 195
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_548.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_2708.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 248
+     "wall_ms": 68
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 180
+     "wall_ms": 56
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_6172.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_340.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 117
+     "wall_ms": 224
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 31
+     "wall_ms": 169
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_6866.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_4093.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 13
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 17
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_4787.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 10
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 20
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_548.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 209
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 167
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_6172.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 87
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 24
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_6866.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 98,
-     "wall_ms": 22
+     "wall_ms": 15
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 40
+     "wall_ms": 29
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_7558.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_7558.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 493
+     "wall_ms": 294
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 276
+     "wall_ms": 167
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_8251.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app7/bench_8251.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 11
+     "wall_ms": 14
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 38
+     "wall_ms": 20
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_147.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_147.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 86,
-     "wall_ms": 31
+     "wall_ms": 17
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 33
+     "wall_ms": 20
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_239.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_239.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 2305,
-     "wall_ms": 4055
+     "wall_ms": 1171
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 7573
+     "wall_ms": 6076
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_3439.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_3439.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 5314
+     "wall_ms": 198
     },
     "z3": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 31
+     "wall_ms": 18
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_71.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app8/bench_71.smt2",
     "nixie": {
      "verdict": "unsat",
      "conflicts": 0,
-     "wall_ms": 20
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 28
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_1438.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 16,
-     "wall_ms": 74
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 854
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_213.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 368
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 20
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_2823.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 25
-    },
-    "z3": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 19
-    }
-   },
-   {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_545.smt2",
-    "nixie": {
-     "verdict": "unsat",
-     "conflicts": 0,
-     "wall_ms": 27
+     "wall_ms": 12
     },
     "z3": {
      "verdict": "unsat",
@@ -1541,42 +1489,94 @@
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/spear/samba_v3.0.24/bin_eventlogadm_vc330983.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_1438.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 16,
+     "wall_ms": 19
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 783
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_213.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 102
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 17
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_2823.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 6
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 15
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/sage/app9/bench_545.smt2",
+    "nixie": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 9
+    },
+    "z3": {
+     "verdict": "unsat",
+     "conflicts": 0,
+     "wall_ms": 16
+    }
+   },
+   {
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/spear/samba_v3.0.24/bin_eventlogadm_vc330983.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 803,
-     "wall_ms": 356
+     "wall_ms": 220
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 618
+     "wall_ms": 524
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/spear/samba_v3.0.24/bin_libsmbclient_vc1225831.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/spear/samba_v3.0.24/bin_libsmbclient_vc1225831.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 1533,
-     "wall_ms": 5301
+     "wall_ms": 4455
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 1837
+     "wall_ms": 1488
     }
    },
    {
-    "instance": "../../media/data/proj/nixie/smt-lib/non-incremental/QF_BV/stp_samples/run_03230.trace.cond_012091_0x4182b4_00.smt2",
+    "instance": "../nixie/smt-lib/non-incremental/QF_BV/stp_samples/run_03230.trace.cond_012091_0x4182b4_00.smt2",
     "nixie": {
      "verdict": "sat",
      "conflicts": 30,
-     "wall_ms": 42
+     "wall_ms": 16
     },
     "z3": {
      "verdict": "sat",
      "conflicts": 0,
-     "wall_ms": 28
+     "wall_ms": 21
     }
    }
   ]

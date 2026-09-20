@@ -2200,18 +2200,26 @@ impl ArithSolver {
     /// Maximum branch-and-bound tree depth for the LIA integrality search.
     const LIA_MAX_DEPTH: usize = 4096;
     /// Maximum number of branch-and-bound nodes explored before giving up
-    /// (returning `Unknown`).  Bounds worst-case exponential search.
+    /// (returning `Unknown`).  Bounds worst-case exponential search.  (A
+    /// tight node budget does NOT pay here as it would in z3: z3's
+    /// branching is CDCL-visible, so learned clauses prune the tree and a
+    /// per-check budget hands off to a smarter outer loop; this internal
+    /// search has no such pruning and a cut budget only converts solvable
+    /// instances to `Unknown` — the wide-literal bnb snapshot pin measures
+    /// exactly that at >512 nodes.)
     const LIA_MAX_NODES: usize = 20_000;
     /// Gomory (GMI) cut rounds run at the root of the branch-and-bound
-    /// search before branching starts.  Each round re-solves the LP and
-    /// derives cuts from still-fractional integer basic rows (Z3's
-    /// `theory_arith_int` interleaves `mk_gomory_cut` with the branch
-    /// search the same way).
+    /// search before branching starts.  Z3's `int_solver::check` cascade
+    /// fires Gomory on a PERIOD (every `m_int_gomory_cut_period`-th check
+    /// call, default 4) and generates at most `get_gomory_cuts(2)` — two
+    /// cuts per firing — falling through to branching otherwise.  The
+    /// historical 24×16 grind poisoned the tableau: every round re-
+    /// feasilibilizes through cut rows whose denominators multiply the
+    /// entries, and the exact-rational blowup measured on the CAV family
+    /// (wide-store migration at ~700 pivots) starts exactly there.
     const LIA_MAX_CUT_ROUNDS: usize = 24;
-    /// Per-round cap on cuts: each cut adds a permanent row to the tableau
-    /// for the rest of this B&B search, so a flood of weak cuts costs more
-    /// pivot work than it saves.
-    const LIA_MAX_CUTS_PER_ROUND: usize = 16;
+    /// Per-round cap on cuts — Z3's `get_gomory_cuts(2)`.
+    const LIA_MAX_CUTS_PER_ROUND: usize = 2;
     /// Coefficient magnitude guard for cuts: numerators/denominators beyond
     /// this would blow up every later pivot on the cut row, so the cut is
     /// skipped (branch-and-bound alone remains sound and complete).
@@ -2673,7 +2681,7 @@ impl ArithSolver {
     /// Gomory-cut rounds, then branch-and-bound, inside the caller's scope.
     fn lia_cuts_then_bnb(&mut self) -> Result<TheoryResult> {
         self.bnb_used_reasons.clear();
-        for _ in 0..Self::LIA_MAX_CUT_ROUNDS {
+        for round in 0..Self::LIA_MAX_CUT_ROUNDS {
             // Re-solve after the previous round's cuts.
             match self.simplex.check() {
                 Ok(()) => {
@@ -2690,6 +2698,22 @@ impl ArithSolver {
                 }
             }
             let int_vars = self.interned_int_vars();
+            // Z3 `patch_basic_columns` — the cheap integrality move FIRST
+            // (before any cut/branch): move nonbasic integer columns so
+            // fractional integer basics land on integers, bounds kept, no
+            // pivots.  On the equality-chain / random-LP families this
+            // finds the integral point outright where cut rounds + internal
+            // B&B would grind hundreds of re-feasibilizations (the measured
+            // `problem__022` shape: 285 make_feasible invocations, rational
+            // entries compounding to the wide store's gcd storm).
+            if round == 0
+                && self
+                    .simplex
+                    .patch_int_columns(&|v| self.int_vars.contains(&v))
+            {
+                self.snapshot_lia_model(&int_vars);
+                return Ok(TheoryResult::Sat);
+            }
             if self.find_fractional_int_var(&int_vars).is_none() {
                 // Cuts closed the integrality gap outright — every integer
                 // variable's value is derivably integral (the tri-state

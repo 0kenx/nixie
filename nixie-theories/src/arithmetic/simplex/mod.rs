@@ -205,6 +205,27 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
     }
 }
 
+/// Modular inverse of `a` modulo `m` (`m > 1`), `None` when not coprime.
+/// Extended Euclid over `i128`; the ring fixup lands the result in `0..m`.
+fn mod_inverse_i64(a: i64, m: i64) -> Option<i64> {
+    if m <= 1 {
+        return None;
+    }
+    let mut t: i128 = 0;
+    let mut new_t: i128 = 1;
+    let mut r: i128 = m as i128;
+    let mut new_r: i128 = (a as i128).rem_euclid(m as i128);
+    while new_r != 0 {
+        let q = r / new_r;
+        (t, new_t) = (new_t, t - q * new_t);
+        (r, new_r) = (new_r, r - q * new_r);
+    }
+    if r != 1 {
+        return None; // not coprime
+    }
+    Some(t.rem_euclid(m as i128) as i64)
+}
+
 /// Fused `x + f·y` on `Rational64` – the exact operation the pivot
 /// substitution performs per term.  The integer fast path (`f`, `y` and `x`
 /// all integral) is two checked `i64` multiplies/adds and *no gcd at all*;
@@ -6200,6 +6221,267 @@ impl Simplex {
     #[inline]
     pub(super) fn is_basic(&self, idx: usize) -> bool {
         idx < self.basic.len() && self.basic[idx]
+    }
+
+    /// The minimal integral move deltas that make `x + α·δ` integral — Z3's
+    /// `get_patching_deltas` (`src/math/lp/int_solver.cpp`): with `x =
+    /// x₁/x₂` and `α = a₁/a₂` both reduced, a solution δ exists iff `x₂ ∣
+    /// a₂`, and the solutions are exactly `δ ≡ δ₊ (mod a₂)` where `δ₊ =
+    /// (−u·t·x₁) mod a₂` with `t = a₂/x₂` and `u·a₁ + v·x₂ = 1` the Bézout
+    /// witness (`u = a₁⁻¹ mod x₂`).  Returns `(δ₊, δ₊ − a₂)`, one positive
+    /// and one negative representative (`0 < δ₊ < a₂` always: `δ₊ = 0`
+    /// would mean `x` itself is integral).
+    fn patching_deltas(x: &Rational64, alpha: &Rational64) -> Option<(i64, i64)> {
+        let (x1, x2) = (*x.numer(), *x.denom());
+        let (a1, a2) = (*alpha.numer(), *alpha.denom());
+        if x1 == 0 || a1 == 0 {
+            return None;
+        }
+        if a2 % x2 != 0 {
+            return None;
+        }
+        let t = a2 / x2;
+        let u = mod_inverse_i64(a1, x2)?;
+        // δ₊ = (−u·t·x₁) mod a₂.  Every factor fits `i64` and the product
+        // fits `i128` (each factor < 2⁶³).
+        let m = (-(u as i128) * (t as i128) * (x1 as i128)).rem_euclid(a2 as i128);
+        if m == 0 || m >= i64::MAX as i128 {
+            return None;
+        }
+        let dminus = m - a2 as i128;
+        if dminus <= i64::MIN as i128 {
+            return None;
+        }
+        Some((m as i64, dminus as i64))
+    }
+
+    /// Z3 `try_patch_column`: move nonbasic `j` by the integral `delta`
+    /// when every variable it touches stays inside its bounds and no
+    /// integral dependent becomes fractional.  A pure assignment update —
+    /// no pivot, no tableau change.  `false` declines without side
+    /// effects.
+    fn try_patch_column(&mut self, v: VarId, j: VarId, delta: i64) -> bool {
+        debug_assert_eq!(
+            self.assignment.get(v as usize).map(|a| a.delta.is_zero()),
+            Some(true)
+        );
+        let dr = Rational64::from_integer(delta);
+        let ji = j as usize;
+        let jv = match self.assignment.get(ji) {
+            Some(a) => *a,
+            None => return false,
+        };
+        // A variable parked in the wide point store has a stale assignment
+        // entry: its exact point is not representable, so no bound check on
+        // it can be trusted — decline (sound skip).
+        if self.wide_points.contains_key(&j) {
+            return false;
+        }
+        let new_j = DeltaRational {
+            real: match checked_add_r64(jv.real, dr) {
+                Some(r) => r,
+                None => return false,
+            },
+            delta: jv.delta,
+        };
+        // An integral move can never repair a fractional `j` — the point
+        // would stay fractional at a nonbasic integer column forever, so
+        // such a move can never contribute to an integral point.  Require
+        // `j` integral up front (Z3's nonbasics rest at integral bounds by
+        // construction; nixie's may not, so the guard is explicit).
+        if !jv.real.is_integer() || !jv.delta.is_zero() {
+            return false;
+        }
+        if let Some(lo) = self.lower.get(ji).and_then(|b| b.as_ref())
+            && lo.value.cmp_narrow(&new_j) == core::cmp::Ordering::Greater
+        {
+            return false;
+        }
+        if let Some(hi) = self.upper.get(ji).and_then(|b| b.as_ref())
+            && hi.value.cmp_narrow(&new_j) == core::cmp::Ordering::Less
+        {
+            return false;
+        }
+        // Every dependent basic stays in bounds and keeps integrality.
+        let Some(col) = self.columns.get(&j).cloned() else {
+            return false;
+        };
+        let mut updates: Vec<(usize, DeltaRational)> = Vec::with_capacity(col.len());
+        for owner in col.iter() {
+            let oi = *owner as usize;
+            // A wide-row owner's assignment entry is stale by design: its
+            // window cannot be checked — decline the whole candidate
+            // (sound: patching is an optimization).
+            if self.wide_rows.contains_key(owner) {
+                return false;
+            }
+            let Some(row) = self.tableau.get(owner) else {
+                continue;
+            };
+            let Some(coef) = row.terms.iter().find(|(vv, _)| *vv == j).map(|(_, c)| *c) else {
+                continue;
+            };
+            let old = match self.assignment.get(oi) {
+                Some(a) => *a,
+                None => return false,
+            };
+            let prod = match checked_mul_r64(coef, dr) {
+                Some(p) => p,
+                None => return false,
+            };
+            let new_val = DeltaRational {
+                real: match checked_add_r64(old.real, prod) {
+                    Some(r) => r,
+                    None => return false,
+                },
+                delta: old.delta,
+            };
+            if let Some(lo) = self.lower.get(oi).and_then(|b| b.as_ref())
+                && lo.value.cmp_narrow(&new_val) == core::cmp::Ordering::Greater
+            {
+                return false;
+            }
+            if let Some(hi) = self.upper.get(oi).and_then(|b| b.as_ref())
+                && hi.value.cmp_narrow(&new_val) == core::cmp::Ordering::Less
+            {
+                return false;
+            }
+            // Z3: "do not waste resources on this case" — never break an
+            // integral dependent.
+            let old_int = old.real.is_integer() && old.delta.is_zero();
+            let new_int = new_val.real.is_integer() && new_val.delta.is_zero();
+            if old_int && !new_int {
+                return false;
+            }
+            updates.push((oi, new_val));
+        }
+        // Commit: pure value moves, tableau untouched.
+        self.assignment[ji] = new_j;
+        for (oi, nv) in updates {
+            self.assignment[oi] = nv;
+        }
+        true
+    }
+
+    /// Z3 `patch_basic_column`: make fractional integer basic `v` integral
+    /// by moving one nonbasic integer column with a fractional row
+    /// coefficient.  Row orientation here is `v = const + Σ coef·x`, so
+    /// moving `j` by `δ` moves `v` by `coef_j·δ`; the patching deltas solve
+    /// `frac(v) + frac(coef_j)·δ ≡ 0 (mod 1)`.
+    fn patch_basic_column(&mut self, v: VarId, is_int: &dyn Fn(VarId) -> bool) {
+        // A wide-basic's narrow row does not exist (its defining row lives
+        // in the wide store) and its assignment entry is stale — nothing
+        // here may be patched soundly.  Skip (the exact-value acceptance
+        // read in `patch_int_columns` covers it).
+        if self.wide_rows.contains_key(&v) {
+            return;
+        }
+        let Some(row) = self.tableau.get(&v).cloned() else {
+            return;
+        };
+        let Some(val) = self.assignment.get(v as usize).copied() else {
+            return;
+        };
+        // A nonzero delta component can never become integral by a
+        // (real-integral) patch move — skip.
+        if !val.delta.is_zero() {
+            return;
+        }
+        if val.real.is_integer() {
+            return;
+        }
+        // Checked: the fractional-part subtraction itself can overflow at
+        // wide magnitudes — decline (sound skip) instead of panicking in
+        // debug / wrapping in release.
+        let Some(r) = checked_sub_r64(val.real, val.real.floor()) else {
+            return;
+        };
+        for (j, coef) in row.terms.iter().copied() {
+            if !is_int(j) || coef.is_integer() {
+                continue;
+            }
+            let Some(alpha) = checked_sub_r64(coef, coef.floor()) else {
+                continue;
+            };
+            let Some((dp, dm)) = Self::patching_deltas(&r, &alpha) else {
+                continue;
+            };
+            if self.try_patch_column(v, j, dp) || self.try_patch_column(v, j, dm) {
+                return;
+            }
+        }
+    }
+
+    /// Z3 `int_solver::patch_basic_columns` — the cheap integrality move
+    /// that runs BEFORE any cut or branch: for every fractional integer
+    /// basic, try to move a nonbasic integer column so the basic lands on
+    /// an integer, with every touched variable staying inside its bounds
+    /// and no integral dependent broken.  Pure assignment updates — no
+    /// pivots, no tableau changes, no rows added.  Returns `true` when no
+    /// integer basic is fractional afterwards (the assignment is then an
+    /// honest integral point: LP feasibility is preserved by the bound
+    /// checks, integrality by construction).
+    pub(super) fn patch_int_columns(&mut self, is_int: &dyn Fn(VarId) -> bool) -> bool {
+        // Z3's `has_inf_int` covers EVERY integer column, basic or not —
+        // so must both the feasibility pre-read and the success read here.
+        // A fractional NONBASIC integer column is unfixable by integral
+        // moves (and moving it only poisons the point further), so the
+        // pass declines immediately when one exists.  Every value read is
+        // EXACT (`point_value_exact`): a wide-basic's or wide-point's raw
+        // assignment entry is stale, and reading it fabricates
+        // integrality — the false-`sat` class `find_fractional_int_var`'s
+        // own comment documents (`(= (+ (* 27670116100584327436 v2) ...)
+        // -5)` answered `sat` on a fabricated `v1 = 0`).
+        let int_cols: Vec<VarId> = (0..self.assignment.len())
+            .map(|i| i as VarId)
+            .filter(|v| is_int(*v))
+            .collect();
+        let mut frac: Vec<VarId> = Vec::new();
+        for v in &int_cols {
+            match self.point_value_exact(*v) {
+                Some(exact) => {
+                    let integral = exact.real.is_integer() && exact.delta.is_zero();
+                    if !integral {
+                        if self.is_basic(*v as usize) {
+                            frac.push(*v);
+                        } else {
+                            // A fractional NONBASIC is unfixable by
+                            // integral moves: the pass cannot succeed.
+                            return false;
+                        }
+                    }
+                }
+                // No exact value at all: nothing may be accepted.
+                None => return false,
+            }
+        }
+        // Roll back the value moves when the pass does not reach an
+        // all-integral point: a partial patch is sound (every move keeps
+        // its touched variables inside their bounds) but it PERTURBS the
+        // point the cut/branch machinery then works from, and on the
+        // knife-edge wide-value instances that perturbation measurably
+        // degrades the downstream search (the wide-point publication
+        // regressions: the exact-model pins flipped sat -> unknown).  The
+        // pass is all-or-nothing: complete patches pay, partial ones
+        // restore the assignment and leave the caller's trajectory
+        // untouched.
+        let snapshot = self.assignment.clone();
+        for v in &frac {
+            self.patch_basic_column(*v, is_int);
+        }
+        // Success = every integer variable (basic or nonbasic) carries an
+        // integral, delta-free value — Z3's `!has_inf_int`.
+        // Success = every integer variable (basic or nonbasic) carries an
+        // EXACT integral, delta-free value — Z3's `!has_inf_int`, with the
+        // same wide-aware exact read the precheck used.
+        let done = int_cols.iter().all(|v| {
+            self.point_value_exact(*v)
+                .is_some_and(|exact| exact.real.is_integer() && exact.delta.is_zero())
+        });
+        if !done {
+            self.assignment = snapshot;
+        }
+        done
     }
 
     /// Whether `var` currently carries a defining row in the tableau.
