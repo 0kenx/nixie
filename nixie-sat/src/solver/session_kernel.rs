@@ -139,12 +139,24 @@ impl Solver {
             // the lists average ~3 entries, so the copy is L1 traffic and
             // the per-scan `Vec::with_capacity` it replaces was the
             // dominant commit-B cost).
-            let b_prepared: Option<(usize, &mut Vec<Watcher>, Vec<Watcher>)> =
+            // Empty-overflow fast path (the common inter-rebuild state):
+            // no take, no second pass — mid-scan self-pushes accumulate in
+            // the live slot (visible to later dedups, exactly as the
+            // taken-`Vec` slot was) and the arm truncates them at scan end,
+            // reproducing the put-back-overwrite semantics without the
+            // take/pass/put machinery.
+            #[allow(clippy::type_complexity)]
+            let b_prepared: Option<(usize, &mut Vec<Watcher>, Option<Vec<Watcher>>)> =
                 if b_mode && let Some(c) = csr.as_mut() {
                     let (start, span, ovf_slot) = c.scan_parts(code);
+                    let ovf = if ovf_slot.is_empty() {
+                        None
+                    } else {
+                        Some(core::mem::take(ovf_slot))
+                    };
                     scratch.clear();
                     scratch.extend_from_slice(span);
-                    Some((start, &mut *scratch, core::mem::take(ovf_slot)))
+                    Some((start, &mut *scratch, ovf))
                 } else {
                     None
                 };
@@ -154,7 +166,7 @@ impl Solver {
                 core::mem::take(&mut destinations[code])
             };
             let watches_len = if let Some((_, span_copy, ovf)) = b_prepared.as_ref() {
-                span_copy.len() + ovf.len()
+                span_copy.len() + ovf.as_ref().map_or(0, Vec::len)
             } else {
                 watches.len()
             };
@@ -204,7 +216,7 @@ impl Solver {
                 {
                     let refs: Vec<String> = if let Some((_, sc, ov)) = b_prepared.as_ref() {
                         sc.iter()
-                            .chain(ov.iter())
+                            .chain(ov.as_deref().unwrap_or(&[]))
                             .map(|w| format!("{}:{}", w.r.byte_offset(), w.blocker.code()))
                             .collect()
                     } else {
@@ -228,7 +240,7 @@ impl Solver {
                 None
             };
             #[allow(unused_mut)]
-            let mut result = if let Some((span_start, span_copy, mut ovf)) = b_prepared {
+            let mut result = if let Some((span_start, span_copy, ovf)) = b_prepared {
                 // Commit-B arm: the CSR is the sole representation — no
                 // Vec mirror, pushes/dedups land in the CSR (the kernel's
                 // const-B instantiation), and the kept prefixes (unvisited
@@ -249,27 +261,39 @@ impl Solver {
                     c.commit_span_end(code, r1.write);
                 }
                 let mut r2 = list_kernel::ScanResult::default();
-                let ovf_write = if r1.conflict.is_null() {
-                    r2 = list_kernel::scan_list::<false, true>(
-                        &mut ovf,
-                        !lit,
-                        values,
-                        &mut queue,
-                        arena.reborrow(),
-                        destinations,
-                        csr,
-                        None,
-                        None,
-                    );
-                    r2.write
-                } else {
-                    // Conflict in the span pass: the overflow was never
-                    // visited — it returns UNTRUNCATED (the unvisited
-                    // tail), exactly as the Vec side's finish() did.
-                    ovf.len()
-                };
-                if let Some(c) = csr.as_mut() {
-                    c.put_back_overflow(code, ovf, ovf_write);
+                match ovf {
+                    None => {
+                        // Fast path: drop the mid-scan self-pushes (the
+                        // put-back-overwrite) — pass 2 has no list.
+                        if let Some(c) = csr.as_mut() {
+                            c.truncate_overflow(code, 0);
+                        }
+                    }
+                    Some(mut ovf) => {
+                        let ovf_write = if r1.conflict.is_null() {
+                            r2 = list_kernel::scan_list::<false, true>(
+                                &mut ovf,
+                                !lit,
+                                values,
+                                &mut queue,
+                                arena.reborrow(),
+                                destinations,
+                                csr,
+                                None,
+                                None,
+                            );
+                            r2.write
+                        } else {
+                            // Conflict in the span pass: the overflow was
+                            // never visited — it returns UNTRUNCATED (the
+                            // unvisited tail), exactly as the Vec side's
+                            // finish() did.
+                            ovf.len()
+                        };
+                        if let Some(c) = csr.as_mut() {
+                            c.put_back_overflow(code, ovf, ovf_write);
+                        }
+                    }
                 }
                 let mut merged = r1;
                 if merged.conflict.is_null() {
