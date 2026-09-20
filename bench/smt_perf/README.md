@@ -55,6 +55,23 @@ refutes at 9 818 conflicts).  The LIA class is unchanged — the
 `docs/studies/2026-09-20-lia-pivot-storm-dissected.md` map owns it
 (CDCL-visible branching + the wide-store arithmetic layer).
 
+## Third snapshot (2026-09-20, z3 4.16.0, calm load, the extract-window + SAT-core landings)
+
+| family | nixie | z3 | disagreements |
+|---|---|---|---|
+| QF_LIA | 32/60 | 52/60 | 0 |
+| QF_BV | **54/60** | 53/60 | 0 |
+
+First slice where nixie leads z3 on QF_BV.  Movement vs the second
+snapshot: `counterexample.dump.ia32_Mul_*` timeout -> unsat at **25 ms**
+(the extract-window arithmetic folds the multiplier identities at zero
+conflicts), `Sage2/bench_16217` timeout -> unsat (9.9 s, same rules),
+and `Sage2/bench_3238` timeout -> **sat at 4.1 s where z3 times out**
+(the concurrent SAT-core landings).  The LIA class is unchanged —
+`docs/studies/2026-09-20-lia-branch-channel-design.md` is the owning
+implementation map.  (The interleaved session's load-contaminated runs
+at load 26-35 were never committed; this snapshot is the honest one.)
+
 The QF_LIA gap (−22) is simplex-side capacity — the arithmetic arc's
 active territory; QF_BV is within 3.  Re-run at landing-relevant shas
 and compare against this table.

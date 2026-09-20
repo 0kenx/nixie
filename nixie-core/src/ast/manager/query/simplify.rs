@@ -49,7 +49,7 @@ impl TermManager {
     ///   variable and function symbol name in the DAG is collected
     ///   first), so a user variable cannot collide with a binding name.
     /// * **Only compound subtrees bind** (size ≥
-    ///   [`MIN_SHARED_SUBTREE_SIZE`]): shared leaves (variables,
+    ///   `MIN_SHARED_SUBTREE_SIZE`): shared leaves (variables,
     ///   constants) keep their plain spelling, so small terms print
     ///   exactly as before — the pass engages only where the unfolding
     ///   would actually repeat real content.
@@ -238,7 +238,7 @@ impl TermManager {
     /// (never a strengthening); the top-level call starts with the empty
     /// context, so the RESULT is unconditionally equivalent to the input.
     /// Fuel-bounded throughout; a growth guard keeps the result when a
-    /// rewrite would exceed [`CTX_GROWTH_LIMIT`] × the input's DAG size.
+    /// rewrite would exceed `CTX_GROWTH_LIMIT` × the input's DAG size.
     pub fn ctx_simplify(&mut self, root: TermId) -> TermId {
         let size_in = self.subtree_dag_size(root);
         let mut fuel = CTX_FUEL_BUDGET;

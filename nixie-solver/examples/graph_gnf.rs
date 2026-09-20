@@ -27,6 +27,12 @@ use nixie_core::ast::TermManager;
 use nixie_solver::{Solver, SolverResult};
 use nixie_theories::graph::{GraphModel, VertexId};
 
+/// Match the production CLI's allocator (see `nixie-cli/src/main.rs`):
+/// without this, throughput examples measure glibc malloc instead of the
+/// solver.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// A parsed GNF instance over the supported subset.
 struct Gnf {
     clauses: Vec<Vec<i64>>,
