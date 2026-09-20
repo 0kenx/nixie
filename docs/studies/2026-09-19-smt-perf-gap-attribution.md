@@ -321,3 +321,37 @@ landed; eq-solving through select-chains is the remaining rule family.
 Verification: suite 12 062/12 062 (one documented load-flake re-passed
 standalone, 182 s at `-j1`); clippy/fmt clean; Z3 parity 100 % correct,
 0 disagreements (z3 4.16.0); perf gate PASS; fresh differentials clean.
+
+### The eq-chain follow-up (eighth session): the synthetic class closes end-to-end; the real member's blocker located to one conjunct
+
+The landed `ctx_simplify` was driven against synthetic priority-select
+chains (`(= K (ite (not (= K rest)) v rest))` nested, values themselves
+selects, 60 levels): **`unsat` end-to-end and a bytes-scale `(simplify)`
+echo** — the push + case-split + connection cascade closes exactly the
+class the parameter sweep specified.  Isolation checks confirm every
+sub-shape on var atoms, `(= 1 i844)` atoms, and under `not`
+(`(not (ite q false r))` → `(not (and (not q) r))`, z3-identical).
+
+The real nec-smt member's post-ctx residual (full body, 1 991 chars
+after let-sharing): conjuncts 1–2 are pushed/connected correctly; the
+blocker is the LAST conjunct — a **self-referential priority-select**
+over a heavily-shared sibling (`(= 400 (ite (= 222 a!185) 224 (ite …
+(ite (not (= 467 a!185)) a!185 …))))`, `a!185` a ~30×-referenced shared
+chain).  The connections fire throughout the walk (fuel ≈ untouched at
+4.99 M), so the stall is in the deep re-walking of the shared select —
+`ctx_walk` has no memoization, and shared subchains re-walk per
+reference.  **Next session's entry points, in order**: (a) one
+fuel-at-exit counter to confirm; (b) a per-context-signature memo
+(the context's relevant atoms per subterm — z3's ctx-simplify caches
+under a normalized context), or a pre-pass that solves the
+`(= K rest)` guards (the `solve_eqs` family proper) which collapses the
+select before the walk.
+
+Repro-generation notes (the traps this session hit, so the next one
+does not): generate test goals with let-bindings in SCOPE ORDER
+(outermost binds first — building inside-out with a running `prev`
+inverts the references); never nest `check-sat` inside a `let` (a
+COMMAND in term position — nixie currently executes nothing and exits 0
+silently, a diagnostic gap worth its own small fix); and never build
+test strings by embedding an accumulator twice per level (exponential
+text growth OOMs the generator).
