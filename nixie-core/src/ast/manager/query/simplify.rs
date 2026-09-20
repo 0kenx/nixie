@@ -22,6 +22,14 @@ use crate::prelude::*;
 use num_bigint::BigInt;
 use smallvec::SmallVec;
 
+/// Fuel for one `ctx_simplify` call: every recursive step decrements;
+/// zero means "return unsimplified" — the pass degrades to the identity,
+/// never to a wrong answer.
+const CTX_FUEL_BUDGET: u32 = 200_000;
+/// The growth guard's multiplier: a result beyond this multiple of the
+/// input's DAG size is discarded (the input kept).
+const CTX_GROWTH_LIMIT: usize = 4;
+
 impl TermManager {
     /// Re-share a term for PRINTING: the DAG's multiply-referenced
     /// compound subtrees are lifted into `let` bindings, so printing the
@@ -201,6 +209,263 @@ impl TermManager {
         }
 
         cache.get(&id).copied().unwrap_or(id)
+    }
+
+    /// Context-dependent simplification (z3's `ctx-simplify` shape, the
+    /// pass the nec-smt let-chain goals need — see
+    /// `2026-09-19-smt-perf-gap-attribution.md`'s parameter-sweep
+    /// addendum: `push_ite` + `ite_extra_rules` + `solve_eqs` are each
+    /// necessary, and the LOCAL subset alone is a measured dead end; the
+    /// closing power comes from carrying a literal context through the
+    /// walk).
+    ///
+    /// The walk is top-down with a context of known-polarity atoms:
+    /// * at an `And`, every conjunct contributes its atom polarity (the
+    ///   conjunct IS true in this context) and the remaining conjuncts
+    ///   simplify under it;
+    /// * at an `Or`, a FALSE literal is dropped (modus ponens on the
+    ///   path — one disjunct known false removes it);
+    /// * at a `Not`, the polarity flips;
+    /// * at an `Ite` whose condition the context decides, prune to the
+    ///   selected branch; otherwise descend BOTH branches under
+    ///   `c` / `¬c` (the case split that reaches through `or`/`not`
+    ///   nesting — the piece the one-level And-context prune lacked);
+    /// * at `Eq`/comparisons of a constant against an `Ite`, push into
+    ///   the branches (fuel-bounded) so constant-vs-constant branches
+    ///   decide.
+    ///
+    /// Every step is an equivalence at its node under the path context
+    /// (never a strengthening); the top-level call starts with the empty
+    /// context, so the RESULT is unconditionally equivalent to the input.
+    /// Fuel-bounded throughout; a growth guard keeps the result when a
+    /// rewrite would exceed [`CTX_GROWTH_LIMIT`] × the input's DAG size.
+    pub fn ctx_simplify(&mut self, root: TermId) -> TermId {
+        let size_in = self.subtree_dag_size(root);
+        let mut fuel = CTX_FUEL_BUDGET;
+        let out = self.ctx_walk(root, &mut FxHashMap::default(), &mut fuel);
+        let size_out = self.subtree_dag_size(out);
+        if size_out > size_in.saturating_mul(CTX_GROWTH_LIMIT) {
+            return root;
+        }
+        out
+    }
+
+    /// DAG node count of `t`'s subtree (the growth guard's metric).
+    fn subtree_dag_size(&self, t: TermId) -> usize {
+        let mut n = 0usize;
+        let mut stack = vec![t];
+        let mut seen = FxHashSet::default();
+        while let Some(x) = stack.pop() {
+            if seen.insert(x) {
+                n += 1;
+                if let Some(d) = self.get(x) {
+                    stack.extend(crate::ast::traversal::get_children(&d.kind));
+                }
+            }
+        }
+        n
+    }
+
+    /// One context step: the polarity `p` assigns to atom `t`, if `t` is
+    /// literal-shaped.
+    fn atom_polarity(&self, t: TermId) -> Option<(TermId, bool)> {
+        match self.get(t).map(|d| &d.kind) {
+            Some(TermKind::Not(inner)) => Some((*inner, false)),
+            // A Boolean atom in positive position asserts itself.
+            Some(_) if self.get(t).is_some_and(|d| d.sort == self.sorts.bool_sort) => {
+                Some((t, true))
+            }
+            _ => None,
+        }
+    }
+
+    /// The context-decided value of `t`: a literal hit, a constant, or a
+    /// comparison the context decides via a known atom's negation
+    /// (`(not c)` with `c` known true).
+    fn ctx_value(&self, t: TermId, ctx: &FxHashMap<TermId, bool>) -> Option<bool> {
+        if let Some(TermKind::True) = self.get(t).map(|d| &d.kind) {
+            return Some(true);
+        }
+        if let Some(TermKind::False) = self.get(t).map(|d| &d.kind) {
+            return Some(false);
+        }
+        let (atom, positive) = self.atom_polarity(t)?;
+        let known = *ctx.get(&atom)?;
+        Some(if positive { known } else { !known })
+    }
+
+    fn ctx_walk(&mut self, t: TermId, ctx: &mut FxHashMap<TermId, bool>, fuel: &mut u32) -> TermId {
+        if *fuel == 0 {
+            return t;
+        }
+        *fuel -= 1;
+        // Constant or context-decided: replace by the Boolean directly.
+        if let Some(v) = self.ctx_value(t, ctx) {
+            return if v { self.true_id } else { self.false_id };
+        }
+        let Some(data) = self.get(t).cloned() else {
+            return t;
+        };
+        match data.kind {
+            TermKind::Not(inner) => {
+                let s = self.ctx_walk(inner, ctx, fuel);
+                self.mk_not(s)
+            }
+            TermKind::And(args) => self.ctx_and(args, ctx, fuel),
+            TermKind::Or(args) => {
+                // Drop disjuncts the context refutes; recurse the rest.
+                let mut kept: SmallVec<[TermId; 4]> = SmallVec::new();
+                for a in args {
+                    if let Some(false) = self.ctx_value(a, ctx) {
+                        continue;
+                    }
+                    let s = self.ctx_walk(a, ctx, fuel);
+                    kept.push(s);
+                }
+                self.mk_or(kept)
+            }
+            TermKind::Ite(c, a, b) => {
+                // Case split: each branch under its own guard.
+                let cs = self.ctx_walk(c, ctx, fuel);
+                if let Some(TermKind::True) = self.get(cs).map(|d| &d.kind) {
+                    return self.ctx_walk(a, ctx, fuel);
+                }
+                if let Some(TermKind::False) = self.get(cs).map(|d| &d.kind) {
+                    return self.ctx_walk(b, ctx, fuel);
+                }
+                let (as_, bs) = if let Some((atom, pol)) = self.atom_polarity(cs) {
+                    let prev = ctx.insert(atom, pol);
+                    let as_ = self.ctx_walk(a, ctx, fuel);
+                    ctx.insert(atom, !pol);
+                    let bs = self.ctx_walk(b, ctx, fuel);
+                    match prev {
+                        Some(p) => {
+                            ctx.insert(atom, p);
+                        }
+                        None => {
+                            ctx.remove(&atom);
+                        }
+                    }
+                    (as_, bs)
+                } else {
+                    (self.ctx_walk(a, ctx, fuel), self.ctx_walk(b, ctx, fuel))
+                };
+                // The ite-on-Boolean connections (z3's `ite_extra_rules`
+                // core): a Boolean ite with a constant branch connects to
+                // and/or, where the context's literals absorb it.
+                if self
+                    .get(as_)
+                    .is_some_and(|d| d.sort == self.sorts.bool_sort)
+                    && self.get(bs).is_some_and(|d| d.sort == self.sorts.bool_sort)
+                {
+                    let t_true = matches!(self.get(as_).map(|d| &d.kind), Some(TermKind::True));
+                    let t_false = matches!(self.get(as_).map(|d| &d.kind), Some(TermKind::False));
+                    let e_true = matches!(self.get(bs).map(|d| &d.kind), Some(TermKind::True));
+                    let e_false = matches!(self.get(bs).map(|d| &d.kind), Some(TermKind::False));
+                    let not_cs = self.mk_not(cs);
+                    if t_true && e_false {
+                        return cs;
+                    }
+                    if t_false && e_true {
+                        return not_cs;
+                    }
+                    if t_true {
+                        return self.mk_or([cs, bs]);
+                    }
+                    if e_true {
+                        return self.mk_or([not_cs, as_]);
+                    }
+                    if t_false {
+                        return self.ctx_and(SmallVec::from_iter([not_cs, bs]), ctx, fuel);
+                    }
+                    if e_false {
+                        return self.ctx_and(SmallVec::from_iter([cs, as_]), ctx, fuel);
+                    }
+                }
+                self.mk_ite(cs, as_, bs)
+            }
+            TermKind::Eq(l, r) => {
+                // The push (z3's `push_ite` equality half): a numeric
+                // constant against an ite becomes an ite of comparisons.
+                let lk = matches!(
+                    self.get(l).map(|d| &d.kind),
+                    Some(TermKind::IntConst(_) | TermKind::RealConst(_))
+                );
+                let rk = matches!(
+                    self.get(r).map(|d| &d.kind),
+                    Some(TermKind::IntConst(_) | TermKind::RealConst(_))
+                );
+                let li = matches!(self.get(l).map(|d| &d.kind), Some(TermKind::Ite(..)));
+                let ri = matches!(self.get(r).map(|d| &d.kind), Some(TermKind::Ite(..)));
+                if (lk && ri) || (rk && li) {
+                    let (k, ite) = if lk { (l, r) } else { (r, l) };
+                    if let Some(TermKind::Ite(c, a, b)) = self.get(ite).map(|d| d.kind.clone()) {
+                        let ka_eq = self.mk_eq(k, a);
+                        let ka = self.ctx_walk(ka_eq, ctx, fuel);
+                        let kb_eq = self.mk_eq(k, b);
+                        let kb = self.ctx_walk(kb_eq, ctx, fuel);
+                        let cs = self.ctx_walk(c, ctx, fuel);
+                        // Re-enter the walk so the ITE arm's connection
+                        // folds see the pushed shape (a constant branch
+                        // connects into and/or where the context absorbs
+                        // it) — returning the raw `mk_ite` bypassed them.
+                        let pushed = self.mk_ite(cs, ka, kb);
+                        return self.ctx_walk(pushed, ctx, fuel);
+                    }
+                }
+                let ls = self.ctx_walk(l, ctx, fuel);
+                let rs = self.ctx_walk(r, ctx, fuel);
+                self.mk_eq(ls, rs)
+            }
+            // Every other kind: keep the node (its children were already
+            // simplified by the bottom-up pass that runs first).
+            _ => t,
+        }
+    }
+
+    fn ctx_and(
+        &mut self,
+        args: SmallVec<[TermId; 4]>,
+        ctx: &mut FxHashMap<TermId, bool>,
+        fuel: &mut u32,
+    ) -> TermId {
+        // Each conjunct asserts its atom's polarity; the REST simplify
+        // under it.  The extensions unwind exactly: fresh entries are
+        // removed, entries a parent had set are restored — a conjunct's
+        // polarity is not valid outside the conjunction.
+        let mut simplified: SmallVec<[TermId; 4]> = SmallVec::new();
+        let mut unwind: Vec<Option<(TermId, bool)>> = Vec::new();
+        for a in args {
+            if let Some(false) = self.ctx_value(a, ctx) {
+                for (atom, prev) in unwind.into_iter().rev().flatten() {
+                    ctx.insert(atom, prev);
+                }
+                return self.false_id;
+            }
+            if let Some(true) = self.ctx_value(a, ctx) {
+                continue;
+            }
+            let s = self.ctx_walk(a, ctx, fuel);
+            match self.get(s).map(|d| &d.kind) {
+                Some(TermKind::False) => {
+                    for (atom, prev) in unwind.into_iter().rev().flatten() {
+                        ctx.insert(atom, prev);
+                    }
+                    return self.false_id;
+                }
+                Some(TermKind::True) => continue,
+                _ => {}
+            }
+            simplified.push(s);
+            if let Some((atom, pol)) = self.atom_polarity(s) {
+                let prev = ctx.insert(atom, pol);
+                unwind.push(prev.map(|p| (atom, p)));
+            }
+        }
+        for (atom, prev) in unwind.into_iter().rev().flatten() {
+            ctx.insert(atom, prev);
+        }
+        self.mk_and(simplified)
     }
 
     /// The children `simplify_cached` should recurse into for `id`, or none
