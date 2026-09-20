@@ -2388,14 +2388,9 @@ impl ArithSolver {
     /// Snapshot the current (integral) LP assignment of every interned Int
     /// variable into `lia_model`.  Called at an integer-feasible leaf so that
     /// `value()` reports the integral model after branch-and-bound unwinds.
-    fn snapshot_lia_model(&mut self, int_vars: &[VarId]) {
-        #[cfg(feature = "std")]
-        if std::env::var("NIXIE_INV_TRACE").is_ok()
-            && let Some(v) = self.simplex.debug_verify_invariant()
-        {
-            let bt = std::backtrace::Backtrace::force_capture();
-            eprintln!("[inv-viol] at snapshot: {v}\n{bt}");
-        }
+    /// The leaf tripwire's check, callable at any search point (env-gated;
+    /// `tag` names the call site in the fire line).
+    fn leaf_tripwire_check(&self, tag: &str) {
         // Leaf tripwire (env `NIXIE_LEAF_TRIPWIRE=1`, release-runnable —
         // the NIXIE_BOUND_TRIPWIRE precedent): at the dive's leaf, every
         // live atom row's slack entry must equal its KEY form evaluated at
@@ -2414,6 +2409,15 @@ impl ArithSolver {
             let mut broken = String::new();
             for ((key, reason), &slack) in self.atom_rows.iter() {
                 if !self.simplex.has_live_bound(slack) {
+                    continue;
+                }
+                // Class #4: a slack that left the basis (no defining row) or a
+                // row whose exact evaluation declines cannot be compared — the
+                // constraint is enforced by the bound plus the pivot's
+                // (form-preserving, verified) reparametrization.
+                if !self.simplex.has_defining_row(slack)
+                    || self.simplex.row_eval_exact(slack).is_none()
+                {
                     continue;
                 }
                 let mut floating = false;
@@ -2463,9 +2467,10 @@ impl ArithSolver {
                 let good = if is_eq { !r.is_zero() } else { r.is_positive() };
                 if !good {
                     let own = self.simplex.row_eval_exact(slack);
+                    let dir = self.slack_forms.get(&slack).map(|f| format!("{:?}", f.dir));
                     let _ = writeln!(
                         &mut broken,
-                        "  v{slack} reason={reason:?}: entry {:?} own-row {own:?} key-form {want:?} (r={r:?})",
+                        "[{tag}] v{slack} reason={reason:?}: entry {:?} own-row {own:?} key-form {want:?} (r={r:?}, dir={dir:?})",
                         sv.real
                     );
                 }
@@ -2477,6 +2482,18 @@ impl ArithSolver {
                 );
             }
         }
+    }
+
+    fn snapshot_lia_model(&mut self, int_vars: &[VarId]) {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_INV_TRACE").is_ok()
+            && let Some(v) = self.simplex.debug_verify_invariant()
+        {
+            let bt = std::backtrace::Backtrace::force_capture();
+            eprintln!("[inv-viol] at snapshot: {v}\n{bt}");
+        }
+        self.leaf_tripwire_check("snapshot");
+
         self.lia_model.clear();
         for &var in int_vars {
             // The honest NARROW integral value: the exact point value
@@ -3228,6 +3245,7 @@ impl ArithSolver {
                 return true;
             }
         };
+        self.leaf_tripwire_check("dive-pre");
         for k in [floor, ceil] {
             let k = super::delta::BigDeltaRational::real_only(k);
             self.simplex.push();
@@ -3237,6 +3255,9 @@ impl ArithSolver {
                 .set_upper_exact(var, k, smallvec::smallvec![BRANCH_REASON]);
             let feasible =
                 matches!(self.simplex.check(), Ok(())) && !self.simplex.resource_limit_reached();
+            if feasible {
+                self.leaf_tripwire_check("dive-post");
+            }
 
             if feasible && self.integral_dive(int_vars, nodes) {
                 self.simplex.pop();

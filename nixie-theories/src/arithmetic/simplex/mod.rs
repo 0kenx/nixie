@@ -1674,6 +1674,12 @@ impl Simplex {
         self.assignment_current
     }
 
+    /// Whether `var` currently has a defining row (the tripwire's
+    /// rowless-skip gate).
+    pub fn has_defining_row(&self, var: VarId) -> bool {
+        self.tableau.contains_key(&var) || self.wide_rows.contains_key(&var)
+    }
+
     /// A basic's own row evaluated exactly over the current point (the
     /// leaf tripwire's discriminator: entry vs own-row vs key-form
     /// separates staleness from form corruption).
