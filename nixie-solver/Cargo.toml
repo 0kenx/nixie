@@ -64,6 +64,10 @@ profiling = [
 nixie-testcorpus = { path = "../nixie-testcorpus" }
 proptest = { workspace = true }
 criterion = { workspace = true }
+# The CLI installs mimalloc process-wide; examples and integration tests that
+# measure throughput must match that allocator or they benchmark glibc malloc
+# instead of the code under test.
+mimalloc = { workspace = true }
 
 [[bench]]
 name = "solver_benchmarks"

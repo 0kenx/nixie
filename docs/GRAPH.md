@@ -140,8 +140,8 @@ default decisions are complete for this fragment.
   assignments keep the possible view, backjumps often revisit seen keys);
   no incremental algorithms. Measured against MonoSAT (see the studies
   below): random instances at n = 100 / 6 224 edges solve in ~0.3 s even in
-  a debug build; on the release corpus (n ≤ 150) Nixie runs at ≈2.65×
-  MonoSAT's geomean after the 2026-09-20 throughput pass (was 5.1×), with
+  a debug build; on the release corpus (n ≤ 150) Nixie runs at ≈2.3×
+  MonoSAT's geomean after the 2026-09-20 throughput passes (was 5.1×), with
   bit-identical solver counters — the remaining gap is MonoSAT's
   incremental dynamic-graph algorithms plus the general per-assertion SMT
   pipeline, the documented upgrade path.
