@@ -490,8 +490,20 @@ impl CsrWatchLists {
             prev = end;
         }
         self.prim_end = span_end;
-        self.overflow.clear();
-        self.overflow.resize(self.span_start.len(), Vec::new());
+        // Retain each literal's overflow CAPACITY (the `Vec` world's
+        // `reset_lists_in_place` shape): the rebuild replaces every list's
+        // content, but freeing the per-literal buffers would make every
+        // post-rebuild watch-move push re-double from capacity zero —
+        // the `Vec` side keeps its capacity across rebuilds, and the
+        // symmetric retention is load-bearing for cost parity on
+        // propagation-heavy classes (millions of moves per rebuild
+        // interval on the 0-conflict families).
+        if self.overflow.len() < self.span_start.len() {
+            self.overflow.resize(self.span_start.len(), Vec::new());
+        }
+        for list in self.overflow.iter_mut() {
+            list.clear();
+        }
         self.scan = CsrScanFrame::default();
         // Rebuild the position index from the fresh layout: the counting
         // sort places every live clause's watchers at its span positions.
@@ -995,6 +1007,16 @@ impl CsrWatchLists {
             dst.copy_from_slice(kept);
         }
         let _ = code;
+    }
+
+    /// Drop the scanned literal's overflow content down to its first `n`
+    /// entries (the empty-overflow fast path's put-back-overwrite: mid-scan
+    /// self-pushes die here exactly as the taken-`Vec` world's put-back
+    /// dropped them).
+    pub(crate) fn truncate_overflow(&mut self, code: usize, n: usize) {
+        if let Some(v) = self.overflow.get_mut(code) {
+            v.truncate(n);
+        }
     }
 
     /// Return the scanned overflow (truncated to its pass's write end; the
