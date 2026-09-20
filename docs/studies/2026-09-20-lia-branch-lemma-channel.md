@@ -184,3 +184,44 @@ benchstore records, and a cost decision on the 6 slow flips (the 10 s-cap
 class; two members exceed 120 s armed).  The armed differentials are the
 standing soundness screen either way.  The channel stays default-off
 until that campaign runs.
+
+## PRE-REGISTRATION — rung 3, the default-flip campaign (written before the runs)
+
+**Binary**: `precompile/9ff377ff/nixie` (current main: the branch channel
+plus the SAT-side CSR flip, which reshuffles trajectories — the campaign
+re-baselines everything on THIS tree).  One binary, three env arms —
+perfect common-random-numbers pairing:
+
+* **A0 unarmed** (the landed default),
+* **A1 treatment** (`NIXIE_LIA_BRANCH_LEMMA=1`),
+* **A2 matched null** (`NIXIE_LIA_BRANCH_LEMMA=1 NIXIE_LIA_BRANCH_NULL=1`).
+
+**Cells**: 12 seeds × 600 instances × 3 arms (the standing 20261000–02 for
+continuity with every prior attribution, plus fresh 20262400–20262408).
+z3 4.16.0 decides every instance in every arm (the generator is
+seed-deterministic; CRN holds by construction).
+
+**Go bar for the default flip** (ALL must hold):
+1. **Consistency**: A1 recovers members over A0 on ≥10 of the 12 seeds
+   (net recoveries > 0 per seed), and A0 recovers over A1 on NO seed
+   (no verdict-loss seed).
+2. **Ledger**: zero wrong verdicts anywhere; every A1-recovered member
+   validated (armed verdict == z3, model binding + negation `unsat` in
+   z3); no member DECISIVE in A0 becomes non-decisive in A1 (a verdict
+   loss — timeouts on formerly-decisive members are an automatic no-go).
+3. **Cost**: A1's timeout count ≤ A0's + 3 per seed on average, and the
+   slow-flip class (unknown→slower-unknown) does not exceed the recovery
+   count net.
+4. **Null dominance holds at scale**: A1's recoveries exceed A2's pooled
+   over the 12 seeds (the fixed-seed point estimate was 22 vs 12).
+5. **Fresh-seed armed differentials clean** (3×400 mixed + 3×300 wide,
+   zero disagreements).
+
+**No-go**: any criterion failing → the channel stays default-off; the
+measurements land as the record.
+
+**Decision**: if go, the flip lands under the enablement rule (the
+soundness argument is structural — the minted dichotomy is a theory
+tautology, the abstention-only guard, the memo/caps — plus the screening
+above), with the full battery at the new default and the perf gate
+re-run (the gate corpus is pure SAT; the channel cannot fire there).

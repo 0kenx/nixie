@@ -275,3 +275,26 @@ Residual: term interning + Tseitin + the SAT/CDCL(T) stack — MonoSAT's
 integer-only loader territory. The next real lever would be incremental
 *decremental* handling for the possible view (currently a lazy rebuild on
 false-assignment batches); nothing in the corpus profile says it is due.
+
+## Addendum (2026-09-21, hard-instance stress): the incremental design under backtracking
+
+The standard corpus is propagation-dominated (conflicts ≤ 1), so it never
+exercises the incremental design's worst case — the post-backtrack
+full re-read. Two additions close that gap:
+
+- The generator gained `--clause-size/--coupling/--unit-prob` for
+  search-heavy instances (dense 3-clauses, near-zero fixing units).
+- A crafted set couples a phase-transition random 3-SAT over n²/2 edge
+  variables with reachability/acyclicity demands (n ∈ {30, 60, 90});
+  the solved instances run ~25 k conflicts / 33 k decisions / 1.46 M
+  propagations — backtracking essentially every conflict.
+
+Results: every instance both solvers finish agrees (3× UNS, 9× both-TMO at
+120 s). On finished instances Nixie tracks MonoSAT within **1.0–1.4×**
+(1.75 s vs 1.75 s; 1.35 s vs 0.96 s; 2.32 s vs 1.63 s) with the
+invalidation re-read firing continuously — the design's ceiling (≤ the old
+per-event O(E) cost, which is the pre-incremental behavior) is never
+approached as a regression; the two easy-corpus wins (1.65× geomean) carry
+over. Fixed process overhead measured at 3.0 ms (Nixie) vs 2.3 ms
+(MonoSAT) on a trivial instance — ~0.7 ms of the residual gap, not its
+story.

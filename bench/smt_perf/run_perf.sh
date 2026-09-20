@@ -81,7 +81,15 @@ run_z3() {
     t1=$(date +%s%N)
     local status conflicts
     status="$(printf '%s\n' "$out" | grep -m1 -oE '^(sat|unsat|unknown)')" || true
-    conflicts="$(printf '%s\n' "$out" | grep -m1 -oE ':conflicts *[0-9]+' | grep -oE '[0-9]+')" || true
+    # Z3's -st prints `:sat-conflicts N` (SAT-core) and `:conflicts N`
+    # (SMT-core).  The historical parser grepped only `:conflicts`, which
+    # QF_BV's bit-blasted path never prints — every z3 conflict count in
+    # the standing snapshots' recorded `0` (the attribution studies built
+    # on "z3 at 0 conflicts" partly on that artifact; see the
+    # 2026-09-20 wall-watch correction).  Prefer the SAT counter, fall
+    # back to the SMT one.
+    conflicts="$(printf '%s\n' "$out" | grep -m1 -oE ':sat-conflicts *[0-9]+' | grep -oE '[0-9]+')" || true
+    [ -z "$conflicts" ] && conflicts="$(printf '%s\n' "$out" | grep -m1 -oE ':conflicts *[0-9]+' | grep -oE '[0-9]+')" || true
     [ -z "$status" ] && status=timeout
     [ -z "$conflicts" ] && conflicts=0
     echo "$status $conflicts $(( (t1-t0)/1000000 ))"
