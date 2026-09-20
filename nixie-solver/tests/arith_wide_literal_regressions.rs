@@ -1673,7 +1673,6 @@ fn unrecognized_command_is_answered_not_swallowed() {
     );
 }
 
-
 /// Item 96's CDCL-visible branch channel (`NIXIE_LIA_BRANCH_LEMMA=1`): the
 /// recovered ray-class survey instance verbatim (seed 20261000, index 142;
 /// z3: `sat`).  UNARMED the search walks the branch-walk ray to its depth

@@ -136,7 +136,6 @@ pub struct LiaBranchRequest {
     pub k: num_bigint::BigInt,
 }
 
-
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
 pub struct ArithSolver {
@@ -2343,8 +2342,7 @@ impl ArithSolver {
         {
             return;
         }
-        let Some(FracVar::Branch { var, ceil, .. }) = self.find_fractional_int_var(int_vars)
-        else {
+        let Some(FracVar::Branch { var, ceil, .. }) = self.find_fractional_int_var(int_vars) else {
             return;
         };
         // The branch point must be an i64 integer (the atom minter takes
@@ -2376,7 +2374,8 @@ impl ArithSolver {
         if lhs.iter().any(|(_, c)| c.denom() != &1) {
             return;
         }
-        self.lia_branch_requests.push(LiaBranchRequest { lhs, rhs, k });
+        self.lia_branch_requests
+            .push(LiaBranchRequest { lhs, rhs, k });
     }
 
     /// The pending (undrained) request count — diagnostics only.

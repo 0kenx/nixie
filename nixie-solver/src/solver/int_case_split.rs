@@ -463,11 +463,11 @@ impl Solver {
     /// reset-and-re-solve round shape as [`Self::refine_int_case_split`]).
     /// The theory records requests ONLY when `NIXIE_LIA_BRANCH_LEMMA` is
     /// set (the flag-gated first rung; default off).
-        fn lia_branch_null() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_NULL").is_some())
-}
+    fn lia_branch_null() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("NIXIE_LIA_BRANCH_NULL").is_some())
+    }
 
     pub(super) fn refine_lia_branch_requests(&mut self, manager: &mut TermManager) -> bool {
         if self.lia_branch_rounds >= Self::MAX_LIA_BRANCH_ROUNDS {
@@ -727,7 +727,6 @@ fn ceil_div(num: i64, den: i64) -> Option<i64> {
         Some(-((-num).div_euclid(den)))
     }
 }
-
 
 #[cfg(test)]
 mod tests {
