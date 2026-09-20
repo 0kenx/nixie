@@ -2877,3 +2877,34 @@ corpus run, a differential, or a user can actually hear.
     against a stale pin produces spurious `base=none` mismatches when
     the old binary is cleaned; always re-read BASELINE before gating);
     debug panic sweep 0; clippy/fmt/rustdoc clean.
+
+## Continuation 49 (2026-09-19): item 93 — the detachment PROVEN form corruption in the dive window; the tripwire landed
+
+93. **Item 92's open question answered** (`7972fb4e`): the corruption is
+    (b) — real FORM corruption, invisible to the check-entry canary's
+    placements.  The proof chain on the i423 reproducer:
+    * A convergence canary (post-LP-solve) fires ZERO times; the landed
+      check-entry canary is silent — the rows are healthy at every
+      theory-check boundary.
+    * A LEAF canary (at the dive's snapshot) fires with the decisive
+      discriminator: **entry == own-row != key-form** on every victim —
+      the definitional invariant holds (no staleness), the rows
+      themselves no longer entail their atoms' constraints.  The
+      corruption window is the DIVE: branch-bound pushes + their
+      re-feasibility pivots.  Victims include wide slacks.
+    * Deltas are small even integers (+66, +242, +44) and one sign flip
+      (r = −1/43) — consistent with a wrong-coefficient rewrite, not a
+      wholesale row replacement.
+    * **Landed**: `NIXIE_LEAF_TRIPWIRE=1` (print-only, release-runnable,
+      the BOUND-TRIPWIRE precedent) with the entry/own-row/key-form
+      discriminator inline.  Zero behavioral change by default; the
+      arith suite unchanged.
+    * **The next session's entry point**: a per-rewrite VALUE-PRESERVATION
+      tracer in the pivot commit loops — each rewritten row must take
+      the same value at the pre-rewrite point as before (old form vs new
+      form at the current values); the FIRST failing rewrite is the
+      corrupting one.  Prime suspects by window: the wide-repair pivots'
+      dependent rewrites (`substitute_row_big`'s per-variable
+      accumulation) and the dive's `set_*_exact`-triggered
+      `on_nonbasic_bound_change` propagation into dependents.  The
+      tripwire is the acceptance test for the fix.
