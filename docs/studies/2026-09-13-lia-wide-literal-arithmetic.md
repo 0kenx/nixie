@@ -2944,3 +2944,43 @@ corpus run, a differential, or a user can actually hear.
     evaluation, one constituent at a time; the wide pass's
     `update_row_exact` (which computes and STORES row values) is the
     only writer left standing.
+
+## Continuation 51 (2026-09-19): item 95 — THE CORRUPTION AT THE BOTTOM: a wide point shadowing a wide row; the reads were wrong, the rows never were
+
+95. **Items 91–94's hunt closed at the root** (`6b581764`).  The
+    tracers had exonerated every form-writer (pivots both loops,
+    migrations, interns — all form-preserving); the hand-composition of
+    the C3 chain proved the rows EQUIVALENT (`v301 = v6` is algebraically
+    exact).  The snapshot tracer then caught the read red-handed: v0's
+    wide row evaluates to `...864` over its own term reads while
+    `point_value_exact` returned `...842` — **v0 was in BOTH wide stores**,
+    a `wide_points` entry parked when it was nonbasic at a wide bound,
+    never retired when it became wide-BASIC.  The frozen point shadowed
+    the live row in every exact read; the two drifted apart (22/44-delta
+    family) as the search moved the row's terms.  Published models read
+    the frozen value and violated their own committed atoms; the exact
+    evaluator correctly refuted them; the big-const gate degraded
+    decidable `sat`s to `unknown`.  **The rows were never corrupt — the
+    READS were.**
+    * **The fix, both sides**: `point_value_exact` consults the wide ROW
+    first (a variable with a defining row is basic; a lone point — a
+    genuine nonbasic at a wide bound — unchanged); gaining a defining row
+    (`intern_wide_row`'s fresh and dedup-hit paths, the pivot's entering
+    commit in both arms) retires any parked point.
+    * **Measured**: the i423 reproducer answers `sat` (z3: `sat`); the
+    leaf tripwire is SILENT (the acceptance test).  Survey: 73 → 78 (3
+    recovered, 8 honest-unknown reshuffles — the stale point had been an
+    accidentally-useful search guide; zero wrong verdicts).  Differentials
+    5 fresh seeds clean; parity 176/177 (z3 4.16.0); gate 1.000/1.000;
+    panic sweep 0; arith suite 4705/4719 (the 14 the documented
+    corpus-missing class).  Regression: `wide_point_never_shadows_a_wide_row`.
+    * **The arc's cumulative survey run on the fixed seeds**:
+    **150 → 110 → 91 → 79 → 75 → 73 → (78 after this fix's reshuffle)**
+    — every step zero wrong verdicts, every recovered member's model
+    z3-validated.  The hunt's full instrument set (leaf tripwire with
+    tags/skips/dir, the pivot form-preservation tracer, the intern
+    equivalence tracer, the snapshot term-read dump) is recorded in
+    items 93–95 with recipes.
+    * Doc-gate note: `cargo doc -D warnings` fails on nixie-core's
+    `simplify.rs` link errors — a parallel session's in-flight landing,
+    untouched by this change.
