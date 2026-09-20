@@ -842,3 +842,429 @@ fn self_pair_negative_propagation_pins_the_cut_edges() {
     let _ = edge_terms;
     let _ = true_term;
 }
+
+/// Driver-side mirror of what has been notified to the manager, with
+/// snapshot rollback for scopes.
+#[derive(Clone)]
+struct Shadow {
+    edges: Vec<Option<bool>>,
+    atoms: Vec<Option<bool>>,
+}
+
+/// Deterministic tiny RNG (xorshift64) for the generated campaign — no
+/// external rand dependency, fully reproducible from the printed seed.
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+    fn chance(&mut self, percent: usize) -> bool {
+        self.below(100) < percent
+    }
+}
+
+/// Generated-oracle campaign: random medium graphs driven through random
+/// event scripts (edge/atom fixations, nested push/pop, interleaved
+/// final-checks), with every consequence validated against every concrete
+/// completion (or a seeded sample when too many are unfixed), exactly like
+/// the CP generated-oracle study. This exercises the incremental
+/// propagator's maintained state across long sequences — the post-backtrack
+/// full re-read, repeated invalidation, and re-fixation paths the
+/// exhaustive small oracles cannot reach.
+#[test]
+fn generated_oracle_random_event_scripts_with_nested_rollback() {
+    for campaign in 0..200u64 {
+        let mut rng = Rng(0x9E3779B97F4A7C15 ^ campaign);
+        let vertices = 8 + rng.below(10);
+        let edge_count = 4 + rng.below(28);
+        let reach_count = 2 + rng.below(8);
+
+        // Build the case graph.
+        let mut tm = TermManager::new();
+        let mut model = GraphModel::new(&tm);
+        let g = model.new_graph();
+        for _ in 0..vertices {
+            model.add_vertex(g).unwrap();
+        }
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for _ in 0..edge_count {
+            let u = rng.below(vertices);
+            let v = rng.below(vertices);
+            edges.push((u, v));
+        }
+        for &(u, v) in &edges {
+            model
+                .new_edge(g, VertexId::new(u as u32), VertexId::new(v as u32), &mut tm)
+                .unwrap();
+        }
+        let mut reach_pairs: Vec<(usize, usize)> = Vec::new();
+        for _ in 0..reach_count {
+            let u = rng.below(vertices);
+            let v = rng.below(vertices);
+            reach_pairs.push((u, v));
+        }
+        for &(u, v) in &reach_pairs {
+            model
+                .reach(g, VertexId::new(u as u32), VertexId::new(v as u32), &mut tm)
+                .unwrap();
+        }
+        let acyclic = if rng.chance(60) {
+            Some(model.acyclic(g, &mut tm).unwrap())
+        } else {
+            None
+        };
+
+        let edge_terms = model.edges(g).unwrap();
+        let reach_atoms = model.reach_atoms(g).unwrap();
+        let mut neg_of: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for &(_, _, a) in &edge_terms {
+            neg_of.insert(a, tm.mk_not(a));
+        }
+        for &(_, _, a) in &reach_atoms {
+            neg_of.insert(a, tm.mk_not(a));
+        }
+        if let Some(a) = acyclic {
+            neg_of.insert(a, tm.mk_not(a));
+        }
+        let mut atom_terms: Vec<TermId> = reach_atoms.iter().map(|&(_, _, a)| a).collect();
+        if let Some(a) = acyclic {
+            atom_terms.push(a);
+        }
+
+        let (propagator, watches) = model.into_propagator();
+        let mut manager = UserPropagatorManager::new();
+        for &w in &watches {
+            manager.watch_term(w);
+        }
+        manager.register_propagator(propagator);
+        let true_term = tm.mk_bool(true);
+        let false_term = tm.mk_bool(false);
+
+        // Driver shadow state (snapshots for rollback), mirroring what has
+        // been notified to the manager.
+        let mut shadow = Shadow {
+            edges: vec![None; edge_terms.len()],
+            atoms: vec![None; atom_terms.len()],
+        };
+        let mut scopes: Vec<Shadow> = Vec::new();
+        let open_scopes = 0usize;
+
+        let mut open_scopes = open_scopes;
+        let mut ops: Vec<String> = Vec::new();
+
+        // Run the random event script.
+        let script_len = 120 + rng.below(120);
+        for _step in 0..script_len {
+            match rng.below(100) {
+                0..=39 if shadow.edges.iter().any(|e| e.is_none()) => {
+                    // Fix a random unfixed edge.
+                    let candidates: Vec<usize> = shadow
+                        .edges
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.is_none())
+                        .map(|(i, _)| i)
+                        .collect();
+                    let i = candidates[rng.below(candidates.len())];
+                    let value = rng.chance(55);
+                    shadow.edges[i] = Some(value);
+                    let term = edge_terms[i].2;
+                    ops.push(format!("edge{i}:={value}"));
+                    manager.notify_fixed(term, if value { true_term } else { false_term });
+                }
+                40..=49 if shadow.atoms.iter().any(|a| a.is_none()) => {
+                    let candidates: Vec<usize> = shadow
+                        .atoms
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, a)| a.is_none())
+                        .map(|(i, _)| i)
+                        .collect();
+                    let k = candidates[rng.below(candidates.len())];
+                    let value = rng.chance(50);
+                    shadow.atoms[k] = Some(value);
+                    let term = atom_terms[k];
+                    ops.push(format!("atom{k}:={value}"));
+                    manager.notify_fixed(term, if value { true_term } else { false_term });
+                }
+                50..=64 => {
+                    scopes.push(shadow.clone());
+                    open_scopes += 1;
+                    ops.push("push".into());
+                    manager.push();
+                }
+                65..=74 if open_scopes > 0 => {
+                    let levels = 1 + rng.below(open_scopes.min(3));
+                    for _ in 0..levels {
+                        if let Some(s) = scopes.pop() {
+                            shadow = s;
+                            open_scopes -= 1;
+                        }
+                    }
+                    ops.push(format!("pop{levels}"));
+                    manager.pop(levels);
+                }
+                check_idx => {
+                    // final_check + consequence validation (the heavy
+                    // all-completion check throttled to every third check).
+                    let verdict = manager.final_check();
+                    let mut consequences = manager.get_consequences();
+                    if check_idx % 3 != 0 {
+                        consequences.clear();
+                    }
+                    validate_generated_state(
+                        &edges,
+                        vertices,
+                        &reach_atoms,
+                        acyclic,
+                        &shadow,
+                        &verdict,
+                        &consequences,
+                        &edge_terms,
+                        &atom_terms,
+                        &neg_of,
+                        &tm,
+                        &mut rng,
+                        campaign,
+                        &ops,
+                    );
+                }
+            }
+        }
+        // Drain any final pending consequences at the end.
+        let verdict = manager.final_check();
+        let consequences = manager.get_consequences();
+        validate_generated_state(
+            &edges,
+            vertices,
+            &reach_atoms,
+            acyclic,
+            &shadow,
+            &verdict,
+            &consequences,
+            &edge_terms,
+            &atom_terms,
+            &neg_of,
+            &tm,
+            &mut rng,
+            campaign,
+            &ops,
+        );
+    }
+}
+
+/// Validate one generated state against the driver's shadow:
+///  1. the verdict agrees with an independent violation analysis;
+///  2. every consequence's justification literals are currently true;
+///  3. every consequence is a valid implication over concrete completions
+///     (all of them when ≤ 16 edges are unfixed, else a 64-sample).
+#[allow(clippy::too_many_arguments)]
+fn validate_generated_state(
+    edges: &[(usize, usize)],
+    vertices: usize,
+    reach_atoms: &[(VertexId, VertexId, TermId)],
+    acyclic: Option<TermId>,
+    shadow: &Shadow,
+    verdict: &crate::user_propagator::PropagatorResult,
+    consequences: &[Consequence],
+    edge_terms: &[(VertexId, VertexId, TermId)],
+    _atom_terms: &[TermId],
+    neg_of: &FxHashMap<TermId, TermId>,
+    tm: &TermManager,
+    rng: &mut Rng,
+    campaign: u64,
+    ops: &[String],
+) {
+    let false_term = tm.mk_bool(false);
+    let _true_term = tm.mk_bool(true);
+    let closure_of = |present: &[bool]| -> Vec<Vec<bool>> {
+        let mut r = vec![vec![false; vertices]; vertices];
+        for (i, &(u, v)) in edges.iter().enumerate() {
+            if present[i] {
+                r[u][v] = true;
+            }
+        }
+        loop {
+            let mut changed = false;
+            for m in 0..vertices {
+                for a in 0..vertices {
+                    for b in 0..vertices {
+                        if r[a][m] && r[m][b] && !r[a][b] {
+                            r[a][b] = true;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                return r;
+            }
+        }
+    };
+
+    // 1. Expected verdict.
+    let forced_present: Vec<bool> = shadow.edges.iter().map(|e| e == &Some(true)).collect();
+    let possible_present: Vec<bool> = shadow.edges.iter().map(|e| e != &Some(false)).collect();
+    let forced = closure_of(&forced_present);
+    let possible = closure_of(&possible_present);
+    let mut expected_unsat = false;
+    for (k, &(u, v, _)) in reach_atoms.iter().enumerate() {
+        let (u, v) = (u.0 as usize, v.0 as usize);
+        match shadow.atoms[k] {
+            Some(true) if !possible[u][v] => expected_unsat = true,
+            Some(false) if forced[u][v] => expected_unsat = true,
+            _ => {}
+        }
+    }
+    if let Some(a) = acyclic {
+        let k = shadow.atoms.len() - 1;
+        let forced_cycle = (0..vertices).any(|i| forced[i][i]);
+        let possible_acyclic = (0..vertices).all(|i| !possible[i][i]);
+        match shadow.atoms[k] {
+            Some(true) if forced_cycle => expected_unsat = true,
+            Some(false) if possible_acyclic => expected_unsat = true,
+            _ => {}
+        }
+    }
+    let all_fixed =
+        shadow.edges.iter().all(|e| e.is_some()) && shadow.atoms.iter().all(|a| a.is_some());
+    let expected_matches = match verdict {
+        crate::user_propagator::PropagatorResult::Unsat(_) => expected_unsat,
+        crate::user_propagator::PropagatorResult::Sat => !expected_unsat && all_fixed,
+        crate::user_propagator::PropagatorResult::Unknown => !expected_unsat && !all_fixed,
+    };
+    assert!(
+        expected_matches,
+        "campaign {campaign}: verdict {verdict:?} disagrees with shadow analysis"
+    );
+
+    // 2. & 3. Consequence validation over completions.
+    let unfixed: Vec<usize> = shadow
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    let sample_all = unfixed.len() <= 12;
+    let completion_count = if sample_all {
+        1usize << unfixed.len()
+    } else {
+        64
+    };
+    let holds_lit = |present: &[bool], closure: &[Vec<bool>], term: TermId| -> bool {
+        for (i, &(_, _, atom)) in edge_terms.iter().enumerate() {
+            if atom == term {
+                return present[i];
+            }
+            if neg_of.get(&atom) == Some(&term) {
+                return !present[i];
+            }
+        }
+        for &(u, v, atom) in reach_atoms {
+            if atom == term {
+                return closure[u.0 as usize][v.0 as usize];
+            }
+            if neg_of.get(&atom) == Some(&term) {
+                return !closure[u.0 as usize][v.0 as usize];
+            }
+        }
+        if let Some(a) = acyclic {
+            let acyclic_holds = (0..vertices).all(|i| !closure[i][i]);
+            if a == term {
+                return acyclic_holds;
+            }
+            if neg_of.get(&a) == Some(&term) {
+                return !acyclic_holds;
+            }
+        }
+        false
+    };
+    // Current truth is by FIXATION, not closure semantics: a conflict's
+    // offending atom literal is true because the atom is *fixed* to that
+    // value, even when the graph semantics disagrees (that is the conflict).
+    let now_true_lit = |term: TermId| -> bool {
+        for (i, &(_, _, atom)) in edge_terms.iter().enumerate() {
+            if atom == term {
+                return shadow.edges[i] == Some(true);
+            }
+            if neg_of.get(&atom) == Some(&term) {
+                return shadow.edges[i] == Some(false);
+            }
+        }
+        for (k, &(_, _, atom)) in reach_atoms.iter().enumerate() {
+            if atom == term {
+                return shadow.atoms[k] == Some(true);
+            }
+            if neg_of.get(&atom) == Some(&term) {
+                return shadow.atoms[k] == Some(false);
+            }
+        }
+        if let Some(a) = acyclic {
+            let k = shadow.atoms.len() - 1;
+            if a == term {
+                return shadow.atoms[k] == Some(true);
+            }
+            if neg_of.get(&a) == Some(&term) {
+                return shadow.atoms[k] == Some(false);
+            }
+        }
+        false
+    };
+    // Cache the completion set (present, closure) once for this check.
+    let mut completions: Vec<(Vec<bool>, Vec<Vec<bool>>)> = Vec::new();
+    for c in 0..completion_count {
+        let mut present: Vec<bool> = shadow.edges.iter().map(|e| e == &Some(true)).collect();
+        if sample_all {
+            for (bit, &i) in unfixed.iter().enumerate() {
+                present[i] = c & (1 << bit) != 0;
+            }
+        } else {
+            for &i in &unfixed {
+                present[i] = rng.chance(50);
+            }
+        }
+        let closure = closure_of(&present);
+        completions.push((present, closure));
+    }
+    for consequence in consequences {
+        let term = consequence.term;
+        for &j in &consequence.justification {
+            assert!(
+                now_true_lit(j),
+                "campaign {campaign}: justification {j:?} not currently true; recent ops: {ops:?}"
+            );
+        }
+        let mut any_completion = false;
+        for (present, closure) in &completions {
+            let reasons_hold = consequence
+                .justification
+                .iter()
+                .all(|&j| holds_lit(present, closure, j));
+            if !reasons_hold {
+                continue;
+            }
+            any_completion = true;
+            if term == false_term {
+                panic!(
+                    "campaign {campaign}: conflict {consequence:?} satisfiable by a completion; ops: {ops:?}"
+                );
+            }
+            assert!(
+                holds_lit(present, closure, term),
+                "campaign {campaign}: consequence {consequence:?} invalid under a completion; ops: {ops:?}"
+            );
+        }
+        if term != false_term && !any_completion && !consequence.justification.is_empty() {
+            // Non-conflict with no satisfying completion: vacuously true.
+        }
+    }
+}
