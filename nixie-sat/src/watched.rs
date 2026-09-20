@@ -2456,17 +2456,21 @@ pub fn csr_b_enabled() -> bool {
     {
         use std::sync::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
-        // THE FLIP (2026-09-20): the slack-CSR is the primary watch
-        // representation on the default path.  `NIXIE_CSR_B=0` restores
-        // the legacy `Vec<Vec<Watcher>>` world (the A/B measurement
-        // escape hatch; the Vec side is scheduled for deletion).
+        // The flip REVERTED (2026-09-20, the corpus ledger): the slack-CSR
+        // as the DEFAULT measured geomean +16% instructions over the
+        // standing corpus (search-heavy cells +15-32%; the load-heavy
+        // spot instances that motivated it were its best case at +3-6%)
+        // with a wash on memory and the surgery payback measured
+        // negative — a net cost with no compensating win.  The machinery
+        // stays landed at zero default cost; `NIXIE_CSR_B=1` opts into
+        // the CSR-primary world (all its driver optimizations intact).
         *FLAG.get_or_init(|| {
-            !std::env::var("NIXIE_CSR_B").is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+            std::env::var("NIXIE_CSR_B").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         })
     }
     #[cfg(not(feature = "std"))]
     {
-        true
+        false
     }
 }
 
