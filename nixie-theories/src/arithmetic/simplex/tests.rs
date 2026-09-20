@@ -2056,3 +2056,300 @@ fn gcd_u64_matches_reference_and_fast_paths() {
     assert_eq!(gcd_i128((1 << 100) * 3, 1 << 100), 1 << 100);
     assert_eq!(gcd_i128(0, -7), 7);
 }
+
+/// Deterministic LCG for the fraction-free equivalence grids (no `rand`
+/// dependency; the grid must be reproducible exactly across runs — a
+/// property failure's seed is only meaningful that way).
+struct FfLcg(u64);
+impl FfLcg {
+    fn new(seed: u64) -> Self {
+        Self(seed ^ 0x9E37_79B9_7F4A_7C15)
+    }
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 11
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+    fn signed_below(&mut self, n: u64) -> i64 {
+        self.below(2 * n + 1) as i64 - n as i64
+    }
+}
+
+/// One randomized coefficient shaped like the measured pivot
+/// distribution: mostly small integers and small fractions, occasionally a
+/// wide numerator/denominator pair (the post-cut determinant-ratio tail).
+fn ff_random_rational(rng: &mut FfLcg) -> Rational64 {
+    let class = rng.below(10);
+    let (n, d) = match class {
+        0..=3 => (rng.signed_below(4), 1), // small integers (0 drops)
+        4..=6 => (rng.signed_below(9), 1 + rng.below(7) as i64), // small fractions
+        7..=8 => (rng.signed_below(1 << 20), 1 + rng.below(1 << 12) as i64),
+        _ => (
+            rng.signed_below(1 << 40),
+            (1 + rng.below(1 << 16) as i64) * (1 + rng.below(4) as i64),
+        ),
+    };
+    if n == 0 {
+        return Rational64::zero();
+    }
+    Rational64::new(n, d.max(1))
+}
+
+/// A random canonical row over `nvars` variables (merged, zero-free,
+/// reduced — the tableau's stored shape).  Merges go through the crate's
+/// CHECKED rational add (the generator's wide class can produce additions
+/// that overflow `i64` intermediates — those terms are simply dropped, the
+/// grid only needs rows the canonical store itself could hold).
+fn ff_random_row(rng: &mut FfLcg, nvars: u32) -> LinExpr {
+    let mut e = LinExpr::new();
+    let nterms = 1 + rng.below(6) as usize;
+    for _ in 0..nterms {
+        let v = rng.below(nvars as u64) as VarId;
+        let c = ff_random_rational(rng);
+        if c.is_zero() {
+            continue;
+        }
+        match e.terms.iter_mut().find(|(tv, _)| *tv == v) {
+            Some((_, tc)) => {
+                if let Some(sum) = checked_add_r64(*tc, c) {
+                    *tc = sum;
+                }
+            }
+            None => e.terms.push((v, c)),
+        }
+        e.terms.retain(|(_, c)| !c.is_zero());
+    }
+    if let Some(sum) = checked_add_r64(e.constant, ff_random_rational(rng)) {
+        e.constant = sum;
+    }
+    e
+}
+
+/// The cached `IntRow` mirrors the canonical row: every per-term value
+/// `n/D` equals the stored coefficient, and the joint gcd is 1 (the
+/// minimal common denominator).  Returns false when the row is over budget
+/// (the honest tail — callers keep the per-term path for those).
+fn ff_encoding_is_faithful(row: &LinExpr) -> Option<bool> {
+    let enc = int_row_from_lin(row)?;
+    let d = enc.denom as i128;
+    // Minimal common denominator: nothing but 1 divides everything.
+    let mut g = d;
+    for (_, n) in &enc.terms {
+        g = gcd_i128(g, *n);
+        if g == 1 {
+            break;
+        }
+    }
+    g = gcd_i128(g, enc.const_num);
+    assert_eq!(g, 1, "joint gcd must be 1 (minimal common denominator)");
+    assert!(enc.denom > 0, "denominator is positive");
+    for (v, n) in &enc.terms {
+        let canonical = row
+            .terms
+            .iter()
+            .find(|(cv, _)| cv == v)
+            .map(|(_, c)| c)
+            .expect("encoding only names the row's variables");
+        // n/D == canonical, compared exactly through i256-free cross
+        // multiplication in i128 (budgeted operands make it safe).
+        assert_eq!(
+            n * *canonical.denom() as i128,
+            *canonical.numer() as i128 * d,
+            "value mismatch on term {v}"
+        );
+        assert!(n.unsigned_abs() <= 1 << 62, "numerator budget");
+    }
+    assert_eq!(
+        enc.const_num * *row.constant.denom() as i128,
+        *row.constant.numer() as i128 * d,
+        "constant value mismatch"
+    );
+    Some(true)
+}
+
+/// The fraction-free substitution is BIT-IDENTICAL to the historical
+/// per-term rational fast path — same canonical coefficient values, same
+/// term ORDER (row order first, appended entering terms after), same
+/// zero-term dropping — and its declines are exactly the rational path's
+/// declines (a final that does not fit `Rational64` refuses in both; the
+/// rational path can additionally decline on intermediate overflow, where
+/// the integer path still succeeds).  This is what lets it share the pivot
+/// without perturbing the search trajectory.
+#[test]
+fn substitute_row_ff_matches_rational_reference_seeded_grid() {
+    let mut rng = FfLcg::new(0xFACADE01);
+    let mut both = 0usize;
+    let mut both_declined = 0usize;
+    let mut skipped = 0usize; // over-budget encodings (the honest tail)
+    for _ in 0..4000 {
+        const NVARS: u32 = 8;
+        let mut row = ff_random_row(&mut rng, NVARS);
+        let mut entering = ff_random_row(&mut rng, NVARS);
+        // The entering (solved-form) row never references the entering
+        // variable itself.
+        let entering_var: VarId = rng.below(NVARS as u64) as VarId;
+        entering.terms.retain(|(v, _)| *v != entering_var);
+        if entering.terms.is_empty() {
+            entering.add_term((entering_var + 1) % NVARS, Rational64::from_integer(2));
+        }
+        // The substituted row must reference the entering variable with a
+        // nonzero coefficient.
+        if !row
+            .terms
+            .iter()
+            .any(|(v, c)| *v == entering_var && !c.is_zero())
+        {
+            row.terms.retain(|(v, _)| *v != entering_var);
+            row.add_term(
+                entering_var,
+                Rational64::from_integer(1 + rng.below(3) as i64),
+            );
+        }
+        let sc = row
+            .terms
+            .iter()
+            .find(|(v, _)| *v == entering_var)
+            .map(|(_, c)| *c)
+            .expect("entering term guaranteed above");
+        if ff_encoding_is_faithful(&row).is_none() {
+            skipped += 1;
+        }
+        let (Some(r_int), Some(e_int)) = (int_row_from_lin(&row), int_row_from_lin(&entering))
+        else {
+            skipped += 1;
+            continue;
+        };
+        let n_e = r_int
+            .numerator_of(entering_var)
+            .expect("encoded row has the term");
+        let ff = substitute_row_ff(&r_int, n_e, &e_int, entering_var);
+        let reference = Simplex::substitute_row_fast(&row, sc, &entering, entering_var);
+        match (ff, reference) {
+            (Some((lin, int_form)), Some(ref_row)) => {
+                both += 1;
+                assert_eq!(lin.terms, ref_row.terms, "term vector (order included)");
+                assert_eq!(lin.constant, ref_row.constant);
+                if let Some(i) = &int_form {
+                    assert!(ff_encoding_is_faithful(&lin).is_some() || i.denom == 1);
+                    if ff_encoding_is_faithful(&lin).is_some() {
+                        assert_eq!(
+                            i.terms.len(),
+                            lin.terms.len(),
+                            "encoding names exactly the live terms"
+                        );
+                    }
+                } else {
+                    // Admission decline: the canonical row exists but its
+                    // joint form exceeds budget — the negative marker.
+                    assert!(
+                        ff_encoding_is_faithful(&lin).is_none() || int_row_from_lin(&lin).is_none(),
+                        "admission declined for a budget-fitting row"
+                    );
+                }
+            }
+            (Some(_), None) => panic!("integer path succeeded where rational refused"),
+            (None, Some(_)) => panic!("integer path refused where rational succeeded"),
+            (None, None) => both_declined += 1,
+        }
+    }
+    assert!(
+        both > 3000,
+        "grid must exercise the both-succeed mass: {both}"
+    );
+    assert!(
+        skipped + both_declined > 0,
+        "grid should touch the decline tails too (skipped {skipped}, declined {both_declined})"
+    );
+}
+
+/// Budget boundaries: a row whose joint form fits 2^62 encodes; one step
+/// past it declines honestly (the per-term rational path owns that row).
+#[test]
+fn int_row_budget_boundaries() {
+    // Denominator exactly at budget: 2^62 with numerator 1 fits.
+    let at = Rational64::new(1, 1 << 62);
+    let mut row = LinExpr::new();
+    row.add_term(0, at);
+    assert!(int_row_from_lin(&row).is_some());
+    // One denominator step past budget declines.
+    let past = Rational64::new(1, ((1u64 << 62) + 2).try_into().unwrap());
+    let mut row2 = LinExpr::new();
+    row2.add_term(0, past);
+    assert!(int_row_from_lin(&row2).is_none());
+    // A numerator at the budget edge encodes; past it declines.
+    let mut row3 = LinExpr::new();
+    row3.add_term(1, Rational64::from_integer(1 << 62));
+    assert!(int_row_from_lin(&row3).is_some());
+    let mut row4 = LinExpr::new();
+    row4.add_term(1, Rational64::from_integer((1i64 << 62) + 1));
+    assert!(int_row_from_lin(&row4).is_none());
+    // Coprime denominators multiply in the lcm: 2^61 and 3·2^61 -> joint
+    // 3·2^61 over budget, though each term alone fits.
+    let mut row5 = LinExpr::new();
+    row5.add_term(2, Rational64::new(1, 1 << 61));
+    row5.add_term(3, Rational64::new(1, 3 * (1i64 << 61)));
+    assert!(int_row_from_lin(&row5).is_none());
+}
+
+/// Cache coherence invariant: after a solving session with real pivots
+/// (and a push/pop cycle), every fraction-free cache entry points at the
+/// tableau's CURRENT row for its variable.  Pointer validation is the
+/// soundness argument for reading cached encodings — this pins that the
+/// maintenance sites (pivot commits, wide captures, migrations, resets)
+/// actually leave it true.
+#[test]
+fn int_row_cache_pointer_coherence_after_pivots() {
+    let mut simplex = Simplex::new();
+    let x = simplex.new_var();
+    let y = simplex.new_var();
+    let z = simplex.new_var();
+    simplex.set_lower(x, Rational64::zero(), 0);
+    simplex.set_lower(y, Rational64::zero(), 1);
+    simplex.set_lower(z, Rational64::zero(), 2);
+    simplex.set_upper(x, Rational64::from_integer(6), 3);
+    simplex.set_upper(y, Rational64::from_integer(6), 4);
+    // A dense interacting row set: equalities and mixed bounds force
+    // substitutions across several pivots.
+    let mut e1 = LinExpr::new();
+    e1.add_term(x, Rational64::from_integer(2));
+    e1.add_term(y, Rational64::from_integer(-3));
+    e1.add_constant(Rational64::from_integer(1));
+    simplex.add_eq(e1, 10);
+    let mut e2 = LinExpr::new();
+    e2.add_term(y, Rational64::from_integer(4));
+    e2.add_term(z, Rational64::from_integer(5));
+    e2.add_constant(Rational64::from_integer(-2));
+    simplex.add_eq(e2, 11);
+    let mut e3 = LinExpr::new();
+    e3.add_term(x, Rational64::from_integer(3));
+    e3.add_term(z, Rational64::from_integer(-2));
+    e3.add_constant(Rational64::from_integer(7));
+    simplex.add_le(e3, 12);
+    simplex.push();
+    simplex.set_lower(x, Rational64::from_integer(1), 13);
+    simplex.set_upper(z, Rational64::from_integer(4), 14);
+    let _ = simplex.check();
+    simplex.pop();
+    let _ = simplex.check();
+    let mut checked = 0usize;
+    for (var, entry) in &simplex.int_rows {
+        let live = simplex
+            .tableau
+            .get(var)
+            .expect("cache entry names a variable with a live narrow row");
+        assert!(
+            Arc::ptr_eq(&entry.src, live),
+            "stale fraction-free entry for var {var}"
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 2,
+        "session must have populated the cache: {checked}"
+    );
+}

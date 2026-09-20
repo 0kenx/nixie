@@ -817,6 +817,237 @@ impl LinExpr {
     }
 }
 
+/// Width budget for fraction-free row arithmetic ([`IntRow`]): every
+/// numerator and the shared denominator stays `≤ 2^62`.  The margin over
+/// `i64::MAX` (2^63) is deliberate — the pivot substitution forms products
+/// `d_e·n_v + n_e·m_v` and `d_r·d_e` in `i128`, and two 2^62 operands keep
+/// every product ≤ 2^124 and every sum ≤ 2^125, comfortably inside `i128`
+/// with NO checked-multiplication bailout on the hot path.
+const INT_ROW_BUDGET: u128 = 1 << 62;
+
+/// A tableau row in fraction-free (common-denominator) form:
+/// `x_B = (Σ nᵢ·vᵢ + n_c) / D` with `D > 0` and every `|nᵢ|, n_c, D ≤
+/// 2^62`.  This is the Bareiss-style representation the pivot substitution
+/// runs on: the per-term rational `x + f·y` (three-plus gcds per term) is
+/// replaced by integer multiply-subtract on the numerators plus ONE
+/// row-level gcd chain — the substitution mass of a pivot drops from
+/// ~3.5 gcds/term to ~1 (the single reduction back to the canonical
+/// per-term `Rational64` row).
+///
+/// Value-identical to the canonical `LinExpr` it mirrors: every per-term
+/// rational `nᵢ/D` reduced to lowest terms is exactly the stored canonical
+/// coefficient.  The form itself stays JOINT-canonical (`gcd(all nᵢ, n_c,
+/// D) = 1` after the reduction pass), which for exact rows coincides with
+/// the minimal common denominator `lcm(term denominators)`: any prime power
+/// of `D` absent from every term's reduced denominator would divide every
+/// numerator, contradicting joint-canonicity.
+///
+/// NEVER stored independently of the row it mirrors — see
+/// [`Simplex::int_rows`]: every cache entry carries the `Arc<LinExpr>` it
+/// was built from and is only read back when the pointer still matches the
+/// tableau's row, so a stale encoding is unreachable (rows are
+/// content-replaced, never edited in place).
+#[derive(Debug, Clone, Default, PartialEq)]
+struct IntRow {
+    /// Terms: (variable, integer numerator)
+    terms: SmallVec<[(VarId, i128); 4]>,
+    /// Constant numerator
+    const_num: i128,
+    /// Shared (positive) denominator
+    denom: i64,
+}
+
+impl IntRow {
+    /// The row's numerator of `var` (`None` when absent — absent terms are
+    /// zero by convention and zero terms never exist in a canonical row).
+    fn numerator_of(&self, var: VarId) -> Option<i128> {
+        self.terms.iter().find(|(v, _)| *v == var).map(|(_, n)| *n)
+    }
+
+    /// Whether `v` appears as a term.
+    fn contains(&self, v: VarId) -> bool {
+        self.terms.iter().any(|(tv, _)| *tv == v)
+    }
+}
+
+/// One [`Simplex::int_rows`] entry: the fraction-free encoding of exactly
+/// one tableau row, plus the `Arc<LinExpr>` it was built from (the pointer
+/// the read path re-validates — see [`Simplex::int_rows`]).
+struct IntCacheEntry {
+    src: Arc<LinExpr>,
+    row: Option<Arc<IntRow>>,
+}
+
+impl core::fmt::Debug for IntCacheEntry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // The tableau's own Debug derives need this; the `src` Arc is
+        // identified by pointer (the coherence key), not by full row dump.
+        write!(
+            f,
+            "IntCacheEntry({:#x}, {})",
+            Arc::as_ptr(&self.src) as usize,
+            self.row.is_some()
+        )
+    }
+}
+
+/// Fraction-free encoding of a canonical row: common denominator =
+/// `lcm(denominators)` (chain of gcds), numerators scaled accordingly.
+/// `None` when the result would leave the [`INT_ROW_BUDGET`] width (the
+/// honest give-up — the caller keeps the per-term rational path for that
+/// row; over-budget rows are the genuine determinant-ratio tail).
+fn int_row_from_lin(row: &LinExpr) -> Option<IntRow> {
+    let mut d: i128 = 1;
+    for (_, c) in &row.terms {
+        d = lcm_i128(d, *c.denom() as i128)?;
+    }
+    d = lcm_i128(d, *row.constant.denom() as i128)?;
+    if d > INT_ROW_BUDGET as i128 {
+        return None;
+    }
+    let scaled = |c: &Rational64| -> Option<i128> {
+        // d is the chain lcm, so the division is exact.
+        let n = (*c.numer() as i128).checked_mul(d / *c.denom() as i128)?;
+        (n.unsigned_abs() <= INT_ROW_BUDGET).then_some(n)
+    };
+    let mut terms: SmallVec<[(VarId, i128); 4]> = SmallVec::with_capacity(row.terms.len());
+    for (v, c) in &row.terms {
+        terms.push((*v, scaled(c)?));
+    }
+    Some(IntRow {
+        terms,
+        const_num: scaled(&row.constant)?,
+        denom: d as i64,
+    })
+}
+
+/// Exact `lcm` on `i128` inputs, `None` on overflow.
+fn lcm_i128(a: i128, b: i128) -> Option<i128> {
+    debug_assert!(a > 0 && b > 0, "denominators are positive");
+    let g = gcd_i128(a, b);
+    (a / g).checked_mul(b)
+}
+
+/// The fraction-free pivot substitution, semantically identical to
+/// [`Simplex::substitute_row_fast`] (and bit-identical in output — same
+/// canonical coefficients, same term ORDER, same zero-term dropping),
+/// computed on [`IntRow`] encodings:
+///
+/// * `row` is the substituted tableau row (`(nᵢ, D_r)`), `n_e` its
+///   numerator of the entering variable,
+/// * `entering` is the entering variable's solved row (`(mⱼ, D_e)`),
+///
+/// result numerators `N_v = D_e·n_v + n_e·m_v` over the shared denominator
+/// `D_r·D_e`, then one joint gcd-reduction pass.  Every operand is within
+/// [`INT_ROW_BUDGET`], so the `i128` products cannot overflow and the only
+/// `None` is a final that does not fit a canonical `Rational64` — exactly
+/// the case where `substitute_row_fast` also declines, so the caller's
+/// exact-`BigRational` retry produces the same row this function could not.
+///
+/// Returns the canonical row plus its fraction-free re-encoding when that
+/// stays within budget (`None` encoding = keep it out of the cache; the
+/// per-term row may still fit `Rational64` fine).
+fn substitute_row_ff(
+    row: &IntRow,
+    n_e: i128,
+    entering: &IntRow,
+    nonbasic_var: VarId,
+) -> Option<(LinExpr, Option<IntRow>)> {
+    let d_r = row.denom as i128;
+    let d_e = entering.denom as i128;
+    // Budget invariants (structural: entries only come from budget-checked
+    // builders) — every product below is ≤ 2^124 and every sum ≤ 2^125,
+    // inside `i128` without checked arithmetic on the hot path.
+    debug_assert!(n_e != 0, "entering coefficient is nonzero");
+    debug_assert!(
+        d_r > 0 && d_e > 0 && d_r <= INT_ROW_BUDGET as i128 && d_e <= INT_ROW_BUDGET as i128
+    );
+    debug_assert!(
+        row.terms
+            .iter()
+            .all(|(_, n)| n.unsigned_abs() <= INT_ROW_BUDGET)
+    );
+    debug_assert!(
+        entering
+            .terms
+            .iter()
+            .all(|(_, n)| n.unsigned_abs() <= INT_ROW_BUDGET)
+    );
+    // Union merge in the exact order `substitute_row_fast` produces:
+    // row terms first (minus the entering term), then entering terms
+    // absent from the row — cancellation to zero drops a row term in
+    // place; an appended term is never zero (`n_e ≠ 0`, `m_v ≠ 0`).
+    let mut nums: SmallVec<[(VarId, i128); 4]> = SmallVec::with_capacity(row.terms.len());
+    for (v, n_v) in &row.terms {
+        if *v == nonbasic_var {
+            continue;
+        }
+        let m_v = entering.numerator_of(*v).unwrap_or(0);
+        let n = d_e * n_v + n_e * m_v;
+        if n != 0 {
+            nums.push((*v, n));
+        }
+    }
+    for (v, m_v) in &entering.terms {
+        if !row.contains(*v) {
+            // The entering row references the leaving basic (its first
+            // term) — always an append, like every absent variable.
+            let n = n_e * m_v;
+            debug_assert!(n != 0, "appended terms carry nonzero entering numerators");
+            if n != 0 {
+                nums.push((*v, n));
+            }
+        }
+    }
+    let mut const_num = d_e * row.const_num + n_e * entering.const_num;
+    let mut d = d_r * d_e;
+    debug_assert!(d > 0, "denominators are positive, so their product is");
+    // One joint reduction: gcd chain over (denominator, numerators,
+    // constant) with early exit at 1.  After it, the form is
+    // joint-canonical (see [`IntRow`]); unreduced large products come back
+    // down to the row's minimal common denominator.
+    let mut g = gcd_i128(d, const_num);
+    if g > 1 {
+        for (_, n) in &nums {
+            g = gcd_i128(g, *n);
+            if g == 1 {
+                break;
+            }
+        }
+    }
+    if g > 1 {
+        d /= g;
+        for (_, n) in &mut nums {
+            *n /= g;
+        }
+        const_num /= g;
+    }
+    // Canonical write-back: one reduction per term (the single gcd this
+    // path pays per term, against the fused multiply-add's three-plus).
+    let out_const = checked_ratio_i128(const_num, d)?;
+    let mut out = LinExpr::new();
+    out.constant = out_const;
+    out.terms.reserve(nums.len());
+    for (v, n) in &nums {
+        out.terms.push((*v, checked_ratio_i128(*n, d)?));
+    }
+    // Cache admission only within the budget; the canonical row itself is
+    // already fully valid.
+    let fits = d <= INT_ROW_BUDGET as i128
+        && const_num.unsigned_abs() <= INT_ROW_BUDGET
+        && nums.iter().all(|(_, n)| n.unsigned_abs() <= INT_ROW_BUDGET);
+    let int_form = if fits {
+        Some(IntRow {
+            terms: nums.clone(),
+            const_num,
+            denom: d as i64,
+        })
+    } else {
+        None
+    };
+    Some((out, int_form))
+}
+
 /// Canonical positive rescaling of a row's coefficients: multiply the whole
 /// linear form by `lcm(denominators) / gcd(|numerators|)` so that every
 /// coefficient becomes an integer and the coefficient set has GCD 1.
@@ -1117,6 +1348,23 @@ pub struct Simplex {
     /// wide-LP wall's remaining territory made sound and partial: no
     /// wrapped verdicts, decided wherever representability allows.
     wide_rows: FxHashMap<VarId, BigLinExpr>,
+    /// Fraction-free ([`IntRow`]) encodings of the narrow tableau's rows —
+    /// the pivot substitution's fast path.  Each entry carries the exact
+    /// `Arc<LinExpr>` it was built from and is ONLY read when that pointer
+    /// is still the tableau's row (`Arc::ptr_eq`): rows are content-
+    /// replaced, never edited in place, so a pointer match is a content
+    /// match and a stale encoding is structurally unreachable.  `row:
+    /// None` is a NEGATIVE entry — this exact row (by pointer) exceeds the
+    /// [`INT_ROW_BUDGET`] width, so the per-term rational path owns it;
+    /// without the negative marker every pivot would re-derive the lcm
+    /// chain for the over-budget tail.
+    ///
+    /// Maintained at exactly the row-content mutation sites: pivot commits
+    /// (leaving removal, entering insert, per-row substitution commits,
+    /// wide captures), the `update_row_exact` narrow→wide migration, and
+    /// `reset`.  `intern_row` inserts lazily materialize on first
+    /// substitution (a miss builds and inserts).
+    int_rows: FxHashMap<VarId, IntCacheEntry>,
     /// Exact POINT values of variables (basic or non-basic) whose current
     /// assignment does not fit `Rational64` width — the point-value
     /// counterpart of `wide_rows`: a non-basic snapped to a wide bound
@@ -1245,6 +1493,7 @@ impl Simplex {
             upper: Vec::new(),
             tableau: FxHashMap::default(),
             wide_rows: FxHashMap::default(),
+            int_rows: FxHashMap::default(),
             wide_points: FxHashMap::default(),
             wide_pending: false,
             columns: FxHashMap::default(),
@@ -3694,6 +3943,15 @@ impl Simplex {
                 })
                 .expect("one of the two entering forms exists")
         });
+        // The entering row's fraction-free encoding, built ONCE per pivot
+        // (every substituted row below consumes it): `None` when the
+        // entering row is wide or over the [`INT_ROW_BUDGET`] width — then
+        // every row keeps its historical per-term rational path this pivot.
+        let entering_int = if entering_wide.is_none() {
+            new_expr.as_ref().and_then(int_row_from_lin)
+        } else {
+            None
+        };
         // Collect the rows that reference the entering column – in O(column)
         // via the column index rather than a full-tableau scan – and compute
         // their substituted content into `row_updates` WITHOUT mutating the
@@ -3701,7 +3959,11 @@ impl Simplex {
         // helpers, and an overflow anywhere aborts the pivot with NO partial
         // mutation (the transactional validate-then-commit contract callers
         // and the overflow regression test rely on).
-        let mut row_updates: Vec<(VarId, LinExpr, bool)> = Vec::new();
+        //
+        // Each entry also carries the new row's fraction-free encoding for
+        // the [`Simplex::int_rows`] cache (`None` = this content is over
+        // budget / not encodable — the negative marker).
+        let mut row_updates: Vec<(VarId, LinExpr, bool, Option<IntRow>)> = Vec::new();
         let mut wide_updates: Vec<(VarId, BigLinExpr)> = Vec::new();
         if let Some(col) = self.columns.get(&nonbasic_var).cloned() {
             for &var in col.iter() {
@@ -3735,7 +3997,10 @@ impl Simplex {
                     let updated =
                         Self::substitute_big_row(&wrow, &sc_b, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&updated) {
-                        Some(narrow) => row_updates.push((var, narrow, true)),
+                        Some(narrow) => {
+                            let int_form = int_row_from_lin(&narrow);
+                            row_updates.push((var, narrow, true, int_form));
+                        }
                         None => wide_updates.push((var, updated)),
                     }
                     continue;
@@ -3748,6 +4013,58 @@ impl Simplex {
                 }) else {
                     continue;
                 };
+                // Fraction-free fast path (the Bareiss layer): with a
+                // pointer-validated cache entry for THIS row content and a
+                // within-budget entering row, the substitution runs as
+                // integer multiply-subtract on the numerators plus one
+                // row-level gcd chain — replacing ~3.5 gcds/term of fused
+                // rational multiply-add with one per-term reduction.  The
+                // output is bit-identical to `substitute_row_fast` (same
+                // canonical values, same term order, same zero-drop), so
+                // the search trajectory is unchanged; a decline (per-term
+                // width) falls through to the historical paths, which
+                // produce the same row by exact `BigRational` arithmetic.
+                // The cache read validates `Arc::ptr_eq` against the
+                // tableau's current row: entries are keyed by content
+                // identity (rows are content-replaced, never edited in
+                // place), so a stale encoding cannot be read.
+                //
+                // GATE — at least one side must carry a fraction: an
+                // all-INTEGRAL substitution is already gcd-free on the
+                // historical path (`try_add_term_mul`'s integer fast
+                // path), where the fraction-free form's `i128` numerators
+                // and cache traffic are pure tax (measured: the integral
+                // cells regressed ~1.1× ungated; the fractional mass is
+                // where the ~3 gcds/term live).  An integral×integral
+                // substitution stays integral, so the gate is stable
+                // across pivots through the cached denominators.
+                if let Some(e_int) = entering_int.as_ref() {
+                    let cached = match self.int_rows.get(&var) {
+                        Some(e) if Arc::ptr_eq(&e.src, &row) => e.row.clone(),
+                        _ => {
+                            // Miss: build once for this content (lcm chain),
+                            // park it (or its negative marker) for every
+                            // later pivot through this row.
+                            let built = int_row_from_lin(&row);
+                            let entry = IntCacheEntry {
+                                src: row.clone(),
+                                row: built.clone().map(Arc::new),
+                            };
+                            let back = entry.row.clone();
+                            self.int_rows.insert(var, entry);
+                            back
+                        }
+                    };
+                    if let Some(r_int) = cached
+                        && (r_int.denom > 1 || e_int.denom > 1)
+                        && let Some(n_e) = r_int.numerator_of(nonbasic_var)
+                        && let Some((fast, int_form)) =
+                            substitute_row_ff(&r_int, n_e, e_int, nonbasic_var)
+                    {
+                        row_updates.push((var, fast, leaving_row_is_wide, int_form));
+                        continue;
+                    }
+                }
                 // Same fast-then-exact discipline as the entering row: the
                 // substitution's intermediates (`sc·const`, merged
                 // coefficients) can exceed `i64` while every final of the
@@ -3766,11 +4083,18 @@ impl Simplex {
                     _ => None, // wide entering row: no narrow fast path
                 };
                 if let Some(fast) = fast {
-                    row_updates.push((var, fast, leaving_row_is_wide));
+                    // Admit the rational fast path's result to the
+                    // fraction-free cache when it fits, so later pivots
+                    // take the integer path through this row.
+                    let int_form = int_row_from_lin(&fast);
+                    row_updates.push((var, fast, leaving_row_is_wide, int_form));
                 } else {
                     let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
-                        Some(new_row) => row_updates.push((var, new_row, leaving_row_is_wide)),
+                        Some(new_row) => {
+                            let int_form = int_row_from_lin(&new_row);
+                            row_updates.push((var, new_row, leaving_row_is_wide, int_form));
+                        }
                         None => {
                             wide_updates.push((var, exact));
                         }
@@ -3863,7 +4187,7 @@ impl Simplex {
         // (the full re-evaluation was the top arithmetic consumer on dense
         // CAV/QF_LIA rows).
         if let Some(delta) = snap_delta {
-            for (var, new_row, was_wide) in &row_updates {
+            for (var, new_row, was_wide, _int_form) in &row_updates {
                 let vi = *var as usize;
                 if vi >= self.assignment.len() {
                     continue;
@@ -3973,6 +4297,9 @@ impl Simplex {
         }
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.tableau.remove(&basic_var);
+        // The leaving row's fraction-free encoding dies with the row (the
+        // VarId is never a row owner again — ids are not recycled).
+        self.int_rows.remove(&basic_var);
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.remove(&basic_var);
         match (new_expr, entering_wide) {
@@ -3983,7 +4310,20 @@ impl Simplex {
                 // The entering variable is now BASIC with this defining row:
                 // retire any wide point from a previous nonbasic life.
                 self.retire_wide_point(nonbasic_var);
-                self.tableau.insert(nonbasic_var, Arc::new(new_expr));
+                let entering_arc = Arc::new(new_expr);
+                self.tableau.insert(nonbasic_var, entering_arc.clone());
+                // The entering row's fraction-free encoding was already
+                // built for the substitution loop — link it to the COMMITTED
+                // arc so the pointer validation reads this exact content.
+                if let Some(e_int) = entering_int {
+                    self.int_rows.insert(
+                        nonbasic_var,
+                        IntCacheEntry {
+                            src: entering_arc,
+                            row: Some(Arc::new(e_int)),
+                        },
+                    );
+                }
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
                     // listed it as a row owner; push without the membership
@@ -4017,7 +4357,7 @@ impl Simplex {
         // column removed (a stale `columns[v]` entry for a cancelled term made
         // `on_nonbasic_bound_change` skip real dependents and let later edits
         // miss rows entirely: corrupted tableau, wrong answers).
-        for (var, new_row, was_wide) in row_updates {
+        for (var, new_row, was_wide, int_form) in row_updates {
             // Diff-based column maintenance: the column index is exact, so a
             // term present in both rows needs no touch, a dropped term needs
             // removal, and an added term is guaranteed absent from the column
@@ -4059,7 +4399,18 @@ impl Simplex {
                 self.column_push_known(v, var);
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
-            self.tableau.insert(var, Arc::new(new_row));
+            let new_arc = Arc::new(new_row);
+            self.tableau.insert(var, new_arc.clone());
+            // Link the new content's fraction-free encoding (or its
+            // negative marker) to the committed arc — pointer validation
+            // on every read keeps a stale encoding unreachable.
+            self.int_rows.insert(
+                var,
+                IntCacheEntry {
+                    src: new_arc,
+                    row: int_form.map(Arc::new),
+                },
+            );
             // A row that narrowed back from the wide store leaves it (the
             // tableau entry is now authoritative) — and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
@@ -4120,6 +4471,9 @@ impl Simplex {
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.tableau.remove(&var);
+            // The row left the narrow tableau: its fraction-free encoding
+            // must not survive where the row no longer lives.
+            self.int_rows.remove(&var);
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.wide_rows.insert(var, new_wide);
         }
@@ -4880,6 +5234,9 @@ impl Simplex {
         for var in wide_migrations {
             self.rows_ver = self.rows_ver.wrapping_add(1);
             if let Some(expr) = self.tableau.remove(&var) {
+                // The narrow store's fraction-free encoding dies with the
+                // narrow row (wide rows never take the integer path).
+                self.int_rows.remove(&var);
                 let big = BigLinExpr {
                     terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
                     constant: big_r64(&expr.constant),
@@ -6005,6 +6362,7 @@ impl Simplex {
         self.upper.clear();
         self.tableau.clear();
         self.wide_rows.clear();
+        self.int_rows.clear();
         self.wide_points.clear();
         self.wide_pending = false;
         self.columns.clear();
