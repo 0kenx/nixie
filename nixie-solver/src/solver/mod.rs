@@ -3368,9 +3368,7 @@ impl Solver {
                         let may_branch_round = theory_manager.abstention_exhausted()
                             && !theory_manager.unjustified_conflict()
                             && self.config.max_conflicts == 0;
-                        if may_branch_round
-                            && self.refine_lia_branch_requests(manager)
-                        {
+                        if may_branch_round && self.refine_lia_branch_requests(manager) {
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
