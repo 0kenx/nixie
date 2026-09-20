@@ -1293,10 +1293,15 @@ impl<'a> TheoryManager<'a> {
     ) -> TheoryCheckResult {
         // Collect every unique term ID that appears in any parsed arithmetic
         // constraint.  These are the terms the arithmetic solver knows about.
+        // Membership goes through a set: the Vec scan was O(terms^2) per
+        // call, and this runs on every theory check (16% of a 4 000-term
+        // QF_LIA run). The set preserves the Vec's insertion order, so the
+        // class representatives below are unchanged.
         let mut arith_terms: Vec<TermId> = Vec::new();
+        let mut arith_seen: FxHashSet<TermId> = FxHashSet::default();
         for parsed in self.var_to_parsed_arith.values() {
             for &(term, _coef) in &parsed.terms {
-                if !arith_terms.contains(&term) {
+                if arith_seen.insert(term) {
                     arith_terms.push(term);
                 }
             }

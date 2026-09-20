@@ -132,3 +132,26 @@ difference is structural, in decreasing order:
 - The stale `bench/perf_gate/BASELINE` pin (several SAT-core landings old)
   shows 1.013 drift attributable to intermediate commits — re-pinning is a
   deliberate act for whoever lands the next SAT-core change.
+
+## Addendum (2026-09-20): the per-assertion audit continued — one more shared quadratic
+
+Following this study's own follow-up note, a scaling probe through the real
+SMT-LIB path (N declarations + N assertions, `set-logic QF_LIA`) found the
+next superlinearity — not in the assertion pipeline but in the theory check:
+
+`TheoryManager::propagate_euf_equalities_to_arith` built its arith-term list
+with a `Vec::contains` membership scan — **O(terms²) per call, once per
+theory check** — which profiled at 16 % of a 4 000-term run (the rest of
+that run is genuine simplex work on the disequalities). Replaced with an
+order-preserving `FxHashSet` membership (identical insertion order ⇒
+identical class representatives ⇒ bit-identical behavior by construction).
+Measured on the `distinct`-heavy probe under a loaded machine: 111 s →
+57–77 s for 4 000 terms; the *residual* superlinear cost is the simplex
+disequality case-split procedure itself (z3: 0.19 s) — a theory-solver
+algorithm change, explicitly out of scope for inert landings.
+
+Verification: verdicts match z3 on the probes (sat/unsat); full workspace
+suite green (timeouts re-verified in isolation — load artifacts); Z3 4.16.0
+parity 176/176 decisive, 0 disagreements; perf gate **1.000** against the
+freshly re-pinned baseline (`a48d8464` re-pinned to `6853ba29`); graph
+differential spot-check 300/300 agree.
