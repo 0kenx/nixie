@@ -119,3 +119,28 @@ folds a measurable subset is unmeasured (needs solver runs: re-express
 the goal as `(assert (and …))` + `(simplify …)` on a sample and compare
 against the per-assertion outcome) — the owning session's first probe,
 cheap and single-threaded.
+
+## Addendum 2: the conj-level demand experiment — NEGATIVE, the item retires
+
+20-file seeded sample from the demand pool (6 BV, 4 NIA, 4 LIA, 4 UF,
+2 UFLIA), each re-expressed as `(assert (and …))` — which gives the
+landed per-assertion fold the full cross-assertion context — and run
+against the original + z3:
+
+* **Zero fold wins**: no cell where the original answers
+  `unknown`/`timeout` and the conjunction form decides (the two
+  z3-`unsat` timeout cells stay timeout in both forms).
+* **The conjunction shape is search-HOSTILE**: 16/20 conjunction runs
+  timeout vs the original's outcome, including 8 `sat` → `timeout`
+  flips (BV mean_buckets/nnrpd/sugarbeets, LIA 37.lp/Example_2, UF
+  at.1/bakery/leader_filters).  The multi-assert pipeline shape
+  (per-assertion encoding, polarity collection, clause granularity) is
+  load-bearing for the search; collapsing it costs far more than any
+  cross-assertion context buys.
+* The NIA `unknown`s stay undecided in both forms — no hidden fold
+  demand there either.
+
+The conj-level probe (the removed check-time variant) RETIRES: no
+demonstrated demand, and a hypothetical set-replacing version would
+reproduce this measured regression.  Sample caveat: 20 files, one
+seed; the effect sizes (8 sat→timeout flips) are far past noise.
