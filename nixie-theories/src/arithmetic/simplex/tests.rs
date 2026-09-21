@@ -2265,6 +2265,149 @@ fn substitute_row_ff_matches_rational_reference_seeded_grid() {
     );
 }
 
+/// The joint-reduction walk's DIVISION-FIRST step must produce the exact
+/// same accumulated gcd as the naive `gcd(g, n)` chain (Euclid's identity:
+/// `gcd(g, n) = n % g == 0 ? g : gcd(g, n % g)` for `g > 0`).  This pins
+/// the identity on the walk's four measured shapes directly against a
+/// reference naive chain computed in the test:
+/// * stabilized `g` — every merged numerator divisible (the 93 %-shape);
+/// * mid-walk residue — one numerator reduces `g`, the rest divide it;
+/// * early exit — a coprime numerator drives `g` to 1 (no reduction);
+/// * wide operands — values past `u64::MAX` take the `gcd_i128` walk.
+#[test]
+fn substitute_row_ff_division_first_walk_matches_naive_chain() {
+    // `row` = (nums, c_r, d_r) carrying `entering_var` with numerator
+    // `n_e`; `entering` = (ms, c_e, d_e).  The output must equal the raw
+    // union-merge arithmetic reduced by a NAIVE gcd chain (the
+    // pre-division-first code), computed independently here.
+    let check = |nums: &[(VarId, i128)],
+                 c_r: i128,
+                 d_r: i64,
+                 n_e: i128,
+                 entering_var: VarId,
+                 ms: &[(VarId, i128)],
+                 c_e: i128,
+                 d_e: i64| {
+        let row = IntRow {
+            terms: nums.iter().copied().collect(),
+            const_num: c_r,
+            denom: d_r,
+        };
+        let entering = IntRow {
+            terms: ms.iter().copied().collect(),
+            const_num: c_e,
+            denom: d_e,
+        };
+        let got = substitute_row_ff(&row, n_e, &entering, entering_var)
+            .expect("budget-sized inputs never decline");
+        let mut ref_nums: Vec<(VarId, i128)> = Vec::new();
+        for &(v, n_v) in nums {
+            if v == entering_var {
+                continue;
+            }
+            let m_v = ms
+                .iter()
+                .find(|(w, _)| *w == v)
+                .map(|(_, m)| *m)
+                .unwrap_or(0);
+            let n = d_e as i128 * n_v + n_e * m_v;
+            if n != 0 {
+                ref_nums.push((v, n));
+            }
+        }
+        for &(v, m_v) in ms {
+            if !nums.iter().any(|(w, _)| *w == v) {
+                ref_nums.push((v, n_e * m_v));
+            }
+        }
+        let ref_const = d_e as i128 * c_r + n_e * c_e;
+        let ref_d = d_r as i128 * d_e as i128;
+        let mut g = gcd_i128(ref_d, ref_const);
+        if g > 1 {
+            for &(_, n) in &ref_nums {
+                g = gcd_i128(g, n);
+                if g == 1 {
+                    break;
+                }
+            }
+        }
+        if g > 1 {
+            assert_eq!(got.denom as i128, ref_d / g, "denominator");
+            assert_eq!(got.const_num, ref_const / g, "constant");
+            assert_eq!(
+                got.terms.as_slice(),
+                &ref_nums
+                    .iter()
+                    .map(|&(v, n)| (v, n / g))
+                    .collect::<Vec<_>>()[..],
+                "numerators"
+            );
+        } else {
+            assert_eq!(got.denom as i128, ref_d, "denominator (unreduced)");
+            assert_eq!(got.const_num, ref_const, "constant (unreduced)");
+            assert_eq!(
+                got.terms.as_slice(),
+                &ref_nums[..],
+                "numerators (unreduced)"
+            );
+        }
+    };
+
+    // Stabilized g: d = 4*9 = 36, c = 24 -> g0 = 12; every merged
+    // numerator (240, 336, append 12) divisible by 12 — the r == 0 fast
+    // case at every step.
+    check(
+        &[(1, 24), (2, 36), (7, 3)],
+        0,
+        4,
+        3,
+        7,
+        &[(1, 8), (3, 4)],
+        8,
+        9,
+    );
+
+    // Mid-walk residue: 240 is divisible by g0 = 12, 255 leaves r = 3 and
+    // reduces g to 3, the appended 12 is divisible by the reduced g.
+    check(
+        &[(1, 24), (2, 28), (7, 3)],
+        0,
+        4,
+        3,
+        7,
+        &[(1, 8), (2, 1), (3, 4)],
+        8,
+        9,
+    );
+
+    // Early exit: g0 = gcd(72, 8) = 8; 216 divisible, 300 reduces g to 4,
+    // the appended 15 is coprime with 4 -> g = 1, NO reduction.
+    check(
+        &[(1, 24), (2, 36), (7, 3)],
+        1,
+        9,
+        3,
+        7,
+        &[(1, 8), (2, 4), (3, 5)],
+        0,
+        8,
+    );
+
+    // Wide operands: every merged value is a multiple of 2^80 past
+    // u64::MAX, so the whole walk runs the gcd_i128 fallback.
+    let w = 1i128 << 40;
+    check(
+        &[(1, 5 * w), (2, 7 * w), (7, w)],
+        3 * w,
+        w as i64,
+        w,
+        7,
+        &[(1, 3 * w), (3, 11 * w)],
+        w,
+        (3 * w) as i64,
+    );
+}
+
 /// Budget boundaries: a row whose joint form fits 2^62 encodes; one step
 /// past it declines honestly (the per-term rational path owns that row).
 #[test]
@@ -2369,7 +2512,7 @@ fn integer_tableau_rows_materialize_consistently_after_pivots() {
 fn born_entering_row_matches_the_canonical_solved_form() {
     let mut rng = FfLcg::new(0xB0D0_5EED);
     let mut checked = 0usize;
-    let mut skipped = 0usize;
+    let mut _skipped = 0usize;
     for _ in 0..2000 {
         const NVARS: u32 = 6;
         let mut row = ff_random_row(&mut rng, NVARS);
@@ -2386,11 +2529,11 @@ fn born_entering_row_matches_the_canonical_solved_form() {
             );
         }
         let Some(leaving_int) = int_row_from_lin(&row) else {
-            skipped += 1;
+            _skipped += 1;
             continue;
         };
         let Some(n_e) = leaving_int.numerator_of(entering_var) else {
-            skipped += 1;
+            _skipped += 1;
             continue;
         };
         let born = born_entering_row(&leaving_int, n_e, 99, entering_var);
@@ -2405,7 +2548,7 @@ fn born_entering_row_matches_the_canonical_solved_form() {
         let Some(reference) = Simplex::build_pivot_expr(&lin, coef, 99, entering_var)
             .or_else(|| Simplex::build_pivot_expr_exact(&lin, coef, 99, entering_var))
         else {
-            skipped += 1;
+            _skipped += 1;
             continue;
         };
         let born_lin = materialize_lin(&born);
