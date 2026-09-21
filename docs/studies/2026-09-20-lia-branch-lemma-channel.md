@@ -389,3 +389,36 @@ corpus-missing class); clippy/fmt/rustdoc clean; parity 176/177 Correct
 wide (20262560-62) fresh differentials clean; debug panic sweep 177/177.
 
 The arc's cumulative fixed-seed survey run: 150 → … → 18 → 2 → **1**.
+
+## Addendum 4 — the fresh-seed hunt: 8 members, the J5-blocking route closes 2, the simplex family (6) named
+
+Fresh seeds 20262600–02 × 600 on `precompile/286f63bd/nixie` (the fixed
+seeds exhausted at 1): **8 members (~2.7/seed — the arc's fixes
+generalize)**.  Attribution: **2 J5-certify + 6 simplex resource-limit
+family** (`smx-rl:make_feasible`/`smx-rl:check`, one with a branch
+request fired).
+
+The 2 J5 members decoded: the certificate now **REFUTES** both
+(`Bool(false)`) — the genuinely-bad-candidate class at last (item 89's
+dive-leaf divergence).  The routing fix: a REFUTED candidate is
+**blocked-and-retried** (the J17 route the J5 gate always bypassed —
+item 88 mapped this years-of-items ago): the certificate's tri-state
+(`Pass`/`Refuted`/`Undecided` — declines are never blocked; excluding an
+undecided region can discard the good model), a bounded retry (8 rounds)
+through `block_refuted_model_and_rebase` + re-solve.  **Both members
+recovered with z3-validated models; the 6 simplex members unchanged**
+(their class is elsewhere).  Fresh-seed residual: **6 members, all the
+simplex pivot-cap/resource-limit family** — the next campaign's target
+(the entry points: `make_feasible`'s pivot cap, `check`'s resource limit,
+and the interplay with the branch channel's rounds).
+
+Battery: workspace suite 12 098 passed (15 = the documented
+corpus-missing class; the scope_rebase timeouts are load artifacts —
+9/9 pass in isolation); clippy/fmt/rustdoc clean (the doc run needed a
+root-disk target — /media/data hit 100% mid-battery again); parity
+176/177 Correct 0 wrong (z3 4.16.0); perf gate PASS; 3×400 mixed
+(20262610-12) + 3×300 wide (20262620-22) fresh differentials clean;
+panic sweep 177/177.
+
+The arc's survey ledger: fixed seeds at 1 (i129, the simplex tail — the
+same family as the fresh-seed 6); fresh seeds at 6.

@@ -1696,12 +1696,46 @@ impl Solver {
             // discarding).
             && !self.model_certifies_assertions(manager)
         {
-            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
-                eprintln!("[qround] Sat downgraded: arith big-const abstraction uncertified");
+            // A REFUTED candidate (some assertion concretely FALSE under
+            // the published model — the dive-leaf divergence class, item
+            // 89's map) is blocked-and-retried like any other refuted
+            // model: the block excludes only this assignment's projection,
+            // and the next candidate may carry the good model.  A DECLINE
+            // (`Undecided`) is never blocked — excluding an undecided
+            // region can discard the good model.  Bounded like the BV
+            // pending rounds; budget out ⇒ the honest `Unknown` this gate
+            // always owned.
+            const MAX_J5_BLOCK_ROUNDS: u32 = 8;
+            let mut certified = false;
+            for _ in 0..MAX_J5_BLOCK_ROUNDS {
+                match self.model_certificate_status(manager) {
+                    crate::solver::model_eval::CertStatus::Pass => {
+                        certified = true;
+                        break;
+                    }
+                    crate::solver::model_eval::CertStatus::Refuted => {
+                        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                            eprintln!("[qround] J5 refuted candidate: blocking + re-solve");
+                        }
+                        if !self.block_refuted_model_and_rebase() {
+                            break; // the block budget or projection failed
+                        }
+                        result = self.check_core(manager);
+                        if result != SolverResult::Sat {
+                            break; // the blocks closed the space or budgeted out
+                        }
+                    }
+                    crate::solver::model_eval::CertStatus::Undecided => break,
+                }
             }
-            self.model = None;
-            self.unsat_core = None;
-            return SolverResult::Unknown;
+            if !certified {
+                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                    eprintln!("[qround] Sat downgraded: arith big-const abstraction uncertified");
+                }
+                self.model = None;
+                self.unsat_core = None;
+                return SolverResult::Unknown;
+            }
         }
         // Honesty gate (soundness): the datatype axiom budget ran out, so the
         // formula was solved against a strict subset of the datatype theory.
