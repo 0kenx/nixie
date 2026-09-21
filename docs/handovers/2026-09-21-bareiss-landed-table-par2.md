@@ -182,3 +182,15 @@ parser arc) and `nixie-theories/src/graph/tests.rs`.
 - **num-rational's `+=` panics on intermediate overflow in debug** —
   test generators must merge through `checked_add_r64`, not
   `LinExpr::add_term`.
+
+## The named-member audit after the integer-tableau landings (clean)
+
+Per the arithmetic arc's discipline (re-run the named members after any
+raced landing on solver surfaces): the fixed-seed survey
+(`gap_survey.py`, seeds 20261000-02 × 600) on `precompile/795abb8f`
+(the Phase-3 tree) yields **exactly 1 member — `i129`**, the known
+simplex resource-limit tail — the arc's expected result on the prior
+tree, reproduced precisely.  No silent drops from the integer-tableau
+Stages A/B or Phases 2/3; no new members.  (The named pins i142/i116/
+i504/i393/i566 live in the test files — green in the full suites run
+at each landing.)
