@@ -82,6 +82,19 @@ integral fast path, and the entering commit stores the born `Int` row —
 the last per-pivot canonical build on the hot path.  Binary
 `precompile/cefcd561`.
 
+**Phase 3 LANDED (`795abb8f`) — the integer tableau is COMPLETE.**  The
+born-integer entering row (re-denomination, exact-and-narrow by
+construction, pinned), `entering_int` = the born row, lazy
+`entering_big`, the zero-gcd integral `eval_int_expr`, the `Int`
+entering commit — plus a profile-exposed Stage-A cost fix
+(`try_patch_column`'s owner scan reads its one coefficient from the
+store form).  Bit-identical on all four probes, ~6 % wall on the churn
+probe under load A/B, full bar green.  **The honest floor**: the churn
+probe is now `substitute_row_ff` (~33 %) + `gcd_i128` (~30 %) — the
+integer mul-sub and the joint-reduction chain, this architecture's
+floor.  The design brief's three phases are closed.  Binary
+`precompile/795abb8f`.
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
