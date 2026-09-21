@@ -847,6 +847,16 @@ impl FlatCnf {
     /// Uses the AVX2 boundary kernels (32-byte blockwise whitespace/digit
     /// runs, direct integer assembly) when the CPU has AVX2 and
     /// `NIXIE_NO_SIMD` is unset; otherwise the scalar byte loops.  The two
+    /// Byte-level scan of an in-memory buffer the caller owns (the mmap
+    /// fast path): no intermediate copy of the file, no whole-file heap
+    /// buffer — the mapping's pages fault once, read-only, straight from
+    /// the page cache (kissat's shape; `read_to_end` instead copied the
+    /// file into ~130k fresh anonymous pages on the 531 MB anatomy, part
+    /// of the 484k-fault sys-time wall).
+    pub fn scan_bytes(raw: &[u8]) -> Result<Self, String> {
+        Self::scan_body(raw, simd_scan_enabled())
+    }
+
     /// Byte-level scan of a whole DIMACS CNF body, with a byte-size hint
     /// for the input buffer (the caller's file length when known).
     ///

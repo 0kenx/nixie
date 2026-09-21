@@ -160,3 +160,39 @@ remaining gap is the *solving* machinery (the anatomy decides UNSAT
 with 0 conflicts; the fold/BVE preprocessing dominates what's left
 after parse).  The next parse-side lever would be architectural (the
 watch-list world), already priced and refused by its corpus ledger.
+
+## Addendum 3 — the wall anatomy is SYS time, and the input goes mmap
+
+The anatomy's wall decomposition (bash `time`, interleaved): **user
+≈ 0.9–1.0 s, sys ≈ 5–7 s** — the ~8× wall gap to kissat is ~85 %
+kernel time, and `perf stat -e page-faults` reads **484 k faults per
+run**: the price of touching ~3 GB of fresh anonymous pages (the file
+copy 531 MB, `lits` 240 MB, the arena ~1 GB, the Vec-of-Vec watch world
+~1.4 GB incl. 15.8 M list allocations, the var arrays ~0.5 GB).  kissat
+mmaps the input and touches ~1 GB total.
+
+Landed: the DIMACS fast path now **mmaps the input** (`memmap2`, the
+mimalloc class of infrastructure dep; `scan_bytes` scans the mapping
+in place) — no 531 MB heap buffer, no `read()` copy, no zero-fill
+faults on the copy target.  Any mmap failure falls back to the buffered
+reader with identical semantics.  Deferred-BIG re-verified: the
+2026-09-18 addendum's wall-negative (9.5→10.6 s) does not reproduce on
+today's tree (sys 5.6±0.6 vs 5.6±0.5, three interleaved pairs) — the
+wiring stays.
+
+Measured honestly: **user instructions identical** (paired corpus
+0.9975 geomean, conflicts bit-identical, gate 1.000); the fault COUNT
+is unchanged (file-map faults replace anon-copy faults — same count,
+cheaper each: no zero-fill, no copy, shared page cache); sys measured
+directionally better in 3 of 4 interleaved rounds (medians 8.0 → 7.1 s)
+on a box whose load noise (±1–2 s) exceeds the effect — kernel-profile
+counters are blocked (`perf_event_paranoid`), so no deterministic
+kernel-instruction figure exists.  The mechanism is strictly-less-work;
+the claim stops there.
+
+**The remaining ~5 s of sys is the solver's own allocation anatomy**
+(arena + watch world + var arrays ≈ 2.5 GB of fresh pages) — every
+restructuring of the watch world priced so far (CSR flip, counting-sort
+materialization, exact reserves) measured negative on the paired
+instruction corpus; the load-path wall now sits where the architecture
+sits.
