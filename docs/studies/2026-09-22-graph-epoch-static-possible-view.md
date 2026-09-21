@@ -207,3 +207,52 @@ by both the probe and the witness): its cost is not closure maintenance
 per-assertion/BCP machinery every theory pays. The corpus as a whole is
 now below MonoSAT on total work; closing the outliers means the shared
 stack (interning/Tseitin/EUF), not the graph propagator.
+
+## Addendum (2026-09-22, close-out): the outlier class is the assertion pipeline; a capacity hint, and where the residual is handed off
+
+Re-baselined at current main (the assert-fold campaign landed between the
+witness measurement and now — it *improved* this corpus too: 0.818× →
+0.764× geomean on the comparable 37-instance subset, totals 0.906× →
+0.837×). The worst class (`v150_r16_s3`, 2.32×) was profiled at
+instruction level and is a **pure assertion-pipeline instance**:
+`conflicts=0 decisions=0 propagations=0` — the entire instruction mass
+is minting and asserting ~22k terms. Breakdown: term interning and its
+hash-table churn ~30% (three `reserve_rehash` growth storms, `intern`,
+`hash_term_key`, `lasso`), kernel page-fault time ~12% (allocation
+traffic), `memmove` ~11% (table-growth copies), and a long tail of
+per-assert pipeline stages at 2–4% each (`contains_quantifier`,
+`intern_term_for_congruence`, `arith_atoms_need_theory`,
+`intern_compound_uf_args_into_arith`, `StaticFeatures::collect`). The
+survey-style stages are already gated or cached (the earlier arcs' work
+— `StaticFeatures` once per goal, set/bag and BV gates); nothing
+dominates. This is the structural cost of the SMT API versus MonoSAT's
+integer GNF loader, distributed across dozens of stages.
+
+One surgical slice landed: **`TermManager::with_capacity`** — presizes
+the terms vector, the hash-consing table, and the symbol interner
+(`new()` delegates with the previous defaults; purely an allocation
+hint, identical TermIds and answers), and the GNF driver estimates its
+term population from the parsed instance (edges + reach + acyclic +
+clause literals + clauses, ×2). Effect on the outlier: 159.6M → 155.5M
+instructions (corpus subset: geomean 0.764× → 0.750×, totals 0.837× →
+0.822×, worst 2.32× → 2.24×). The remaining growth-copy mass lives in
+the *solver-side* maps (Tseitin/guard/constraint tables), not the
+manager's — not worth chasing from the graph side.
+
+**The corpus is closed from this side**: below MonoSAT on geomean and
+totals (≈0.75×/0.82×), 40+/61 instances individually below it, and the
+residual outlier class is per-assertion SMT-stack territory — the
+assert-fold arc's successors own that surface (their handoff names the
+load wall and the top parser symbols). The profile evidence above is
+the handoff. One caveat for whoever picks it up: on the outlier class
+the *wall* ratio exceeds the instruction ratio (≈3.5× vs 2.24× in a
+quiet window, medians unstable) — the pipeline is pointer-chasing
+(hash tables, hash-consing) where MonoSAT's loader streams arrays, so
+instruction-count wins there understate wall-time wins.
+
+Validation for the capacity slice: workspace `--all-features`
+12108/12108, MonoSAT differential 300/300 (full 1600 not re-run — the
+driver hint is inert for verdicts and the corpus verdicts were verified
+at 300), Z3 4.16.0 parity 0/354 wrong, perf gate PASS at exactly 1.000
+counters (nixie-core is upstream of the gate — verified explicitly),
+clippy/fmt/rustdoc clean.

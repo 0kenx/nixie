@@ -109,16 +109,31 @@ impl TermManager {
     /// Create a new term manager
     #[must_use]
     pub fn new() -> Self {
+        Self::with_capacity(1024)
+    }
+
+    /// Create a new term manager presized for `expected_terms` interned
+    /// terms. Purely an allocation hint: the tables grow identically from
+    /// any starting capacity, so answers and TermIds are the same as from
+    /// [`TermManager::new`] — but goals that will intern tens of thousands
+    /// of terms (the graph and CP drivers) avoid the intermediate
+    /// table-growth copies, which profiled as a quarter of a pure-Boolean
+    /// goal's assertion pipeline.
+    ///
+    /// The symbol interner is presized to the same estimate: named
+    /// variables typically dominate an API-driven goal's term population.
+    #[must_use]
+    pub fn with_capacity(expected_terms: usize) -> Self {
         let sorts = SortManager::new();
         let bool_sort = sorts.bool_sort;
 
         let mut manager = Self {
-            terms: Vec::with_capacity(1024),
+            terms: Vec::with_capacity(expected_terms.max(1024)),
             next_id: AtomicU32::new(0),
-            interner: Rodeo::default(),
+            interner: Rodeo::with_capacity(lasso::Capacity::for_strings(expected_terms.max(1024))),
             sorts,
             rounding_mode_used: false,
-            table: HashTable::new(),
+            table: HashTable::with_capacity(expected_terms.max(1024)),
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),

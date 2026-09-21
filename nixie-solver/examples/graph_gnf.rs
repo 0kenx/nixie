@@ -216,7 +216,19 @@ fn main() {
     };
     let t_parse = t0.elapsed();
 
-    let mut tm = TermManager::new();
+    // Presize the term manager: the manager's tables otherwise grow
+    // through repeated rehash/copy cycles while the driver mints the edge
+    // atoms, their negations, the or-clauses, and the auxiliary atoms
+    // (table-growth copies profiled as a quarter of a pure-Boolean goal's
+    // assertion pipeline; the hint changes nothing semantically).
+    let clause_literals: usize = gnf.clauses.iter().map(|c| c.len()).sum();
+    let expected_terms = (gnf.edges.len()
+        + gnf.reach.len()
+        + gnf.acyclic.len()
+        + clause_literals
+        + gnf.clauses.len())
+    .saturating_mul(2);
+    let mut tm = TermManager::with_capacity(expected_terms);
     let mut model = GraphModel::new(&tm);
     // GNF graph ids are arbitrary non-negative integers; remap them to
     // consecutive GraphHandles in declaration order (`new_graph` hands out
