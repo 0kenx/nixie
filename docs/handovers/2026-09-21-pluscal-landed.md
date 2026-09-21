@@ -46,10 +46,16 @@ previous cannot (see its `METHODOLOGY.md` for the full tables):
 BMC smoke (`nixie-tla` CLI, `bench/tla_bmc` contract): our translation of
 TeachingConcurrency/Simple gives `NoViolationWithin` on `Inv` at depth 6,
 and a `Violation` (0 steps) with independent replay + ITF trace on a false
-invariant. QueensPluscal's `Next` hits the standing enumerable-domain wall
-and DijkstraMutex the typechecker's occurs-check — **identically on the
-oracle's translation**, so both are pre-existing front-end walls, not
-translation defects.
+invariant; our DiningPhilosophers (NP = 2) gives `NoViolationWithin` on
+`ExclusiveAccess` at depth 4 — the classic's safety property, on the
+classic. QueensPluscal's `Next` hits the standing enumerable-domain wall,
+DijkstraMutex the typechecker's occurs-check, and KVsnap an
+Init-encoding decline — the first two **identically on the oracle's
+translation**, all pre-existing front-end walls, not translation defects.
+
+The two standing parity gates were re-run on the landed tree and stay
+green: `bench/tla_parity` 4 422 definitions / 0 mismatches;
+`bench/tla_eval` 362 agreeing / 0 mismatches.
 
 The three TLA crate suites are green (503 tests, 17 new in
 `nixie-tla-syntax/tests/pcal.rs`); clippy and fmt clean.

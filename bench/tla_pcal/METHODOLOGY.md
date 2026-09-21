@@ -67,21 +67,37 @@ and cannot be replayed against a state dump. EWD687a uses an unbounded
 construct classes are represented in the runnable set.
 
 **BMC on translated specs.** The `nixie-tla` CLI runs on translated modules
-unchanged (the output is ordinary TLA+). Smoke results on our translation
-of TeachingConcurrency/Simple (N = 3):
+unchanged (the output is ordinary TLA+). Smoke results on our translations:
 
-- `--inv=Inv --length=6`: `NoViolationWithin` (exit 0);
-- a deliberately false invariant: `Violation` at 0 steps (exit 12),
-  **independently replayed**, ITF trace written.
+- TeachingConcurrency/Simple (N = 3): `--inv=Inv --length=6` →
+  `NoViolationWithin` (exit 0); a deliberately false invariant →
+  `Violation` at 0 steps (exit 12), **independently replayed**, ITF trace
+  written.
+- DiningPhilosophers (NP = 2): `--inv=ExclusiveAccess --length=4` →
+  `NoViolationWithin` — the Chandy/Misra mutual-exclusion property holds
+  within the bound on the handover's named classic. (An 8-step search for
+  a liveness-shaped violation exceeds the smoke timeout; depth 5 stays
+  clean.) Note: this spec's `ASSUME NP \in Nat \ {0}` cannot be evaluated
+  by the trace replayer (`Nat` is free to it), so a *violation* replay on
+  this spec would report `replayed: no` for that reason — the Simple
+  replay above is the clean demonstration.
 
-Two walls are standing and *identical on the oracle's translation* (checked
-differentially): QueensPluscal's `Next` hits the enumerable-domain wall
-(a symbolic `todo` set with no candidate list), and DijkstraMutex fails the
-typechecker's occurs-check on a recursive sort. DiningPhilosophers at
-depth 6 / NP = 3 exceeds a smoke timeout. An invariant of the shape
-`pc[0] = "a"` reported no counterexample within the bound on **both**
-translations — a pre-existing encoding behaviour of the function-equality
-shape (see `bench/tla_bmc/METHODOLOGY.md` §4), not a translation property.
+Walls, each checked differentially (the oracle's own translation run
+through the same checker):
+
+- QueensPluscal: `Next` hits the enumerable-domain wall (a symbolic `todo`
+  set with no candidate list) — identical on the oracle's translation.
+- DijkstraMutex: fails the typechecker's occurs-check on a recursive
+  sort — identical on the oracle's.
+- KVsnap: `Init` declines on our translation ("a function where a single
+  value is needed"); the oracle's declines at a neighbouring conjunct
+  ("a set-valued term with no enumerable members"). Both `Unknown`, no
+  verdict claimed; the divergence in *which* conjunct trips first comes
+  from rendering shapes (`\cup` vs `\union`, spacing), not semantics.
+- An invariant of the shape `pc[0] = "a"` reported no counterexample
+  within the bound on **both** translations — a pre-existing encoding
+  behaviour of the function-equality shape (see
+  `bench/tla_bmc/METHODOLOGY.md` §4), not a translation property.
 
 ## What the corpus actually uses
 
@@ -103,6 +119,20 @@ and the byzpaxos family). The construct matrix:
 **Declined, not implemented**: `procedure`/`call`/`return` (the stack
 machine). Nothing in the corpus uses them; a partial implementation would
 be a silent wrong answer, and the parser rejects them with a named error.
+
+## The standing gates, re-run on the landed tree
+
+The two existing parity suites (unchanged by this work) were re-run on the
+committed tree, per the handoff's bar that they "stay green":
+
+- `bench/tla_parity` (syntax + levels): 4 422 definitions compared,
+  0 level mismatches — PARITY OK;
+- `bench/tla_eval` (semantics vs TLC): 362 definitions agreeing with TLC,
+  0 mismatches.
+
+The "widen" half of the bar is this suite: those gates never saw the
+algorithms (they are comments); gates 2–4 above run the same machinery
+over what the translator *generates*.
 
 ## How to run
 

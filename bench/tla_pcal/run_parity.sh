@@ -64,6 +64,14 @@ root="$(cd "${corpora[0]}" && pwd)"
 : > "$work/ours.txt"
 : > "$work/declined.txt"
 find "$root" -name '*.tla' ! -path '*.toolbox*' | sort > "$work/files.txt"
+if [ ! -s "$work/files.txt" ]; then
+  # The default corpus is a sibling of the checkout (as in the other TLA
+  # gates); from a relocated worktree it must be passed explicitly. Say so
+  # rather than reporting a vacuous "0 translated" run.
+  echo "no .tla files found under: $root" >&2
+  echo "pass the corpus directory explicitly: $0 <corpus-dir>" >&2
+  exit 2
+fi
 while read -r f; do
   rel="${f#"$root"/}"
   stage="$work/ours/$rel"
