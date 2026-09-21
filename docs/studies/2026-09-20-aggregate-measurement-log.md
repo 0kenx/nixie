@@ -44,3 +44,28 @@ defaults).
 10 s cap — every loaded table run will bounce them.  The tactic-cascade
 route (solve-eqs over the SAGE concat definitions) owns the former;
 SAT-core capacity the latter.
+
+## 2026-09-21 (morning): the branch-channel default shows in the standing counters; walls await calm
+
+Three table runs on `precompile/cf8e497c` (the tree with the branch
+channel default `0edc05fc` + Bareiss + assert-fold + the sat arc's
+BVE landing):
+
+- **Load-robust signals (consistent across all three):** QF_LIA solved
+  **33/60** held, zero disagreements, and **conflicts 4502 → 3209**
+  (−1293: the branch channel's effect on the standing slice —
+  consistent with the rung-3 campaign's 42 recoveries).  QF_BV 52-54/60
+  vs z3 52-54 (the at-cap cells bouncing with load; z3's own set moves
+  too — no nixie-attributable change).
+- **Walls untrusted in all three:** one run rode a concurrent
+  symbolized build (my mistake — median nixie/z3 1.88 against every
+  calm measurement's ~0.52; discarded), two rode other agents'
+  campaigns at load 10-83 (medians 2.03/2.67, z3's own geomean
+  inflated ~1.7×; discarded per the discipline).  The standing wall
+  record remains the campaign snapshot (`661fb774`'s, in the tracked
+  results file): LIA par2 9088, median 0.52, geomean comparison only
+  against same-load pairs.
+- The 45-vars churn probe (`problem__022`) still produces no verdict at
+  30 s — the pivot VOLUME (internal B&B) is unchanged, as mapped; a
+  fresh symbolized profile of it is in the Bareiss study's addendum
+  (the follow-up question resolved negative, ≤2 %).
