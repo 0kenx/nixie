@@ -2297,6 +2297,15 @@ impl ArithSolver {
     /// instances to `Unknown` — the wide-literal bnb snapshot pin measures
     /// exactly that at >512 nodes.)
     const LIA_MAX_NODES: usize = 20_000;
+    /// The node budget at which the CDCL-visible branch REQUEST fires when
+    /// the channel is armed (see `bnb_search`'s budget check): a short
+    /// internal walk, then the case split belongs to CDCL.  Dosed on the
+    /// fixed-seed corpus and 10 fresh seeds (dose curve 1/8/64 flat at
+    /// 61–63s vs the 200s walk; the matched null — same cadence, the
+    /// branch point perturbed off the fractional vertex — reproduces the
+    /// full cost win, so the COST is the cadence and the RECOVERY is the
+    /// semantic branch; both recorded in the campaign study).
+    const LIA_REQUEST_NODES: usize = 64;
     /// Gomory (GMI) cut rounds run at the root of the branch-and-bound
     /// search before branching starts.  Z3's `int_solver::check` cascade
     /// fires Gomory on a PERIOD (every `m_int_gomory_cut_period`-th check
@@ -3521,7 +3530,27 @@ impl ArithSolver {
                     return Ok(TheoryResult::Sat);
                 }
             }
-            if stack.len() > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
+            // The branch REQUEST's node budget: with the channel ARMED the
+            // request fires after a SHORT walk (Z3's shape —
+            // `branch_infeasible_int_var` internalizes one case-split
+            // lemma per fractional vertex and returns to CDCL; the case
+            // exploration belongs to CDCL, not to an internal tree).  The
+            // measured ray-walk class (the residual `i202`/`i445` members:
+            // branch bounds advancing +1/+3 per node along an LP ray,
+            // 4,000-deep linear trees, the node budget burned every CDCL
+            // round) makes the long walk strictly worse: requesting early
+            // is −53% median corpus cost (10 seeds × 600: 77.5s → 36.7s
+            // per seed, timeouts 39 → 15) and recovers the ray members the
+            // walk never closes.  With the channel OFF (the
+            // `NIXIE_LIA_BRANCH_LEMMA=0` opt-out) the request does
+            // nothing, so the budget stays at the full walk — the opt-out
+            // must keep the unarmed search's strength.
+            let node_budget = if Self::lia_branch_channel_on() {
+                Self::LIA_REQUEST_NODES
+            } else {
+                Self::LIA_MAX_NODES
+            };
+            if stack.len() > Self::LIA_MAX_DEPTH || *nodes > node_budget {
                 // Item 96's ray class: the internal walk cannot close this
                 // search (measured budget-immune).  Hand the fractional
                 // variable to the CDCL-visible branch channel — a REQUEST,
