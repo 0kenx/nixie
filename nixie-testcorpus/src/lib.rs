@@ -51,6 +51,27 @@ pub fn corpus_path(rel: &str) -> PathBuf {
     repo_root().join(rel.trim_start_matches('/'))
 }
 
+/// Resolve `rel` to an existing corpus file, falling back to the primary
+/// checkout when this checkout is a linked worktree that lacks it.
+///
+/// The gitignored external corpora (satcomp*, smt-lib, satlib) are only
+/// materialised in the primary checkout; a linked worktree used to fail
+/// every corpus test with `[corpus-missing]` until the operator symlinked
+/// the roots by hand. Since a worktree shares the primary's repository,
+/// reading the primary's copy is exactly equivalent to that symlink — so
+/// the reader now does it automatically. Returns `None` only when the file
+/// exists in neither checkout (the loud diagnosis covers both paths).
+fn resolve_existing(rel: &str) -> Option<PathBuf> {
+    let rel = rel.trim_start_matches('/');
+    let local = repo_root().join(rel);
+    if local.is_file() {
+        return Some(local);
+    }
+    let primary = linked_worktree_primary(repo_root())?;
+    let there = primary.join(rel);
+    there.is_file().then_some(there)
+}
+
 /// Whether the operator asked for visible-skips instead of loud failure.
 #[must_use]
 pub fn skip_requested() -> bool {
@@ -62,16 +83,19 @@ pub fn skip_requested() -> bool {
 /// When the file is absent and skipping was *not* requested this panics
 /// with the loud `[corpus-missing]` diagnosis (see [`read`]).
 pub fn read_opt(rel: &str) -> Option<String> {
-    let path = corpus_path(rel);
+    let Some(path) = resolve_existing(rel) else {
+        if skip_requested() {
+            eprintln!(
+                "[corpus-skip] {rel}: not present in this (or the primary) checkout ({SKIP_ENV}=skip)"
+            );
+            return None;
+        }
+        panic!("{}", missing_diagnosis(rel, &corpus_path(rel)));
+    };
     match std::fs::read_to_string(&path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if skip_requested() {
-                eprintln!("[corpus-skip] {rel}: not present in this checkout ({SKIP_ENV}=skip)");
-                None
-            } else {
-                panic!("{}", missing_diagnosis(rel, &path));
-            }
+            panic!("{}", missing_diagnosis(rel, &corpus_path(rel)))
         }
         Err(e) => panic!("[corpus-error] reading {}: {e}", path.display()),
     }
@@ -86,11 +110,13 @@ pub fn read_opt(rel: &str) -> Option<String> {
 /// unless `NIXIE_CORPUS_MISSING=skip`, in which case this still panics:
 /// use [`read_or_skip!`] for the visible-skip form.
 pub fn read(rel: &str) -> String {
-    let path = corpus_path(rel);
+    let Some(path) = resolve_existing(rel) else {
+        panic!("{}", missing_diagnosis(rel, &corpus_path(rel)))
+    };
     match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            panic!("{}", missing_diagnosis(rel, &path))
+            panic!("{}", missing_diagnosis(rel, &corpus_path(rel)))
         }
         Err(e) => panic!("[corpus-error] reading {}: {e}", path.display()),
     }
@@ -103,11 +129,10 @@ pub fn read(rel: &str) -> String {
 ///
 /// Same diagnosis as [`read`].
 pub fn require_path(rel: &str) -> String {
-    let path = corpus_path(rel);
-    if path.is_file() {
+    if let Some(path) = resolve_existing(rel) {
         return path.to_string_lossy().into_owned();
     }
-    panic!("{}", missing_diagnosis(rel, &path));
+    panic!("{}", missing_diagnosis(rel, &corpus_path(rel)));
 }
 
 /// Read a corpus file or visibly skip the current test.
@@ -132,7 +157,7 @@ fn missing_diagnosis(rel: &str, path: &Path) -> String {
     let mut msg = String::new();
     msg.push_str("[corpus-missing] external corpus file not present:\n  ");
     msg.push_str(&path.display().to_string());
-    msg.push_str("\n\nThe SMT/SAT corpora (satcomp2024, satcomp2025, smt-lib, satlib) are\ngitignored external data and are NOT copied into git worktrees; only\nthe primary checkout has them on disk.\n");
+    msg.push_str("\n\nThe SMT/SAT corpora (satcomp2024, satcomp2025, smt-lib, satlib) are\ngitignored external data; a linked worktree reads them through from\nits primary checkout automatically, so this file is missing in BOTH.\n");
     if let Some(primary) = linked_worktree_primary(root) {
         let corpus_root = rel.split('/').next().unwrap_or(rel);
         msg.push_str(&format!(

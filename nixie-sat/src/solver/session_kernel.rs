@@ -213,6 +213,10 @@ impl Solver {
                     eprintln!("[content] code={} refs={:?}", code, refs);
                 }
             }
+            // `mut` serves only the `bcp-work` work-accounting below;
+            // the feature-unified builds (dependents do not enable it) see
+            // an unused `mut` without this scoped allow.
+            #[cfg_attr(not(feature = "bcp-work"), allow(unused_mut))]
             let mut result = if csr_arm && let Some(c) = csr.as_mut() {
                 let (span, mut ctx) = c.scan_split(code);
                 // Primary mode: no Vec mirror, no Vec destinations — the

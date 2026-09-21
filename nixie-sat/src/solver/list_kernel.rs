@@ -280,6 +280,10 @@ pub(super) fn scan_list<D: ScanDest>(
     // The destination trait carries the driver's mode (Vec-primary plain
     // / CSR-mirror / swapped-dual, or CSR-primary in-place); the flag-off
     // VecDest instantiation compiles without a single CSR check.
+    // `mut` serves only the `bcp-work` work-accounting below; the
+    // feature-unified builds (dependents do not enable it) see an unused
+    // `mut` without this scoped allow.
+    #[cfg_attr(not(feature = "bcp-work"), allow(unused_mut))]
     let mut result = scan(
         WatchCursor::new(watches),
         false_lit,
