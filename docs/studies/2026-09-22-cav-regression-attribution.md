@@ -75,3 +75,36 @@ The calm-load standing table (LIA leg) — blocked on machine load this
 whole arc — is the instrument that prices this class honestly
 (par-2/geomean readout per `docs/BENCHMARKING.md`); run it before any
 fix lands, so the dive campaign's counterfactual has a baseline.
+
+## Addendum (same night): the piece-level bisect — executed
+
+Two subset builds over the driver commit's six pieces (rebuild recipe:
+worktree at the base, apply the named hunks verbatim from `2a7dc324`):
+
+* **S1 = `7687dc39` + the preserve-resting-nonbasics pair ONLY**
+  (`nonbasic_rests_at_bound` + the two `continue`s in `crash_basis` and
+  `update_assignment`): `problem__011` sat 13.9 s, `problem__025` sat
+  22.8 s, `problem__034` sat 5.1 s — **pre-driver behavior; the preserve
+  rules are INNOCENT solo**.
+* **S2 = `2a7dc324` with the preserve rule neutralized** (fn body :=
+  `false`): all three cells TO @60 s — **the regression is the
+  unified wide-driver rewrite ALONE** (the wide basics joining
+  `find_violating`'s smallest-index leaving rule + `make_feasible`'s
+  exact wide pivots + the `check` repair-loop deletion).
+
+These cells genuinely go wide: no input literal exceeds ~14 digits, but
+the pivot accumulation builds the 120-bit denominators the
+integer-tableau studies measured — the canonical `Rational64`
+materialization declines and the exact store takes over.  The old
+architecture (narrow `make_feasible` + `check`'s interleaved one-wide-
+repair-then-narrow-re-feasibilization loop, 32-budget) carried the CAV
+trajectory; the unified driver's leaving/entering order for wide basics
+does not.
+
+**Fix options this leaves open** (for the dive campaign or the smx
+successor):  keep the preserve rules and the survey recoveries, and
+either restore the interleaved repair shape for wide-heavy trajectories,
+or land the Route-A dive bound (the per-CHECK node budget + CDCL-visible
+channel) so the internal trajectory difference stops deciding these
+cells.  The `rederivation_preserves_*` pins are NOT in conflict with
+either (S1 shows the preserve pair passes alone).
