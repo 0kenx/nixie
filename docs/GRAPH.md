@@ -41,11 +41,16 @@ An **edge** is a Boolean term — either a fresh variable from `new_edge`, or
 any non-constant Boolean term of your own via `add_edge` (a conjunction, an
 arithmetic equality, ...). The edge is present in the graph exactly when its
 term is true in the model. Parallel edges (several terms for one ordered
-pair) and self-loops are allowed; the same term cannot name two edges or a
-graph atom within one model. Atoms minted by `new_edge`/`reach`/`acyclic`
-carry a per-model salt, so several models over one term manager never
-silently share atoms through name interning; passing the *same* user term
-to two models deliberately aliases those edges.
+pair) and self-loops are allowed; the same term can name **any number of
+edges** — parallel, across graphs, across a product unfolding — and every
+edge it names is present exactly when the term is true (shared-guard
+aliasing; this is what the FSM product construction
+(`docs/FSM.md`) relies on), with justifications deduplicated. Atoms minted
+by `new_edge`/`reach`/`acyclic` carry a per-model salt, so several models
+over one term manager never silently share atoms through name interning;
+passing the *same* user term to two models deliberately aliases those
+edges. A term and its negation may both name edges (one SAT variable,
+opposite phases — both are routed).
 
 `reach(g, u, v)` reifies **reachability**: it is true iff some directed path
 of **length ≥ 1** over present edges leads from `u` to `v`. **Zero-length
@@ -163,12 +168,12 @@ default decisions are complete for this fragment.
   class (the general SMT stack), not the graph theory. The GNF driver
   prints propagator maintenance counters under `STATS=1` for scaling
   diagnosis.
-- **Watch terms**: registration rejects watch lists in which two distinct
-  terms encode to the same SAT variable (e.g. a term and its negation
-  both watched) — the O(1) per-assignment event routing keeps one watch
-  per variable, and a collision would silently drop the other's fixations
-  (this also closes a latent hazard in the justification-truth lookup,
-  which reads through the same index).
+- **Watch terms**: several watch terms may share one SAT variable (a term
+  and its negation — e.g. graph edges `x` and `¬x`, or FSM guards `g` and
+  `¬g`). The per-variable watch index keeps **every** entry and decodes
+  each variable assignment into its own term's fixation, so nothing is
+  silently dropped; justification-truth lookups decode through any entry
+  on the variable.
 - **Certification**: graph registrations are trusted client callbacks
   without independently checkable certificates. Proof-producing and
   certified checks fail closed to `Unknown` for them (the same boundary as

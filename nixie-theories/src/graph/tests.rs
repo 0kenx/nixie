@@ -710,10 +710,11 @@ fn rejects_malformed_construction() {
     // Boolean constants.
     assert!(model.add_edge(g, v, v, tm.mk_bool(true), &mut tm).is_err());
     assert!(model.add_edge(g, v, v, tm.mk_bool(false), &mut tm).is_err());
-    // Duplicate edge atom.
+    // A shared user term names several edges with one meaning.
     let e = tm.mk_var("e", tm.sorts.bool_sort);
     assert!(model.add_edge(g, v, v, e, &mut tm).is_ok());
-    assert!(model.add_edge(g, v, v, e, &mut tm).is_err());
+    assert!(model.add_edge(g, v, VertexId(0), e, &mut tm).is_ok());
+    assert_eq!(model.edges(g).unwrap().len(), 2);
     // Unknown handles.
     assert!(model.add_vertex(GraphHandle(9)).is_err());
     assert!(model.reach(GraphHandle(9), v, v, &mut tm).is_err());
@@ -1411,4 +1412,238 @@ fn all_fixed_determined_reach_propagates() {
         consequences.iter().any(|c| c.term == neg_r03),
         "determined ¬reach(0,3) must propagate at the all-fixed state"
     );
+}
+
+/// Shared guards: several edges named by one Boolean term (the shape the
+/// FSM product construction needs). A diamond-plus-loop graph over three
+/// guard *groups*:
+///
+/// - group 0 controls the chain `0→1→2→3` (three edges, one atom),
+/// - group 1 controls `3→0` (closing a 4-cycle through 0),
+/// - group 2 controls `0→0` and `0→3` (a self-loop plus a direct edge).
+///
+/// Every partial state of the three guards and the three atoms (reach(0,3),
+/// reach(0,0), acyclic) is replayed through the propagator; verdicts and
+/// emitted consequences are validated against **all 2³ guard completions**
+/// with an independent closure oracle — the same contract as the distinct
+///-atom cases above, so sharing cannot change what a consequence means.
+#[test]
+fn oracle_shared_guard_edges() {
+    /// (from, to, group) — one entry per *edge*; group indexes the atom.
+    const EDGES: &[(u32, u32, usize)] = &[
+        (0, 1, 0),
+        (1, 2, 0),
+        (2, 3, 0),
+        (3, 0, 1),
+        (0, 0, 2),
+        (0, 3, 2),
+    ];
+    const VERTICES: usize = 4;
+    const GROUPS: usize = 3;
+    // (from, to) of the two reach atoms.
+    const REACH: &[(u32, u32)] = &[(0, 3), (0, 0)];
+
+    // Independent closure over a group assignment (paths of length ≥ 1).
+    #[allow(clippy::needless_range_loop)]
+    let closure_over = |present: &[bool]| -> Vec<Vec<bool>> {
+        let mut r = vec![vec![false; VERTICES]; VERTICES];
+        for &(from, to, group) in EDGES {
+            if present[group] {
+                r[from as usize][to as usize] = true;
+            }
+        }
+        loop {
+            let mut next = r.clone();
+            for a in 0..VERTICES {
+                for b in 0..VERTICES {
+                    if r[a][b] {
+                        for c in 0..VERTICES {
+                            if r[b][c] {
+                                next[a][c] = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if next == r {
+                return r;
+            }
+            r = next;
+        }
+    };
+
+    for group_states in tri_vectors(GROUPS) {
+        for atom_states in tri_vectors(REACH.len() + 1) {
+            let mut tm = TermManager::new();
+            let mut model = GraphModel::new(&tm);
+            let g = model.new_graph();
+            for _ in 0..VERTICES {
+                model.add_vertex(g).unwrap();
+            }
+            let guards: Vec<TermId> = (0..GROUPS)
+                .map(|i| tm.mk_var(&format!("shared_g{i}"), tm.sorts.bool_sort))
+                .collect();
+            for &(from, to, group) in EDGES {
+                model
+                    .add_edge(g, VertexId(from), VertexId(to), guards[group], &mut tm)
+                    .unwrap();
+            }
+            let reach_terms: Vec<TermId> = REACH
+                .iter()
+                .map(|&(u, v)| model.reach(g, VertexId(u), VertexId(v), &mut tm).unwrap())
+                .collect();
+            let acyclic_term = model.acyclic(g, &mut tm).unwrap();
+            let mut atom_terms = reach_terms.clone();
+            atom_terms.push(acyclic_term);
+            let negs: FxHashMap<TermId, TermId> = guards
+                .iter()
+                .chain(atom_terms.iter())
+                .map(|&a| (a, tm.mk_not(a)))
+                .collect();
+
+            let (propagator, watches) = model.into_propagator();
+            let mut manager = UserPropagatorManager::new();
+            for &w in &watches {
+                manager.watch_term(w);
+            }
+            manager.register_propagator(propagator);
+            let true_term = tm.mk_bool(true);
+            let false_term = tm.mk_bool(false);
+            // One fixation per guard term fans out to every edge it names.
+            for (gi, &guard) in guards.iter().enumerate() {
+                match group_states[gi] {
+                    Tri::T => manager.notify_fixed(guard, true_term),
+                    Tri::F => manager.notify_fixed(guard, false_term),
+                    Tri::Unfixed => {}
+                }
+            }
+            for (k, &atom) in atom_terms.iter().enumerate() {
+                match atom_states[k] {
+                    Tri::T => manager.notify_fixed(atom, true_term),
+                    Tri::F => manager.notify_fixed(atom, false_term),
+                    Tri::Unfixed => {}
+                }
+            }
+
+            // Expected verdict from the independent violation analysis over
+            // the forced (true groups) and possible (non-false groups)
+            // closures.
+            let forced: Vec<bool> = group_states.iter().map(|&s| s == Tri::T).collect();
+            let possible: Vec<bool> = group_states.iter().map(|&s| s != Tri::F).collect();
+            let forced_closure = closure_over(&forced);
+            let possible_closure = closure_over(&possible);
+            let mut expected = Verdict::Sat;
+            let all_fixed = group_states
+                .iter()
+                .chain(atom_states.iter())
+                .all(|&s| s != Tri::Unfixed);
+            if !all_fixed {
+                expected = Verdict::Unknown;
+            }
+            for (k, &(u, v)) in REACH.iter().enumerate() {
+                match atom_states[k] {
+                    Tri::T if !possible_closure[u as usize][v as usize] => {
+                        expected = Verdict::Unsat
+                    }
+                    Tri::F if forced_closure[u as usize][v as usize] => expected = Verdict::Unsat,
+                    _ => {}
+                }
+            }
+            let last = atom_states.len() - 1;
+            let possible_acyclic = (0..VERTICES).all(|i| !possible_closure[i][i]);
+            let forced_cycle = (0..VERTICES).any(|i| forced_closure[i][i]);
+            match atom_states[last] {
+                Tri::T if forced_cycle => expected = Verdict::Unsat,
+                Tri::F if possible_acyclic => expected = Verdict::Unsat,
+                _ => {}
+            }
+
+            let verdict = manager.final_check();
+            let got = match verdict {
+                crate::user_propagator::PropagatorResult::Sat => Verdict::Sat,
+                crate::user_propagator::PropagatorResult::Unsat(_) => Verdict::Unsat,
+                crate::user_propagator::PropagatorResult::Unknown => Verdict::Unknown,
+            };
+            assert_eq!(
+                got, expected,
+                "shared-guard verdict mismatch groups={group_states:?} atoms={atom_states:?}"
+            );
+
+            // Literal truth in the current partial state.
+            let holds_current = |term: TermId| -> bool {
+                for (gi, &guard) in guards.iter().enumerate() {
+                    if guard == term {
+                        return group_states[gi] == Tri::T;
+                    }
+                    if negs[&guard] == term {
+                        return group_states[gi] == Tri::F;
+                    }
+                }
+                for (k, &atom) in atom_terms.iter().enumerate() {
+                    if atom == term {
+                        return atom_states[k] == Tri::T;
+                    }
+                    if negs[&atom] == term {
+                        return atom_states[k] == Tri::F;
+                    }
+                }
+                false
+            };
+            // Literal truth under a concrete guard completion.
+            let holds_completion = |term: TermId, present: &[bool], r: &[Vec<bool>]| -> bool {
+                for (gi, &guard) in guards.iter().enumerate() {
+                    if guard == term {
+                        return present[gi];
+                    }
+                    if negs[&guard] == term {
+                        return !present[gi];
+                    }
+                }
+                for (k, &(u, v)) in REACH.iter().enumerate() {
+                    if reach_terms[k] == term {
+                        return r[u as usize][v as usize];
+                    }
+                    if negs[&reach_terms[k]] == term {
+                        return !r[u as usize][v as usize];
+                    }
+                }
+                let acyclic_holds = (0..VERTICES).all(|i| !r[i][i]);
+                if acyclic_term == term {
+                    return acyclic_holds;
+                }
+                if negs[&acyclic_term] == term {
+                    return !acyclic_holds;
+                }
+                false
+            };
+
+            for consequence in manager.get_consequences() {
+                let term = consequence.term;
+                for &j in &consequence.justification {
+                    assert!(
+                        holds_current(j),
+                        "untrue justification {j:?} in {term:?} (groups={group_states:?})"
+                    );
+                }
+                for mask in 0..(1usize << GROUPS) {
+                    let present: Vec<bool> = (0..GROUPS).map(|i| mask & (1 << i) != 0).collect();
+                    let r = closure_over(&present);
+                    if !consequence
+                        .justification
+                        .iter()
+                        .all(|&j| holds_completion(j, &present, &r))
+                    {
+                        continue;
+                    }
+                    if term == false_term {
+                        panic!("satisfiable conflict {consequence:?} under present={present:?}");
+                    }
+                    assert!(
+                        holds_completion(term, &present, &r),
+                        "invalid consequence {consequence:?} under present={present:?}"
+                    );
+                }
+            }
+        }
+    }
 }

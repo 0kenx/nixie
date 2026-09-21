@@ -87,6 +87,7 @@ pub mod ff_euf;
 pub mod ff_theory;
 pub mod fp;
 pub mod fp_interval_prop;
+pub mod fsm;
 pub mod graph;
 pub mod hashcons;
 pub(crate) mod lru_cache;

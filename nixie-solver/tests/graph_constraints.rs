@@ -1049,32 +1049,74 @@ fn multiple_registrations_are_enforced() {
     assert_eq!(solver2.check(&mut tm2), SolverResult::Sat);
 }
 
-/// A watch list in which two distinct terms encode to the same SAT
-/// variable (a term and its negation, both used as edge atoms) must be
-/// rejected at registration: the O(1) `by_var` routing keeps one watch per
-/// variable, and silently dropping the other would lose its fixations
-/// (this also closes the pre-existing latent hazard in `truth`, which
-/// reads through the same index).
+/// A term and its negation can both appear as edge atoms (they encode to
+/// one SAT variable with opposite phases). The multi-entry `by_var`
+/// routing must deliver both terms' fixations — the graph `0 --x--> 1
+/// --¬x--> 2` reaches 2 only under the contradiction `x ∧ ¬x` — and the
+/// returned model must carry values for both terms. (Registration used to
+/// reject this shape; FSM guards `g`/`¬g` need it, and the routing now
+/// keeps every watch entry per variable.)
 #[test]
-fn negated_duplicate_watch_terms_are_rejected() {
+fn negated_duplicate_watch_terms_both_route() {
     let mut tm = TermManager::new();
-    let mut solver = Solver::new();
     let mut model = GraphModel::new(&tm);
     let g = model.new_graph();
     let v0 = model.add_vertex(g).unwrap();
     let v1 = model.add_vertex(g).unwrap();
+    let v2 = model.add_vertex(g).unwrap();
     let x = tm.mk_var("x", tm.sorts.bool_sort);
     let not_x = tm.mk_not(x);
     model.add_edge(g, v0, v1, x, &mut tm).unwrap();
     model
-        .add_edge(g, v1, v0, not_x, &mut tm)
-        .expect("edge construction itself is legal");
-    let err = solver
-        .register_graph(model, &mut tm)
-        .expect_err("negated duplicate watch terms must fail loudly");
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("share a SAT variable"),
-        "unexpected error message: {msg}"
+        .add_edge(g, v1, v2, not_x, &mut tm)
+        .expect("edge construction is legal");
+    let reaches = model.reach(g, v0, v2, &mut tm).unwrap();
+
+    // Demanding the contradictory path is unsat.
+    let mut solver = Solver::new();
+    solver.register_graph(model, &mut tm).unwrap();
+    solver.assert(reaches, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+
+    // Rejecting it is satisfiable, and the model pins both terms with
+    // complementary values (any x assignment works; both must appear).
+    let mut tm2 = TermManager::new();
+    let mut model2 = GraphModel::new(&tm2);
+    let g2 = model2.new_graph();
+    let w0 = model2.add_vertex(g2).unwrap();
+    let w1 = model2.add_vertex(g2).unwrap();
+    let w2 = model2.add_vertex(g2).unwrap();
+    let x2 = tm2.mk_var("x", tm2.sorts.bool_sort);
+    let not_x2 = tm2.mk_not(x2);
+    model2.add_edge(g2, w0, w1, x2, &mut tm2).unwrap();
+    model2.add_edge(g2, w1, w2, not_x2, &mut tm2).unwrap();
+    let reaches2 = model2.reach(g2, w0, w2, &mut tm2).unwrap();
+    let mut solver2 = Solver::new();
+    solver2.register_graph(model2, &mut tm2).unwrap();
+    solver2.assert(x2, &mut tm2);
+    solver2.assert(reaches2, &mut tm2);
+    assert_eq!(
+        solver2.check(&mut tm2),
+        SolverResult::Unsat,
+        "a fixed-true x disables the ¬x edge; reach must be refutable"
     );
+
+    // And symmetrically with x pinned FALSE: the x edge is out, the ¬x
+    // edge may be in, but v0 has no live out-edge — rejecting reach is sat.
+    let mut tm3 = TermManager::new();
+    let mut model3 = GraphModel::new(&tm3);
+    let g3 = model3.new_graph();
+    let u0 = model3.add_vertex(g3).unwrap();
+    let u1 = model3.add_vertex(g3).unwrap();
+    let u2 = model3.add_vertex(g3).unwrap();
+    let x3 = tm3.mk_var("x", tm3.sorts.bool_sort);
+    let not_x3 = tm3.mk_not(x3);
+    model3.add_edge(g3, u0, u1, x3, &mut tm3).unwrap();
+    model3.add_edge(g3, u1, u2, not_x3, &mut tm3).unwrap();
+    let reaches3 = model3.reach(g3, u0, u2, &mut tm3).unwrap();
+    let mut solver3 = Solver::new();
+    solver3.register_graph(model3, &mut tm3).unwrap();
+    solver3.assert(tm3.mk_not(x3), &mut tm3);
+    solver3.assert(tm3.mk_not(reaches3), &mut tm3);
+    assert_eq!(solver3.check(&mut tm3), SolverResult::Sat);
 }

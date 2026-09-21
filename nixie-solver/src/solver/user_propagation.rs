@@ -11,13 +11,17 @@ pub(super) struct UserState {
     manager: UserPropagatorManager,
     literals: FxHashMap<TermId, Lit>,
     watches: Vec<(TermId, Lit)>,
-    /// SAT variable -> its watch entry. One entry per variable decodes both
-    /// polarities (a watch `(term, lit)` answers literal `lit` from the
-    /// fixed value of `term` and literal `!lit` from its negation), so this
-    /// index is exactly equivalent to scanning `watches` — which was
-    /// O(watches) per justification literal of every consequence, quadratic
-    /// for models registering thousands of watches (graph constraints).
-    by_var: FxHashMap<nixie_sat::Var, (TermId, Lit)>,
+    /// SAT variable -> its watch entries. A watch `(term, lit)` answers
+    /// literal `lit` from the fixed value of `term` and literal `!lit` from
+    /// its negation, so this index is exactly equivalent to scanning
+    /// `watches` — which was O(watches) per justification literal of every
+    /// consequence, quadratic for models registering thousands of watches
+    /// (graph constraints). A variable may carry **several** entries: a
+    /// term and its negation can both be watched (FSM guards `g` and `¬g`
+    /// name one SAT variable with opposite phases), and each entry decodes
+    /// the variable's assignment into its own term's fixation
+    /// independently — nothing is dropped.
+    by_var: FxHashMap<nixie_sat::Var, Vec<(TermId, Lit)>>,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
     pub(super) closed: bool,
@@ -131,20 +135,17 @@ impl Solver {
             let negation = tm.mk_not(term);
             self.user_state.literals.insert(negation, !lit);
             if seen.insert(term) {
-                // One watch per SAT variable keeps `by_var` exactly
-                // equivalent to a watch-list scan (the routing below and
-                // `truth` both read through it). Two distinct terms on one
-                // variable (a term and its negation both watched) would
-                // silently drop one of them — reject loudly instead.
-                if let Some(&(_, existing)) = self.user_state.by_var.get(&lit.var()) {
-                    if existing != lit {
-                        return Err(CpError(
-                            "watch terms must not share a SAT variable (negated duplicates)",
-                        ));
-                    }
-                }
+                // Several watches may share one SAT variable (a term and
+                // its negation — the FSM guard pattern — or two terms the
+                // encoder maps to one variable). Every entry decodes the
+                // variable's assignment into its own term's fixation, so
+                // all of them are kept: nothing is silently dropped.
                 self.user_state.watches.push((term, lit));
-                self.user_state.by_var.insert(lit.var(), (term, lit));
+                self.user_state
+                    .by_var
+                    .entry(lit.var())
+                    .or_default()
+                    .push((term, lit));
             }
             self.user_state.manager.watch_term(term);
         }
@@ -167,6 +168,47 @@ impl Solver {
         let (propagator, watches) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)
             .map_err(|e| nixie_theories::graph::GraphError(e.0))
+    }
+
+    /// Install guarded finite-state-machine constraints (reified
+    /// constant-word acceptance over symbolic-transition NFAs) declared in
+    /// an `FsmModel`. Registration follows
+    /// [`Self::register_user_propagator`]'s lifecycle: assertion scope zero,
+    /// before the first check, permanent until `reset`. The model's
+    /// registration payload is asserted alongside the propagator: the
+    /// asserted-true variable backing constant-`true` guards, and one
+    /// biconditional per reified acceptance atom (`atom ⟺ definition`, the
+    /// definition being the disjunction of the product graph's reach
+    /// atoms plus, for a zero-length accepting run, the constant true).
+    /// These are ordinary root-level assertions and survive every legal
+    /// scope change.
+    ///
+    /// FSM registrations are trusted client callbacks without independent
+    /// certificates: certified and proof-producing checks fail closed to
+    /// `Unknown` for them. Ordinary solving is complete for the fragment,
+    /// and returned models are replayed through the propagator before
+    /// being reported. See `docs/FSM.md`.
+    pub fn register_fsm(
+        &mut self,
+        model: nixie_theories::fsm::FsmModel,
+        tm: &mut TermManager,
+    ) -> Result<(), nixie_theories::fsm::FsmError> {
+        let registration = model.registration();
+        let (propagator, watches) = model.into_propagator();
+        self.register_user_propagator(propagator, &watches, tm)
+            .map_err(|e| nixie_theories::fsm::FsmError(e.0))?;
+        if let Some(true_var) = registration.true_var {
+            self.assert(true_var, tm);
+        }
+        for (atom, definition) in registration.bindings {
+            // atom ⟺ definition, as two clauses:
+            // (¬atom ∨ definition) and (atom ∨ ¬definition).
+            let not_atom = tm.mk_not(atom);
+            let not_definition = tm.mk_not(definition);
+            self.assert(tm.mk_or([not_atom, definition]), tm);
+            self.assert(tm.mk_or([atom, not_definition]), tm);
+        }
+        Ok(())
     }
 
     /// Install a finite-domain CP model with all its domain/link assertions.
@@ -280,11 +322,29 @@ impl<'a, T: TheoryCallback> UserCallback<'a, T> {
     }
 
     fn truth(&self, literal: Lit) -> Option<bool> {
-        let &(term, lit) = self.state.by_var.get(&literal.var())?;
-        self.state
-            .manager
-            .get_fixed_value(term)
-            .map(|value| (value == self.true_term) == (lit == literal))
+        // Any watch entry on this variable decodes the literal: an entry
+        // whose watched literal IS `literal` answers from its term's fixed
+        // value; an entry with the opposite phase answers inverted (a
+        // term and its negation both watched carry complementary values,
+        // so either entry is correct).
+        let entries = self.state.by_var.get(&literal.var())?;
+        for &(term, watched) in entries {
+            if watched == literal {
+                return self
+                    .state
+                    .manager
+                    .get_fixed_value(term)
+                    .map(|value| value == self.true_term);
+            }
+            if watched == !literal {
+                return self
+                    .state
+                    .manager
+                    .get_fixed_value(term)
+                    .map(|value| value != self.true_term);
+            }
+        }
+        None
     }
 
     fn consequences(&mut self) -> TheoryCheckResult {
@@ -369,22 +429,24 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
     }
     fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
         let result = self.inner.on_assignment(lit);
-        // O(1) routing through `by_var`: the registration guard keeps one
-        // watch per SAT variable, so this is exactly the previous scan
-        // over `watches` minus its linear cost (quadratic once models
-        // register thousands of watches — graph constraints).
-        if let Some(&(term, watched)) = self.state.by_var.get(&lit.var()) {
-            let value = if watched == lit {
-                self.true_term
-            } else {
-                self.false_term
-            };
-            match self.state.manager.get_fixed_value(term) {
-                // Idempotent re-assignment of the same fixation.
-                Some(old) if old == value => {}
-                // A client cannot retract a fixation without a pop.
-                Some(_) => self.invalid = true,
-                None => self.state.manager.notify_fixed(term, value),
+        // O(1) routing through `by_var`: every watch entry on this SAT
+        // variable decodes the assignment into its own term's fixation (a
+        // term and its negation both watched receive complementary
+        // values — each entry's `watched` phase does the decoding).
+        if let Some(entries) = self.state.by_var.get(&lit.var()).cloned() {
+            for (term, watched) in entries {
+                let value = if watched == lit {
+                    self.true_term
+                } else {
+                    self.false_term
+                };
+                match self.state.manager.get_fixed_value(term) {
+                    // Idempotent re-assignment of the same fixation.
+                    Some(old) if old == value => {}
+                    // A client cannot retract a fixation without a pop.
+                    Some(_) => self.invalid = true,
+                    None => self.state.manager.notify_fixed(term, value),
+                }
             }
         }
         if self.invalid {

@@ -111,6 +111,55 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Expect a non-negative numeral token and return its `u64` value
+    /// (FSM commands index states and symbols positionally).
+    pub(super) fn expect_numeral_u64(&mut self, what: &str) -> Result<u64> {
+        let token = self
+            .lexer
+            .next_token()
+            .ok_or_else(|| NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("expected numeral for {what}, found end of input"),
+            })?;
+        match &token.kind {
+            TokenKind::Numeral(n) => n.parse::<u64>().map_err(|_| NixieError::ParseError {
+                position: token.start,
+                message: format!("numeral for {what} out of u64 range: {n}"),
+            }),
+            other => Err(NixieError::ParseError {
+                position: token.start,
+                message: format!("expected numeral for {what}, found {other:?}"),
+            }),
+        }
+    }
+
+    /// Expect an FSM transition label: a numeral symbol index, or the
+    /// symbol `eps` for a non-consuming epsilon transition.
+    pub(super) fn expect_fsm_label(&mut self) -> Result<Option<u64>> {
+        let token = self
+            .lexer
+            .next_token()
+            .ok_or_else(|| NixieError::ParseError {
+                position: self.lexer.position(),
+                message: "expected transition label, found end of input".to_string(),
+            })?;
+        match &token.kind {
+            TokenKind::Symbol(s) if s == "eps" => Ok(None),
+            TokenKind::Numeral(n) => {
+                n.parse::<u64>()
+                    .map(Some)
+                    .map_err(|_| NixieError::ParseError {
+                        position: token.start,
+                        message: format!("transition label out of u64 range: {n}"),
+                    })
+            }
+            other => Err(NixieError::ParseError {
+                position: token.start,
+                message: format!("expected numeral or 'eps' label, found {other:?}"),
+            }),
+        }
+    }
+
     /// Expect a keyword token (e.g., :named) and return its string value (without leading colon)
     pub(super) fn expect_keyword(&mut self) -> Result<String> {
         let token = self
@@ -487,6 +536,74 @@ impl<'a> Parser<'a> {
                 self.constants.insert(name.clone(), sort_id);
                 let sort_str = self.sort_id_to_string(sort_id);
                 Command::DeclareConst(name, sort_str)
+            }
+            "declare-fsm" => {
+                let name = self.expect_symbol()?;
+                let states = self.expect_numeral_u64("declare-fsm states")?;
+                let alphabet = self.expect_numeral_u64("declare-fsm alphabet")?;
+                self.expect_rparen()?;
+                Command::DeclareFsm {
+                    name,
+                    states,
+                    alphabet,
+                }
+            }
+            "fsm.initial" | "fsm.accepting" => {
+                let name = self.expect_symbol()?;
+                let state = self.expect_numeral_u64(&cmd_name)?;
+                self.expect_rparen()?;
+                if cmd_name == "fsm.initial" {
+                    Command::FsmInitial { name, state }
+                } else {
+                    Command::FsmAccepting { name, state }
+                }
+            }
+            "fsm.transition" => {
+                let name = self.expect_symbol()?;
+                let from = self.expect_numeral_u64("fsm.transition from")?;
+                let to = self.expect_numeral_u64("fsm.transition to")?;
+                let label = self.expect_fsm_label()?;
+                let guard = self.parse_term()?;
+                let is_bool = self
+                    .manager
+                    .get(guard)
+                    .is_some_and(|d| d.sort == self.manager.sorts.bool_sort);
+                if !is_bool {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: "fsm.transition guard must have Boolean sort".to_string(),
+                    });
+                }
+                self.expect_rparen()?;
+                Command::FsmTransition {
+                    name,
+                    from,
+                    to,
+                    label,
+                    guard,
+                }
+            }
+            "fsm.accepts" => {
+                let name = self.expect_symbol()?;
+                self.expect_lparen()?;
+                let mut word = Vec::new();
+                loop {
+                    if let Some(t) = self.lexer.peek()
+                        && matches!(t.kind, TokenKind::RParen)
+                    {
+                        self.lexer.next_token();
+                        break;
+                    }
+                    word.push(self.expect_numeral_u64("fsm.accepts word symbol")?);
+                }
+                let result = self.expect_symbol()?;
+                self.expect_rparen()?;
+                // Declare the result constant so subsequent terms can
+                // reference it by name (the same registration declare-const
+                // performs).
+                self.constants
+                    .insert(result.clone(), self.manager.sorts.bool_sort);
+                Command::FsmAccepts { name, word, result }
             }
             "declare-fun" => {
                 let name = self.expect_symbol()?;

@@ -163,6 +163,64 @@ pub enum Command {
     SetInfo(String, String),
     /// Simplify (Z3 extension)
     Simplify(TermId),
+    /// Declare a guarded finite automaton (Nixie extension, following
+    /// Z3's `declare-rel`/`rule` extension-command precedent for non-
+    /// standard theories): `(declare-fsm <name> <num-states>
+    /// <alphabet-size>)`. States are `0..num-states`, symbols
+    /// `0..alphabet-size`; see `docs/FSM.md`.
+    DeclareFsm {
+        /// Automaton name.
+        name: String,
+        /// Number of states.
+        states: u64,
+        /// Alphabet size.
+        alphabet: u64,
+    },
+    /// `(fsm.initial <fsm> <state>)`: set the automaton's unique initial
+    /// state.
+    FsmInitial {
+        /// Automaton name.
+        name: String,
+        /// State index.
+        state: u64,
+    },
+    /// `(fsm.accepting <fsm> <state>)`: mark a state accepting
+    /// (repeatable).
+    FsmAccepting {
+        /// Automaton name.
+        name: String,
+        /// State index.
+        state: u64,
+    },
+    /// `(fsm.transition <fsm> <from> <to> <label|eps> <guard>)`: add a
+    /// transition existing exactly when the Boolean `guard` term is true;
+    /// the label is a symbol index or `eps` for a non-consuming epsilon
+    /// transition.
+    FsmTransition {
+        /// Automaton name.
+        name: String,
+        /// Source state.
+        from: u64,
+        /// Target state.
+        to: u64,
+        /// Symbol index, or `None` for epsilon.
+        label: Option<u64>,
+        /// Boolean guard term.
+        guard: TermId,
+    },
+    /// `(fsm.accepts <fsm> (<labels>) <result>)`: declare the Boolean
+    /// constant `result`, defined as acceptance of the constant word
+    /// (sequence of symbol indices) by the automaton under the guard
+    /// assignment. The atom is usable in arbitrary formulas, positively
+    /// and negatively.
+    FsmAccepts {
+        /// Automaton name.
+        name: String,
+        /// The constant word's symbols.
+        word: Vec<u64>,
+        /// Name of the Boolean constant to declare and define.
+        result: String,
+    },
 }
 
 /// A `define-fun` macro registered for call-site expansion.

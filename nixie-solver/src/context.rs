@@ -68,6 +68,37 @@ struct DeclaredFun {
     ret_sort: SortId,
 }
 
+/// One FSM declaration command, in script order; replayed into an
+/// `FsmModel` at (re)registration (see `Context::ensure_fsm_registered`).
+#[derive(Debug, Clone)]
+enum FsmDecl {
+    /// `(declare-fsm name states alphabet)`.
+    Declare {
+        name: String,
+        states: u64,
+        alphabet: u64,
+    },
+    /// `(fsm.initial name state)`.
+    Initial { name: String, state: u64 },
+    /// `(fsm.accepting name state)`.
+    Accepting { name: String, state: u64 },
+    /// `(fsm.transition name from to label guard)`; `label` `None` is
+    /// epsilon.
+    Transition {
+        name: String,
+        from: u64,
+        to: u64,
+        label: Option<u64>,
+        guard: TermId,
+    },
+    /// `(fsm.accepts name word result)`.
+    Accepts {
+        name: String,
+        word: Vec<u64>,
+        result: String,
+    },
+}
+
 /// Solver context for managing the solving process
 ///
 /// The `Context` provides a high-level API for SMT solving, similar to
@@ -182,6 +213,27 @@ pub struct Context {
     /// before returning.
     #[cfg(feature = "std")]
     proof_log_path: Option<PathBuf>,
+    /// FSM declarations (`declare-fsm`/`fsm.*` commands), in script order;
+    /// the accumulated model is (re)built and registered lazily at the
+    /// first solving/asserting command (`docs/FSM.md`). Retained across
+    /// `reset-assertions` (declarations survive; the registration itself
+    /// is dropped by `Solver::reset` and rebuilt on demand), cleared by
+    /// `reset`.
+    fsm_decls: Vec<FsmDecl>,
+    /// `declare-fsm` names -> `(states, alphabet)` for eager validation of
+    /// `fsm.*` references at execution (the registration rebuild
+    /// re-validates everything; this fails malformed commands fast).
+    fsm_names: crate::prelude::HashMap<String, (u64, u64)>,
+    /// Names already consumed by `fsm.accepts` results.
+    fsm_result_names: crate::prelude::HashSet<String>,
+    /// Whether the FSM model built from `fsm_decls` is currently
+    /// registered with the solver.
+    fsm_registered: bool,
+}
+
+/// Map an `FsmError` to a command error.
+fn fsm_error(e: nixie_theories::fsm::FsmError) -> nixie_core::error::NixieError {
+    nixie_core::error::NixieError::Unsupported(format!("fsm: {}", e.0))
 }
 
 impl Default for Context {
@@ -216,6 +268,10 @@ impl Context {
             options: crate::prelude::HashMap::new(),
             certified_mode_required: false,
             declared_sorts: crate::prelude::HashMap::new(),
+            fsm_decls: Vec::new(),
+            fsm_names: crate::prelude::HashMap::new(),
+            fsm_result_names: crate::prelude::HashSet::new(),
+            fsm_registered: false,
             #[cfg(feature = "std")]
             proof_log_path: None,
         }
@@ -471,12 +527,140 @@ impl Context {
         result
     }
 
+    /// Build and register the FSM model accumulated from `declare-fsm` /
+    /// `fsm.*` commands, if any remain unregistered. Registration follows
+    /// the propagator lifecycle: assertion scope zero, before the first
+    /// check; afterwards the registration is permanent until the solver
+    /// resets (`reset` / `reset-assertions` both drop it, and the latter
+    /// keeps the declarations for an automatic rebuild here). The method
+    /// is idempotent and a no-op without declarations. Errors (unknown
+    /// automaton references, malformed declarations, registration at a
+    /// non-zero scope) are command errors, never silent drops.
+    pub fn ensure_fsm_registered(&mut self) -> Result<()> {
+        if self.fsm_registered || self.fsm_decls.is_empty() {
+            return Ok(());
+        }
+        use nixie_theories::fsm::{AutomatonHandle, FsmModel, Label};
+        let mut model = FsmModel::new(&self.terms);
+        let mut handles: crate::prelude::HashMap<String, AutomatonHandle> =
+            crate::prelude::HashMap::new();
+        let usize_of = |v: u64, what: &str| -> Result<u64> {
+            u32::try_from(v)
+                .map_err(|_| {
+                    nixie_core::error::NixieError::Unsupported(format!("fsm {what} exceeds u32"))
+                })
+                .map(|v| v as u64)
+        };
+        for decl in self.fsm_decls.clone() {
+            let r: Result<()> = (|| {
+                match decl {
+                    FsmDecl::Declare {
+                        name,
+                        states,
+                        alphabet,
+                    } => {
+                        let _ = usize_of(states, "state count")?;
+                        let _ = usize_of(alphabet, "alphabet size")?;
+                        let handle = model
+                            .new_automaton(states as usize, alphabet as usize)
+                            .map_err(fsm_error)?;
+                        if handles.contains_key(&name) {
+                            return Err(nixie_core::error::NixieError::Unsupported(format!(
+                                "declare-fsm: automaton '{name}' declared twice"
+                            )));
+                        }
+                        handles.insert(name, handle);
+                    }
+                    FsmDecl::Initial { name, state } => {
+                        let &a = handles.get(&name).ok_or_else(|| {
+                            nixie_core::error::NixieError::Unsupported(format!(
+                                "fsm.initial: unknown automaton '{name}'"
+                            ))
+                        })?;
+                        let _ = usize_of(state, "state index")?;
+                        model.set_initial(a, state as usize).map_err(fsm_error)?;
+                    }
+                    FsmDecl::Accepting { name, state } => {
+                        let &a = handles.get(&name).ok_or_else(|| {
+                            nixie_core::error::NixieError::Unsupported(format!(
+                                "fsm.accepting: unknown automaton '{name}'"
+                            ))
+                        })?;
+                        let _ = usize_of(state, "state index")?;
+                        model.add_accepting(a, state as usize).map_err(fsm_error)?;
+                    }
+                    FsmDecl::Transition {
+                        name,
+                        from,
+                        to,
+                        label,
+                        guard,
+                    } => {
+                        let &a = handles.get(&name).ok_or_else(|| {
+                            nixie_core::error::NixieError::Unsupported(format!(
+                                "fsm.transition: unknown automaton '{name}'"
+                            ))
+                        })?;
+                        let _ = usize_of(from, "state index")?;
+                        let _ = usize_of(to, "state index")?;
+                        let label = match label {
+                            None => Label::Epsilon,
+                            Some(l) => {
+                                let _ = usize_of(l, "symbol index")?;
+                                Label::Symbol(l as u32)
+                            }
+                        };
+                        model
+                            .add_transition(
+                                a,
+                                from as usize,
+                                to as usize,
+                                label,
+                                guard,
+                                &mut self.terms,
+                            )
+                            .map_err(fsm_error)?;
+                    }
+                    FsmDecl::Accepts { name, word, result } => {
+                        let &a = handles.get(&name).ok_or_else(|| {
+                            nixie_core::error::NixieError::Unsupported(format!(
+                                "fsm.accepts: unknown automaton '{name}'"
+                            ))
+                        })?;
+                        let mut word_u32 = Vec::with_capacity(word.len());
+                        for &s in &word {
+                            let _ = usize_of(s, "word symbol")?;
+                            word_u32.push(s as u32);
+                        }
+                        model
+                            .accepts_named(a, &word_u32, &result, &mut self.terms)
+                            .map_err(fsm_error)?;
+                    }
+                }
+                Ok(())
+            })();
+            r?;
+        }
+        self.solver
+            .register_fsm(model, &mut self.terms)
+            .map_err(fsm_error)?;
+        self.fsm_registered = true;
+        Ok(())
+    }
+
     /// Check satisfiability.
     ///
     /// With recursive definitions in scope the plain check would solve a
     /// strictly weaker problem (every `f(x)` unconstrained), so the
     /// fuel-bounded unfolding driver takes over.
     pub fn check_sat(&mut self) -> SolverResult {
+        // FSM declarations must be live before solving; a registration
+        // failure cannot be silent (unconstrained acceptance constants
+        // would admit false `sat`) — surface it as an honest Unknown.
+        if let Err(e) = self.ensure_fsm_registered() {
+            self.pending_contract_error = Some(format!("{e}"));
+            return SolverResult::Unknown;
+        }
         let result = if self.recfun.is_empty() {
             self.check_sat_core()
         } else {
@@ -761,6 +945,10 @@ impl Context {
             self.options
                 .insert("certified-mode".to_string(), "true".to_string());
         }
+        self.fsm_decls.clear();
+        self.fsm_names.clear();
+        self.fsm_result_names.clear();
+        self.fsm_registered = false;
         self.invalidate_last_check();
     }
 
@@ -784,6 +972,9 @@ impl Context {
     pub fn reset_assertions(&mut self) {
         self.recfun.retract_to_base();
         self.solver.reset();
+        // The fresh solver has no propagator registrations; the retained
+        // FSM declarations re-register lazily at the next solving command.
+        self.fsm_registered = false;
         self.assertions.clear();
         self.assertion_stack.clear();
         // Keep declared_consts, const_stack, const_name_to_index,
@@ -1429,10 +1620,141 @@ impl Context {
                         self.declare_fun(&name, parsed_arg_sorts, parsed_ret_sort);
                     }
                 }
+                Command::DeclareFsm { .. }
+                | Command::FsmInitial { .. }
+                | Command::FsmAccepting { .. }
+                | Command::FsmTransition { .. }
+                | Command::FsmAccepts { .. } => {
+                    // Eager validation: references must name a declared
+                    // automaton with in-range indices, and acceptance
+                    // result names must be fresh. (The registration rebuild
+                    // re-validates independently — defense in depth.)
+                    if let Command::DeclareFsm {
+                        name,
+                        states,
+                        alphabet,
+                    } = &cmd
+                    {
+                        if self.fsm_names.contains_key(name) {
+                            return Err(nixie_core::error::NixieError::Unsupported(format!(
+                                "declare-fsm: automaton '{name}' declared twice"
+                            )));
+                        }
+                        self.fsm_names.insert(name.clone(), (*states, *alphabet));
+                    }
+                    let (states, alphabet) = match &cmd {
+                        Command::DeclareFsm { .. } => (0, 0),
+                        Command::FsmInitial { name, .. }
+                        | Command::FsmAccepting { name, .. }
+                        | Command::FsmTransition { name, .. }
+                        | Command::FsmAccepts { name, .. } => match self.fsm_names.get(name) {
+                            Some(&shape) => shape,
+                            None => {
+                                return Err(nixie_core::error::NixieError::Unsupported(format!(
+                                    "fsm command: unknown automaton '{name}'"
+                                )));
+                            }
+                        },
+                        _ => (0, 0),
+                    };
+                    let check_state = |what: &str, name: &str, state: u64, states: u64| {
+                        if state >= states {
+                            Err(nixie_core::error::NixieError::Unsupported(format!(
+                                "{what}: state {state} out of range (automaton '{name}' has {states} states)"
+                            )))
+                        } else {
+                            Ok(())
+                        }
+                    };
+                    match &cmd {
+                        Command::FsmInitial { name, state } => {
+                            check_state("fsm.initial", name, *state, states)?;
+                        }
+                        Command::FsmAccepting { name, state } => {
+                            check_state("fsm.accepting", name, *state, states)?;
+                        }
+                        Command::FsmTransition {
+                            name,
+                            from,
+                            to,
+                            label,
+                            ..
+                        } => {
+                            check_state("fsm.transition", name, *from, states)?;
+                            check_state("fsm.transition", name, *to, states)?;
+                            if let Some(l) = label
+                                && *l >= alphabet
+                            {
+                                return Err(nixie_core::error::NixieError::Unsupported(format!(
+                                    "fsm.transition: symbol {l} out of range (automaton '{name}' alphabet {alphabet})"
+                                )));
+                            }
+                        }
+                        Command::FsmAccepts { name, word, result } => {
+                            for &s in word {
+                                if s >= alphabet {
+                                    return Err(nixie_core::error::NixieError::Unsupported(
+                                        format!(
+                                            "fsm.accepts: word symbol {s} out of range (automaton '{name}' alphabet {alphabet})"
+                                        ),
+                                    ));
+                                }
+                            }
+                            if !self.fsm_result_names.insert(result.clone()) {
+                                return Err(nixie_core::error::NixieError::Unsupported(format!(
+                                    "fsm.accepts: result constant '{result}' already used by this script"
+                                )));
+                            }
+                        }
+                        _ => {}
+                    }
+                    // Record the declaration; the accumulated model is
+                    // registered lazily before the first solving/asserting
+                    // command (see `ensure_fsm_registered`). `fsm.accepts`
+                    // additionally declares its result constant so the
+                    // script's terms can reference it (the parser has
+                    // already registered the name for term building).
+                    if let Command::FsmAccepts { ref result, .. } = cmd {
+                        self.declare_const(result, self.terms.sorts.bool_sort);
+                    }
+                    self.fsm_decls.push(match cmd {
+                        Command::DeclareFsm {
+                            name,
+                            states,
+                            alphabet,
+                        } => FsmDecl::Declare {
+                            name,
+                            states,
+                            alphabet,
+                        },
+                        Command::FsmInitial { name, state } => FsmDecl::Initial { name, state },
+                        Command::FsmAccepting { name, state } => FsmDecl::Accepting { name, state },
+                        Command::FsmTransition {
+                            name,
+                            from,
+                            to,
+                            label,
+                            guard,
+                        } => FsmDecl::Transition {
+                            name,
+                            from,
+                            to,
+                            label,
+                            guard,
+                        },
+                        Command::FsmAccepts { name, word, result } => {
+                            FsmDecl::Accepts { name, word, result }
+                        }
+                        _ => unreachable!("guarded by the outer match"),
+                    });
+                    self.invalidate_last_check();
+                }
                 Command::Assert(term) => {
+                    self.ensure_fsm_registered()?;
                     self.assert(term);
                 }
                 Command::AssertNamed(term, name) => {
+                    self.ensure_fsm_registered()?;
                     // Register the assertion under its `:named` label so that,
                     // with `:produce-unsat-cores` enabled, `(get-unsat-core)`
                     // reports the user label when this assertion participates
@@ -1440,6 +1762,7 @@ impl Context {
                     self.assert_named(term, &name);
                 }
                 Command::CheckSat => {
+                    self.ensure_fsm_registered()?;
                     let result = self.check_sat();
                     // A logic-contract violation is a command error, not an
                     // honest `unknown`: the script's body never belonged to
@@ -1454,6 +1777,10 @@ impl Context {
                     });
                 }
                 Command::Push(n) => {
+                    // Registration must happen while the assertion scope is
+                    // still zero; a script that declares FSMs and then pushes
+                    // registers here, before the scope rises.
+                    self.ensure_fsm_registered()?;
                     for _ in 0..n {
                         self.push();
                     }
@@ -1499,6 +1826,7 @@ impl Context {
                     self.set_option(&key, &value);
                 }
                 Command::CheckSatAssuming(assumptions) => {
+                    self.ensure_fsm_registered()?;
                     // Check under temporary assumptions WITHOUT push/assert/pop.
                     // A pop() would discard the model / unsat core built by the
                     // check, leaving `last_result == Sat` but no state for a
@@ -1526,6 +1854,7 @@ impl Context {
                     });
                 }
                 Command::GetConsequences(assumptions, variables) => {
+                    self.ensure_fsm_registered()?;
                     let out = self.get_consequences(&assumptions, &variables);
                     output.extend(out);
                 }
@@ -2468,5 +2797,248 @@ mod tests {
             ctx.solver_config().certification_mode,
             crate::solver::CertificationMode::Uncertified
         );
+    }
+
+    // ----- FSM command surface (docs/FSM.md) -----
+
+    /// A full synthesis script: positive and negative examples over a
+    /// stay/move automaton, solved through the SMT-LIB command surface,
+    /// with the found guard assignment validated against the reference
+    /// interpreter.
+    #[test]
+    #[allow(clippy::needless_range_loop)]
+    fn fsm_script_synthesis() {
+        let mut ctx = Context::new();
+        let mut script = String::from("(set-logic ALL)\n");
+        script.push_str("(declare-fsm A 3 2)\n");
+        script.push_str("(fsm.initial A 0)\n");
+        script.push_str("(fsm.accepting A 2)\n");
+        for q in 0..3 {
+            for s in 0..2 {
+                script.push_str(&format!("(declare-const stay{q}_{s} Bool)\n"));
+                script.push_str(&format!("(declare-const move{q}_{s} Bool)\n"));
+                script.push_str(&format!("(fsm.transition A {q} {q} {s} stay{q}_{s})\n"));
+                script.push_str(&format!(
+                    "(fsm.transition A {q} {} {s} move{q}_{s})\n",
+                    (q + 1) % 3
+                ));
+            }
+        }
+        script.push_str("(fsm.accepts A (0 1 0) pos)\n");
+        script.push_str("(fsm.accepts A (1 0) neg)\n");
+        script.push_str("(fsm.accepts A () empty)\n");
+        script.push_str("(assert pos)\n");
+        script.push_str("(assert (not neg))\n");
+        script.push_str("(assert (not empty))\n");
+        script.push_str("(check-sat)\n");
+        script.push_str("(get-value (stay0_0 move0_0))\n");
+        let output = ctx.execute_script(&script).expect("script executes");
+        assert_eq!(
+            output[0], "sat",
+            "synthesis must be satisfiable: {output:?}"
+        );
+        assert!(
+            output[1].contains("stay0_0"),
+            "get-value answer: {output:?}"
+        );
+        // Independent validation against the interpreter.
+        let model = ctx.solver.model().expect("model after sat");
+        let mut twin = nixie_theories::fsm::FsmModel::new(&ctx.terms);
+        let a = twin.new_automaton(3, 2).unwrap();
+        twin.set_initial(a, 0).unwrap();
+        twin.add_accepting(a, 2).unwrap();
+        let mut grid = vec![vec![(TermId::new(u32::MAX), TermId::new(u32::MAX)); 2]; 3];
+        for q in 0..3 {
+            for s in 0..2 {
+                let gs = ctx
+                    .terms
+                    .mk_var(&format!("stay{q}_{s}"), ctx.terms.sorts.bool_sort);
+                let gm = ctx
+                    .terms
+                    .mk_var(&format!("move{q}_{s}"), ctx.terms.sorts.bool_sort);
+                twin.add_transition(
+                    a,
+                    q,
+                    q,
+                    nixie_theories::fsm::Label::Symbol(s as u32),
+                    gs,
+                    &mut ctx.terms,
+                )
+                .unwrap();
+                twin.add_transition(
+                    a,
+                    q,
+                    (q + 1) % 3,
+                    nixie_theories::fsm::Label::Symbol(s as u32),
+                    gm,
+                    &mut ctx.terms,
+                )
+                .unwrap();
+                grid[q][s] = (gs, gm);
+            }
+        }
+        let true_id = ctx.terms.mk_bool(true);
+        let mut value_of_name = std::collections::HashMap::new();
+        for q in 0..3 {
+            for s in 0..2 {
+                let (gs, gm) = grid[q][s];
+                value_of_name.insert(
+                    format!("stay{q}_{s}"),
+                    *model.assignments().get(&gs).unwrap() == true_id,
+                );
+                value_of_name.insert(
+                    format!("move{q}_{s}"),
+                    *model.assignments().get(&gm).unwrap() == true_id,
+                );
+            }
+        }
+        let truth = |t: TermId| -> bool {
+            for q in 0..3 {
+                for s in 0..2 {
+                    let (gs, gm) = grid[q][s];
+                    if t == gs {
+                        return value_of_name[&format!("stay{q}_{s}")];
+                    }
+                    if t == gm {
+                        return value_of_name[&format!("move{q}_{s}")];
+                    }
+                }
+            }
+            false
+        };
+        assert!(twin.accepts_under(a, &[0, 1, 0], &truth).unwrap());
+        assert!(!twin.accepts_under(a, &[1, 0], &truth).unwrap());
+        assert!(!twin.accepts_under(a, &[], &truth).unwrap());
+    }
+
+    /// Epsilon transitions and the empty word through the script surface:
+    /// an epsilon cycle 0 -> 1 -> 0 accepts "" iff both guards hold.
+    #[test]
+    fn fsm_script_epsilon_and_empty_word() {
+        let mut ctx = Context::new();
+        let script = "(set-logic ALL)\n\
+            (declare-fsm A 2 1)\n\
+            (fsm.initial A 0)\n\
+            (fsm.accepting A 1)\n\
+            (declare-const g Bool)\n\
+            (declare-const h Bool)\n\
+            (fsm.transition A 0 1 eps g)\n\
+            (fsm.transition A 1 0 eps h)\n\
+            (fsm.accepts A () e0)\n\
+            (fsm.accepts A (0) w0)\n\
+            (assert e0)\n\
+            (assert (not w0))\n\
+            (check-sat)\n\
+            (push 1)\n\
+            (assert (not g))\n\
+            (check-sat)\n\
+            (pop 1)\n\
+            (check-sat)\n";
+        let output = ctx.execute_script(script).expect("script executes");
+        // sat (g true), then unsat under ¬g, then sat again after pop.
+        assert_eq!(output, vec!["sat", "unsat", "sat"]);
+    }
+
+    /// Malformed scripts are command errors: unknown automaton references,
+    /// duplicate declarations, out-of-range states, non-Boolean guards.
+    #[test]
+    fn fsm_script_malformed_inputs_error() {
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script("(fsm.initial B 0)")
+            .expect_err("unknown automaton must error");
+        assert!(format!("{err}").contains("unknown automaton"), "{err}");
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script("(declare-fsm A 2 1)(declare-fsm A 2 1)")
+            .expect_err("duplicate declaration must error");
+        assert!(format!("{err}").contains("twice"), "{err}");
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script("(declare-fsm A 2 1)(fsm.initial A 5)")
+            .expect_err("out-of-range state must error");
+        assert!(format!("{err}").contains("range"), "{err}");
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script("(declare-fsm A 2 1)(declare-const i Int)(fsm.transition A 0 1 0 i)")
+            .expect_err("non-Boolean guard must error");
+        assert!(format!("{err}").contains("Boolean"), "{err}");
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script("(declare-fsm A 2 1)(fsm.accepts A (9) x)")
+            .expect_err("out-of-range word symbol must error");
+        assert!(format!("{err}").contains("range"), "{err}");
+        let mut ctx = Context::new();
+        let err = ctx
+            .execute_script(
+                "(declare-fsm A 2 1)(fsm.initial A 0)(fsm.accepting A 1)\
+                 (declare-const g Bool)(fsm.transition A 0 1 0 g)\
+                 (fsm.accepts A (0) r)(fsm.accepts A (0) r)",
+            )
+            .expect_err("duplicate acceptance name must error");
+        assert!(format!("{err}").contains("already used"), "{err}");
+    }
+
+    /// `reset-assertions` keeps the FSM declarations (SMT-LIB: declarations
+    /// survive) and the model re-registers on the next check.
+    #[test]
+    fn fsm_script_reset_assertions_reregisters() {
+        let mut ctx = Context::new();
+        let script = "(set-logic ALL)\n\
+            (declare-fsm A 2 1)\n\
+            (fsm.initial A 0)\n\
+            (fsm.accepting A 1)\n\
+            (declare-const g Bool)\n\
+            (fsm.transition A 0 1 0 g)\n\
+            (fsm.accepts A (0) w)\n\
+            (assert (and w g))\n\
+            (check-sat)\n\
+            (reset-assertions)\n\
+            (assert (not w))\n\
+            (check-sat)\n\
+            (assert w)\n\
+            (check-sat)\n";
+        let output = ctx.execute_script(script).expect("script executes");
+        // sat; sat (g false); unsat (w and not w — w is still defined by
+        // the re-registered constraints, so the contradiction is caught).
+        assert_eq!(output, vec!["sat", "sat", "unsat"]);
+    }
+
+    /// `reset` clears FSM declarations entirely.
+    #[test]
+    fn fsm_script_reset_clears_declarations() {
+        let mut ctx = Context::new();
+        let script = "(declare-fsm A 2 1)(reset)(declare-fsm A 2 1)(check-sat)";
+        let output = ctx.execute_script(script).expect("script executes");
+        assert_eq!(output, vec!["sat"]);
+    }
+
+    /// Guard terms may be full formulas (negations, conjunctions) and are
+    /// shared across transitions by naming the same term.
+    #[test]
+    fn fsm_script_compound_shared_guards() {
+        let mut ctx = Context::new();
+        let script = "(set-logic ALL)\n\
+            (declare-fsm A 2 1)\n\
+            (fsm.initial A 0)\n\
+            (fsm.accepting A 1)\n\
+            (declare-const g Bool)\n\
+            (declare-const h Bool)\n\
+            (fsm.transition A 0 1 0 (and g h))\n\
+            (fsm.transition A 0 1 0 (not g))\n\
+            (fsm.accepts A (0) w)\n\
+            (push 1)\n\
+            (assert (not w))\n\
+            (assert (not g))\n\
+            (check-sat)\n\
+            (pop 1)\n\
+            (assert w)\n\
+            (assert g)\n\
+            (assert h)\n\
+            (check-sat)\n";
+        let output = ctx.execute_script(script).expect("script executes");
+        // With ¬g fixed, the ¬g edge is in: w must be true, so ¬w is unsat.
+        // With g and h true, the and-edge is in: w holds, sat.
+        assert_eq!(output, vec!["unsat", "sat"]);
     }
 }

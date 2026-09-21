@@ -405,8 +405,10 @@ impl Bfs {
     }
 
     /// Edge atoms of the witnessed path `source ->+ target` in the **forced**
-    /// view (every emitted edge is currently true). Returns `None` if the
-    /// path invariant does not hold; callers treat that as fail-closed.
+    /// view (every emitted edge is currently true), deduplicated in path
+    /// order — a shared guard naming several path edges appears once (a
+    /// conjunction does not gain strength from repetition). Returns `None`
+    /// if the path invariant does not hold; callers treat that as fail-closed.
     fn path_atoms(
         &self,
         spec: &GraphSpec,
@@ -414,16 +416,22 @@ impl Bfs {
         target: VertexId,
     ) -> Option<Vec<TermId>> {
         let source = VertexId(self.source as u32);
+        let mut atoms = Vec::new();
+        let push = |atoms: &mut Vec<TermId>, atom: TermId| {
+            if !atoms.contains(&atom) {
+                atoms.push(atom);
+            }
+        };
         if target == source {
             // A cycle through the source: close it with any *true* in-edge
             // of the source from a visited vertex, then walk parents back.
             for (i, edge) in spec.edges.iter().enumerate() {
                 if edge.to == target && self.visits(edge.from) && values[i] == EdgeValue::True {
-                    let mut atoms = vec![edge.atom];
+                    push(&mut atoms, edge.atom);
                     let mut x = edge.from;
                     while x != source {
                         let e = self.parent_edge[x.0 as usize]?;
-                        atoms.push(spec.edges[e as usize].atom);
+                        push(&mut atoms, spec.edges[e as usize].atom);
                         x = spec.edges[e as usize].from;
                     }
                     return Some(atoms);
@@ -432,11 +440,10 @@ impl Bfs {
             return None;
         }
         // Ordinary path: walk parents from `target` back to the source.
-        let mut atoms = Vec::new();
         let mut x = target;
         while x != source {
             let e = self.parent_edge[x.0 as usize]?;
-            atoms.push(spec.edges[e as usize].atom);
+            push(&mut atoms, spec.edges[e as usize].atom);
             x = spec.edges[e as usize].from;
         }
         Some(atoms)
@@ -610,8 +617,9 @@ impl Backward {
     /// Signed reasons that the source cannot reach the target through
     /// possible edges: **every false edge into the backward closure** of
     /// the target (MonoSAT's cut; non-false edges into the closure are the
-    /// closure's own possible edges and are not part of the cut). The
-    /// implication these reasons justify is valid for *arbitrary* graphs,
+    /// closure's own possible edges and are not part of the cut), deduped —
+    /// a shared guard naming several cut edges contributes one negation.
+    /// The implication these reasons justify is valid for *arbitrary* graphs,
     /// not only completions of the current state — which is what learned
     /// clauses require: any path (for a self-pair, any cycle) from the
     /// source to the target whose edges into the closure are not among
@@ -623,7 +631,10 @@ impl Backward {
     fn cut_negations(&self, spec: &GraphSpec, values: &[EdgeValue]) -> Vec<TermId> {
         let mut reasons = Vec::new();
         for (i, edge) in spec.edges.iter().enumerate() {
-            if self.sees(edge.to) && values[i] == EdgeValue::False {
+            if self.sees(edge.to)
+                && values[i] == EdgeValue::False
+                && !reasons.contains(&edge.negation)
+            {
                 reasons.push(edge.negation);
             }
         }
@@ -906,15 +917,21 @@ fn next_model_uid() -> u64 {
 /// declared before `into_propagator`/`register_graph`. Atoms minted by
 /// `new_edge`/`reach`/`acyclic` carry a per-model unique salt, so several
 /// models over one term manager stay disjoint; user-supplied edge terms may
-/// deliberately be shared (the same term cannot be reused twice *within* a
-/// model).
+/// deliberately be shared — the same term can name any number of edges
+/// (parallel edges, product-unfolding positions, distinct graphs), every
+/// one present exactly when the term is true — so a shared guard keeps one
+/// meaning everywhere it appears.
 pub struct GraphModel {
     uid: u64,
     graphs: Vec<GraphSpec>,
     /// One incrementally maintained cache per graph (see [`ViewCache`]).
     caches: Vec<ViewCache>,
-    /// Edge atom -> (graph index, edge index), for O(1) event routing.
-    edge_index: FxHashMap<TermId, (u32, u32)>,
+    /// Edge atom -> every (graph index, edge index) it guards, for O(1)
+    /// event routing. A term may guard **several** edges: a guard shared
+    /// across parallel edges, product-unfolding positions or distinct graphs
+    /// keeps one meaning (all its edges live and die together), so a fixation
+    /// event fans out to every edge it names.
+    edge_index: FxHashMap<TermId, Vec<(u32, u32)>>,
     /// Every term used as an edge atom (across graphs), for uniqueness.
     edge_terms: FxHashSet<TermId>,
     /// Terms created by this model (reach/acyclicity atoms), which edge
@@ -1014,8 +1031,12 @@ impl GraphModel {
 
     /// Add edge `from -> to` with an existing Boolean term as its presence
     /// atom. The term must have Boolean sort, must not be a Boolean
-    /// constant, and must not already name an edge or a graph atom in this
-    /// model. Returns the atom for convenience.
+    /// constant, and must not name a graph atom (reach/acyclic) in this
+    /// model. The **same term may name several edges** — across parallel
+    /// edges, graphs, or any other multiplicity — with one meaning: every
+    /// edge it names is present exactly when the term is true (this is the
+    /// aliasing the FSM product construction relies on). Returns the atom
+    /// for convenience.
     pub fn add_edge(
         &mut self,
         g: GraphHandle,
@@ -1040,7 +1061,7 @@ impl GraphModel {
         ) {
             return Err(GraphError("edge atoms must not be Boolean constants"));
         }
-        if self.edge_terms.contains(&atom) || self.system_terms.contains(&atom) {
+        if self.system_terms.contains(&atom) {
             return Err(GraphError("edge atom already used by this model"));
         }
         self.edge_terms.insert(atom);
@@ -1184,7 +1205,10 @@ impl GraphModel {
         let watches = self.watches();
         for (g, spec) in self.graphs.iter().enumerate() {
             for (i, edge) in spec.edges.iter().enumerate() {
-                self.edge_index.insert(edge.atom, (g as u32, i as u32));
+                self.edge_index
+                    .entry(edge.atom)
+                    .or_default()
+                    .push((g as u32, i as u32));
             }
         }
         (Box::new(self), watches)
@@ -1325,8 +1349,14 @@ impl GraphModel {
                 find_cycle(&forced_csr, vertices)
             });
             if let Some(cycle) = forced_result.clone() {
-                let reasons: Vec<TermId> =
-                    cycle.iter().map(|&e| spec.edges[e as usize].atom).collect();
+                // Deduped in cycle order: a shared guard naming several
+                // cycle edges contributes one literal.
+                let mut seen_atoms = FxHashSet::default();
+                let reasons: Vec<TermId> = cycle
+                    .iter()
+                    .map(|&e| spec.edges[e as usize].atom)
+                    .filter(|atom| seen_atoms.insert(*atom))
+                    .collect();
                 match fixed {
                     Some(true) => {
                         let mut conflict = reasons;
@@ -1345,12 +1375,14 @@ impl GraphModel {
                     })
                 });
                 if possible_result.clone().is_none() {
+                    let mut seen = FxHashSet::default();
                     let reasons: Vec<TermId> = spec
                         .edges
                         .iter()
                         .zip(values)
                         .filter(|&(_, v)| *v == EdgeValue::False)
                         .map(|(edge, _)| edge.negation)
+                        .filter(|lit| seen.insert(*lit))
                         .collect();
                     match fixed {
                         Some(false) => {
@@ -1497,12 +1529,14 @@ impl GraphModel {
                     // No true cycle exists, and with all edges fixed
                     // that means no possible cycle either: the demanded
                     // cycle cannot exist in any completion.
+                    let mut seen = FxHashSet::default();
                     let mut conflict: Vec<TermId> = spec
                         .edges
                         .iter()
                         .zip(values.iter())
                         .filter(|&(_, v)| *v == EdgeValue::False)
                         .map(|(edge, _)| edge.negation)
+                        .filter(|lit| seen.insert(*lit))
                         .collect();
                     conflict.push(negation);
                     return PropagatorResult::Unsat(conflict);
@@ -1520,15 +1554,19 @@ impl UserPropagator for GraphModel {
         // Route edge events in O(1): record them for the next run instead
         // of re-reading every edge from the manager. Atom events carry no
         // derived state (atom values are read on demand in the scan).
-        if let Some(&(g, edge)) = self.edge_index.get(&term) {
-            let g = g as usize;
-            if value == self.true_term {
-                self.caches[g].pending.push((edge, EdgeValue::True));
-            } else if value == self.false_term {
-                self.caches[g].pending.push((edge, EdgeValue::False));
-            } else {
-                // Non-Boolean fixation: fail closed to the full re-read.
-                self.caches[g].invalidate();
+        // A shared guard names several edges; one fixation fans out to all
+        // of them (every edge with this atom records the same value).
+        if let Some(edges) = self.edge_index.get(&term).cloned() {
+            for (g, edge) in edges {
+                let g = g as usize;
+                if value == self.true_term {
+                    self.caches[g].pending.push((edge, EdgeValue::True));
+                } else if value == self.false_term {
+                    self.caches[g].pending.push((edge, EdgeValue::False));
+                } else {
+                    // Non-Boolean fixation: fail closed to the full re-read.
+                    self.caches[g].invalidate();
+                }
             }
         }
         self.run(ctx);

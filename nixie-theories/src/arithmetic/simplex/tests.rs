@@ -2512,7 +2512,7 @@ fn integer_tableau_rows_materialize_consistently_after_pivots() {
 fn born_entering_row_matches_the_canonical_solved_form() {
     let mut rng = FfLcg::new(0xB0D0_5EED);
     let mut checked = 0usize;
-    let mut _skipped = 0usize;
+    let mut skipped = 0usize;
     for _ in 0..2000 {
         const NVARS: u32 = 6;
         let mut row = ff_random_row(&mut rng, NVARS);
@@ -2529,11 +2529,11 @@ fn born_entering_row_matches_the_canonical_solved_form() {
             );
         }
         let Some(leaving_int) = int_row_from_lin(&row) else {
-            _skipped += 1;
+            skipped += 1;
             continue;
         };
         let Some(n_e) = leaving_int.numerator_of(entering_var) else {
-            _skipped += 1;
+            skipped += 1;
             continue;
         };
         let born = born_entering_row(&leaving_int, n_e, 99, entering_var);
@@ -2548,7 +2548,7 @@ fn born_entering_row_matches_the_canonical_solved_form() {
         let Some(reference) = Simplex::build_pivot_expr(&lin, coef, 99, entering_var)
             .or_else(|| Simplex::build_pivot_expr_exact(&lin, coef, 99, entering_var))
         else {
-            _skipped += 1;
+            skipped += 1;
             continue;
         };
         let born_lin = materialize_lin(&born);
@@ -2562,6 +2562,13 @@ fn born_entering_row_matches_the_canonical_solved_form() {
     assert!(
         checked > 1500,
         "grid must exercise the mass: {checked} (skipped {skipped})"
+    );
+    // `skipped` cases (degenerate rows) are expected to be a small
+    // minority; pin that so the mass assertion cannot silently degrade
+    // and the counter stays read (no dead bookkeeping).
+    assert!(
+        checked + skipped >= 2000,
+        "every iteration must be accounted: {checked} checked, {skipped} skipped"
     );
 }
 
