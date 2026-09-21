@@ -316,7 +316,7 @@ impl Solver {
     ///
     /// Returns the rescued (shallow-enough) replacement, or `None` when
     /// the term is still genuinely deep after both rungs (the
-    /// `deep_split` rescue and the honest `Unknown` refusal follow as
+    /// honest `Unknown` refusal follows as
     /// before).  Every rewrite here is an unconditional equivalence, so
     /// any replacement preserves the assertion's meaning exactly.
     pub(super) fn deep_fold_rescue(

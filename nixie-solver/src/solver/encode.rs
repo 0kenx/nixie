@@ -1381,25 +1381,6 @@ impl Solver {
         if self.term_exceeds_encode_depth(term, manager) {
             if let Some(rescued) = self.deep_fold_rescue(term, manager) {
                 term = rescued;
-            } else if super::deep_split::enabled()
-                && let Some(pieces) = super::deep_split::split_deep(term, manager)
-                && pieces
-                    .iter()
-                    .all(|p| !self.term_exceeds_encode_depth(*p, manager))
-            {
-                // The deep-split rescue: lift the deep subterms to fresh
-                // constants with defining equations (equi-satisfiable —
-                // depth traded for width; see `deep_split`).  Every piece
-                // passes the guard, so feed them through the full assert
-                // pipeline and keep this caller's term out of the books:
-                // the pieces ARE its meaning.  Measured unlock: the
-                // nec-smt class (2537-deep ite/=/let spines) — nine
-                // standing-table instances that answered an instant
-                // spurious `unknown` now get an honest search.
-                for piece in pieces {
-                    self.assert(piece, manager);
-                }
-                return;
             } else {
                 self.encode_depth_exceeded = true;
                 let index = self.assertions.len();
@@ -2266,24 +2247,6 @@ impl Solver {
         if self.term_exceeds_encode_depth(term, manager) {
             if let Some(rescued) = self.deep_fold_rescue(term, manager) {
                 term = rescued;
-            } else if super::deep_split::enabled()
-                && let Some(pieces) = super::deep_split::split_deep(term, manager)
-                && pieces
-                    .iter()
-                    .all(|p| !self.term_exceeds_encode_depth(*p, manager))
-            {
-                // The deep-split rescue (see `assert`'s twin note).  For a
-                // NAMED assertion every piece carries the name: the named
-                // input denotes the conjunction of the pieces, so a core
-                // containing any piece legitimately involves the name
-                // (over-approximation — sound for cores, and the
-                // alternative of dropping the name from the definitions
-                // would let a core blame the caller's assertion without
-                // the pieces it actually needed).
-                for piece in pieces {
-                    self.assert_named(piece, name, manager);
-                }
-                return;
             } else {
                 self.encode_depth_exceeded = true;
                 self.record_assertion_identity(term, Some(name.to_string()), index);
