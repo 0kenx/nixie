@@ -160,3 +160,13 @@ the subsumption volume guard, `7d4adf4f` the UF-walk gating,
 No third silent drop.  The full battery context (suite, parity, gate,
 differentials) is in `2026-09-21-tree-health-validation.md` at
 `af07e5ad`; this audit extends it to `fa30412c`.
+
+## Regression audit, second execution (2026-09-21, night) — holds through Phase 2 + the SAT landings
+
+After `cefcd561` (integer-tableau Phase 2, simplex surfaces),
+`bf938922` (lazy BIG + parse_lit) and `020b4310` (the theory-decision
+channel, default-inert): fixed seeds 20261000–02 × 600 on
+`precompile/bf938922` — **exactly 1 member, `i129`**; fresh seeds
+20262600–02 × 600 — **exactly 6 members** (the simplex family:
+i492/i202/i445/i551/+2, unchanged).  No third silent drop; the
+named recovered members remain absent from both lists.
