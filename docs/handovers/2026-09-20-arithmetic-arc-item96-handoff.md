@@ -163,3 +163,18 @@ armed searches still reach uncertifiable candidates — item 89/91's
 dive-leaf divergence), the ~18 slow-class members, and the timeout tails.
 Study: `docs/studies/2026-09-20-lia-branch-lemma-channel.md` (the
 campaign, the traps, the honest-counting method).
+
+## Update (the J5 half): J5-(a) CLOSED — 55 → 18 members
+
+`a64738ff` lands the certificate fallback: the big-const gate's MBQI
+certifier declines mixed Int/Real goals *without evaluating them* (a
+fragment refusal), discarding valid models the armed search found.  The
+gate now falls back to `model_certifies_assertions` (the value-only exact
+certificate — original assertions, true constants, fails closed).  **37
+of 55 post-flip members recovered; all 37 verdicts z3-agreeing; all 37
+models z3-validated by binding+negation; zero false.**  The residual 18 =
+J5-(b) (candidates the certificate genuinely refutes — item 89's
+dive-leaf divergence, the next open item) + the ray/smx tails.
+
+The arc's cumulative fixed-seed survey run: 150 → 110 → 91 → 79 → 75 →
+73 → 78 → 76 (flip) → **18**.
