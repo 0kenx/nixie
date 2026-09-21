@@ -31,6 +31,20 @@ other agents' campaigns at load 10-399, discarded) — **the next
 agent's cheap closure** is exactly the handover's step-1 recipe: the
 table at sustained load <= ~8 on `precompile/cf8e497c` (or newer).
 
+**Warm-start: taken and CLOSED NEGATIVE** (`2026-09-21-warm-start-negative.md`).
+The addendum's premise expired: `crash_basis`/`update_assignment`
+measure 0.00-0.03 % on both named probes (011: sat/0cf/18.4 s; 022:
+churn) — pop's relax-only discipline plus basic-var branch bounds
+retired the per-node pass for free.  **The profile map moved**: both
+probes are now substitution-volume cells (~78 % of wall in
+`pivot`+`checked_ratio_i128`+`gcd_i128`) — the canonical write-back
+floor times the pivot count.  The write-back floor is the dominant
+remaining ARITHMETIC cost; the named way past it is the full
+integer-tableau architecture (lazy canonicalization of substituted
+rows — the IntRow cache already holds the content; multi-session,
+soundness-critical).  The pivot COUNT remains the architectural item
+(pivot-storm Layer 3).
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
