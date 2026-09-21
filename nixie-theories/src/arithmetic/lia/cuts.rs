@@ -91,8 +91,9 @@ impl LiaSolver {
         let row = self
             .simplex
             .tableau_iter()
-            .find(|(v, _)| **v == var)
-            .map(|(_, e)| e.clone())?;
+            .into_iter()
+            .find(|(v, _)| *v == var)
+            .map(|(_, e)| e.into_owned())?;
         if row.terms.is_empty() {
             return None;
         }

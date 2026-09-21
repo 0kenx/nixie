@@ -989,7 +989,7 @@ mod soi_differential {
                         let mut basics: Vec<VarId> = soi.tableau.keys().copied().collect();
                         basics.sort_unstable();
                         for b in basics {
-                            let row = soi.tableau.get(&b).unwrap().clone();
+                            let row = soi.row_lin(b).expect("row exists");
                             let mut acc = DeltaRational::from_rational(row.constant);
                             for (nv, c) in &row.terms {
                                 let av = soi.assignment[*nv as usize];
@@ -1020,7 +1020,7 @@ mod soi_differential {
                         // by validating the SOI model against rows+bounds.
                         let mut ok_model = true;
                         'outer: for b in soi.tableau.keys().copied().collect::<Vec<_>>() {
-                            let row = soi.tableau.get(&b).unwrap().clone();
+                            let row = soi.row_lin(b).expect("row exists");
                             let mut acc = DeltaRational::from_rational(row.constant);
                             for (nv, c) in &row.terms {
                                 match crate::arithmetic::simplex::checked_mul_delta(
@@ -1156,7 +1156,7 @@ mod soi_differential {
             );
             if b.is_ok() {
                 for bv in s.tableau.keys().copied().collect::<Vec<_>>() {
-                    let row = s.tableau.get(&bv).unwrap().clone();
+                    let row = s.row_lin(bv).expect("row exists");
                     let mut acc = DeltaRational::from_rational(row.constant);
                     for (nv, c) in &row.terms {
                         acc = crate::arithmetic::simplex::checked_add_delta(
@@ -1510,10 +1510,10 @@ fn intern_row_reports_rescaled_for_width_rescale() {
     // carries the 2^62 constant).
     s.tableau.insert(
         yi,
-        std::sync::Arc::new(LinExpr {
+        TableRow::Lin(std::sync::Arc::new(LinExpr {
             terms: smallvec::smallvec![(pin, Rational64::one())],
             constant: Rational64::from_integer(4611686018427387904),
-        }),
+        })),
     );
     s.basic.resize(yi as usize + 1, false);
     s.basic[yi as usize] = true;
@@ -1552,10 +1552,10 @@ fn intern_row_reports_rescaled_for_width_rescale() {
     let md2 = s2.new_var();
     s2.tableau.insert(
         yi2,
-        std::sync::Arc::new(LinExpr {
+        TableRow::Lin(std::sync::Arc::new(LinExpr {
             terms: smallvec::smallvec![(pin2, Rational64::one())],
             constant: Rational64::from_integer(4),
-        }),
+        })),
     );
     s2.basic.resize(yi2 as usize + 1, false);
     s2.basic[yi2 as usize] = true;
@@ -1597,10 +1597,10 @@ fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
     }
     s.tableau.insert(
         b,
-        std::sync::Arc::new(LinExpr {
+        TableRow::Lin(std::sync::Arc::new(LinExpr {
             terms: smallvec::smallvec![(a, Rational64::from_integer(-1))],
             constant: Rational64::new(-1, 2),
-        }),
+        })),
     );
     s.basic.resize(b as usize + 1, false);
     s.basic[b as usize] = true;
@@ -2342,8 +2342,17 @@ fn int_row_cache_pointer_coherence_after_pivots() {
             .tableau
             .get(var)
             .expect("cache entry names a variable with a live narrow row");
+        let live_lin = match live {
+            TableRow::Lin(arc) => arc.clone(),
+            TableRow::Int(_) => {
+                // An integer-form row has no canonical arc; the cache
+                // entry for it would be rebuilt on demand (and Stage A
+                // never stores Int rows) — accept by key identity here.
+                continue;
+            }
+        };
         assert!(
-            Arc::ptr_eq(&entry.src, live),
+            Arc::ptr_eq(&entry.src, &live_lin),
             "stale fraction-free entry for var {var}"
         );
         checked += 1;

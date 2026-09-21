@@ -1115,7 +1115,7 @@ impl ArithSolver {
         match mode {
             RowInternMode::Exact => true,
             RowInternMode::Rescaled => match self.simplex.defining_row(slack) {
-                Some(row) => self.is_integral_form(row),
+                Some(row) => self.is_integral_form(row.as_ref()),
                 None => false,
             },
         }
@@ -3067,7 +3067,6 @@ impl ArithSolver {
             self.simplex.bound_lower_at(j).is_none() && self.simplex.bound_upper_at(j).is_none()
         };
         for (var, row) in self.simplex.tableau_iter() {
-            let var = *var;
             if !self.int_vars.contains(&var) || self.simplex.value(var).is_integer() {
                 continue;
             }
@@ -3208,8 +3207,9 @@ impl ArithSolver {
         let row = self
             .simplex
             .tableau_iter()
-            .find(|(v, _)| **v == var)
-            .map(|(_, e)| e.clone())?;
+            .into_iter()
+            .find(|(v, _)| *v == var)
+            .map(|(_, e)| e.into_owned())?;
         if row.terms.is_empty() {
             return None;
         }

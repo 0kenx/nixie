@@ -103,7 +103,7 @@ impl Simplex {
             let obj_coef = obj
                 .terms
                 .iter()
-                .find(|(v, _)| v == basic_var)
+                .find(|(v, _)| *v == basic_var)
                 .map(|(_, c)| *c)
                 .unwrap_or_else(Rational64::zero);
             if obj_coef.is_zero() {
