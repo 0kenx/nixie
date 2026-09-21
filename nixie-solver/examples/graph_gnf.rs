@@ -402,5 +402,21 @@ fn main() {
             "c conflicts={} decisions={} propagations={}",
             stats.conflicts, stats.decisions, stats.propagations
         );
+        // Graph-propagator maintenance counters (scaling diagnosis).
+        {
+            use nixie_theories::graph::{TRACE, TraceKind};
+            let g = |k: TraceKind| TRACE[k as usize].load(std::sync::atomic::Ordering::Relaxed);
+            eprintln!(
+                "c graph: pops={} inval={} reread={} evT={} evF={} witDrop={} cycDrop={} closureRebuild={}",
+                g(TraceKind::Pops),
+                g(TraceKind::Invalidations),
+                g(TraceKind::FullRereads),
+                g(TraceKind::EventsTrue),
+                g(TraceKind::EventsFalse),
+                g(TraceKind::WitnessDrops),
+                g(TraceKind::CycleMemoDrops),
+                g(TraceKind::ClosureRebuilds),
+            );
+        }
     }
 }

@@ -361,3 +361,45 @@ structural SMT-API cost (hash-consing, one-var-per-atom, teardown)
 and to the simplifier/parse surface owned by the assert-fold and
 parser arcs. Further outlier work belongs to those owners with this
 study's profiles as the entry point.
+
+## Addendum (2026-09-22, fifth session): the scaling probe — parity was n-bounded; the witness repair restores it at n=500
+
+All prior parity claims were measured at n ≤ 150. A probe at
+n ∈ {200, 300, 500} (r ∈ {8, 16}, seeds 1–3, 18 instances) showed the
+gap **reopening superlinearly**: 1.00× at n=200, 1.09× at n=300,
+**1.84× at n=500** (totals 1.57×, worst 2.91×, instruction masses in
+the tens of billions). Diagnosis used new STATS-gated maintenance
+counters (now landed in the driver: pops/inval/reread/evT/evF/
+witDrop/cycDrop/closureRebuild): the worst instance ran 370k false
+events with a **1.5 % witness-match rate — 5,675 closure drops, each
+repaying a full O(V+E) rebuild (≈3M instructions at n=500) = 48.7 % of
+the solve in `backward_seen`**. (The 147k pops were one deep final
+backtrack — rereads stayed at 2, so epoch churn was innocent.)
+
+The fix is the Italiano-style **localized witness repair** the original
+design skipped: when a disabled edge kills member `a`'s witness, scan
+`a`'s other out-edges (declaration order) for a surviving edge into a
+closure member whose own witness chain does not pass through `a` — the
+cycle-grounding condition, checked by walking the candidate's chain to
+the target root (bounded by tree depth; corrupt state fails closed to
+the drop). A grounded re-attachment keeps the memo **exactly** valid at
+O(out-degree); only a genuine shrink still drops it. On the probe the
+repair eliminated every drop (`witDrop 5675 → 0`, `closureRebuild 5691
+→ 16` — first builds plus genuine shrinks).
+
+| corpus | before | after |
+|---|---|---|
+| scale (n∈{200,300,500}) | 1.168× / 1.570× (worst 2.91×) | **1.012× / 1.006×** (worst 2.21×) |
+| regression (n≤150) | 0.750× / 0.822× | **0.653× / 0.686×** (28/37 below 1×) |
+
+Counters bit-identical on both corpora (the closure set is exact
+either way — repair preserves it, rebuild recomputes it — so cuts and
+consequences are unchanged; verified 6/6 spanning n=25..500).
+
+The remaining worst instances (`v500_r16_s3`, 2.21×; `v150_r16_s3`,
+2.03×) are the assertion-pipeline class already attributed — not
+closure maintenance. Validation: oracles 30/30, MonoSAT differential
+1600/1600, workspace `--all-features` 12122/12122, Z3 4.16.0 parity
+0/354 wrong, perf gate PASS at exactly 1.000, clippy/fmt/rustdoc clean
+on touched crates (the two pre-existing nixie-sat feature-unification
+lints reproduce at base through the dependency edge).

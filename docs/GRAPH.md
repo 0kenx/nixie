@@ -141,20 +141,28 @@ default decisions are complete for this fragment.
   rebuilt on events. Backward closures and possible-cycle memos are kept
   exactly valid by **witness-checked** dirty-marking: each closure member
   carries its BFS witness edge (the first edge of a genuine, simple,
-  surviving path to the target), and a disabled edge `(a→b)` drops a
-  closure memo only when it is exactly `a`'s witness edge — an O(1)
-  check, with the drop repaying one lazy recompute on the next query. A
-  memoized possible cycle dies only if the disabled edge is on it. An
-  all-fixed exactness gate re-verifies the `Sat` certificate as defense
-  in depth. Measured against MonoSAT on deterministic instruction counts
-  (pinned `perf stat -e instructions:u`, ±0.001% stable — see the
-  2026-09-22 study): **geomean 0.82×, totals 0.91×, worst instance
-  2.30×** on the 61-instance n∈{25..150} corpus — less total work than
-  MonoSAT on the corpus (8.9G vs 9.8G instructions), with 40/61
-  instances individually below it. Search counters are bit-identical to
-  the pre-change propagator on every measured corpus instance, so the
-  restructure is trajectory-inert. The remaining gap concentrates in a
-  few outliers and the general SMT stack, not the graph theory.
+  surviving path to the target), and a disabled edge `(a→b)` endangers
+  a closure memo only when it is exactly `a`'s witness edge — an O(1)
+  check. A dying witness is then **repaired locally**: `a` re-attaches
+  through any surviving out-edge into a closure member whose witness
+  chain avoids `a` (the cycle-grounding walk), keeping the memo exactly
+  valid at O(out-degree); only a genuine shrink drops it for one lazy
+  rebuild. A memoized possible cycle dies only if the disabled edge is
+  on it. An all-fixed exactness gate re-verifies the `Sat` certificate
+  as defense in depth. Measured against MonoSAT on deterministic
+  instruction counts (pinned `perf stat -e instructions:u`, ±0.001%
+  stable — see the 2026-09-22 study): **geomean 0.65×, totals 0.69×,
+  worst instance 2.03×** on the n∈{25..150} corpus (28/37 instances
+  individually below MonoSAT), and **geomean 1.01× / totals 1.01× at
+  n∈{200,300,500}** — parity across the measured scale range (the
+  pre-repair gap reopened superlinearly: 1.84× at n=500 from
+  closure-rebuild churn, eliminated by the localized repair). Search
+  counters are bit-identical to the pre-change propagator on every
+  measured instance across both corpora, so the design is
+  trajectory-inert. The remaining outliers are the assertion-pipeline
+  class (the general SMT stack), not the graph theory. The GNF driver
+  prints propagator maintenance counters under `STATS=1` for scaling
+  diagnosis.
 - **Watch terms**: registration rejects watch lists in which two distinct
   terms encode to the same SAT variable (e.g. a term and its negation
   both watched) — the O(1) per-assignment event routing keeps one watch

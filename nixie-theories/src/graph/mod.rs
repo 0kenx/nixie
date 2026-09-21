@@ -443,6 +443,44 @@ impl Bfs {
     }
 }
 
+/// Diagnosis counters for the propagator's maintenance paths, read by the
+/// GNF driver when `STATS=1` (scaling investigations). Plain atomics; the
+/// enum indexes the array.
+#[derive(Clone, Copy)]
+pub enum TraceKind {
+    /// `UserPropagator::pop` calls (per level, not per backtrack).
+    Pops,
+    /// Full-cache invalidations (a pop's retraction cascade).
+    Invalidations,
+    /// Full manager re-reads executed by a run.
+    FullRereads,
+    /// True-edge events applied.
+    EventsTrue,
+    /// False-edge events applied.
+    EventsFalse,
+    /// Backward-closure memos dropped (witness died and repair failed).
+    WitnessDrops,
+    /// Possible-cycle memos dropped.
+    CycleMemoDrops,
+    /// Backward closures (re)built from scratch.
+    ClosureRebuilds,
+    /// Sentinel: the number of counter kinds.
+    KindCount,
+}
+/// The diagnosis counters themselves (see [`TraceKind`]); the GNF driver
+/// prints them under `STATS=1`.
+pub static TRACE: [std::sync::atomic::AtomicU64; TraceKind::KindCount as usize] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; TraceKind::KindCount as usize];
+
+#[cfg(feature = "std")]
+/// Bump a [`TraceKind`] counter (no-op off `std`).
+pub fn trace_bump(kind: TraceKind) {
+    use std::sync::atomic::Ordering;
+    TRACE[kind as usize].fetch_add(1, Ordering::Relaxed);
+}
+#[cfg(not(feature = "std"))]
+pub fn trace_bump(_kind: TraceKind) {}
+
 /// Negative ("possible") reachability over the backward closure, following
 /// MonoSAT's `buildNonReachReason`: `seen` is the set of vertices that can
 /// reach the target through possible edges (paths of length ≥ 0).
@@ -470,6 +508,7 @@ fn backward_seen(
     target: VertexId,
     values: &[EdgeValue],
 ) -> Backward {
+    trace_bump(TraceKind::ClosureRebuilds);
     let search = bfs_filter(possible_in, vertices, target, values, |values, edge| {
         values[edge as usize] == EdgeValue::False
     });
@@ -483,6 +522,74 @@ fn backward_seen(
 impl Backward {
     fn sees(&self, v: VertexId) -> bool {
         self.seen.get(v.0 as usize).copied().unwrap_or(false)
+    }
+
+    /// Re-attach member `a` after its witness edge died: scan `a`'s other
+    /// out-edges (declaration order) for a surviving edge into a closure
+    /// member whose own witness path does not pass through `a` — the
+    /// cycle-grounding condition, checked by walking the candidate's
+    /// witness chain toward the target (the chains form a tree rooted at
+    /// the target, bounded by its depth). On success `a`'s new witness
+    /// path is a genuine, simple, all-surviving path, so the closure set
+    /// is provably unchanged and no recompute is owed. Returns false when
+    /// no candidate qualifies (a genuine shrink — the caller drops the
+    /// memo and the next query rebuilds it exactly).
+    ///
+    /// This is the Italiano-style localized repair that keeps dense graphs
+    /// at O(out-degree) per disabled edge instead of an O(V+E) closure
+    /// rebuild: at scale the witness-match rate is ~1.5 % of false events,
+    /// and each full rebuild (≈3 M instructions at n=500) dominated the
+    /// solve.
+    fn repair_witness(
+        &mut self,
+        spec: &GraphSpec,
+        possible_out: &Csr,
+        values: &[EdgeValue],
+        a: usize,
+        dead_edge: u32,
+    ) -> bool {
+        let vertices = self.seen.len();
+        for k in possible_out.row(a) {
+            let candidate = possible_out.edges[k];
+            if candidate == dead_edge || values[candidate as usize] == EdgeValue::False {
+                continue;
+            }
+            let w = possible_out.neighbours[k] as usize;
+            if w == a || w >= vertices || !self.seen[w] {
+                continue;
+            }
+            // Grounding: w's witness chain must not pass through `a`
+            // (a chain through `a` would make `a`'s new path circular).
+            // The chain terminates at the target (the tree root); a step
+            // cap bounds a corrupt-state walk and fails closed.
+            let mut cur = w;
+            let mut steps = 0usize;
+            let mut grounded = true;
+            while cur != self.target {
+                if cur == a {
+                    grounded = false;
+                    break;
+                }
+                let Some(edge) = self.witness.get(cur).copied().flatten() else {
+                    // A member without a witness that is not the target:
+                    // structurally impossible in a consistent memo; treat
+                    // as ungrounded (fail closed to the drop path).
+                    grounded = false;
+                    break;
+                };
+                cur = spec.edges[edge as usize].to.0 as usize;
+                steps += 1;
+                if steps > vertices {
+                    grounded = false;
+                    break;
+                }
+            }
+            if grounded {
+                self.witness[a] = Some(candidate);
+                return true;
+            }
+        }
+        false
     }
 
     /// Can `u` reach the target through at least one possible edge? For
@@ -548,6 +655,7 @@ impl ViewCache {
     /// Full invalidation (backtrack/reset): the next run re-reads the
     /// manager from scratch.
     fn invalidate(&mut self) {
+        trace_bump(TraceKind::Invalidations);
         self.forced_valid = false;
         self.possible_dirty = true;
         self.pending.clear();
@@ -579,6 +687,7 @@ impl ViewCache {
             self.forced_cycle = None;
             self.merge_new_edge(spec, e.from, e.to, edge);
         } else if value == EdgeValue::False {
+            trace_bump(TraceKind::EventsFalse);
             // A disabled edge e = (a -> b) can shrink a memoized backward
             // closure C_t only through member `a` (a witness path is
             // simple: no other member's path can use e, whose tail is a;
@@ -597,12 +706,27 @@ impl ViewCache {
                     && backward.sees(e.to)
                     && backward.witness[e.from.0 as usize] == Some(edge)
                 {
-                    *memo = None;
+                    // Try the localized repair first: in a dense graph the
+                    // tail almost always has another surviving edge into
+                    // the closure, and a grounded re-attachment keeps the
+                    // memo exactly valid without any recompute. Only a
+                    // genuine shrink drops it.
+                    if !backward.repair_witness(
+                        spec,
+                        &self.possible_out,
+                        &self.values,
+                        e.from.0 as usize,
+                        edge,
+                    ) {
+                        trace_bump(TraceKind::WitnessDrops);
+                        *memo = None;
+                    }
                 }
             }
             if let Some(Some(cycle)) = &self.possible_cycle
                 && cycle.contains(&edge)
             {
+                trace_bump(TraceKind::CycleMemoDrops);
                 self.possible_cycle = None;
             }
         }
@@ -1131,6 +1255,7 @@ impl GraphModel {
                         Some(_) => return PropagatorResult::Unknown,
                     }
                 }
+                trace_bump(TraceKind::FullRereads);
                 cache.pending.clear();
                 cache.forced_valid = true;
                 // The epoch starts: possible-side memos from a previous
@@ -1402,6 +1527,7 @@ impl UserPropagator for GraphModel {
     }
 
     fn pop(&mut self, _levels: usize) {
+        trace_bump(TraceKind::Pops);
         // Backtracking retracts fixations without individual events: the
         // maintained state can no longer be trusted until re-read.
         for cache in &mut self.caches {
