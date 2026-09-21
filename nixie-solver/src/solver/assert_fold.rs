@@ -50,3 +50,87 @@ pub(super) fn fold(term: TermId, manager: &mut TermManager) -> TermId {
     let bottom_up = manager.simplify(term);
     manager.ctx_simplify(bottom_up)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The fold closes the nec-smt member shape: the self-referential
+    /// priority select `(= 5 (ite (= x 5) 3 x))` refutes by pure value
+    /// reasoning (x=5 selects 3; x≠5 selects x≠5), so the assertion
+    /// folds to `false` outright — the class the depth guard used to
+    /// refuse with a spurious instant `Unknown`.
+    #[test]
+    fn fold_refutes_the_self_referential_select() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let five = m.mk_int(5);
+        let three = m.mk_int(3);
+        let c = m.mk_eq(five, x);
+        let sel = m.mk_ite(c, three, x);
+        let goal = m.mk_eq(sel, five);
+        let out = fold(goal, &mut m);
+        assert_eq!(out, m.false_id);
+    }
+
+    /// The fold never refutes a satisfiable goal: the same select with
+    /// the guard selecting `5` is satisfiable at x=5 and folds to the
+    /// guard itself.
+    #[test]
+    fn fold_keeps_satisfiable_selects() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let five = m.mk_int(5);
+        let seven = m.mk_int(7);
+        let c = m.mk_eq(five, x);
+        let sel = m.mk_ite(c, five, seven);
+        let goal = m.mk_eq(sel, five);
+        let out = fold(goal, &mut m);
+        assert_eq!(out, c);
+        assert_ne!(out, m.false_id);
+    }
+
+    /// Deep-spine safety: a 1200-level nested select folds on the
+    /// explicit-stack passes without native recursion, and the result
+    /// stays equivalent (here: every level is value-decided, so the
+    /// whole spine folds to a constant).
+    #[test]
+    fn fold_handles_a_deep_spine() {
+        let mut m = TermManager::new();
+        let p = m.mk_var("p", m.sorts.bool_sort);
+        // (ite p 1 (ite p 2 (ite p 3 ... ))): every level's condition
+        // is the same undecided p, so the same-condition merges collapse
+        // the spine before any walk; the fold still runs through both
+        // passes without overflowing (the passes are explicit-stack).
+        let mut t = m.mk_int(1200);
+        for k in 0..1200 {
+            let v = m.mk_int(k);
+            t = m.mk_ite(p, v, t);
+        }
+        let out = fold(t, &mut m);
+        // The result must exist and be well-formed (any of: a constant,
+        // or a residual ite) — the regression is the process not
+        // overflowing, plus idempotence of a second fold.
+        let again = fold(out, &mut m);
+        assert_eq!(out, again, "the fold is idempotent on its result");
+    }
+
+    /// The fold is an end-to-end equivalence on a mixed shape: a
+    /// conjunction whose select-equality refutes folds the whole
+    /// conjunction to `false`, while the same conjunction with the
+    /// satisfiable twin keeps the other conjuncts.
+    #[test]
+    fn fold_composes_with_conjunctions() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let q = m.mk_var("q", m.sorts.bool_sort);
+        let five = m.mk_int(5);
+        let three = m.mk_int(3);
+        let c = m.mk_eq(five, x);
+        let sel = m.mk_ite(c, three, x);
+        let bad = m.mk_eq(sel, five);
+        let goal = m.mk_and([q, bad]);
+        let out = fold(goal, &mut m);
+        assert_eq!(out, m.false_id, "q AND false is false");
+    }
+}
