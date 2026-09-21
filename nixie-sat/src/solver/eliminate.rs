@@ -546,10 +546,62 @@ impl Solver {
         if !self.eliminating() || !self.elimination_allowed() {
             return SubstOutcome::Ok;
         }
+        // BVE-after-fold skip policy (2026-09-21 slice of the
+        // SSR-binaries study §5): the pre-search ELS fold collapsed the
+        // formula beyond the policy threshold, so the unconditional
+        // phase-1 elimination — the 36M-resolution re-entangler on
+        // gate-dense families — is skipped.  Later phases still arm on
+        // genuinely new level-0 units or fresh marks (cadical's
+        // subsequent-phase semantics).
+        if self.elim_phases == 0 && !self.config.presearch_collapse && self.fold_bve_skip_armed() {
+            self.skip_elim_phase_one();
+            return SubstOutcome::Ok;
+        }
         if self.trail.decision_level() > 0 {
             self.backtrack_with_phase_saving(0);
         }
         self.eliminate_phase()
+    }
+
+    /// Whether the fold-collapse ratio clears the policy threshold
+    /// (armed env, `fold_retired / fold_orig_at_entry >= pct%`).
+    fn fold_bve_skip_armed(&self) -> bool {
+        let (armed, pct) = crate::fold_bve_skip_policy();
+        if !armed || self.fold_orig_at_entry == 0 {
+            return false;
+        }
+        let retired = u64::try_from(self.fold_retired).unwrap_or(u64::MAX);
+        let at_entry = u64::try_from(self.fold_orig_at_entry).unwrap_or(u64::MAX);
+        retired.saturating_mul(100) >= pct.saturating_mul(at_entry)
+    }
+
+    /// Consume the unconditional phase-1 trigger without eliminating:
+    /// mirror a completed zero-yield phase's bookkeeping (the same
+    /// end-of-phase updates `eliminate_phase` performs) so subsequent
+    /// phases arm only on genuinely new level-0 units or fresh marks —
+    /// a bare `return false` in `eliminating()` would leave the trigger
+    /// re-firing on every conflict.
+    fn skip_elim_phase_one(&mut self) {
+        self.elim_phases = 1;
+        self.last_elim_eliminated = 0;
+        self.last_elim_fixed = self
+            .trail
+            .level_start(1)
+            .min(self.trail.assignments().len());
+        for m in &mut self.elim_mark {
+            *m = false;
+        }
+        self.elim_mark_count = 0;
+        // cadical: `lim.elim = conflicts + elimint * (phases + 1)`.
+        let interval = self.config.elim_interval * (self.elim_phases + 1);
+        self.lim_elim = self.stats.conflicts.saturating_add(interval);
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_LOG_ELIM").is_ok() {
+            eprintln!(
+                "[elim] phase 1 skipped: fold collapse {}/{} originals (NIXIE_FOLD_BVE_SKIP)",
+                self.fold_retired, self.fold_orig_at_entry
+            );
+        }
     }
 
     /// Mark every active variable for elimination (cadical's wholesale

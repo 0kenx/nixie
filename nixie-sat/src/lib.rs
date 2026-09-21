@@ -440,6 +440,7 @@ pub(crate) mod test_knobs {
         static DEFINITIONS: Cell<Option<bool>> = const { Cell::new(None) };
         static SSR_BIN: Cell<Option<bool>> = const { Cell::new(None) };
         static ELS_PRE: Cell<Option<bool>> = const { Cell::new(None) };
+        static FOLD_SKIP: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set_kitten_sweep(v: Option<bool>) {
@@ -480,6 +481,16 @@ pub(crate) mod test_knobs {
 
     pub(crate) fn els_presearch_override() -> Option<bool> {
         ELS_PRE.with(Cell::get)
+    }
+
+    /// Test override for [`crate::fold_bve_skip_policy`]: `Some((armed,
+    /// pct))` replaces the env; `None` restores env-derived behavior.
+    pub(crate) fn set_fold_bve_skip(v: Option<(bool, u64)>) {
+        FOLD_SKIP.with(|c| c.set(v));
+    }
+
+    pub(crate) fn fold_bve_skip_override() -> Option<(bool, u64)> {
+        FOLD_SKIP.with(Cell::get)
     }
 }
 
@@ -825,6 +836,54 @@ pub fn elim_subfix_enabled() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG
         .get_or_init(|| std::env::var("NIXIE_ELIM_SUBFIX").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP=1`, threshold percent
+/// `NIXIE_FOLD_BVE_SKIP_PCT`, default 25): when the pre-search ELS
+/// fixpoint (`NIXIE_ELS_PRESEARCH`) retired at least the threshold share
+/// of the originals it started from, the unconditional phase-1 elimination
+/// is consumed without running (`try_scheduled_elimination` →
+/// `skip_elim_phase_one`) — on gate-dense families the phase's mass
+/// resolution re-entangles what the fold untangled (bv_ILA: 355K conflicts
+/// with the phase vs 155-172K without any BVE on the same folded formula;
+/// `docs/studies/2026-09-18-ssr-binaries.md` §4-5). Default off =
+/// bit-identical. Returns `(armed, pct)`.
+#[doc(hidden)]
+#[cfg(test)]
+pub fn fold_bve_skip_policy() -> (bool, u64) {
+    if let Some(over) = crate::test_knobs::fold_bve_skip_override() {
+        return over;
+    }
+    fold_bve_skip_policy_from_env()
+}
+
+/// Env-only variant; the cfg(test) twin additionally consults the
+/// `test_knobs` override first.
+#[cfg(not(test))]
+pub fn fold_bve_skip_policy() -> (bool, u64) {
+    fold_bve_skip_policy_from_env()
+}
+
+fn fold_bve_skip_policy_from_env() -> (bool, u64) {
+    use std::sync::OnceLock;
+    static POLICY: OnceLock<(bool, u64)> = OnceLock::new();
+    #[cfg(feature = "std")]
+    {
+        *POLICY.get_or_init(|| {
+            let armed = std::env::var("NIXIE_FOLD_BVE_SKIP")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            let pct = std::env::var("NIXIE_FOLD_BVE_SKIP_PCT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(25)
+                .min(100);
+            (armed, pct)
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        (false, 25)
+    }
 }
 
 #[doc(hidden)]

@@ -26,6 +26,8 @@ mod and_gate_tests;
 #[cfg(test)]
 mod eager_sub_tests;
 #[cfg(test)]
+mod fold_bve_skip_tests;
+#[cfg(test)]
 mod otfs_tests;
 mod search_ext;
 #[cfg(test)]
@@ -1964,6 +1966,15 @@ pub struct Solver {
     /// Variables eliminated by the most recent elimination phase; drives the
     /// pre-search fixpoint loop's productivity gate.
     pub(super) last_elim_eliminated: u64,
+    /// Originals live when the pre-search ELS fold (`NIXIE_ELS_PRESEARCH`)
+    /// started — the denominator of the fold-collapse ratio.  0 when the
+    /// arm never ran.
+    pub(super) fold_orig_at_entry: usize,
+    /// Originals retired by the pre-search ELS fixpoint (fold plus its
+    /// subsumption) — the numerator of the fold-collapse ratio that gates
+    /// the BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP`, see
+    /// `try_scheduled_elimination`).
+    pub(super) fold_retired: usize,
     /// Variables eliminated by the inprocessing eliminator (`eliminate.rs`).
     /// Distinct from `bve_def` non-emptiness: a variable can be eliminated
     /// with an empty positive-side snapshot (all its positive clauses were
@@ -2455,6 +2466,8 @@ impl Solver {
             elim_finished: false,
             elim_resolutions_total: 0,
             last_elim_eliminated: 0,
+            fold_orig_at_entry: 0,
+            fold_retired: 0,
             elim_var_flag: Vec::new(),
             clause_transred_checked: Vec::new(),
             clause_hyper: Vec::new(),
@@ -4675,6 +4688,12 @@ impl Solver {
             && self.destructive_preprocessing_safe()
         {
             self.did_equiv_subst = true;
+            // Fold-collapse accounting for the BVE-after-fold policy
+            // (`NIXIE_FOLD_BVE_SKIP`): the ratio of originals this fixpoint
+            // retires is the gate that decides whether the unconditional
+            // phase-1 elimination is skipped (see
+            // `try_scheduled_elimination`).
+            let fold_orig_at_entry = self.clauses.num_original();
             // Bounded fixpoint (kissat's closure shape): each round's fold
             // rewrites clauses onto representatives, completing further gate
             // patterns for the next round's detection.
@@ -4695,6 +4714,8 @@ impl Solver {
                     break;
                 }
             }
+            self.fold_retired = fold_orig_at_entry.saturating_sub(self.clauses.num_original());
+            self.fold_orig_at_entry = fold_orig_at_entry;
         }
 
         // ===== CDCL search =====
