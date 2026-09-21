@@ -206,3 +206,17 @@ soften).  i504 answers `sat` (model z3-validated).  **The fixed-seed
 survey residual: 1 member — i129, the simplex resource-limit tail (a
 different class).**  The arc's cumulative run: 150 → … → 18 → 2 → **1**.
 The next hunt is fresh-seed surveying (the fixed seeds are exhausted).
+
+## Landing note (the ff is pending the parallel session's tree)
+
+The i504 fix's CODE commit is ready but its fast-forward is BLOCKED by
+the warm-start session's uncommitted restyle of `model_eval.rs` /
+`solver/mod.rs` in the primary checkout (30+ minutes in-flight — their
+battery).  Git refuses both `merge --ff-only` and `push . HEAD:main`
+while their tree is dirty; discarding their work is forbidden.  The
+commit lives on the `nixie-wt-r4` worktree (rebased on `6cf69d91`,
+`80cc7170`); the NEXT session (or the warm-start session's own landing)
+rebases it — a textual conflict with their restyle is expected and
+mechanical (my hunks' context is the pre-restyle spelling).  The
+measured binary is cached at `precompile/8eede1d7*/` and the full
+battery ran on exactly that tree.
