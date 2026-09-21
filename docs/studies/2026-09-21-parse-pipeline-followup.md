@@ -116,3 +116,47 @@ Wall on the anatomy (loaded box, cold-cache first run excluded):
 ~11 s → ~8-9 s vs kissat's 1.0 s — the remaining gap is the solving
 machinery (the instance decides UNSAT with 0 conflicts — preprocessing
 work, not parse).
+
+## Addendum 2 — the block-edge inline completion measured NEGATIVE (do not retry this shape)
+
+The post-`bf938922` profile still showed the block-edge token round
+trips (`scan_digits_avx2` 7.6 % + much of the driver's 8.8 % — every
+32-byte boundary bails one token to the scalar driver, which re-enters
+the per-token kernels; ~16.6 M round trips on the anatomy).  Completing
+edge tokens *inline* in the fused loop (a `complete_digit_run` byte
+walk across the boundary + a shared `emit_lit`, resuming the block
+loop at the token's end) was tried in three forms:
+
+| form | 6s299b685 instructions |
+|---|---|
+| landed baseline (`bf938922`) | 13.11 G |
+| shared `emit_lit` helper (also hot path) | **18.67 G (+42 %)** |
+| `#[inline(always)]` helper | **15.89 G (+21 %)** |
+| straight-line hot path + helper only on edge | **15.45 G (+18 %)** |
+
+The hot path refusing the helper explains form 1-2 (the `?`-carried
+`String` error paths outline the body); but form 3 — with the hot path
+byte-identical to the landed code — still costs +18 %: **carrying the
+completion logic inside the block loop itself disrupts its register
+allocation**; the cold-`return`-to-driver shape of the landed code is
+what keeps the loop tight.  The round trips are cheaper than the
+in-loop alternative.  Reverted; the scan's landed shape is the end
+state of this arc.
+
+## Where the parse pipeline stands (arc close)
+
+Cumulative vs the pre-SIMD baseline on the hwmcc anatomy:
+**24.85 G → 13.11 G whole-run instructions (−47 %)**; 6s163 −47 %,
+GP_105 −13 %.  The remaining load-path budget (post-`bf938922`
+profile): the fused scan 42.9 % (≈5.6 G — parse proper), memmove
+12.4 % (watch-list push growth — the counting-sort materialization was
+measured +5.4 % and refused), memset 9.4 % (`new_vars_bulk`'s ~20
+V-scaled arrays + the 380 MB watch-outer headers — the latter is the
+Vec-world architecture the CSR campaign priced), the scalar driver
+8.8 % + boundary round trips 7.6 % (priced above), resize cluster ~9 %
+(heuristic bookkeeping arrays, semantically necessary zero-fill).
+Wall on the loaded box: ~8–9 s vs kissat's 1.0 s — most of the
+remaining gap is the *solving* machinery (the anatomy decides UNSAT
+with 0 conflicts; the fold/BVE preprocessing dominates what's left
+after parse).  The next parse-side lever would be architectural (the
+watch-list world), already priced and refused by its corpus ledger.
