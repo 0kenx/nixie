@@ -58,7 +58,7 @@ valuable, not less:
   repr-canonicalization (union-find-root-keyed literals) already
   exists from the fold's class materialization.
 - Bar: heuristic class (trajectories change) — verdict-agreement corpus
-  + the powered experiment (the `/tmp/fold_ab.sh` pattern, committed in
+  + the powered experiment (the `bench/perf_gate/env_ab.sh` pattern, committed in
   the study) + Z3 parity.  The paired instruction corpus
   (`bench/perf_gate/paired_instructions.sh`, committed `8d34ea72`)
   prices any cost claim.
@@ -88,7 +88,7 @@ valuable, not less:
   (the landscape shift, the refused flip, the trigger-consumption
   semantics, the lucky-pre-solve trap).
 - `bench/perf_gate/paired_instructions.sh` — trap 23's tool, committed.
-- `/tmp/fold_ab.sh` pattern (in the study) — the powered A/B harness.
+- `bench/perf_gate/env_ab.sh` pattern (in the study) — the powered A/B harness.
 - `precompile/8d34ea72/nixie` — the current pinned baseline binary.
 
 ## First moves
