@@ -3494,6 +3494,11 @@ impl Solver {
     /// per watched literal, ~18.7M on the 9.4M-variable class) that the
     /// single counting-sort build eliminates outright.
     pub fn begin_deferred_watches(&mut self) {
+        // CSR-B world only: the Vec-world arm of the counting-sort
+        // materialization measured NEGATIVE on the load cells (paired
+        // instruction corpus 2026-09-21: 6s299b685 +5.4%, 6s163 +5.0%,
+        // search cells flat) — mimalloc's small-alloc path makes the
+        // per-clause push growth cheaper than 15.8M exact allocations.
         if crate::watched::csr_b_enabled() {
             self.deferred_watch_attach = true;
         }

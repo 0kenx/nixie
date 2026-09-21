@@ -847,19 +847,33 @@ impl FlatCnf {
     /// Uses the AVX2 boundary kernels (32-byte blockwise whitespace/digit
     /// runs, direct integer assembly) when the CPU has AVX2 and
     /// `NIXIE_NO_SIMD` is unset; otherwise the scalar byte loops.  The two
-    /// paths produce byte-identical `lits` streams and identical error
-    /// messages — pinned by the differential tests in `scan_tests`.
+    /// Byte-level scan of a whole DIMACS CNF body, with a byte-size hint
+    /// for the input buffer (the caller's file length when known).
+    ///
+    /// `read_to_end` otherwise grows the buffer by amortized doubling —
+    /// on half-gigabyte inputs that is a second full read's worth of
+    /// copying through the page cache; an exact reservation reads once.
+    /// The AVX2 boundary kernels and the fused blockwise token walk run
+    /// when the CPU has AVX2 and `NIXIE_NO_SIMD` is unset; both produce
+    /// byte-identical `lits` streams and identical error messages —
+    /// pinned by the differential tests in `scan_tests`.
     ///
     /// # Errors
     ///
     /// Same error conditions as [`DimacsCnf::parse`], with analogous
     /// messages (missing problem line, invalid literal, variable exceeding
     /// the declared count, unterminated clause, clause count mismatch).
-    pub fn scan<R: BufRead>(mut reader: R) -> Result<Self, String> {
+    pub fn scan_sized<R: BufRead>(mut reader: R, size_hint: u64) -> Result<Self, String> {
         // One whole-file buffer: for CNF inputs (hundreds of MB at most)
         // a single allocation beats chunk-carry machinery, and unlike the
         // solver-side parser this scan builds no solver state mid-read.
         let mut raw = Vec::new();
+        if size_hint > 0 {
+            // +1 slack: `reserve_exact` at the exact length leaves the
+            // vector zero-capacity-margin, and any metadata/file-length
+            // disagreement then falls straight back to doubling.
+            raw.reserve_exact(size_hint as usize + 1);
+        }
         reader
             .read_to_end(&mut raw)
             .map_err(|e| format!("Failed to read DIMACS: {}", e))?;
@@ -877,12 +891,39 @@ impl FlatCnf {
         let mut num_vars = 0usize;
         let mut num_clauses_expected = 0usize;
         let mut problem_line_found = false;
+        // ABLATION: exact upper bound measured +3% instructions on the
+        // load cells vs this heuristic (mimalloc's large-alloc path
+        // costs more than the doubling regrows it saves); see the study.
         let mut lits: Vec<i32> = Vec::with_capacity(raw.len() / 8);
         let mut clauses_found = 0usize;
 
         let mut i = 0usize;
         let n = raw.len();
         while i < n {
+            // Fused blockwise walk: advances whole 32-byte blocks of
+            // tokens at one load + two masks each, stopping at line
+            // bytes, block-edge tokens, or the tail for this scalar
+            // body (which handles the stop reason; the loop then
+            // re-enters fused mode — the scalar body is the reference
+            // semantics and owns every non-fast path).
+            if simd && i + 32 <= n {
+                i = scan_tokens_fused_fast(
+                    raw,
+                    i,
+                    num_vars,
+                    problem_line_found,
+                    &mut lits,
+                    &mut clauses_found,
+                )?;
+            }
+            // The fused walk can consume THROUGH the final block and
+            // land exactly on `n` (its block loop exits with `i == n`
+            // when the buffer ends on a block boundary reached from the
+            // re-entry position): hand control back to the loop head,
+            // whose `i < n` is the exit.
+            if i >= n {
+                continue;
+            }
             let b = raw[i];
             // Line classification mirrors `DimacsCnf::parse`: a line whose
             // first non-space byte is 'c' is a comment (skipped whole);
@@ -1099,6 +1140,35 @@ unsafe fn skip_ws_avx2(raw: &[u8], mut i: usize) -> usize {
     skip_ws_scalar(raw, i)
 }
 
+/// Fused-block dispatch (see [`scan_tokens_fused`]); `true`-gated on the
+/// same runtime detection as the boundary kernels.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn scan_tokens_fused_fast(
+    raw: &[u8],
+    i: usize,
+    num_vars: usize,
+    problem_line_found: bool,
+    lits: &mut Vec<i32>,
+    clauses_found: &mut usize,
+) -> Result<usize, String> {
+    // SAFETY: only reached with `simd == true` (runtime-gated on AVX2).
+    unsafe { scan_tokens_fused(raw, i, num_vars, problem_line_found, lits, clauses_found) }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline]
+fn scan_tokens_fused_fast(
+    raw: &[u8],
+    i: usize,
+    _num_vars: usize,
+    _problem_line_found: bool,
+    _lits: &mut Vec<i32>,
+    _clauses_found: &mut usize,
+) -> Result<usize, String> {
+    Ok(i)
+}
+
 /// AVX2 digit-run scan: same blockwise shape as [`skip_ws_fast`]; a byte
 /// is a digit iff `v - b'0'` is unsigned `<= 9` (the sub/min/cmpeq trick —
 /// wrapping bytes below `b'0'` become large unsigned values and fail).
@@ -1111,6 +1181,154 @@ unsafe fn skip_ws_avx2(raw: &[u8], mut i: usize) -> usize {
 fn scan_digits_fast(raw: &[u8], i: usize) -> usize {
     // SAFETY: only reached with `simd == true` (runtime-gated on AVX2).
     unsafe { scan_digits_avx2(raw, i) }
+}
+
+/// The fused blockwise token walk (the load path's remaining headroom:
+/// `FlatCnf::scan_sized` + the two per-token kernels were 57 % of the
+/// 531 MB anatomy run; this collapses them to one load + two masks per
+/// 32 *bytes*).
+///
+/// Processes whole 32-byte blocks from `i` while they are fully inside
+/// `raw`, walking tokens with mask arithmetic only (no per-token kernel
+/// calls, no per-token loads): per block one whitespace mask and one
+/// digit mask; per token a `tzcnt` to its start, a `tzcnt` of the
+/// inverted digit mask for its run, the shared `parse_lit`, and the same
+/// clause/var bookkeeping as the scalar driver.
+///
+/// Stops (returning that absolute byte position for the scalar driver,
+/// which handles the reason and re-enters fused mode on the next loop
+/// iteration — progress is guaranteed in every case):
+/// * a token whose first byte is `c`/`p` (the line path),
+/// * a token touching the block end (its digit run may continue into
+///   the next block — the scalar walk finishes it),
+/// * the problem line not yet seen (the scalar driver owns that error),
+/// * fewer than 32 bytes remaining (the scalar tail).
+///
+/// # Safety (caller contract)
+///
+/// AVX2 must be available at runtime, as for the boundary kernels.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_tokens_fused(
+    raw: &[u8],
+    mut i: usize,
+    num_vars: usize,
+    problem_line_found: bool,
+    lits: &mut Vec<i32>,
+    clauses_found: &mut usize,
+) -> Result<usize, String> {
+    if !problem_line_found {
+        return Ok(i);
+    }
+    let n = raw.len();
+    // SAFETY: AVX2 is caller-contracted (see `skip_ws_fast`); every load
+    // is in-bounds by the `i + 32 <= n` block bound, every byte access
+    // by the same bound plus the in-block positions from 32-bit masks.
+    unsafe {
+        use core::arch::x86_64::*;
+        'blocks: while i + 32 <= n {
+            let v = _mm256_loadu_si256(raw.as_ptr().add(i) as *const __m256i);
+            let ws = _mm256_or_si256(
+                _mm256_or_si256(
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b' ' as i8)),
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\t' as i8)),
+                ),
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\n' as i8)),
+                        _mm256_cmpeq_epi8(v, _mm256_set1_epi8(0x0c)),
+                    ),
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\r' as i8)),
+                ),
+            );
+            let t = _mm256_sub_epi8(v, _mm256_set1_epi8(b'0' as i8));
+            let digits = _mm256_cmpeq_epi8(t, _mm256_min_epu8(t, _mm256_set1_epi8(9)));
+            let ws_m = _mm256_movemask_epi8(ws) as u32;
+            let digit_m = _mm256_movemask_epi8(digits) as u32;
+            // Bit b set: byte b of the block is a non-whitespace token
+            // start candidate.  Walked destructively: after each token,
+            // the mask shifts past it (separator bits are clear).
+            // Both masks live in ONE walked frame: after each token the
+            // pair shifts past it in lockstep (a block-relative digit
+            // mask under a frame-relative position was the first draft's
+            // divergence — every token after the first in a block read
+            // the wrong digit bits; caught by the differential harness
+            // at randomized iteration 2).
+            let mut non_ws = !ws_m;
+            let mut digits_m = digit_m;
+            if non_ws == 0 {
+                i += 32;
+                continue 'blocks;
+            }
+            // `off` accumulates the consumed prefix so token positions
+            // stay block-relative in `non_ws`.
+            let mut off = 0u32;
+            while non_ws != 0 {
+                let pos = non_ws.trailing_zeros();
+                let abs_start = i + (off + pos) as usize;
+                let b = raw[abs_start];
+                if b == b'c' || b == b'p' {
+                    return Ok(abs_start);
+                }
+                let has_sign = (b == b'+' || b == b'-') as u32;
+                let dstart_rel = pos + has_sign;
+                if off + dstart_rel >= 32 {
+                    // Sign at the block edge: the digits live in the next
+                    // block; let the scalar walk finish this token.
+                    return Ok(abs_start);
+                }
+                let rest = digits_m >> dstart_rel;
+                let run = (!rest).trailing_zeros();
+                if run == 0 {
+                    // Not a digit after the sign/byte: the scalar error,
+                    // byte-identical (16-byte context window).
+                    let end = (abs_start + 16).min(n);
+                    return Err(format!(
+                        "Invalid literal in clause: {}",
+                        String::from_utf8_lossy(&raw[abs_start..end])
+                    ));
+                }
+                if run == 32 || off + dstart_rel + run >= 32 {
+                    // The digit run touches the block end and may
+                    // continue into the next block.
+                    return Ok(abs_start);
+                }
+                let ds_abs = i + (off + dstart_rel) as usize;
+                let end_abs = ds_abs + run as usize;
+                let lit = match parse_lit(raw, abs_start, ds_abs, end_abs) {
+                    Some(lit) => lit,
+                    None => {
+                        return Err(format!(
+                            "Invalid literal in clause: {}",
+                            String::from_utf8_lossy(&raw[abs_start..end_abs])
+                        ));
+                    }
+                };
+                if lit == 0 {
+                    *clauses_found += 1;
+                } else if lit.unsigned_abs() as usize > num_vars {
+                    return Err(format!(
+                        "Literal {} refers to variable {}, but only {} variables declared",
+                        lit,
+                        lit.unsigned_abs(),
+                        num_vars
+                    ));
+                }
+                lits.push(lit);
+                // Consume the token (sign + digits) from BOTH masks;
+                // separator bits between tokens are already clear.
+                let shift = dstart_rel + run;
+                non_ws >>= shift;
+                digits_m >>= shift;
+                off += shift;
+                if non_ws == 0 {
+                    break;
+                }
+            }
+            i += 32;
+        }
+    }
+    Ok(i)
 }
 
 #[cfg(target_arch = "x86_64")]

@@ -699,7 +699,8 @@ fn process_single_file(
         if fast_path_ok {
             let flat = {
                 let reader = BufReader::new(&file_handle);
-                match dimacs::FlatCnf::scan(reader) {
+                let size_hint = file_handle.metadata().map(|m| m.len()).unwrap_or(0);
+                match dimacs::FlatCnf::scan_sized(reader, size_hint) {
                     Ok(f) => f,
                     Err(e) => {
                         return SolverResult {
@@ -784,6 +785,13 @@ fn process_single_file(
             // `Vec` path — bit-identical; kills the per-literal overflow
             // allocation storm in `NIXIE_CSR_B=1` mode).
             sat.begin_deferred_watches();
+            // The deferred-BIG pair (validated bit-identical in the CSR
+            // campaign; the producer side was never wired): binaries skip
+            // their per-clause BIG edge inserts (the ensure_codes growth
+            // cluster, 5.3% of the load-path profile on the 531 MB
+            // anatomy) and solve-entry materializes the graph in one
+            // exact-size counting-sort build from the arena.
+            sat.begin_deferred_big();
             let deadline = if args.timeout > 0 {
                 std::time::Instant::now().checked_add(std::time::Duration::from_secs(args.timeout))
             } else {
@@ -841,6 +849,15 @@ fn process_single_file(
             };
             ctx.absorb_sat_stats(sat.stats());
             let time_ms = start.elapsed().as_millis();
+            // Skip the solver's teardown: its drop is millions of small
+            // deallocations (the per-literal watch `Vec`s alone) — measured
+            // 7.45% of the whole run on the 531 MB load anatomy — and the
+            // process is past every consumer of the solver's state (stats
+            // absorbed above; the arena and lists hold no resources but
+            // memory, which the OS reclaims).  `mem::forget` leaks by
+            // design; multi-file batches pay one solver-footprint per file,
+            // the documented trade for the teardown win.
+            std::mem::forget(sat);
             return SolverResult {
                 file: Some(file.display().to_string()),
                 result,
