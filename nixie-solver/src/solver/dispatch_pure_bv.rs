@@ -728,13 +728,36 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
     // depth limit. Hash-consed inputs are far below it in practice.
     const MAX_VISITED: usize = 2_000_000;
 
+    // Visited tracking: a flat Vec with linear membership up to a small
+    // threshold (assertion-sized DAGs are far below it, and a Vec probe
+    // beats hashing + the set's allocation at that scale), spilling into
+    // a hash set only for pathologically wide terms. Same reachability
+    // semantics as the previous always-hash-set version.
+    const LINEAR_MAX: usize = 256;
     let mut stack = vec![term];
-    let mut visited = rustc_hash::FxHashSet::default();
+    let mut visited_linear: Vec<TermId> = Vec::new();
+    let mut visited_hashed: Option<rustc_hash::FxHashSet<TermId>> = None;
     while let Some(tid) = stack.pop() {
-        if !visited.insert(tid) {
+        if visited_linear.contains(&tid) {
             continue;
         }
-        if visited.len() > MAX_VISITED {
+        if let Some(hashed) = visited_hashed.as_ref() {
+            if hashed.contains(&tid) {
+                continue;
+            }
+        }
+        if visited_linear.len() < LINEAR_MAX {
+            visited_linear.push(tid);
+        } else {
+            let hashed = visited_hashed.get_or_insert_with(|| {
+                let mut h = rustc_hash::FxHashSet::default();
+                h.reserve(visited_linear.len() + 1);
+                h.extend(visited_linear.iter().copied());
+                h
+            });
+            hashed.insert(tid);
+        }
+        if visited_linear.len() + visited_hashed.as_ref().map_or(0, |h| h.len()) > MAX_VISITED {
             return false;
         }
         let Some(term_data) = manager.get(tid) else {

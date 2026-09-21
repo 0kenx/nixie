@@ -256,3 +256,67 @@ driver hint is inert for verdicts and the corpus verdicts were verified
 at 300), Z3 4.16.0 parity 0/354 wrong, perf gate PASS at exactly 1.000
 counters (nixie-core is upstream of the gate — verified explicitly),
 clippy/fmt/rustdoc clean.
+
+## Addendum (2026-09-22, third session): taking the outlier class — feature-gated early scans, memoized quantifier checks
+
+The outlier class (`v150_r16_s3`, 2.24×) profiled as a pure
+assertion-pipeline instance, so the slices are per-assert/per-check
+pipeline stages that run regardless of what the goal contains. Five
+inert fixes landed together (search counters bit-identical on every
+measured instance):
+
+1. **Feature-gated early-conflict scans.** `check()` runs four
+   whole-assertion-set scans per check — string, FP, datatype, array
+   early conflict detection — plus the finite-domain-enumeration bump
+   walk. The goal's `StaticFeatures` (already computed once per goal
+   for the router) knows whether each theory is present; the scans now
+   run only when it is (`has_string/fp/dt/array_terms`, and
+   `num_eqs > 0` for the bump walk, whose leaves are `Eq` terms of any
+   sort). Absent-theory collection is provably empty, so the gates are
+   inert by construction — but they delete a full per-check DAG sweep
+   per theory for every goal that isn't using it. The FP scan's cache
+   has no external readers (verified) and the string scan's ground
+   evaluator already self-gates.
+2. **Memoized `contains_quantifier`** (`TermManager`): the pipeline
+   asks per assertion at several stages; each call re-walked the DAG
+   with a fresh visited set. The manager now records every term proven
+   quantifier-free (a completed negative traversal proves it for the
+   whole visited DAG; term content is immutable and ids are never
+   reused — the same argument the `eq_solve_cache` documents), making
+   repeated queries and shared subterms set lookups. `RefCell` because
+   the queries arrive through `&TermManager` (the manager is not
+   `Sync`; single-threaded interner).
+3. **Allocation-free BV fragment walk** (`term_in_blastable_fragment`):
+   per-asserted-term walk allocated a fresh `FxHashSet`; now a flat
+   `Vec` with linear membership below 256 entries (assertion-sized
+   DAGs), spilling to a set above. Same reachability semantics.
+4. **Incremental `add_vertex`** (graph module): the per-vertex table
+   re-size was O(V²) over construction; pristine caches now grow one
+   row.
+
+Effect on the heavy half of the corpus (12 instances,
+n∈{100,150}×r∈{16,32}): the worst instance 155.5M → 142.8M
+instructions (**2.24× → 2.06×** vs MonoSAT), and the subset as a whole
+now runs at **0.596× geomean / 0.593× totals** (1.57G vs 2.65G — 40%
+less work than MonoSAT on the heavy instances).
+
+**What remains in the outlier, and whose it is.** Re-profiling after
+the gates: process teardown ≈ 19% (`drop_in_place<Solver>` +
+`drop_in_place<TermKind>` + `mi_free` — the cost of destructing ~60k
+hash-consed terms and the solver's maps at exit; MonoSAT's flat arrays
+destruct nearly free; deliberately NOT gamed with `process::exit`),
+Vec-growth copying ≈ 20% (SAT watcher lists + the per-assert
+simplifier's term traffic — the simplifier is the assert-fold arc's
+surface), `new_var` 4.7% + `intern_term_for_congruence` 6.9%
+(structural: one SAT var and one congruence entry per encoded atom),
+and `link_or_blast_bv_circuits` ≈ 12% (per-assert BV circuit walk that
+no-ops on Boolean goals — skippable only by threading a "saw a BV
+subterm" bit out of the encoder, a coupling change for the BV owner).
+The instruction-level profile is preserved in this study's session
+logs; the graph side's remaining contribution to the outlier is now
+noise.
+
+Validation: workspace `--all-features` 12113/12113, bit-identical
+counters 12/12 vs the pre-change build, MonoSAT differential 300/300,
+Z3 4.16.0 parity 0/354 wrong, perf gate PASS at exactly 1.000
+counters, clippy/fmt/rustdoc clean.

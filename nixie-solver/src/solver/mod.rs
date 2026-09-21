@@ -2632,23 +2632,45 @@ impl Solver {
         // `(= (head l) 10) ∧ (= (head l) 11)` came back `sat`.
         self.instantiate_dt_axioms(manager);
 
+        // Check string constraints for early conflict detection. Each scan
+        // of this family walks every assertion's DAG; when the goal's
+        // static features say the theory is absent (no string/fp/dt/array
+        // term anywhere) the walk provably collects nothing, so the gate
+        // skips it outright — inert by construction and the difference
+        // between a per-check full-assertion sweep and a flag read for
+        // every goal that isn't using the theory.
+        let early_scan_features = {
+            let features = self
+                .last_features
+                .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions));
+            (
+                features.has_string_terms(),
+                features.has_fp_terms(),
+                features.has_dt_terms(),
+                features.has_array_terms(),
+                features.num_eqs > 0,
+            )
+        };
+        let (goal_has_string, goal_has_fp, goal_has_dt, goal_has_array, goal_has_eqs) =
+            early_scan_features;
+
         // Check string constraints for early conflict detection
-        if self.check_string_constraints(manager) {
+        if goal_has_string && self.check_string_constraints(manager) {
             return SolverResult::Unsat;
         }
 
         // Check floating-point constraints for early conflict detection
-        if self.check_fp_constraints(manager) {
+        if goal_has_fp && self.check_fp_constraints(manager) {
             return SolverResult::Unsat;
         }
 
         // Check datatype constraints for early conflict detection
-        if self.check_dt_constraints(manager) {
+        if goal_has_dt && self.check_dt_constraints(manager) {
             return SolverResult::Unsat;
         }
 
         // Check array constraints for early conflict detection
-        if self.check_array_constraints(manager) {
+        if goal_has_array && self.check_array_constraints(manager) {
             return SolverResult::Unsat;
         }
 
@@ -2975,7 +2997,13 @@ impl Solver {
         self.link_table_index_comparisons(manager);
 
         // Theory-aware decision hint: prioritize finite-domain value atoms.
-        self.bump_finite_domain_enumerations(manager);
+        // An enumeration leaf is an `Eq` whose one side is a variable, so a
+        // goal with no equality anywhere (the graph corpus: pure clauses)
+        // cannot produce a single bump — skip the full per-assertion
+        // subterm walk. Inert: `num_eqs` counts equalities of every sort.
+        if goal_has_eqs {
+            self.bump_finite_domain_enumerations(manager);
+        }
 
         // Ensure arith trichotomy for ALL numeric equalities/disequalities,
         // including those inside `let` bindings (array select results).

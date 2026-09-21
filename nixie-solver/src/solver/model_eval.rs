@@ -135,15 +135,6 @@ impl EvalOutcome {
     }
 }
 
-// Whether the current certificate conjunct's evaluation read any value
-// from the LIVE tableau (rather than a published model constant or a
-// δ₀-instantiated read).  The free `combine_*` functions read it through
-// this thread-local; the certificate resets it per conjunct and the live
-// read paths set it.  See `EagerKind::CmpStrictCertify`.
-thread_local! {
-    static CERTIFY_LIVE_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// A fixed-arity operator whose operands are evaluated left to right, stopping
 /// at the first operand that does not produce a value.
 ///
@@ -152,7 +143,6 @@ thread_local! {
 /// Evaluation here is pure – no cache, no model mutation – so the only thing
 /// that short-circuit ever changed was the cost, and it is kept for that.
 #[derive(Debug, Clone, Copy)]
-
 enum EagerKind {
     /// `not`
     Not,
@@ -178,15 +168,6 @@ enum EagerKind {
     /// it.  The certificate's positive direction — the refutation gates'
     /// [`EagerKind::Eq`] keeps collisions `Undetermined`.
     EqCertify,
-    /// A STRICT comparison under the CERTIFICATE: at real-part equality a
-    /// fully-concrete operand pair is a genuine violation (decisively
-    /// false); a live-read operand may have dropped a positive delta, where
-    /// equality stays ambiguous (the soften).  See
-    /// [`Solver::certify_live_read`].
-    CmpStrictCertify {
-        /// `true` for `<`, `false` for `>`.
-        less: bool,
-    },
     /// SMT-LIB `div` on Int (Euclidean: the remainder is non-negative).
     IntDiv,
     /// SMT-LIB `mod` on Int (Euclidean: `0 <= mod < |divisor|`).
@@ -756,22 +737,6 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
         (EagerKind::CmpStrict { less }, [EvalVal::Num(x), EvalVal::Num(y)]) => {
             cmp_strict(*x, *y, less)
         }
-        (EagerKind::CmpStrictCertify { less }, [x, y]) => match (x.to_big(), y.to_big()) {
-            (Some(a), Some(b)) if a == b => {
-                // Equality with all-concrete operands: `a > a` is FALSE.
-                // With any live read, the delta may have been dropped —
-                // ambiguous (the caller checks the provenance flag via the
-                // `evaluator` closure below; the frame machine exposes it
-                // through `EvalOutcome::UNDETERMINED`).
-                if CERTIFY_LIVE_READ.with(|f| f.get()) {
-                    EvalOutcome::UNDETERMINED
-                } else {
-                    EvalOutcome::boolean(false)
-                }
-            }
-            (Some(a), Some(b)) => EvalOutcome::boolean(if less { a < b } else { a > b }),
-            _ => EvalOutcome::UNDETERMINED,
-        },
         (EagerKind::CmpStrict { less }, [x, y]) => match (x.to_big(), y.to_big()) {
             (Some(a), Some(b)) => {
                 if a == b {
@@ -1058,15 +1023,10 @@ impl Solver {
             return false;
         };
         // CERTIFICATE mode: an exact `=` collision verifies (see
-        // [`EagerKind::EqCertify`]) and the strict-bound deltas are
-        // CONCRETIZED through a single δ₀ instantiation
-        // ([`Solver::certify_delta0`] — the dive leaf's trick, item 90,
-        // applied to the certificate's reads).  Both restored before
-        // returning: evaluation-local by contract.
+        // [`EagerKind::EqCertify`]); restored before returning — the flag
+        // is evaluation-local by contract.
         let saved = self.eq_collision_verifies.get();
-        let saved_d0 = self.certify_delta0.borrow().clone();
         self.eq_collision_verifies.set(true);
-        *self.certify_delta0.borrow_mut() = self.arith.delta_instantiation_exact();
         // Value-only derivation, sharing the refutation gate's `And`-spine
         // flattening but *never* the SAT core's committed polarity: that
         // shortcut trusts the core's atom decisions, and a certificate
@@ -1081,19 +1041,16 @@ impl Solver {
                 _ => conjuncts.push(assertion),
             }
             for &conj in &conjuncts {
-                CERTIFY_LIVE_READ.with(|f| f.set(false));
                 match self.eval_in_model_outcome(conj, model, manager, 0) {
                     EvalOutcome::Value(EvalVal::Bool(true)) => {}
                     _other => {
                         self.eq_collision_verifies.set(saved);
-                        *self.certify_delta0.borrow_mut() = saved_d0;
                         return false;
                     }
                 }
             }
         }
         self.eq_collision_verifies.set(saved);
-        *self.certify_delta0.borrow_mut() = saved_d0;
         true
     }
 
@@ -1608,64 +1565,6 @@ impl Solver {
                             return Opened::Done(parsed);
                         }
                     }
-                    // CERTIFICATE mode, USER variables included: read the
-                    // value the model PUBLISHES first — the certificate's
-                    // contract is to verify the model that will be printed,
-                    // and the live tableau can diverge from it (the popped
-                    // post-search state vs the snapshot the builder
-                    // published — i504's class).  The published entry is a
-                    // constant tree (compound spellings like
-                    // `(* 1.0 55340232221128654948)` included): evaluate it
-                    // exactly through this same evaluator; fall through to
-                    // the honest tableau reads when it does not decide.
-                    if self.eq_collision_verifies.get()
-                        && let Some(value_term) = model.get(term)
-                    {
-                        let parsed = match parse_value_term(value_term, manager) {
-                            EvalOutcome::UNDETERMINED => self.eval_in_model_outcome(
-                                value_term,
-                                model,
-                                manager,
-                                depth.saturating_add(1),
-                            ),
-                            parsed => parsed,
-                        };
-                        if !matches!(parsed, EvalOutcome::UNDETERMINED) {
-                            return Opened::Done(parsed);
-                        }
-                    }
-                    // CERTIFICATE mode for a REAL variable: instantiate the
-                    // delta concretely (`real + δ₀·delta`) so strict
-                    // comparisons at the boundary DECIDE (the dive leaf's
-                    // trick; `value()` drops the delta and the comparison
-                    // softens).  The snapshot (concrete) and the honest
-                    // delta read both flow through `delta_value_term`.
-                    if self.eq_collision_verifies.get()
-                        && sort == manager.sorts.real_sort
-                        && let Some(d0) = self.certify_delta0.borrow().clone()
-                    {
-                        let out = self
-                            .arith
-                            .delta_value_term(term)
-                            .map(|dv| {
-                                let real = num_rational::BigRational::new(
-                                    num_bigint::BigInt::from(*dv.real.numer()),
-                                    num_bigint::BigInt::from(*dv.real.denom()),
-                                );
-                                let coef = num_rational::BigRational::new(
-                                    num_bigint::BigInt::from(*dv.delta.numer()),
-                                    num_bigint::BigInt::from(*dv.delta.denom()),
-                                );
-                                EvalOutcome::Value(EvalVal::NumBig(Box::new(
-                                    real + d0.clone() * coef,
-                                )))
-                            })
-                            .unwrap_or(EvalOutcome::UNDETERMINED);
-                        if !matches!(out, EvalOutcome::UNDETERMINED) {
-                            return Opened::Done(out);
-                        }
-                    }
-                    CERTIFY_LIVE_READ.with(|f| f.set(true));
                     match self.arith.value(term) {
                         Some(n) => EvalOutcome::number(n),
                         // A value beyond `Rational64` width (an honest
@@ -1933,21 +1832,13 @@ impl Solver {
             TermKind::Lt(a, b) => Opened::Frame(Frame::binary(
                 *a,
                 *b,
-                if self.eq_collision_verifies.get() {
-                    EagerKind::CmpStrictCertify { less: true }
-                } else {
-                    EagerKind::CmpStrict { less: true }
-                },
+                EagerKind::CmpStrict { less: true },
                 depth,
             )),
             TermKind::Gt(a, b) => Opened::Frame(Frame::binary(
                 *a,
                 *b,
-                if self.eq_collision_verifies.get() {
-                    EagerKind::CmpStrictCertify { less: false }
-                } else {
-                    EagerKind::CmpStrict { less: false }
-                },
+                EagerKind::CmpStrict { less: false },
                 depth,
             )),
             TermKind::Le(a, b) => Opened::Frame(Frame::binary(
@@ -2386,8 +2277,8 @@ fn eval_bv_value(
 #[cfg(test)]
 mod tests {
     use super::{
-        ENCODE_DEPTH_LIMIT, EagerKind, EvalOutcome, EvalVal, combine_eager, combine_eq,
-        combine_eq_certify, combine_int_div_mod,
+        ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal, combine_eq, combine_eq_certify,
+        combine_int_div_mod,
     };
     use crate::solver::Solver;
     use crate::solver::types::Model;
@@ -2875,50 +2766,6 @@ mod tests {
             combine_int_div_mod(&half, &num_big(2), false),
             EvalOutcome::Undetermined
         );
-    }
-
-    #[test]
-    fn certificate_strict_at_equality_decides_on_concrete_operands() {
-        use super::CERTIFY_LIVE_READ;
-        let n4 = EvalVal::Num(num_rational::Rational64::from_integer(4));
-        let big4 = num_big(4);
-        // All-concrete operands: `4 > 4` is decisively FALSE (a genuine
-        // violation under the published point).
-        CERTIFY_LIVE_READ.with(|f| f.set(false));
-        assert_eq!(
-            combine_eager(
-                EagerKind::CmpStrictCertify { less: false },
-                &[n4.clone(), n4.clone()]
-            ),
-            EvalOutcome::Value(EvalVal::Bool(false))
-        );
-        // Big/narrow mixes compare exactly.
-        assert_eq!(
-            combine_eager(
-                EagerKind::CmpStrictCertify { less: false },
-                &[n4.clone(), big4]
-            ),
-            EvalOutcome::Value(EvalVal::Bool(false))
-        );
-        assert_eq!(
-            combine_eager(
-                EagerKind::CmpStrictCertify { less: false },
-                &[num_big(5), n4]
-            ),
-            EvalOutcome::Value(EvalVal::Bool(true))
-        );
-        // A LIVE read may have dropped a positive delta: equality stays
-        // ambiguous (the soften) — the provenance flag governs.
-        CERTIFY_LIVE_READ.with(|f| f.set(true));
-        let nn = EvalVal::Num(num_rational::Rational64::from_integer(4));
-        assert_eq!(
-            combine_eager(
-                EagerKind::CmpStrictCertify { less: false },
-                &[nn.clone(), nn]
-            ),
-            EvalOutcome::Undetermined
-        );
-        CERTIFY_LIVE_READ.with(|f| f.set(false));
     }
 
     #[test]

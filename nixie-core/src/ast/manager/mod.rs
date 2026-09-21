@@ -97,6 +97,20 @@ pub struct TermManager {
     /// path and the bottom-up/ctx pair re-solves each other's output —
     /// the interning flood that hung the large nec-smt members' walks.
     pub(super) eq_solve_cache: FxHashMap<(TermId, TermId), Option<TermId>>,
+    /// Memo for [`crate::tactic::quantifier::predicates::contains_quantifier`]:
+    /// the ids of terms *proven* quantifier-free by a completed traversal.
+    /// Term content is immutable and ids are never reused (append-only
+    /// arena; `gc` only prunes the intern table), so an entry is valid for
+    /// the manager's whole lifetime. Only negative results are memoized
+    /// (a found quantifier aborts the walk early, so the visited prefix
+    /// is not all quantifier-free); every *sub*term of a quantifier-free
+    /// root is quantifier-free, so one walk populates the whole DAG. The
+    /// pipeline asks this per assertion at several stages — without the
+    /// memo each call re-walks the assertion DAG with a fresh visited set.
+    /// `RefCell` because the queries arrive through `&TermManager` (the
+    /// manager is not `Sync` — its interner is single-threaded — so plain
+    /// interior mutability is sound here).
+    pub(super) quantifier_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
 }
 
 impl Default for TermManager {
@@ -137,6 +151,7 @@ impl TermManager {
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
+            quantifier_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             eq_solve_cache: FxHashMap::default(),
         };
 
@@ -154,6 +169,44 @@ impl TermManager {
     /// (e.g. when rebuilding quantifiers with substituted bodies).
     pub fn intern_term(&mut self, kind: TermKind, sort: SortId) -> TermId {
         self.intern(kind, sort)
+    }
+
+    /// Does `term`'s DAG contain any quantifier? Memoized: terms whose
+    /// completed traversal found none are recorded (with every visited
+    /// subterm) in the `quantifier_free_cache` field, so repeated queries —
+    /// and sibling assertions sharing subterms — become set lookups.
+    /// Exact by construction: term content is immutable, ids are never
+    /// reused, and only full negative traversals populate the cache.
+    #[must_use]
+    pub fn contains_quantifier(&self, term: TermId) -> bool {
+        if self.quantifier_free_cache.borrow().contains(&term) {
+            return false;
+        }
+        // Iterative DAG walk (no native recursion over user terms).
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(data) = self.get(id) else {
+                continue;
+            };
+            if matches!(data.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                // Partial traversal: the visited prefix may still contain
+                // quantifiers above this one elsewhere; memoize nothing.
+                return true;
+            }
+            for child in get_children(&data.kind).iter().rev() {
+                stack.push(*child);
+            }
+        }
+        // Completed without finding: every visited subterm is quantifier-
+        // free (a quantifier anywhere reachable would have aborted).
+        self.quantifier_free_cache
+            .borrow_mut()
+            .extend(visited.iter().copied());
+        false
     }
 
     /// Intern a term, returning its unique ID

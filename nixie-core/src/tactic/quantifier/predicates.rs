@@ -3,35 +3,21 @@
 //! Split out of the former single-file `tactic/quantifier.rs`; see
 //! [`super`] for the module layout. Pure code motion.
 
-use crate::ast::traversal::{TermVisitor, VisitorAction, traverse};
-use crate::ast::{TermId, TermKind, TermManager};
+use crate::ast::{TermId, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
 
 use crate::tactic::Goal;
 
 /// Check if a term contains any quantifiers
+///
+/// Delegates to the manager's memoized walk ([`TermManager::
+/// contains_quantifier`]): repeated queries and shared subterms are set
+/// lookups instead of re-traversals, which the per-assertion pipeline
+/// asks for at several stages.
 #[must_use]
 pub fn contains_quantifier(term_id: TermId, manager: &TermManager) -> bool {
-    struct QuantifierChecker {
-        found: bool,
-    }
-
-    impl TermVisitor for QuantifierChecker {
-        fn visit_pre(&mut self, term_id: TermId, manager: &TermManager) -> VisitorAction {
-            if let Some(term) = manager.get(term_id)
-                && matches!(term.kind, TermKind::Forall { .. } | TermKind::Exists { .. })
-            {
-                self.found = true;
-                return VisitorAction::Stop;
-            }
-            VisitorAction::Continue
-        }
-    }
-
-    let mut checker = QuantifierChecker { found: false };
-    let _ = traverse(term_id, manager, &mut checker);
-    checker.found
+    manager.contains_quantifier(term_id)
 }
 
 /// Check if a goal contains any quantifiers

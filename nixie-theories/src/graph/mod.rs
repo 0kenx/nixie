@@ -852,11 +852,32 @@ impl GraphModel {
         }
         let id = VertexId(self.graphs[g.0].vertices as u32);
         self.graphs[g.0].vertices += 1;
-        // The graph grew: re-size the per-vertex tables from scratch.
+        // The graph grew: extend the per-vertex tables by one row. The
+        // contract requires every vertex before `into_propagator`, so the
+        // cache is still pristine here and one appended row is exactly
+        // what `ViewCache::sized` at the new size would rebuild — without
+        // the O(vertices) re-allocation per added vertex (O(V^2)
+        // construction for large universes). A cache that somehow carries
+        // derived state falls back to the full re-size.
         if g.0 < self.caches.len() {
-            let vertices = self.graphs[g.0].vertices;
-            let edges = self.graphs[g.0].edges.len();
-            self.caches[g.0] = ViewCache::sized(vertices, edges);
+            let cache = &mut self.caches[g.0];
+            let pristine = !cache.forced_valid
+                && cache.pending.is_empty()
+                && cache.forced_searches.iter().all(|s| s.is_none())
+                && cache.backward_searches.iter().all(|s| s.is_none())
+                && cache.forced_cycle.is_none()
+                && cache.possible_cycle.is_none();
+            if pristine {
+                // `values` is edge-indexed and add_vertex adds no edge, so
+                // only the per-vertex tables grow by one row.
+                cache.forced_rows.push(Vec::new());
+                cache.forced_searches.push(None);
+                cache.backward_searches.push(None);
+            } else {
+                let vertices = self.graphs[g.0].vertices;
+                let edges = self.graphs[g.0].edges.len();
+                *cache = ViewCache::sized(vertices, edges);
+            }
         }
         Ok(id)
     }

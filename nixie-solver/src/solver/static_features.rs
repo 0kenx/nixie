@@ -206,6 +206,25 @@ impl StaticFeatures {
         self.has_fp
     }
 
+    /// Any string-sorted term or string operator (gates the per-check
+    /// string conflict scan, which is otherwise a full assertion walk
+    /// that finds nothing).
+    pub(super) fn has_string_terms(&self) -> bool {
+        self.has_string
+    }
+
+    /// Any datatype constructor/tester/accessor term (gates the per-check
+    /// datatype conflict scan).
+    pub(super) fn has_dt_terms(&self) -> bool {
+        self.has_dt
+    }
+
+    /// Any array store/select term (gates the per-check array conflict
+    /// scan).
+    pub(super) fn has_array_terms(&self) -> bool {
+        self.has_array
+    }
+
     /// Collect features from `assertions`, mirroring
     /// `static_features::collect(num_formulas, formulas)`.
     #[must_use]
