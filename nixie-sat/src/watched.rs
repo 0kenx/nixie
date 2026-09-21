@@ -1169,7 +1169,9 @@ impl WatchLists {
     }
 
     /// Attach an adopted CSR layout as the new shadow baseline.
-    pub(crate) fn csr_set(&mut self, csr: CsrWatchLists) {}
+    pub(crate) fn csr_set(&mut self, csr: CsrWatchLists) {
+        self.csr = Some(csr);
+    }
 
     /// Whether a maintained shadow exists (drifted comparison is meaningful).
     pub(crate) fn csr_active(&self) -> bool {
