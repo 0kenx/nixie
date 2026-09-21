@@ -1260,6 +1260,14 @@ impl Solver {
         // bound to `(extract 255 64 a)`) loses its link to its definition and
         // an unsatisfiable formula reads as satisfiable.  See `expand_lets`.
         let mut term = self.expand_lets(term, manager);
+        // The assertion fold pass (flag-gated): value-level rewriting of
+        // the let-expanded assertion — the nec-smt deep ite/`=` spines
+        // fold to a constant here, before the depth guard below measures
+        // them.  Equivalence-only rules; the exact user term is already
+        // captured as `certificate_term` above.
+        if super::assert_fold::enabled() {
+            term = super::assert_fold::fold(term, manager);
+        }
         // Finite sets: give every membership atom its defining axioms before
         // anything else looks at the assertion. The axioms are *valid* — each
         // is a consequence of the theory of finite sets — so conjoining them
@@ -2200,6 +2208,14 @@ impl Solver {
         // discarding the bindings – the exact `?v_0 = (extract ...)` false-SAT
         // shape `expand_lets` exists to prevent (see its doc comment).
         let mut term = self.expand_lets(term, manager);
+        // The assertion fold pass (flag-gated), same placement as `assert`:
+        // after let-expansion, before the depth guard.  The ORIGINAL term
+        // is already recorded in `assertions`/`certificate_assertions`
+        // above, so the name-to-index core mapping and certified mode are
+        // untouched by the fold.
+        if super::assert_fold::enabled() {
+            term = super::assert_fold::fold(term, manager);
+        }
         // Overflow guard (soundness): see `assert`.  Skip all deep recursive
         // passes for a pathologically deep term and flag the incomplete
         // encoding so `check` answers `Unknown` instead of overflowing.
