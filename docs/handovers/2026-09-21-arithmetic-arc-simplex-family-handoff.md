@@ -137,3 +137,26 @@ and the fresh-seed six are a single named family — the simplex
 pivot-cap/resource-limit class — with the instruments wired, the ledger
 empty, and the one process rule that matters being to re-run the named
 members after any raced landing in the evaluator files.**
+
+## Regression audit executed (2026-09-21, evening) — the tree holds
+
+Per this handoff's discipline (item 3), after the six parallel landings
+that followed the tree-health validation (`c5e8026a`/`45a2c742` the
+integer tableau Phase 1, `ac7f5404` the fused tokenizer, `4ca9a0e6`
+the subsumption volume guard, `7d4adf4f` the UF-walk gating,
+`fa30412c` the graph witness repair — several touching
+`solver`/`simplex` surfaces), the named-member audit ran on
+`precompile/fa30412c`:
+
+* **Fixed seeds 20261000–02 × 600: exactly 1 gap member —
+  `i129`** (`gap_s20261000_i129`, z3 `sat`), the documented simplex-tail
+  cell, unchanged.
+* **Fresh seeds 20262600–02 × 600: exactly 6 gap members** — the
+  simplex resource-limit family, unchanged in count.
+* **The named recovered members are all absent from both gap lists** —
+  i504 (the twice-silently-dropped one), i142, i116, i393, i566 held
+  through the churn.
+
+No third silent drop.  The full battery context (suite, parity, gate,
+differentials) is in `2026-09-21-tree-health-validation.md` at
+`af07e5ad`; this audit extends it to `fa30412c`.
