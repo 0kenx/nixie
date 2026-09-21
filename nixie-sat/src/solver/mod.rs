@@ -237,13 +237,38 @@ impl BinaryImplicationGraph {
         let fill = self.span_end.last().copied().unwrap_or(0);
         self.span_end.resize(n, fill);
         self.live.resize(n, 0);
-        self.extra.resize(n, Vec::new());
+        // `extra` (the per-literal overflow lists) grows LAZILY on first
+        // append: materializing one empty `Vec` header per code zeroed
+        // 24 bytes x 2*num_vars — 380 MB of page-faulted writes on the
+        // 7.9M-var anatomy, `extend_with`'s 7.4% of the whole load run —
+        // for lists that stay empty outside search-time appends (learned
+        // binaries, congruence sentinels, factoring products).  Readers
+        // go through `extra_of`, which treats a short `extra` as all-
+        // empty; `extra_push` extends it to the touched index on demand.
+        // The CSR invariant note above is unaffected: `span_end`/`live`
+        // still resize eagerly (every code's span is addressable).
+    }
+
+    /// Overflow list of `code` under the lazy-`extra` contract: codes
+    /// beyond `extra`'s length have no overflow entries.
+    #[inline]
+    pub(crate) fn extra_list(&self, code: usize) -> &[(Lit, ClauseId)] {
+        self.extra.get(code).map_or(&[], Vec::as_slice)
     }
 
     fn add(&mut self, lit: Lit, implied: Lit, clause_id: ClauseId) {
         let idx = lit.code() as usize;
         self.ensure_codes(idx + 1);
-        self.extra[idx].push((implied, clause_id));
+        self.extra_push(idx, (implied, clause_id));
+    }
+
+    /// Append to `code`'s overflow list, growing the (lazily short)
+    /// `extra` to cover the index first.
+    fn extra_push(&mut self, idx: usize, edge: (Lit, ClauseId)) {
+        if idx >= self.extra.len() {
+            self.extra.resize(idx + 1, Vec::new());
+        }
+        self.extra[idx].push(edge);
     }
 
     /// Read view of `lit`'s edges (primary span then overflow).
@@ -253,7 +278,7 @@ impl BinaryImplicationGraph {
         let plen = self.live[code] as usize;
         BigList {
             primary: &self.edges[start..start + plen],
-            extra: &self.extra[code],
+            extra: self.extra_list(code),
         }
     }
 
@@ -277,13 +302,13 @@ impl BinaryImplicationGraph {
     /// Overflow length of `code`'s post-build list.
     #[inline]
     pub(crate) fn extra_len(&self, code: usize) -> usize {
-        self.extra[code].len()
+        self.extra_list(code).len()
     }
 
     /// Copy the overflow edge `(code, i)`.
     #[inline]
     pub(crate) fn extra_at(&self, code: usize, i: usize) -> (Lit, ClauseId) {
-        self.extra[code][i]
+        self.extra_list(code)[i]
     }
 
     /// Iterate every edge as `(trigger, implied, clause_id)`, in key order.
@@ -298,7 +323,7 @@ impl BinaryImplicationGraph {
             let plen = self.live[code] as usize;
             self.edges[start..start + plen]
                 .iter()
-                .chain(self.extra[code].iter())
+                .chain(self.extra_list(code).iter())
                 .map(move |&(to, cid)| (from, to, cid))
         })
     }
@@ -346,7 +371,9 @@ impl BinaryImplicationGraph {
             self.live[idx] -= 1;
             return;
         }
-        self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+        if idx < self.extra.len() {
+            self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+        }
     }
 
     /// Bulk dead-edge compaction (the factor pass's analogue of kissat's

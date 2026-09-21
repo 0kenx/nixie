@@ -1379,6 +1379,25 @@ const LIT_ACC_SENTINEL: u64 = 3_000_000_000;
 fn parse_lit(raw: &[u8], start: usize, ds: usize, end: usize) -> Option<i32> {
     let neg = raw[start] == b'-';
     let mut acc: u64 = 0;
+    // Fast path for runs of at most 8 digits with 8 readable bytes at
+    // `ds`: one load, then a register-only accumulate (shift-and-mask
+    // per digit — no per-byte bounds-checked loads).  At most 8 digits
+    // cannot overflow `u64`, so the freeze logic below is unnecessary
+    // here and a single final range check decides (the common CNF shape
+    // on 8-digit variable ranges pays ~4 ops/digit instead of ~7).
+    // `parse_lit` was 16.6% of the whole load-path run (iterator
+    // `next`/bounds-check overhead visible in the profile).
+    let len = end - ds;
+    if len <= 8 && ds + 8 <= raw.len() {
+        let mut chunk = [0u8; 8];
+        chunk.copy_from_slice(&raw[ds..ds + 8]);
+        let mut word = u64::from_le_bytes(chunk);
+        for _ in 0..len {
+            acc = acc * 10 + (word & 0xF);
+            word >>= 8;
+        }
+        return finish_lit(acc, neg);
+    }
     for &d in &raw[ds..end] {
         if acc <= LIT_ACC_LIMIT {
             acc = acc * 10 + u64::from(d - b'0');
@@ -1386,6 +1405,13 @@ fn parse_lit(raw: &[u8], start: usize, ds: usize, end: usize) -> Option<i32> {
             acc = LIT_ACC_SENTINEL;
         }
     }
+    finish_lit(acc, neg)
+}
+
+/// The shared range decision of [`parse_lit`]: the magnitude's i32 range
+/// check with the one wide negative (`-2147483648`) accepted.
+#[inline]
+fn finish_lit(acc: u64, neg: bool) -> Option<i32> {
     if neg {
         if acc > 2147483648 {
             return None;

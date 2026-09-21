@@ -51,7 +51,7 @@ impl Solver {
             let code = lit.index();
             let (start, plen) = graph.span_of(code);
             let primary = &graph.edges[start..start + plen];
-            let extra = &graph.extra[code];
+            let extra = graph.extra_list(code);
             #[cfg(feature = "bcp-work")]
             {
                 use super::super::propagation_work::list_lines;

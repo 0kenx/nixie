@@ -86,3 +86,33 @@ our 9.5 s at campaign start) is now a fraction of its former self.
 - The differential harness paid for itself twice more: both fused-pass
   bugs were caught pre-measurement, one of them (the frame mismatch) by
   randomized iteration 2 of 3000.
+
+## Addendum — the lazy BIG `extra` and the `parse_lit` fast path (same day)
+
+The post-landing profile (symbolized) put two more items on top:
+`ensure_codes` at 7.4 % (its `extra.resize(2·V, Vec::new())` zeroing
+380 MB of empty `Vec` headers on the 7.9M-var anatomy — lists that
+stay empty outside search-time appends) and `parse_lit` at 16.6 % of
+the whole run (per-byte iterator/bounds overhead in the digit loop).
+
+- **Lazy `extra`**: the overflow lists grow on first append
+  (`extra_push` extends to the touched index); every reader goes
+  through `extra_list(code)` (a short `extra` reads as all-empty).
+  `span_end`/`live` still resize eagerly (every code's span must stay
+  addressable).  Three direct-index readers outside mod.rs needed the
+  accessor (`session_kernel`, `equiv` ×2 — the 24-test breakage when
+  one was missed was the tell).
+- **`parse_lit` fast path**: runs of ≤8 digits with 8 readable bytes
+  parse from one `u64` load with a register-only accumulate (≤8 digits
+  cannot overflow; the freeze logic stays for longer runs); the range
+  decision hoisted into a shared `finish_lit`.
+
+Paired corpus vs `ac7f5404`: 6s299b685 **0.892**, 6s163 **0.890**,
+GP_105 0.973, search cells flat, conflicts bit-identical, geomean
+**0.979**.  **Cumulative vs the pre-SIMD baseline: −47 % whole-run
+instructions on the hwmcc anatomy** (24.85G → 13.11G), −47 % on 6s163.
+
+Wall on the anatomy (loaded box, cold-cache first run excluded):
+~11 s → ~8-9 s vs kissat's 1.0 s — the remaining gap is the solving
+machinery (the instance decides UNSAT with 0 conflicts — preprocessing
+work, not parse).

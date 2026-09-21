@@ -668,7 +668,7 @@ impl Solver {
             for code in 0..self.num_vars * 2 {
                 let (start, plen) = self.binary_graph.span_of(code);
                 let primary = &self.binary_graph.edges[start..start + plen];
-                let extra = &self.binary_graph.extra[code];
+                let extra = self.binary_graph.extra_list(code);
                 if primary.is_empty() && extra.is_empty() {
                     continue;
                 }
@@ -886,7 +886,7 @@ impl Solver {
                 for code in 0..self.num_vars * 2 {
                     let (start, plen) = self.binary_graph.span_of(code);
                     let primary = &self.binary_graph.edges[start..start + plen];
-                    let extra = &self.binary_graph.extra[code];
+                    let extra = self.binary_graph.extra_list(code);
                     if primary.is_empty() && extra.is_empty() {
                         continue;
                     }
