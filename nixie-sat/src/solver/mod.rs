@@ -499,6 +499,17 @@ pub trait TheoryCallback {
     /// Returns a theory check result
     fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult;
 
+    /// A theory-proposed decision for the next branch, consulted before
+    /// the SAT heuristic picks freely. `None` (the default) leaves
+    /// branching entirely to the heuristic. The search skips a proposal
+    /// whose literal is already assigned, so proposals may be stale —
+    /// this is a heuristic channel only: any literal it returns is a
+    /// legal decision, and the soundness of the search does not depend
+    /// on it. (MonoSAT's `-decide-theories` is the reference design.)
+    fn suggest_decision(&mut self) -> Option<Lit> {
+        None
+    }
+
     /// Called after propagation is complete to do a full theory check
     fn final_check(&mut self) -> TheoryCheckResult;
 

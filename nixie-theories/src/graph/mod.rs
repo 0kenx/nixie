@@ -920,6 +920,11 @@ pub struct GraphModel {
     /// Terms created by this model (reach/acyclicity atoms), which edge
     /// declarations must not shadow.
     system_terms: FxHashSet<TermId>,
+    /// Last-known fixation state of each graph's reach atoms, refreshed
+    /// by every run's atom scan (the `decide` hook reads it between runs;
+    /// a stale proposal is filtered by the search layer, which skips
+    /// assigned literals).
+    reach_atom_fixed: Vec<Vec<Option<bool>>>,
     true_term: TermId,
     false_term: TermId,
 }
@@ -944,6 +949,7 @@ impl GraphModel {
             edge_index: FxHashMap::default(),
             edge_terms: FxHashSet::default(),
             system_terms: FxHashSet::default(),
+            reach_atom_fixed: Vec::new(),
             true_term: tm.mk_bool(true),
             false_term: tm.mk_bool(false),
         }
@@ -1101,6 +1107,10 @@ impl GraphModel {
             negation,
         });
         spec.reach_cache.insert((u.0, v.0), index);
+        if self.reach_atom_fixed.len() <= g.0 {
+            self.reach_atom_fixed.resize(g.0 + 1, Vec::new());
+        }
+        self.reach_atom_fixed[g.0].push(None);
         Ok(atom)
     }
 
@@ -1358,7 +1368,7 @@ impl GraphModel {
         }
 
         // 2. Reachability atoms.
-        for reach in &spec.reach {
+        for (reach_index, reach) in spec.reach.iter().enumerate() {
             let fixed = match ctx.get_fixed_value(reach.atom) {
                 None => {
                     all_fixed = false;
@@ -1368,6 +1378,12 @@ impl GraphModel {
                 Some(v) if v == self.false_term => Some(false),
                 Some(_) => return PropagatorResult::Unknown,
             };
+            // Refresh the decide hook's view of this atom's fixation.
+            if let Some(states) = self.reach_atom_fixed.get_mut(g)
+                && states.len() == spec.reach.len()
+            {
+                states[reach_index] = fixed;
+            }
             match fixed {
                 Some(false) => {
                     let search = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
@@ -1520,6 +1536,60 @@ impl UserPropagator for GraphModel {
 
     fn final_check(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
         self.run(ctx)
+    }
+
+    /// Theory-directed decision (MonoSAT's `-decide-theories` channel):
+    /// propose one undecided reach atom. Reads the arm from
+    /// `NIXIE_GRAPH_DECIDE` — unset (the default) disables the hook
+    /// entirely; `1` proposes the *first* undecided reach atom (the
+    /// treatment: deciding reachability early drives either a witnessed
+    /// path or a cut refutation instead of waiting for the Boolean search
+    /// to stumble into it); `2` proposes the *last* undecided one — the
+    /// matched null: identical code path, candidate set, suggestion
+    /// frequency and exhaustion timing, with only the semantic content
+    /// (which atom) scrambled. Both arms always propose `true`, so the
+    /// tested content is the selection order. Proposals are heuristic
+    /// only: the search layer skips assigned literals and any proposed
+    /// literal is a legal decision.
+    fn decide(&mut self) -> Option<(TermId, bool)> {
+        static ARM: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+        let arm = *ARM.get_or_init(|| match std::env::var("NIXIE_GRAPH_DECIDE").as_deref() {
+            Ok("1") => 1,
+            Ok("2") => 2,
+            Ok("3") => 3,
+            Ok("4") => 4,
+            _ => 0,
+        });
+        if arm == 0 {
+            return None;
+        }
+        // Arms 3/4 mirror 1/2 with the reverse (false) proposal polarity
+        // (MonoSAT's `-decide-theories-reverse` counterpart).
+        let phase = arm < 3;
+        // First undecided atom (arm 1) or last undecided atom (arm 2)
+        // across the graphs, in model declaration order.
+        let mut found: Option<TermId> = None;
+        for (g, spec) in self.graphs.iter().enumerate() {
+            let Some(states) = self.reach_atom_fixed.get(g) else {
+                continue;
+            };
+            if states.len() != spec.reach.len() {
+                continue;
+            }
+            for (i, &state) in states.iter().enumerate() {
+                if state.is_none() {
+                    let atom = spec.reach[i].atom;
+                    // Treatment arms return the first match; the null's
+                    // selection is scrambled to the last (same candidate
+                    // set, frequency, and exhaustion timing).
+                    if arm == 1 || arm == 3 {
+                        return Some((atom, phase));
+                    }
+                    found = Some(atom);
+                }
+            }
+        }
+        found.map(|atom| (atom, phase))
     }
 
     fn push(&mut self) {

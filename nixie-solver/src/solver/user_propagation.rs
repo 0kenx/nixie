@@ -351,6 +351,19 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
     fn is_real_theory(&self) -> bool {
         true
     }
+    fn suggest_decision(&mut self) -> Option<Lit> {
+        // Propagator-proposed decisions (MonoSAT's `-decide-theories`
+        // channel): the first registered propagator's hint wins; the
+        // term is mapped through the watch/literal table, so only
+        // registered vocabulary can ever be proposed. The search layer
+        // filters assigned proposals.
+        if !self.state.active() {
+            return None;
+        }
+        let (term, phase) = self.state.manager.get_decision()?;
+        let lit = self.state.literals.get(&term).copied()?;
+        Some(if phase { lit } else { !lit })
+    }
     fn record_lemma(&mut self, clause: &[Lit]) {
         self.inner.record_lemma(clause);
     }

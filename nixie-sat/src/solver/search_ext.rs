@@ -510,7 +510,22 @@ impl Solver {
                     self.stats.decisions
                 );
             }
-            if let Some(var) = self.pick_branch_var() {
+            // Theory-proposed decision (MonoSAT's `-decide-theories`
+            // channel): consulted once per branch before the heuristic
+            // picks freely. An assigned or absent proposal falls through
+            // to the normal path; the proposed literal is assigned as an
+            // ordinary decision, so search soundness never depends on it.
+            let theory_proposal = theory
+                .suggest_decision()
+                .filter(|&lit| !self.trail.value(lit.var()).is_defined());
+            if let Some(lit) = theory_proposal {
+                self.stats.decisions += 1;
+                self.trail.new_decision_level();
+                let new_level = self.trail.decision_level();
+                theory.on_new_level(new_level);
+                self.trail.assign_decision(lit);
+                self.trace_decision(lit.var(), new_level, lit.is_pos());
+            } else if let Some(var) = self.pick_branch_var() {
                 #[cfg(feature = "std")]
                 if crate::env_flags::pick_trace() {
                     eprintln!(
