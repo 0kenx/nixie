@@ -229,3 +229,17 @@ rebases it — a textual conflict with their restyle is expected and
 mechanical (my hunks' context is the pre-restyle spelling).  The
 measured binary is cached at `precompile/8eede1d7*/` and the full
 battery ran on exactly that tree.
+
+## Update (fresh-seed hunt + J5-blocking + the i504 regression restored)
+
+`82ad3417`: (1) the fresh-seed hunt (20262600–02 × 600) found **8 members
+— 2 J5 + 6 simplex resource-limit family**; (2) the J5 gate now
+block-and-retries REFUTED candidates (the certificate's tri-state;
+declines never blocked) — both J5 members recovered, models z3-validated;
+(3) **a regression restoration**: the fold experiment's merge had
+silently dropped the functional half of the i504 landing (δ₀
+instantiation, CmpStrictCertify, the provenance flag, the published-value
+Var read — i504 answered `unknown` on main again); restored verbatim,
+i504 `sat` again.  **The fresh-seed residual: 6 members, all the simplex
+pivot-cap/resource-limit family (+ i129 on the fixed seeds) — the next
+campaign's target.**
