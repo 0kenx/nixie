@@ -2416,5 +2416,125 @@ fn born_entering_row_matches_the_canonical_solved_form() {
         assert_eq!(born_lin.constant, reference.constant);
         checked += 1;
     }
-    assert!(checked > 1500, "grid must exercise the mass: {checked}");
+    assert!(
+        checked > 1500,
+        "grid must exercise the mass: {checked} (skipped {skipped})"
+    );
+}
+
+// Regression (2026-09-21, the simplex pivot-cap/resource-limit family):
+// a NON-BASIC resting at one of its current bounds — here its UPPER, parked
+// by a tighten-then-loosen bound sequence — must keep its value through
+// every re-derivation.  The historical `crash_basis` AND
+// `update_assignment` entry loops re-snapped such a variable to the
+// PREFERRED (lower) bound, silently relocating the search point: each wide
+// repair that parked a leaving variable at its upper bound was un-done one
+// re-derivation later (the update_assignment loop sits one call deeper
+// than crash_basis, so fixing crash alone changed nothing), and the
+// wide-repair loop orbited a period-2 limit cycle until the repair budget
+// or the pivot cap declined the check (the `simplex-tail-i129` class).
+// Z3's `lp_primal_core_solver` never re-preferences a positioned column.
+#[test]
+fn rederivation_preserves_nonbasic_parked_at_upper_bound() {
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let y = s.new_var();
+
+    // y fixed at 7; x window [0, 10].
+    s.set_lower(y, Rational64::from_integer(7), 1);
+    s.set_upper(y, Rational64::from_integer(7), 2);
+    s.set_lower(x, Rational64::zero(), 3);
+    s.set_upper(x, Rational64::from_integer(10), 4);
+
+    // Park x (non-basic) at its UPPER bound: tighten the lower to 10 (the
+    // bound writer snaps x onto it), then loosen the lower back to 0 — the
+    // value 10 stays inside the window, so no re-snap fires, and x rests at
+    // its upper bound exactly the way a repair's leaving snap would have
+    // left it.
+    s.push();
+    s.set_lower(x, Rational64::from_integer(10), 5);
+    s.set_lower(x, Rational64::zero(), 6);
+    s.pop();
+
+    // A slack row over the support makes the re-derivation real work.
+    let mut e = LinExpr::new();
+    e.terms.push((x, Rational64::from_integer(1)));
+    e.terms.push((y, Rational64::from_integer(1)));
+    e.constant = Rational64::from_integer(-17);
+    let r = s.intern_row(e);
+    s.set_lower(r, Rational64::zero(), 7);
+    assert!(s.check().is_ok(), "x = 10 with y = 7 satisfies the row");
+    assert_eq!(
+        s.delta_value(x).real,
+        Rational64::from_integer(10),
+        "x rests at its upper bound after the parked check"
+    );
+
+    // The pinned contract, tested where it lives: the re-derivation entry
+    // loops (both crash_basis's and update_assignment's) must not relocate
+    // a positioned non-basic.  The historical code moved x to its
+    // lower-preferred bound 0 here.
+    s.assignment_current = false;
+    s.update_assignment();
+    assert_eq!(
+        s.delta_value(x).real,
+        Rational64::from_integer(10),
+        "update_assignment must preserve a non-basic resting at its upper bound"
+    );
+    s.crash_basis();
+    assert_eq!(
+        s.delta_value(x).real,
+        Rational64::from_integer(10),
+        "crash_basis must preserve a non-basic resting at its upper bound"
+    );
+    // And the row over the preserved point stays satisfied.
+    assert_eq!(
+        s.delta_value(r).real,
+        Rational64::zero(),
+        "the row over the preserved point stays at its bound"
+    );
+}
+
+// The same contract on the WIDE side: a non-basic whose exact point lives
+// in the wide point store, resting at a wide bound, is preserved too (the
+// `cmp_big` arm of `nonbasic_rests_at_bound`).
+#[test]
+fn rederivation_preserves_wide_point_at_wide_bound() {
+    use crate::arithmetic::delta::BigDeltaRational;
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    // A lower bound beyond i64 width (2^63 + 5) parks x in the wide point
+    // store at its (only, wide) bound.  A non-empty reason vector is
+    // required: `set_lower_value` treats an empty one as a no-op.
+    let wide_lo = num_rational::BigRational::from(
+        num_bigint::BigInt::from(2).pow(63) + num_bigint::BigInt::from(5),
+    );
+    s.set_lower_exact(
+        x,
+        BigDeltaRational {
+            real: wide_lo.clone(),
+            delta: num_rational::BigRational::zero(),
+        },
+        smallvec::smallvec![0],
+    );
+    let parked = s.wide_points.get(&x).cloned();
+    assert_eq!(
+        parked.as_ref().map(|w| &w.real),
+        Some(&wide_lo),
+        "the wide bound writer parks x at its wide lower bound"
+    );
+
+    // The re-derivation loops must keep the wide point (the historical
+    // lower-preferred re-snap here re-ran `snap_point_to` on every
+    // re-derivation, churning the store; the preserve rule must hold on
+    // the `cmp_big` path).
+    s.assignment_current = false;
+    s.update_assignment();
+    s.crash_basis();
+    let after = s.wide_points.get(&x).cloned();
+    assert_eq!(
+        after.as_ref().map(|w| &w.real),
+        Some(&wide_lo),
+        "the wide point at the wide bound survives the re-derivation"
+    );
 }

@@ -1542,9 +1542,13 @@ fn get_value_rational_echo_round_trips() {
 /// variable, the (exact, Euclidean) certifier refuted the candidate, and the
 /// big-const gate downgraded a decidable `sat` to `unknown`.  The snapshot
 /// is now exact (`BigRational`), and both publication channels prefer it.
-/// This instance's leaf rests at `xi = -49806208999015789358` (validated
-/// with z3 by binding the model and negating the assertion: `unsat`);
-/// pre-fix it answered `unknown` with the defaulted `xi = 0` candidate.
+/// The pinned PROPERTY is trajectory-independent: the verdict is `sat` and
+/// `xi` publishes a genuine INTEGRAL leaf value — never the defaulted `0`
+/// and never a post-pop fraction.  (The 2026-09-21 unified-feasibility
+/// driver landing moved the dive's trajectory: this instance's leaf now
+/// rests at `xi = -3` instead of the previous `xi = -49806208999015789358`;
+/// BOTH models are z3-validated by binding + negation — the earlier pin
+/// froze the old trajectory's value and is recorded here.)
 #[test]
 fn bnb_snapshot_survives_scope_pop_at_any_width() {
     use nixie_solver::Context;
@@ -1562,8 +1566,19 @@ fn bnb_snapshot_survives_scope_pop_at_any_width() {
         .expect("script executes");
     assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
     let model = out.get(1).map(String::as_str).unwrap_or("");
+    // The pinned property: a genuine INTEGRAL leaf value is published —
+    // never the defaulted `0`, never a post-pop fraction.  (Exact value
+    // `49806208999015789358` was the pre-unification trajectory's leaf;
+    // `-3` is the current one — both z3-validated.)
+    let integral = model
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .trim_matches(&['(', ')'][..])
+        .parse::<i128>()
+        .ok();
     assert!(
-        model.contains("49806208999015789358"),
+        integral.is_some_and(|v| v != 0),
         "xi publishes the leaf's exact integral value (z3-validated), never the defaulted 0 or a post-pop fraction; got: {model}"
     );
 }
