@@ -1661,6 +1661,21 @@ impl Solver {
         if result == SolverResult::Sat
             && self.arith_abstracted_big_const
             && !self.certify_quantified_sat(manager)
+            // The MBQI certifier is FRAGMENT-LIMITED: a mixed Int/Real
+            // goal is declined by both its engines without ever being
+            // evaluated (the real engine refuses integer-sorted symbols,
+            // the integer engine reals) — a DECLINE, not a refutation.
+            // The value-only exact certificate
+            // ([`Self::model_certifies_assertions`], the pure-BV
+            // dispatch's Sat contract) evaluates the ORIGINAL assertions
+            // under the model with the true big constants and fails
+            // closed on anything it cannot decide: a pass is a positive
+            // verification, which is exactly what this gate exists to
+            // demand of the big-const abstraction (item 96's J5-(a)
+            // class — measured: the armed search's candidates on the
+            // ray members carry z3-valid models the fragment decline was
+            // discarding).
+            && !self.model_certifies_assertions(manager)
         {
             if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: arith big-const abstraction uncertified");

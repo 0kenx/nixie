@@ -268,3 +268,38 @@ count needs sequential direct validation (the 12-seed campaign's 59
 candidates contained 18 timeout flips).  (3) Parallel-machine ENOSPC
 killed two battery attempts (target2/target3 on a shared 100%-full
 disk); serialize on ONE target dir and clean aggressively.
+
+## Addendum — the J5-(a) class closed: the certificate fallback (same day, next session)
+
+The post-flip re-attribution (55 members: 51 J5 / 3 ray→J5 / 1 smx) made
+the J5-certify class 100% of the actionable gap.  Decoded on i116 (the
+ray member the channel had moved into J5):
+
+* The candidate model is **z3-VALID** (binding + negation `unsat`) — the
+  armed search finds genuine models.
+* `certify_quantified_sat` **declines without evaluating**: mixed
+  Int/Real goals are refused by BOTH MBQI certifier engines (the real
+  engine rejects integer-sorted symbols, the integer engine reals) — a
+  FRAGMENT decline, not a refutation.  The gate then discarded the valid
+  model.
+
+**The fix** (15 lines): the J5 gate falls back to
+[`Solver::model_certifies_assertions`] — the value-only exact certificate
+(the pure-BV dispatch's Sat contract): it evaluates the ORIGINAL
+assertions under the model with the true big constants, fails closed on
+anything undecided, and never consults the SAT core's polarities.  A
+pass is a positive verification — exactly what the gate demands of the
+big-const abstraction.
+
+**Measured**: the fixed-seed post-flip survey **55 → 18 members** (37
+recovered); all 37 verdicts agree with z3; **all 37 models validated by
+binding + negation** (`unsat`), zero false models.  The residual 18: the
+J5-(b) class (candidates the certificate genuinely REFUTES — item 89's
+dive-leaf divergence, still open) plus the ray/smx tails.
+
+Battery: workspace suite 12 078 passed (15 = documented corpus-missing
+class; one load-artifact timeout passed on re-run); clippy/fmt/rustdoc
+clean; parity **176/177 Correct 0 wrong** (z3 4.16.0); perf gate PASS;
+3×400 mixed (20262500-02) + 3×300 wide (20262510-12) + a clean-build
+1×400 (20262520) fresh differentials — zero disagreements, zero refuted
+models; debug panic sweep 177/177.
