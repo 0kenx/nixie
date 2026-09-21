@@ -45,6 +45,17 @@ rows — the IntRow cache already holds the content; multi-session,
 soundness-critical).  The pivot COUNT remains the architectural item
 (pivot-storm Layer 3).
 
+**Afternoon closures:** the conj-level fold probe RETIRES by experiment
+(20-file seeded sample: zero fold wins; the `(assert (and …))`
+re-expression itself regresses 16/20 with 8 sat->timeout flips — the
+multi-assert pipeline shape is load-bearing; see the assert-fold
+study's Addendum 2).  The next-session entry for the write-back floor
+is WRITTEN: `2026-09-21-integer-tableau-design.md` (three phases,
+pre-registered measurement, soundness rails).  The LIA leg reproduced
+at the day's one true-calm window (33/60, par2 9100, median 0.52-0.55);
+the full snapshot (BV leg) remains blocked on machine load — still the
+next agent's cheap closure.
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
