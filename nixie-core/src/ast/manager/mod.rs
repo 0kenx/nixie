@@ -87,6 +87,16 @@ pub struct TermManager {
     pub false_id: TermId,
     /// GC statistics
     pub(super) gc_stats: GCStatistics,
+    /// Memo for [`crate::ast::manager::query::simplify`]'s guard-equality
+    /// solve (`eq_ite_rules`): the solved form of an equality PAIR, keyed
+    /// by the id-ordered pair.  The solve is a pure function of the two
+    /// terms' (immutable) kinds, and term ids are never reused (the
+    /// append-only arena; `gc` only prunes the intern table), so entries
+    /// are valid for the manager's whole lifetime.  Without it, the ctx
+    /// walk re-solves the same `(ite, value)` pair under every split
+    /// path and the bottom-up/ctx pair re-solves each other's output —
+    /// the interning flood that hung the large nec-smt members' walks.
+    pub(super) eq_solve_cache: FxHashMap<(TermId, TermId), Option<TermId>>,
 }
 
 impl Default for TermManager {
@@ -112,6 +122,7 @@ impl TermManager {
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
+            eq_solve_cache: FxHashMap::default(),
         };
 
         // Pre-allocate true and false

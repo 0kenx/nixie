@@ -1404,3 +1404,83 @@ fn solve_rules_do_not_refute_satisfiable_selects() {
     assert_ne!(out, m.false_id, "the goal is satisfiable at x=5");
     assert_eq!(out, c, "it is exactly (= x 5)");
 }
+
+/// The share-for-printing TOPOLOGICAL tie-break: saturating tree sizes
+/// TIE at `usize::MAX` for every huge compound, and a size-only sort can
+/// then place a parent BEFORE its saturated child — the child is not yet
+/// named when the parent's RHS is rebuilt, so it inlines (and its whole
+/// subtree with it).  On the nec-smt large members that inflated the
+/// printed mass to 376 M nodes; the post-order tie-break keeps the
+/// candidate order strictly children-first, and the printed text
+/// DAG-linear.  Pinned with a chain whose sizes all saturate.
+#[test]
+fn share_for_printing_tie_break_keeps_children_first() {
+    let mut m = TermManager::new();
+    let p = m.mk_var("p", m.sorts.bool_sort);
+    let zero = m.mk_int(0);
+    let one = m.mk_int(1);
+    // The doubling chain (the shape of the existing bound test): every
+    // level is referenced twice (refs = 2) and every subtree size
+    // DOUBLES, so past ~64 levels all sizes saturate and parent and
+    // child tie at `usize::MAX` — only the post-order index keeps the
+    // candidate order children-first.
+    let mut t = m.mk_ite(p, zero, one);
+    for _ in 0..70 {
+        t = m.mk_add([t, t]);
+    }
+    let (bindings, _body) = m.share_for_printing(t);
+    assert!(
+        bindings.len() >= 70,
+        "every spine level is a shared compound and must bind (got {})",
+        bindings.len()
+    );
+    // The linearity pin: each binding's RHS may inline at most its own
+    // non-shared children (constants), so the longest RHS text stays in
+    // the tens of characters — never an inlined subtree.
+    let printer = crate::smtlib::Printer::new(&m);
+    for (name, rhs) in bindings.iter() {
+        let text = printer.print_term(*rhs);
+        assert!(
+            text.len() < 256,
+            "binding {name} inlines a subtree ({} chars) — the tie-break failed",
+            text.len()
+        );
+    }
+}
+
+/// The ctx walk's RECURSION budget: the walk's depth is not the input's
+/// term depth (the Eq arm's solve expands a shallow chain into a deep
+/// and/or form and re-enters on it), so a ≤512-deep input can recurse
+/// thousands of levels.  Past the budget the walk returns nodes
+/// unchanged — never an overflow.  Pinned on a 1 MiB stack, which the
+/// unbudgeted walk would overflow well before the budget itself trips
+/// on the main stack.
+#[test]
+fn ctx_simplify_recursion_budget_returns_instead_of_overflowing() {
+    let build_and_walk = || {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let five = m.mk_int(5);
+        // 400 nested selects — under the 512 entry gate, but the solve
+        // of the outer equality expands into a 400-deep and/or chain
+        // that the walk re-enters level by level.
+        let mut sel = x;
+        for k in 0..400 {
+            let ki = m.mk_int(k);
+            let guard = m.mk_eq(ki, x);
+            sel = m.mk_ite(guard, ki, sel);
+        }
+        let goal = m.mk_eq(sel, five);
+        let bottom = m.simplify(goal);
+        // Must RETURN (any result) — the regression is the overflow.
+        let _out = m.ctx_simplify(bottom);
+    };
+    let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::ast::manager::query::tests::run_on_1mib_stack(build_and_walk)
+    }))
+    .is_ok();
+    // An overflow aborts the process (not a panic) — this assertion
+    // only ever runs if the walk returned; its value is that the test
+    // EXISTS on the small stack where the regression reproduced.
+    assert!(ok);
+}

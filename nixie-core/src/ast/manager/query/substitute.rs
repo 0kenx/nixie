@@ -722,6 +722,21 @@ impl TermManager {
     /// recursive version's original exhaustiveness guarantee.
     fn rebuild_substituted(&mut self, ctx: &SubstContext, kind: TermKind, sort: SortId) -> TermId {
         let sub = |t: TermId| ctx.resolved(t).unwrap_or(t);
+        self.rebuild_children_with(kind, sort, &sub)
+    }
+
+    /// Rebuild one node applying `sub` to every child position — the
+    /// exhaustive per-`TermKind` rebuild of the substitution walk,
+    /// factored out so other passes can remap a node's children without
+    /// a full substitution call (whose per-call map clone is quadratic
+    /// when invoked per node: `share_for_printing`'s binding loop).
+    pub(crate) fn rebuild_children_with(
+        &mut self,
+        kind: TermKind,
+        sort: SortId,
+        sub: &dyn Fn(TermId) -> TermId,
+    ) -> TermId {
+        let sub = |t| sub(t);
         match kind {
             TermKind::True
             | TermKind::False

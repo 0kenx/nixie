@@ -1545,9 +1545,24 @@ impl Context {
                     let simplified = self.terms.ctx_simplify(bottom_up);
                     let (bindings, body) = self.terms.share_for_printing(simplified);
                     let printer = nixie_core::smtlib::Printer::new(&self.terms);
-                    let mut text = printer.print_term(body);
+                    // Assemble the let-shared spelling LINEARLY: the
+                    // bindings' openings, then the body, then one closer
+                    // per binding.  (The previous per-binding
+                    // `text = format!("(let … {text})")` rebuild copied
+                    // the whole accumulated text once per binding —
+                    // O(L²) on the 10k+-binding residuals.)
+                    let mut text = String::new();
                     for (name, rhs) in bindings.iter().rev() {
-                        text = format!("(let (({name} {})) {text})", printer.print_term(*rhs));
+                        let rhs_text = printer.print_term(*rhs);
+                        text.push_str("(let ((");
+                        text.push_str(name);
+                        text.push(' ');
+                        text.push_str(&rhs_text);
+                        text.push_str(")) ");
+                    }
+                    text.push_str(&printer.print_term(body));
+                    for _ in bindings.iter() {
+                        text.push(')');
                     }
                     output.push(text);
                 }
