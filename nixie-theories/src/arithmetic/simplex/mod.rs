@@ -3616,18 +3616,19 @@ impl Simplex {
 
     /// Bland's-rule entering choice: the smallest-indexed eligible non-basic
     /// variable in the leaving variable's row (termination-guaranteed).
-    fn find_bland_pivot_col(&mut self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
-        let expr = self.row_lin(basic_var)?;
+    fn find_bland_pivot_col(&self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
+        let terms = self.row_term_signs(basic_var)?;
         let mut best_var: Option<VarId> = None;
-        for (var, coef) in &expr.terms {
+        for (var, sgn) in terms.iter() {
+            if *sgn == 0 {
+                continue;
+            }
             let eligible = match bound.kind {
                 BoundType::Lower => {
-                    (*coef > Rational64::zero() && self.can_increase(*var))
-                        || (*coef < Rational64::zero() && self.can_decrease(*var))
+                    (*sgn > 0 && self.can_increase(*var)) || (*sgn < 0 && self.can_decrease(*var))
                 }
                 BoundType::Upper => {
-                    (*coef < Rational64::zero() && self.can_increase(*var))
-                        || (*coef > Rational64::zero() && self.can_decrease(*var))
+                    (*sgn < 0 && self.can_increase(*var)) || (*sgn > 0 && self.can_decrease(*var))
                 }
                 _ => false,
             };
@@ -3713,21 +3714,18 @@ impl Simplex {
     ///
     /// For now, we use a simple rule: choose the first eligible variable (Bland's rule for dual)
     #[allow(dead_code)]
-    fn find_dual_pivot_col(&mut self, leaving_var: VarId, bound: &Bound) -> Option<VarId> {
-        let expr = self.row_lin(leaving_var)?;
+    fn find_dual_pivot_col(&self, leaving_var: VarId, bound: &Bound) -> Option<VarId> {
+        let terms = self.row_term_signs(leaving_var)?;
         let mut best_var = None;
-        for (var, coef) in &expr.terms {
+        for (var, sgn) in terms.iter() {
+            if *sgn == 0 {
+                continue;
+            }
             let can_increase = self.can_increase(*var);
             let can_decrease = self.can_decrease(*var);
             let is_eligible = match bound.kind {
-                BoundType::Lower => {
-                    (*coef > Rational64::zero() && can_increase)
-                        || (*coef < Rational64::zero() && can_decrease)
-                }
-                BoundType::Upper => {
-                    (*coef < Rational64::zero() && can_increase)
-                        || (*coef > Rational64::zero() && can_decrease)
-                }
+                BoundType::Lower => (*sgn > 0 && can_increase) || (*sgn < 0 && can_decrease),
+                BoundType::Upper => (*sgn < 0 && can_increase) || (*sgn > 0 && can_decrease),
                 _ => false,
             };
             if is_eligible {
@@ -3782,19 +3780,52 @@ impl Simplex {
     /// columns make every later pivot touch fewer rows, and non-free (bounded)
     /// dependents cannot absorb arbitrary value changes, so entering a column
     /// full of them immediately recreates infeasibility elsewhere.
-    fn find_pivot_col(&mut self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
-        let expr = self.row_lin(basic_var)?;
+    /// The violated basic's row as (variable, sign) pairs — the entering
+    /// rules' only coefficient input.  Reads EITHER stored form with no
+    /// materialization and no gcd (the sign of `N_v` under `D > 0` is the
+    /// sign of the canonical coefficient); the term order is the same in
+    /// both forms, so the iteration (and every tie-break) is identical to
+    /// the historical canonical walk.
+    fn row_term_signs(&self, var: VarId) -> Option<SmallVec<[(VarId, i8); 4]>> {
+        Some(match self.tableau.get(&var)? {
+            TableRow::Lin(row) | TableRow::LinNoInt(row) => row
+                .terms
+                .iter()
+                .map(|(v, c)| {
+                    (
+                        *v,
+                        if c.is_positive() {
+                            1
+                        } else if c.is_negative() {
+                            -1
+                        } else {
+                            0
+                        },
+                    )
+                })
+                .collect(),
+            TableRow::Int(row) => row
+                .terms
+                .iter()
+                .map(|(v, n)| (*v, n.signum() as i8))
+                .collect(),
+        })
+    }
+
+    fn find_pivot_col(&self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
+        let terms = self.row_term_signs(basic_var)?;
         // (non-free dependents, column length, variable) – smaller is better.
         let mut best: Option<(usize, usize, VarId)> = None;
-        for (var, coef) in &expr.terms {
+        for (var, sgn) in terms.iter() {
+            if *sgn == 0 {
+                continue;
+            }
             let is_eligible = match bound.kind {
                 BoundType::Lower => {
-                    (*coef > Rational64::zero() && self.can_increase(*var))
-                        || (*coef < Rational64::zero() && self.can_decrease(*var))
+                    (*sgn > 0 && self.can_increase(*var)) || (*sgn < 0 && self.can_decrease(*var))
                 }
                 BoundType::Upper => {
-                    (*coef < Rational64::zero() && self.can_increase(*var))
-                        || (*coef > Rational64::zero() && self.can_decrease(*var))
+                    (*sgn < 0 && self.can_increase(*var)) || (*sgn > 0 && self.can_decrease(*var))
                 }
                 _ => false,
             };

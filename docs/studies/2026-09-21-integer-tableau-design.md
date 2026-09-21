@@ -157,3 +157,54 @@ entering/leaving row materializations — Phase 2/3 territory (the
 entering-rule trio and `build_pivot_expr` still materialize one
 canonical row per pivot round; the born-integer solved form is
 Phase 3).  The write-back floor itself is CLOSED.
+
+## Phase 2 record: the entering rules go sign-native (marginal win, honest attribution)
+
+`find_pivot_col` / `find_bland_pivot_col` / `find_dual_pivot_col` now
+read `(var, sign)` pairs through `row_term_signs` — either stored form,
+no materialization, no gcd, and the trio returns to `&self`.  The rules'
+only coefficient input was always the SIGN (eligibility) plus
+`num_nonfree_basic_dependents`/column-length scoring — `sign(N_v)` under
+`D > 0` is exactly the canonical coefficient's sign, and both forms
+share the term order, so iteration and tie-breaks are identical.
+Bit-identical (gate 1.000/1.000, probes, CAV identity); full bar green.
+
+**Honest attribution**: the win is smaller than the profile suggested —
+`row_lin`'s memoization meant the trio's materialization of the
+violated row was SHARED with `pivot`'s own leaving-row fetch one call
+later; Phase 2 saves only the conflict-round materializations (rounds
+that end without a pivot).  The walls show it inside noise.  The
+structural value stands (the entering rules no longer force canonicity
+at all).
+
+## Phase 3, refined (the next session's entry)
+
+The born-integer entering row — and the refinement that makes it
+cleaner than the original sketch: **an `Int` leaving row's solved form
+is exact-and-narrow BY CONSTRUCTION**.  Re-denomination
+(`e = (D·b − Σ_{i≠e} n_i·v_i − n_c)/n_e`, sign-normalized so the
+denominator is `|n_e|`) only sign-flips budget-bounded numerators — no
+intermediate can overflow, so `build_pivot_expr`'s exact and wide
+RETRIES ARE UNREACHABLE for Int leaving rows, and the born row is
+admitted by construction (`|N| ≤ 2^62`, `D = |n_e| ≤ 2^62`).
+
+Implementation notes for the owner:
+* `born_entering_row(leaving_int, n_e, basic_var, nonbasic_var)` —
+  term order `[basic_var, then leaving order]` matches
+  `build_pivot_expr`'s (try_add_term appends), so the commit's content
+  addressing and downstream orders are unchanged.
+* `entering_int` IS the born row (kills `int_row_from_lin(new_expr)`'s
+  per-pivot lcm build).
+* `entering_big` must become LAZY — it is consumed only by the
+  wide-row substitution branch and the exact fallback (the cold tail);
+  building it eagerly from the born row would pay per-term `BigRational`
+  reductions on every pivot.  Construct at the use sites from whichever
+  entering form exists.
+* The entering var's assignment value: `eval` over the born row.  The
+  ZERO-GCD FAST PATH: when the assignment values are INTEGRAL (the
+  common tableau state), the value is `(Σ N_i·a_i + N_c)/D` — pure
+  `i128` accumulation (products ≤ 2^125) with ONE final
+  `checked_ratio_i128`.  Fractional `a_i` fall back to per-term
+  rational adds (1 gcd/term, the mixed case only).
+* The commit inserts `TableRow::Int(born)` — the entering row's
+  canonical form is never built on the hot path at all.
