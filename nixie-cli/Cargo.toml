@@ -16,6 +16,7 @@ doc = false
 
 [dependencies]
 mimalloc = { workspace = true }
+memmap2 = "0.9"
 nixie-core = { workspace = true, features = ["std"] }
 nixie-sat = { workspace = true, features = ["std"] }
 nixie-solver = { workspace = true, features = ["std", "nlsat"] }

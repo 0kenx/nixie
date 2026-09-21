@@ -698,9 +698,22 @@ fn process_single_file(
             && !args.dimacs_output; // `v`-line models come from the SMT path
         if fast_path_ok {
             let flat = {
-                let reader = BufReader::new(&file_handle);
-                let size_hint = file_handle.metadata().map(|m| m.len()).unwrap_or(0);
-                match dimacs::FlatCnf::scan_sized(reader, size_hint) {
+                // mmap first: zero-copy scan straight off the page cache
+                // (no 531 MB heap copy on the anatomy class — that copy
+                // was ~130k of the 484k anonymous-page faults behind the
+                // sys-time wall).  Any mmap failure — empty file,
+                // non-regular, fs without mapping — falls back to the
+                // buffered reader path; parse semantics and every error
+                // message are identical either way.
+                let parsed = match unsafe { memmap2::Mmap::map(&file_handle) } {
+                    Ok(mapping) => dimacs::FlatCnf::scan_bytes(&mapping),
+                    Err(_) => {
+                        let reader = BufReader::new(&file_handle);
+                        let size_hint = file_handle.metadata().map(|m| m.len()).unwrap_or(0);
+                        dimacs::FlatCnf::scan_sized(reader, size_hint)
+                    }
+                };
+                match parsed {
                     Ok(f) => f,
                     Err(e) => {
                         return SolverResult {
