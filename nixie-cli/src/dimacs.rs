@@ -834,7 +834,7 @@ mod tests {
 /// intermediate cost ~70 % of whole-run wall on the 544 MB parse anatomy
 /// (`hwmcc-6s299`, zero search on both sides) — see
 /// `docs/studies/2026-09-15-env-probe-regression.md`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct FlatCnf {
     pub num_vars: usize,
     pub num_clauses: usize,
@@ -843,6 +843,12 @@ pub struct FlatCnf {
 
 impl FlatCnf {
     /// Byte-level scan of a whole DIMACS CNF body.
+    ///
+    /// Uses the AVX2 boundary kernels (32-byte blockwise whitespace/digit
+    /// runs, direct integer assembly) when the CPU has AVX2 and
+    /// `NIXIE_NO_SIMD` is unset; otherwise the scalar byte loops.  The two
+    /// paths produce byte-identical `lits` streams and identical error
+    /// messages — pinned by the differential tests in `scan_tests`.
     ///
     /// # Errors
     ///
@@ -857,7 +863,17 @@ impl FlatCnf {
         reader
             .read_to_end(&mut raw)
             .map_err(|e| format!("Failed to read DIMACS: {}", e))?;
+        Self::scan_body(&raw, simd_scan_enabled())
+    }
 
+    /// The scan driver over an in-memory buffer.
+    ///
+    /// `simd == true` is a caller contract: AVX2 was runtime-detected
+    /// ([`simd_scan_enabled`] or the equivalent test-side check) — the
+    /// AVX2 kernels below are `#[target_feature]` and must not be called
+    /// otherwise.  Both kernel choices walk the identical token stream;
+    /// the output and every error message are path-independent.
+    fn scan_body(raw: &[u8], simd: bool) -> Result<Self, String> {
         let mut num_vars = 0usize;
         let mut num_clauses_expected = 0usize;
         let mut problem_line_found = false;
@@ -899,7 +915,7 @@ impl FlatCnf {
                 continue;
             }
             if b.is_ascii_whitespace() {
-                i += 1;
+                i = skip_ws(raw, i, simd);
                 continue;
             }
             if !problem_line_found {
@@ -913,9 +929,7 @@ impl FlatCnf {
                 i += 1;
             }
             let ds = i;
-            while i < n && raw[i].is_ascii_digit() {
-                i += 1;
-            }
+            i = scan_digits(raw, i, simd);
             if i == ds {
                 let end = (start + 16).min(n);
                 return Err(format!(
@@ -923,11 +937,20 @@ impl FlatCnf {
                     String::from_utf8_lossy(&raw[start..end])
                 ));
             }
-            let token =
-                std::str::from_utf8(&raw[start..i]).map_err(|_| "Invalid token".to_string())?;
-            let lit: i32 = token
-                .parse()
-                .map_err(|_| format!("Invalid literal in clause: {}", token))?;
+            // Digits are ASCII by the kernel contract, so the token is
+            // valid UTF-8; assemble the i32 directly (no from_utf8/
+            // str::parse round trip).  `None` is exactly the `str::parse`
+            // failure case (magnitude beyond i32 range) — pinned against
+            // `str::parse` by `scan_tests::parse_lit_matches_str_parse`.
+            let lit = match parse_lit(raw, start, ds, i) {
+                Some(lit) => lit,
+                None => {
+                    return Err(format!(
+                        "Invalid literal in clause: {}",
+                        String::from_utf8_lossy(&raw[start..i])
+                    ));
+                }
+            };
             if lit == 0 {
                 clauses_found += 1;
             } else if lit.unsigned_abs() as usize > num_vars {
@@ -960,5 +983,431 @@ impl FlatCnf {
             num_clauses: clauses_found,
             lits,
         })
+    }
+}
+
+/// Runtime gate, cached once; `NIXIE_NO_SIMD=1` opts out (the same
+/// pattern as `nixie-sat`'s list-kernel gate).
+fn simd_scan_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    #[cfg(target_arch = "x86_64")]
+    {
+        *ON.get_or_init(|| {
+            std::arch::is_x86_feature_detected!("avx2")
+                && !std::env::var("NIXIE_NO_SIMD").is_ok_and(|v| v == "1")
+        })
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        *ON.get_or_init(|| false)
+    }
+}
+
+/// Advance `i` past the maximal ASCII-whitespace run starting at `i`
+/// (byte-at-a-time reference kernel; exactly `u8::is_ascii_whitespace`:
+/// space, `\t`, `\n`, `\x0C`, `\r` — *not* `\x0B`).
+#[inline]
+fn skip_ws_scalar(raw: &[u8], mut i: usize) -> usize {
+    while i < raw.len() && raw[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// Advance `i` past the maximal ASCII-digit run starting at `i`
+/// (byte-at-a-time reference kernel).
+#[inline]
+fn scan_digits_scalar(raw: &[u8], mut i: usize) -> usize {
+    while i < raw.len() && raw[i].is_ascii_digit() {
+        i += 1;
+    }
+    i
+}
+
+/// Kernel dispatch: `simd` selects the AVX2 boundary kernels when the
+/// caller's runtime gate allows (see [`FlatCnf::scan_body`]'s contract).
+#[inline]
+fn skip_ws(raw: &[u8], i: usize, simd: bool) -> usize {
+    if simd {
+        skip_ws_fast(raw, i)
+    } else {
+        skip_ws_scalar(raw, i)
+    }
+}
+
+/// Kernel dispatch (digits), mirroring [`skip_ws`].
+#[inline]
+fn scan_digits(raw: &[u8], i: usize, simd: bool) -> usize {
+    if simd {
+        scan_digits_fast(raw, i)
+    } else {
+        scan_digits_scalar(raw, i)
+    }
+}
+
+/// AVX2 whitespace skip: classify 32-byte blocks, jump to the first
+/// non-whitespace byte (one load + one tzcnt for typical short gaps);
+/// the trailing partial block falls back to the scalar kernel.
+///
+/// # Safety (caller contract)
+///
+/// AVX2 must be available at runtime (`is_x86_feature_detected!("avx2")`);
+/// the `#[target_feature]` body below must not execute otherwise.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn skip_ws_fast(raw: &[u8], i: usize) -> usize {
+    // SAFETY: only reached with `simd == true`, which the callers gate on
+    // AVX2 runtime detection (the `simd_scan_enabled` OnceLock, or the
+    // differential test's own detection check).
+    unsafe { skip_ws_avx2(raw, i) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn skip_ws_avx2(raw: &[u8], mut i: usize) -> usize {
+    // SAFETY: AVX2 is caller-contracted (see `skip_ws_fast`); every load is
+    // in-bounds by the `i + 32 <= n` cursor bound.
+    unsafe {
+        use core::arch::x86_64::*;
+        while i + 32 <= raw.len() {
+            let v = _mm256_loadu_si256(raw.as_ptr().add(i) as *const __m256i);
+            // bit set = whitespace byte (the five `is_ascii_whitespace`
+            // members — the mask set must match `skip_ws_scalar` exactly).
+            let ws = _mm256_or_si256(
+                _mm256_or_si256(
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b' ' as i8)),
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\t' as i8)),
+                ),
+                _mm256_or_si256(
+                    _mm256_or_si256(
+                        _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\n' as i8)),
+                        _mm256_cmpeq_epi8(v, _mm256_set1_epi8(0x0c)),
+                    ),
+                    _mm256_cmpeq_epi8(v, _mm256_set1_epi8(b'\r' as i8)),
+                ),
+            );
+            // movemask covers exactly the 32 lanes (a full i32), so `!m`
+            // sets a bit precisely at non-whitespace bytes.
+            let non_ws = !_mm256_movemask_epi8(ws);
+            if non_ws != 0 {
+                return i + non_ws.trailing_zeros() as usize;
+            }
+            i += 32;
+        }
+    }
+    skip_ws_scalar(raw, i)
+}
+
+/// AVX2 digit-run scan: same blockwise shape as [`skip_ws_fast`]; a byte
+/// is a digit iff `v - b'0'` is unsigned `<= 9` (the sub/min/cmpeq trick —
+/// wrapping bytes below `b'0'` become large unsigned values and fail).
+///
+/// # Safety (caller contract)
+///
+/// AVX2 must be available at runtime, as for [`skip_ws_fast`].
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn scan_digits_fast(raw: &[u8], i: usize) -> usize {
+    // SAFETY: only reached with `simd == true` (runtime-gated on AVX2).
+    unsafe { scan_digits_avx2(raw, i) }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn scan_digits_avx2(raw: &[u8], mut i: usize) -> usize {
+    // SAFETY: AVX2 is caller-contracted (see `scan_digits_fast`); every
+    // load is in-bounds by the `i + 32 <= n` cursor bound.
+    unsafe {
+        use core::arch::x86_64::*;
+        while i + 32 <= raw.len() {
+            let v = _mm256_loadu_si256(raw.as_ptr().add(i) as *const __m256i);
+            let t = _mm256_sub_epi8(v, _mm256_set1_epi8(b'0' as i8));
+            let digits = _mm256_cmpeq_epi8(t, _mm256_min_epu8(t, _mm256_set1_epi8(9)));
+            let non_digits = !_mm256_movemask_epi8(digits);
+            if non_digits != 0 {
+                return i + non_digits.trailing_zeros() as usize;
+            }
+            i += 32;
+        }
+    }
+    scan_digits_scalar(raw, i)
+}
+
+/// Accumulator freeze point: once the running magnitude exceeds this,
+/// one more digit proves the full magnitude exceeds `2_147_483_649`, i.e.
+/// beyond every `i32` literal bound — `str::parse::<i32>` would reject the
+/// token.  Clamping to the sentinel (kept on every later digit) therefore
+/// preserves the accept/reject decision exactly while making unbounded
+/// digit runs (arbitrary leading zeros) safe in `u64`.  While unclamped,
+/// every accumulated value is exact (≤ `214_748_364 * 10 + 9`), so all
+/// valid magnitudes up to `i32::MIN`'s `2147483648` stay exact.
+const LIT_ACC_LIMIT: u64 = 214_748_364;
+/// Sentinel magnitude: strictly above `2147483649` (the largest exact
+/// accumulator value `LIT_ACC_LIMIT * 10 + 9`) and above every accepted
+/// magnitude, so a clamped accumulator is always rejected and can never
+/// be mistaken for an exact one.
+const LIT_ACC_SENTINEL: u64 = 3_000_000_000;
+
+/// Assemble a DIMACS literal from ASCII bytes: `raw[start..ds)` is the
+/// optional `+`/`-` sign, `raw[ds..end)` a non-empty ASCII digit run.
+///
+/// Semantics are exactly `str::parse::<i32>` over the same token
+/// (arbitrary leading zeros accepted; `+0`/`-0` are `0`; `i32::MIN`'s
+/// magnitude is accepted only with `-`), returning `None` precisely
+/// where the `str` parse fails.  Equivalence is pinned by
+/// `scan_tests::parse_lit_matches_str_parse`.
+#[inline]
+fn parse_lit(raw: &[u8], start: usize, ds: usize, end: usize) -> Option<i32> {
+    let neg = raw[start] == b'-';
+    let mut acc: u64 = 0;
+    for &d in &raw[ds..end] {
+        if acc <= LIT_ACC_LIMIT {
+            acc = acc * 10 + u64::from(d - b'0');
+        } else {
+            acc = LIT_ACC_SENTINEL;
+        }
+    }
+    if neg {
+        if acc > 2147483648 {
+            return None;
+        }
+        if acc == 2147483648 {
+            return Some(i32::MIN); // -2147483648: the one wide negative
+        }
+        Some(-(acc as i32))
+    } else {
+        if acc > i32::MAX as u64 {
+            return None;
+        }
+        Some(acc as i32)
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    /// Test-side twin of `simd_scan_enabled`'s detection half: the
+    /// differential harness compares the SIMD path against the scalar
+    /// reference whenever the hardware can actually run it.
+    fn have_avx2() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            std::arch::is_x86_feature_detected!("avx2")
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
+    /// Differential oracle: scalar reference vs SIMD kernels must agree
+    /// on the full result — including the exact error message.  On
+    /// hardware without AVX2 the SIMD leg degenerates to the scalar path
+    /// (the safety contract forbids executing the kernels undetected).
+    fn assert_paths_agree(raw: &[u8]) {
+        let scalar = FlatCnf::scan_body(raw, false);
+        let simd = FlatCnf::scan_body(raw, have_avx2());
+        assert_eq!(
+            scalar, simd,
+            "scalar and SIMD scan disagree on input {raw:?}"
+        );
+    }
+
+    #[test]
+    fn parse_lit_matches_str_parse() {
+        // Deterministic boundary magnitudes (around i32::MAX, i32::MIN,
+        // and the accumulator freeze point) plus arbitrary leading zeros.
+        let magnitudes = [
+            0u64,
+            1,
+            9,
+            10,
+            99,
+            214748364,
+            2147483646,
+            2147483647,
+            2147483648,
+            2147483649,
+            2147483650,
+            3_000_000_000,
+            4_294_967_295,
+        ];
+        let mut tokens: Vec<String> = Vec::new();
+        for &m in &magnitudes {
+            tokens.push(m.to_string());
+            tokens.push(format!("+{m}"));
+            tokens.push(format!("-{m}"));
+            // Leading zeros must not change acceptance (str::parse skips
+            // them; the accumulator must stay exact through them).
+            tokens.push(format!("0{m}"));
+            tokens.push(format!("-000{m}"));
+            tokens.push(format!("00000000000000000000{m}"));
+        }
+        tokens.push("00000000000000000000000000000".to_string()); // all zeros
+        tokens.push("99999999999999999999999999999".to_string()); // wide, nonzero
+        tokens.push("-99999999999999999999999999999".to_string());
+        for tok in &tokens {
+            let bytes = tok.as_bytes();
+            let start = 0;
+            let ds = matches!(bytes[0], b'+' | b'-') as usize;
+            let got = parse_lit(bytes, start, ds, bytes.len());
+            let want = tok.parse::<i32>().ok();
+            assert_eq!(
+                got, want,
+                "parse_lit({tok:?}) = {got:?} but str::parse = {want:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scan_paths_agree_deterministic() {
+        // Well-formed basics.
+        assert_paths_agree(b"p cnf 2 2\n1 2 0\n-1 -2 0\n");
+        assert_paths_agree(b"c comment\np cnf 1 1\n1 0\n");
+        assert_paths_agree(b"p cnf 1 1\n0\n"); // empty clause
+        assert_paths_agree(b"p cnf 3 1\n1 -2\n3 0\n"); // clause across lines
+        assert_paths_agree(b"p cnf 3 2\n1 2 0 3 0\n"); // two clauses one line
+        assert_paths_agree(b"p cnf 2 2\n+1 -0 0\n007 0\n"); // signs, -0, leading zeros
+        // Every whitespace member (and the excluded \x0B) as separator.
+        assert_paths_agree(b"p cnf 2 2\x201\x09-2\x0c0\x0a\x0d1 0\n");
+        // Malformed: the error paths must stay reachable and identical.
+        assert_paths_agree(b"1 -2 0\n"); // clause before problem line
+        assert_paths_agree(b"p cnf 2 1\n1 3 0\n"); // var beyond declared count
+        assert_paths_agree(b"p cnf 2 1\n1 2\n"); // unterminated
+        assert_paths_agree(b"p cnf 2 2\n1 2 0\n"); // clause count mismatch
+        assert_paths_agree(b"p cnf 2 1\nx 0\n"); // non-digit token
+        assert_paths_agree(b"p cnf 2 1\n- 0\n"); // lone sign
+        assert_paths_agree(b"p cnf 2 1\n--5 0\n");
+        assert_paths_agree(b"p cnf 2 1\n999999999999 0\n"); // i32 overflow
+        assert_paths_agree(b"p cnf 2 1\n-999999999999 0\n");
+        assert_paths_agree(b"p cnf 2 1\n2147483648 0\n"); // i32::MAX + 1
+        assert_paths_agree(b"p cnf 2 1\n-2147483648 0\n"); // i32::MIN, valid
+        assert_paths_agree(b"p cnf 2 1\n2147483649 0\n");
+        assert_paths_agree(b"p cnf\n"); // truncated problem line
+        assert_paths_agree(b"p cnf x y\n1 0\n");
+        assert_paths_agree(b""); // empty file
+        assert_paths_agree(b"p cnf 2 1\n"); // declared but absent clause
+        assert_paths_agree(b"p cnf 2 1\n1 2 c3 0\n"); // 'c' swallows rest of line
+        assert_paths_agree(b"p cnf 2 1\n1 p 2 0\n"); // 'p' line skipped silently
+        assert_paths_agree(b"p cnf 2 1\n1 2 0 c\xa0\n"); // invalid UTF-8 comment
+        assert_paths_agree(b"p cnf 2 1\n1 2 0\nc"); // comment, no newline at EOF
+        assert_paths_agree(b"p cnf 2 1\n1 2 0"); // no newline after last clause
+        assert_paths_agree(b"p cnf 2 1\n1 2 0 \t \r \x0c \n"); // ws tail at EOF
+    }
+
+    #[test]
+    fn scan_paths_agree_at_block_boundaries() {
+        // The AVX2 kernels decide in 32-byte blocks; every token/whitespace
+        // arrangement around a block edge must agree with the scalar walk.
+        for pad in 0..96usize {
+            // Token starting exactly at each offset near the edges.
+            let body = format!(
+                "p cnf 9 2\n{}1 -2 0\n{}34 0\n",
+                " ".repeat(pad),
+                " ".repeat(pad)
+            );
+            assert_paths_agree(body.as_bytes());
+        }
+        // Whitespace runs crossing block edges (length 30..=66).
+        for ws_len in 28..=68usize {
+            for ws in [" ", "\t", "\n", "\r\n", " \t\x0c "] {
+                let sep = ws.repeat(ws_len / ws.len() + 1);
+                let body = format!("p cnf 9 1\n1{sep}2{sep}3{sep}0\n");
+                assert_paths_agree(body.as_bytes());
+            }
+        }
+        // Digit runs crossing block edges: leading zeros make long runs.
+        for zeros in [28usize, 29, 30, 31, 32, 33, 34, 63, 64, 65, 100] {
+            let body = format!("p cnf 9 1\n{}5 0\n", "0".repeat(zeros));
+            assert_paths_agree(body.as_bytes());
+        }
+        // Exact multiples of 32 for the whole buffer (tail-path coverage).
+        for total in [0usize, 1, 31, 32, 33, 63, 64, 65, 95, 96, 97, 128, 160] {
+            let mut body = String::from("p cnf 9 1\n1 0\n");
+            while body.len() < total {
+                body.push(' ');
+            }
+            body.truncate(total);
+            assert_paths_agree(body.as_bytes());
+        }
+        // Digit run ending exactly at EOF (no terminator after it).
+        for tail in [
+            "5".to_string(),
+            "55".to_string(),
+            "0".repeat(31) + "5",
+            "0".repeat(32) + "5",
+        ] {
+            let body = format!("p cnf 9 1\n1 0\n{tail}");
+            assert_paths_agree(body.as_bytes());
+        }
+        // All-digit final block (the all-32-digits advance branch).
+        let all_digits = "1".repeat(96);
+        let body = format!("p cnf 9 1\n{all_digits}");
+        assert_paths_agree(body.as_bytes());
+        // All-whitespace tail blocks (the all-32-ws advance branch).
+        assert_paths_agree(b"p cnf 9 1\n1 0\n                              \n");
+    }
+
+    #[test]
+    fn scan_paths_agree_randomized() {
+        // Deterministic xorshift64* — no external RNG so the corpus is
+        // reproducible from the seed alone.
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let gen_case = |next: &mut dyn FnMut() -> u64| -> Vec<u8> {
+            let mode = next() % 4;
+            let mut out: Vec<u8> = Vec::new();
+            match mode {
+                0 => {
+                    // Structured CNF: header, random small clauses.
+                    out.extend_from_slice(b"p cnf 64 200\n");
+                    for _ in 0..200 {
+                        let len = next() % 5;
+                        for _ in 0..=len {
+                            let v = (next() % 64) as i64 + 1;
+                            let lit = if next().is_multiple_of(2) { v } else { -v };
+                            out.extend_from_slice(lit.to_string().as_bytes());
+                            out.push(b' ');
+                        }
+                        out.extend_from_slice(b"0\n");
+                    }
+                }
+                1 => {
+                    // Header plus random byte soup (malformed-heavy).
+                    out.extend_from_slice(b"p cnf 999 5\n");
+                    for _ in 0..(next() % 4096) {
+                        out.push((next() % 256) as u8);
+                    }
+                }
+                2 => {
+                    // Random tokens from a hostile alphabet.
+                    let alphabet: Vec<u8> = b"0123456789-+ cpcnf\t\n\r\x0c[]%$@\xC3\xA0".to_vec();
+                    out.extend_from_slice(b"p cnf 50 1\n");
+                    for _ in 0..(next() % 512) {
+                        out.push(alphabet[(next() % alphabet.len() as u64) as usize]);
+                    }
+                }
+                _ => {
+                    // No header at all (exercises the early-error paths).
+                    for _ in 0..(next() % 256) {
+                        out.push(b"0123456789 -+c\n"[(next() % 14) as usize]);
+                    }
+                }
+            }
+            out
+        };
+        for iter in 0..3000 {
+            let case = gen_case(&mut next);
+            let scalar = FlatCnf::scan_body(&case, false);
+            let simd = FlatCnf::scan_body(&case, have_avx2());
+            assert_eq!(scalar, simd, "iteration {iter} diverged on {case:?}");
+        }
     }
 }

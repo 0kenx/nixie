@@ -4086,20 +4086,32 @@ impl Solver {
         // ranking sees the final, post-backtrack trail state rather than one
         // that gets invalidated out from under it.
         let n = clause_lits.len();
-        let mut best = 0;
-        for i in 1..n {
-            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[best]) {
-                best = i;
+        // Load-time fast path: with an empty trail every literal ranks
+        // `(1, u32::MAX)` (`watch_rank`'s undefined case), the strict `>`
+        // tie-break then keeps `best = 0` and `second = 1`, and both swaps
+        // are self-swaps — the two argmax scans are provably identity maps
+        // and are skipped wholesale.  This is the bulk-load shape (every
+        // `add_clause` of a fresh parse; the two scans were ~5.2% of run on
+        // load-dominated classes).  `pre_check_effective_unit` above may
+        // only *shrink* the trail (`backtrack_to_root`); its unit-forcing
+        // assignment happens after this selection, so the emptiness test
+        // here sees the exact trail the scans would have.
+        if self.trail.num_assigned() != 0 {
+            let mut best = 0;
+            for i in 1..n {
+                if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[best]) {
+                    best = i;
+                }
             }
-        }
-        clause_lits.swap(0, best);
-        let mut second = 1;
-        for i in 2..n {
-            if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
-                second = i;
+            clause_lits.swap(0, best);
+            let mut second = 1;
+            for i in 2..n {
+                if self.watch_rank(clause_lits[i]) > self.watch_rank(clause_lits[second]) {
+                    second = i;
+                }
             }
+            clause_lits.swap(1, second);
         }
-        clause_lits.swap(1, second);
 
         let clause_id = self.clauses.add_original(clause_lits.iter().copied());
         self.proof_set_clause_id(clause_id, proof_oid);
