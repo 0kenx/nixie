@@ -1,5 +1,22 @@
 # Handoff: the Bareiss layer landed, the table carries par-2/geomean, LIA's arithmetic layer closed
 
+**Follow-up (same night, later): step 3 EXECUTED.**  The ctx-simplify
+fold pass reached the check-sat path — not as a fresh build but as the
+CAMPAIGN completing the assert-fold session's flag-gated landing
+(`a6349641`; their checkout had clobbered this session's independent
+probe — reconciled per the item-96 precedent).  Landed (`6853f25c`):
+default ON with `NIXIE_ASSERT_FOLD=0` kill-switch, REFUTE-ONLY adoption
+(the always-rewrite variant measurably regressed the LIA mid-band),
+ite structural gate, depth-aware contract (ctx_walk is natively
+recursive — the depth-guard's fold-rescue LADDER owns deep spines).
+69 nec-smt members `unknown -> unsat` with zero z3-disagreeing flips;
+`prp-3-18` (47x cell) at 0 conflicts; `problem_2__014` (42x cell)
+timeout -> `sat`/905 ms; standing LIA 33/60, par2 9429 -> 9088, median
+0.55 -> 0.52.  Full record:
+`docs/studies/2026-09-21-assert-fold-default.md` (binary
+`precompile/6853f25c`).
+
+----
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
