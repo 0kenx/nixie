@@ -207,7 +207,16 @@ survey residual: 1 member — i129, the simplex resource-limit tail (a
 different class).**  The arc's cumulative run: 150 → … → 18 → 2 → **1**.
 The next hunt is fresh-seed surveying (the fixed seeds are exhausted).
 
-## Landing note (the ff is pending the parallel session's tree)
+## Landing note (RESOLVED: `286f63bd` landed)
+
+The ff completed after preserving the warm-start session's uncommitted
+restyle on the `warm-start-restyle-snapshot` branch (nothing discarded;
+their session had closed at `553a44f8`).  The i504 fix is on main as
+`286f63bd`; the landed tree re-verified (build, the certificate pins,
+the 1670-test theory suite, fmt/clippy; i504 `sat`, i129 honest
+`unknown`), binary cached at `precompile/286f63bd/`.
+
+(original note:)
 
 The i504 fix's CODE commit is ready but its fast-forward is BLOCKED by
 the warm-start session's uncommitted restyle of `model_eval.rs` /
