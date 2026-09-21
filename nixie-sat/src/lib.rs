@@ -442,6 +442,7 @@ pub(crate) mod test_knobs {
         static ELS_PRE: Cell<Option<bool>> = const { Cell::new(None) };
         static FOLD_SKIP: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
         static GATE_SUB: Cell<Option<bool>> = const { Cell::new(None) };
+        static GATE_SUB_MIN: Cell<Option<usize>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set_kitten_sweep(v: Option<bool>) {
@@ -491,6 +492,15 @@ pub(crate) mod test_knobs {
 
     pub(crate) fn gate_subsume_override() -> Option<bool> {
         GATE_SUB.with(Cell::get)
+    }
+
+    /// Test override for [`crate::gate_subsume_min_candidates`].
+    pub(crate) fn set_gate_subsume_min(v: Option<usize>) {
+        GATE_SUB_MIN.with(|c| c.set(v));
+    }
+
+    pub(crate) fn gate_subsume_min_override() -> Option<usize> {
+        GATE_SUB_MIN.with(Cell::get)
     }
 
     /// Test override for [`crate::fold_bve_skip_policy`]: `Some((armed,
@@ -893,6 +903,50 @@ fn fold_bve_skip_policy_from_env() -> (bool, u64) {
     #[cfg(not(feature = "std"))]
     {
         (false, 25)
+    }
+}
+
+pub(crate) const GATE_SUBSUME_MIN_CANDIDATES: usize = 64;
+
+/// Default candidate-volume floor for the gate-subsumption pass
+/// (`NIXIE_GATE_SUBSUME_MIN` overrides at runtime; the test knob too).
+/// Below the floor the pass skips entirely — measured rationale
+/// (2026-09-21): the pass's value tracks its retirement volume (WS
+/// retires 510/round and wins 5.3×; frb retires zero — its win is the
+/// fold's; Carry_Bits_Fast retires 1-3/round and pays 2.2×: micro-rounds
+/// are pure trajectory perturbation with no structural payoff).
+#[cfg(test)]
+#[doc(hidden)]
+pub fn gate_subsume_min_candidates() -> usize {
+    if let Some(over) = crate::test_knobs::gate_subsume_min_override() {
+        return over;
+    }
+    gate_subsume_min_from_env()
+}
+
+/// Env-only variant; the cfg(test) twin consults the `test_knobs`
+/// override first.
+#[cfg(not(test))]
+#[doc(hidden)]
+pub fn gate_subsume_min_candidates() -> usize {
+    gate_subsume_min_from_env()
+}
+
+fn gate_subsume_min_from_env() -> usize {
+    use std::sync::OnceLock;
+    static FLOOR: OnceLock<usize> = OnceLock::new();
+    #[cfg(feature = "std")]
+    {
+        *FLOOR.get_or_init(|| {
+            std::env::var("NIXIE_GATE_SUBSUME_MIN")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(crate::GATE_SUBSUME_MIN_CANDIDATES)
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        crate::GATE_SUBSUME_MIN_CANDIDATES
     }
 }
 

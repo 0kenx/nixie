@@ -107,3 +107,79 @@ differential, the `fold_class_unit_regression` pair, and the 4 unit
 tests); workspace suite, gate (trajectory shift expected and justified —
 deliberate soundness fix), env_ab full-stack table, Z3 parity — in the
 landing message.
+
+## Addendum (the Carry "regression" is chaos-shaped; the 30-seed replication)
+
+Per-seed default-vs-full-stack on `Carry_Bits_Fast_19` (the 1.78× cell):
+
+| seed | default | armed | ratio |
+|---|---:|---:|---:|
+| 7919 | 34,621 | 136,732 | 3.95× |
+| 15838 | 54,600 | 60,565 | 1.11× |
+| 23757 | 20,773 | 50,041 | 2.41× |
+| 31676 | 122,563 | **5,680** | **0.046×** |
+| 39595 | 24,250 | 60,780 | 2.51× |
+| 47514 | 52,342 | 79,234 | 1.51× |
+| 55433 | **3,534** | **68,561** | **19.4×** |
+| 63352 | 56,105 | 57,123 | 1.02× |
+| 71271 | 29,457 | 40,936 | 1.39× |
+| 79190 | **682** | 4,197 | 6.2× |
+
+The default's own seed spread is **180×** (682 → 122,563) and the armed
+set both wins 22× (seed 31676) and loses 19× (seed 55433).  The 1.78
+geomean at 10 seeds is trajectory reshuffling, not a family cost —
+AGENTS.md's chaos rule verbatim ("changing only the RNG seed moves
+aggregate cost 7.31×"; this cell is wilder).  The flip decision
+therefore runs the 30-seed replication over the whole corpus
+(`SEEDS=30 env_ab.sh`); the per-cell ratio stability across seed sets is
+the practical null for an env-armed deterministic transform (both arms
+share the seed set — the ratio's stability across seed draws bounds the
+chaos term).  Verdict recorded below when the run completes.
+
+## Addendum 2 — the volume guard, the discriminator pattern, and the flip verdict
+
+Directed pattern discovery at 3 seeds (per the session's operating
+instruction) instead of the 30-seed sweep:
+
+| cell | 10-seed | 3-seed | pattern |
+|---|---|---|---|
+| frb35-17-5 | 0.49 | 0.46 | **stable structural win** (the FOLD's — the pass retires zero there) |
+| WS_500_16 | 0.51 | 0.19 | **stable structural win** (the PASS's — 510 retirements/round) |
+| circuit | 0.94 | 0.87 | stable win |
+| x9 / s38584 / SCPC / b21 / 6s299b685_Iter22 | 0.96-1.29 | 0.94-1.23 | **chaos noise around 1.0**, direction flips with the seed set |
+| Carry_Bits_Fast_19 | 1.78 | 2.19 | the sole persistent loser |
+
+**Attribution on Carry (3 seeds)**: default 33,989 / fold-only 34,226
+(1.007 — the fold is FREE there at these seeds) / fold+gs 74,554 — the
+entire cost is the subsumption pass, whose rounds on Carry retire **1-3
+clauses** (vs WS's 510, frb's 0).  The pass's value tracks its
+retirement volume; micro-rounds are pure trajectory perturbation.
+
+**The guard** (`GATE_SUBSUME_MIN_CANDIDATES = 64`, env
+`NIXIE_GATE_SUBSUME_MIN`, test knob): a read-only candidate pre-count —
+below the floor the pass returns untouched, leaving the instance
+bit-identical to the fold-only arm.  Measured: **frb fold+gs ≡ fold to
+the last conflict** (547,324 = 547,324), **WS's 5.3× win intact**,
+Carry 2.19 → 1.62 (its high-candidate/low-yield rounds still fire — the
+floor is a candidate-volume signal, the true discriminator would be
+retirement yield, which a probe-first pass cannot know; kissat's
+lazy-connect scheme is the restructure that self-limits).
+
+**Final guarded table (3 seeds)**: geomean **0.819** over 9 cells
+(Carry 1.62, WS 0.19, frb 0.46, circuit 0.87, rest ≈ 1.0).
+
+**Flip verdict: default stays OFF.**  The aggregate win is robust
+(0.82-0.93 across seed sets and guard variants) but
+docs/BENCHMARKING.md's family band blocks a default flip while any
+family sits persistently > 1.15 — Carry is at 1.6-2.2 (chaotic
+magnitude: per-seed 0.046×-19×, 8/10 seeds directionally worse; even
+fold-only measured 1.59 there at 10 seeds once).  The stack remains the
+documented opt-in
+(`NIXIE_SSR_BIN=1 NIXIE_ELS_PRESEARCH=1 NIXIE_GATE_SUBSUME=1`).
+Opening the flip needs either the retirement-yield gate (lazy-connect
+restructure) or an explicit maintainers' call accepting the Carry
+trade.
+
+**Do not tune the floor on Carry** — 3-10-seed geomeans on a cell with
+180× default seed-spread are chaos; any threshold that "fixes" it is
+overfitting the reshuffle.

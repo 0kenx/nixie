@@ -73,6 +73,9 @@ fn strictly_smaller_set_subsumes_through_the_classes() {
         s
     };
     test_knobs::set_gate_subsume(Some(true));
+    // The volume floor guards corpus behavior; the direct fixture is far
+    // below it — bypass for the unit-level semantics pin.
+    test_knobs::set_gate_subsume_min(Some(0));
     let mut armed = build();
     assert_eq!(
         armed.substitute_equivalent_literals_round(),
@@ -84,6 +87,7 @@ fn strictly_smaller_set_subsumes_through_the_classes() {
     );
     assert_eq!(armed.solve(), crate::SolverResult::Sat);
     test_knobs::set_gate_subsume(None);
+    test_knobs::set_gate_subsume_min(None);
 
     let mut unarmed = build();
     assert_eq!(
@@ -173,5 +177,39 @@ fn armed_pass_preserves_verdicts_on_equivalence_chains() {
     assert_eq!(unarmed, armed);
     test_knobs::set_ssr_binaries(None);
     test_knobs::set_els_presearch(None);
+    test_knobs::set_gate_subsume(None);
+}
+
+#[test]
+fn volume_floor_skips_the_pass_without_touching_state() {
+    // Below the floor the pass must be a pure no-op: the round's outcome
+    // then matches the fold-only arm exactly (the rewrite's own paths do
+    // all the retiring).
+    let build = || {
+        let mut s = Solver::default();
+        for _ in 0..6 {
+            s.new_var();
+        }
+        s.add_clause([l(0, false), l(1, true)]);
+        s.add_clause([l(0, true), l(1, false)]);
+        s.add_clause([l(0, true), l(2, true)]);
+        s.add_clause([l(1, true), l(2, true), l(3, true)]);
+        s
+    };
+    test_knobs::set_gate_subsume(Some(true));
+    // Default floor (64) >> this fixture's candidate count.  (The
+    // equivalence binaries themselves are binary-graph edges, not arena
+    // clauses, so `num_original` never counted them — the pass's zero is
+    // the whole pin.)
+    let mut guarded = build();
+    assert_eq!(
+        guarded.substitute_equivalent_literals_round(),
+        crate::solver::equiv::SubstOutcome::Ok
+    );
+    assert_eq!(
+        guarded.stats.gate_subsumed, 0,
+        "guarded pass retires nothing"
+    );
+    assert_eq!(guarded.solve(), crate::SolverResult::Sat);
     test_knobs::set_gate_subsume(None);
 }

@@ -96,6 +96,38 @@ impl Solver {
             }
         }
 
+        // Candidate-volume guard: a cheap read-only pre-count of
+        // matchable-containing originals.  Below the floor the pass
+        // returns without touching anything — the rewrite's own
+        // satisfied/tautology/dedup paths then handle the round exactly
+        // as the fold-only arm would (bit-identical trajectory).
+        let min_candidates = crate::gate_subsume_min_candidates();
+        let mut ncandidates = 0usize;
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned {
+                continue;
+            }
+            if c.lits.iter().any(|&l| matchable[l.var().index()]) {
+                ncandidates += 1;
+                if ncandidates >= min_candidates {
+                    break;
+                }
+            }
+        }
+        let min_candidates = crate::gate_subsume_min_candidates();
+        #[cfg(feature = "std")]
+        if super::learn::inproc_round_trace_enabled() {
+            // The pre-count stops at the floor, so a displayed count equal
+            // to the floor means "floor or more".
+            eprintln!("gate_subsume: ncandidates>={ncandidates} floor={min_candidates}");
+        }
+        if ncandidates < min_candidates {
+            return 0;
+        }
+
         // One pass over the live originals: canonicalize (map through
         // `sub`, drop level-0-false literals, sort + dedup by code),
         // retire satisfied clauses and class-tautologies (the rewrite's
