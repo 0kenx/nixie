@@ -71,6 +71,17 @@ trio and `build_pivot_expr` still materialize one canonical row per
 round; the born-integer solved form is Phase 3) — entry: the design
 study's execution record.  Binary `precompile/45a2c742`.
 
+**Phase 2 landed (`cefcd561`)** — the entering rules read signs
+natively (either form, zero gcd, `&self` again; honest attribution: the
+win is marginal — the memo shared the materialization with pivot's own
+fetch — but the entering rules no longer force canonicity).  **Phase 3
+is refined and ready** (the study's record): an `Int` leaving row's
+solved form is exact-and-narrow BY CONSTRUCTION, `entering_int` dies,
+`entering_big` goes lazy, the entering-value eval has a zero-gcd
+integral fast path, and the entering commit stores the born `Int` row —
+the last per-pivot canonical build on the hot path.  Binary
+`precompile/cefcd561`.
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
