@@ -208,3 +208,35 @@ Implementation notes for the owner:
   rational adds (1 gcd/term, the mixed case only).
 * The commit inserts `TableRow::Int(born)` — the entering row's
   canonical form is never built on the hot path at all.
+
+## Phase 3 record: the born-integer entering row — landed, hot path fully integer
+
+`born_entering_row` (re-denomination of an `Int` leaving row:
+`e = (D·b − Σ_{i≠e} nᵢvᵢ − n_c)/n_e`, sign-normalized to denominator
+`|n_e|`) — exact-and-narrow BY CONSTRUCTION, zero gcds, term order
+matching `build_pivot_expr` (pinned: the 2000-case grid's
+`materialize(born) == build_pivot_expr(materialize(leaving))`, order
+included).  The pivot's Int-leaving branch takes it; `entering_int` IS
+the born row (the per-pivot `int_row_from_lin` build dies);
+`entering_big` goes LAZY (a cell the two cold-tail consumers fill —
+the wide-row branch and the exact fallback — no more eager per-term
+`BigRational` reductions); the entering var's assignment value comes
+from `eval_int_expr` (the ZERO-GCD integral fast path: pure `i128`
+accumulation, one final `checked_ratio_i128`; fractional assignments
+fall back to the canonical evaluation); and the entering commit stores
+`TableRow::Int` — **the hot path never builds a canonical row at all**.
+
+A Stage-A cost the profile exposed is also fixed: `try_patch_column`'s
+owner scan had been materializing Int rows per (owner, candidate)
+through the Cow view — it now reads its ONE coefficient from the store
+form (a single `checked_ratio_i128` for Int rows, direct find for Lin).
+
+Measured (problem__011, back-to-back A/B under load): a consistent
+~6 % wall improvement with BIT-IDENTICAL counters on all four probes
+(026/011/prp-3-18/022-45); gate 1.000/1.000; parity 176/177.  The
+honest end-to-end note: the probe is now dominated by the substitution
+machinery itself (`substitute_row_ff` ~33 % + `gcd_i128` ~30 % — the
+integer mul-sub and the joint-reduction chain), which is this
+architecture's floor; Phase 3's entering-side saving shows as the
+~2 % pivot-share drop plus the removed eager builds, not as a large
+wall multiple.  The design brief's three phases are COMPLETE.

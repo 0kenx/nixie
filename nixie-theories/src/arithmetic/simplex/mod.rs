@@ -1000,6 +1000,79 @@ fn materialize_lin(row: &IntRow) -> LinExpr {
     out
 }
 
+/// The entering row's exact (`BigRational`) form, from whichever
+/// entering form exists (canonical, born-integer, or the wide form
+/// itself) — the lazy `entering_big_cell`'s builder (the cold-tail
+/// consumers only).
+fn entering_big_from(lin: &Option<LinExpr>, born: &Option<IntRow>) -> BigLinExpr {
+    if let Some(w) = born {
+        let d = w.denom as i128;
+        BigLinExpr {
+            terms: w
+                .terms
+                .iter()
+                .map(|(v, n)| {
+                    (
+                        *v,
+                        num_rational::BigRational::new(
+                            num_bigint::BigInt::from(*n),
+                            num_bigint::BigInt::from(d),
+                        ),
+                    )
+                })
+                .collect(),
+            constant: num_rational::BigRational::new(
+                num_bigint::BigInt::from(w.const_num),
+                num_bigint::BigInt::from(d),
+            ),
+        }
+    } else if let Some(e) = lin {
+        BigLinExpr {
+            terms: e.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
+            constant: big_r64(&e.constant),
+        }
+    } else {
+        // The wide entering form populates the cell directly; this arm is
+        // unreachable with an empty cell.
+        BigLinExpr::default()
+    }
+}
+
+/// The entering variable's solved row, BORN in its integer form from an
+/// integer-form leaving row (Phase 3 of the integer tableau): solving
+/// `b = (Σ nᵢvᵢ + n_c)/D` for the entering variable (`n_e` its numerator)
+/// gives `e = (D·b − Σ_{i≠e} nᵢvᵢ − n_c)/n_e` — re-denomination only
+/// sign-flips budget-bounded numerators, so the result is EXACT AND
+/// NARROW BY CONSTRUCTION (no intermediate can overflow; the historical
+/// `build_pivot_expr` exact/wide retries are unreachable for an `Int`
+/// leaving row) and admitted by construction (`|N| ≤ 2^62`,
+/// `denominator = |n_e| ≤ 2^62`).
+///
+/// Term order matches `build_pivot_expr` exactly — `basic_var` first,
+/// then the leaving row's terms in order — so downstream iteration,
+/// column maintenance and content addressing see the same shape.
+fn born_entering_row(leaving: &IntRow, n_e: i128, basic_var: VarId, nonbasic_var: VarId) -> IntRow {
+    debug_assert!(n_e != 0, "entering coefficient is nonzero");
+    let d = leaving.denom as i128;
+    let s: i128 = if n_e < 0 { -1 } else { 1 };
+    let mut terms: SmallVec<[(VarId, i128); 4]> = SmallVec::with_capacity(leaving.terms.len());
+    terms.push((basic_var, s * d));
+    for (v, n) in &leaving.terms {
+        if *v != nonbasic_var {
+            let num = -s * n;
+            debug_assert!(num != 0, "leaving terms are zero-free");
+            terms.push((*v, num));
+        }
+    }
+    let denom = s * n_e;
+    debug_assert!(denom > 0 && denom <= INT_ROW_BUDGET as i128);
+    IntRow {
+        terms,
+        const_num: -s * leaving.const_num,
+        denom: denom as i64,
+    }
+}
+
 /// Exact `lcm` on `i128` inputs, `None` on overflow.
 fn lcm_i128(a: i128, b: i128) -> Option<i128> {
     debug_assert!(a > 0 && b > 0, "denominators are positive");
@@ -3972,7 +4045,31 @@ impl Simplex {
         // without it, a violated wide row whose achievable range overlaps
         // its window could never be repaired).
         let mut leaving_row_is_wide = false;
-        let (new_expr, entering_wide) = if let Some(expr) = self.row_lin(basic_var) {
+        // PHASE 3: an integer-form leaving row's solved form is BORN
+        // integer (see `born_entering_row`) — exact-and-narrow by
+        // construction, zero gcds, and the entering row's canonical form
+        // is never built on this path at all.  Lin/LinNoInt and wide
+        // leaving rows keep the historical chain below.
+        let (new_expr, entering_wide, born_int): (
+            Option<LinExpr>,
+            Option<BigLinExpr>,
+            Option<IntRow>,
+        ) = if let Some(TableRow::Int(leaving_int)) = self.tableau.get(&basic_var).cloned() {
+            let Some(n_e) = leaving_int.numerator_of(nonbasic_var) else {
+                self.resource_limit = true;
+                return false;
+            };
+            (
+                None,
+                None,
+                Some(born_entering_row(
+                    &leaving_int,
+                    n_e,
+                    basic_var,
+                    nonbasic_var,
+                )),
+            )
+        } else if let Some(expr) = self.row_lin(basic_var) {
             let Some(coef) = expr
                 .terms
                 .iter()
@@ -3985,9 +4082,9 @@ impl Simplex {
             match Self::build_pivot_expr(&expr, coef, basic_var, nonbasic_var)
                 .or_else(|| Self::build_pivot_expr_exact(&expr, coef, basic_var, nonbasic_var))
             {
-                Some(e) => (Some(e), None),
+                Some(e) => (Some(e), None, None),
                 None => match Self::build_pivot_expr_big(&expr, coef, basic_var, nonbasic_var) {
-                    Some(w) => (None, Some(w)),
+                    Some(w) => (None, Some(w), None),
                     None => {
                         self.resource_limit = true;
                         return false;
@@ -4024,34 +4121,33 @@ impl Simplex {
             // the wide-LEAVING side.
             leaving_row_is_wide = true;
             match Self::narrow_big_lin(&entering_big) {
-                Some(narrow) => (Some(narrow), None),
-                None => (None, Some(entering_big)),
+                Some(narrow) => (Some(narrow), None, None),
+                None => (None, Some(entering_big), None),
             }
         } else {
             self.resource_limit = true;
             return false;
         };
-        // The exact entering row in wide form (whatever path built it):
-        // the exact substitutions below run against this, so a wide
-        // entering row needs no separate code path per site.
-        let entering_big = entering_wide.clone().unwrap_or_else(|| {
-            new_expr
-                .as_ref()
-                .map(|e| BigLinExpr {
-                    terms: e.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
-                    constant: big_r64(&e.constant),
-                })
-                .expect("one of the two entering forms exists")
+        // The exact entering row in wide form — LAZY (Phase 3): only the
+        // cold-tail consumers (the wide-row substitution branch and the
+        // exact fallback below) ever need it; the fraction-free and born
+        // paths never do.  Building it eagerly would pay per-term
+        // `BigRational` reductions on every pivot for a fallback the hot
+        // path no longer takes.
+        //
+        // The entering row's fraction-free encoding: the BORN row itself
+        // on the Phase-3 path (no `int_row_from_lin` build at all), the
+        // lcm build on the canonical path; `None` when wide or over the
+        // [`INT_ROW_BUDGET`] width — then every row keeps its historical
+        // per-term rational path this pivot.
+        let mut entering_big_cell = entering_wide.clone();
+        let entering_int = born_int.clone().or_else(|| {
+            if entering_wide.is_none() {
+                new_expr.as_ref().and_then(int_row_from_lin)
+            } else {
+                None
+            }
         });
-        // The entering row's fraction-free encoding, built ONCE per pivot
-        // (every substituted row below consumes it): `None` when the
-        // entering row is wide or over the [`INT_ROW_BUDGET`] width — then
-        // every row keeps its historical per-term rational path this pivot.
-        let entering_int = if entering_wide.is_none() {
-            new_expr.as_ref().and_then(int_row_from_lin)
-        } else {
-            None
-        };
         // Collect the rows that reference the entering column – in O(column)
         // via the column index rather than a full-tableau scan – and compute
         // their substituted content into `row_updates` WITHOUT mutating the
@@ -4091,8 +4187,13 @@ impl Simplex {
                         .find(|(v, _)| *v == nonbasic_var)
                         .map(|(v, c)| (*v, c.clone()))
                 {
-                    let updated =
-                        Self::substitute_big_row(&wrow, &sc_b, &entering_big, nonbasic_var);
+                    let updated = Self::substitute_big_row(
+                        &wrow,
+                        &sc_b,
+                        entering_big_cell
+                            .get_or_insert_with(|| entering_big_from(&new_expr, &born_int)),
+                        nonbasic_var,
+                    );
                     match Self::narrow_big_lin(&updated) {
                         Some(narrow) => {
                             // Commit-time negative marker (the same build
@@ -4195,7 +4296,13 @@ impl Simplex {
                     };
                     row_updates.push((var, committed, leaving_row_is_wide));
                 } else {
-                    let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
+                    let exact = Self::substitute_row_big(
+                        &row,
+                        sc,
+                        entering_big_cell
+                            .get_or_insert_with(|| entering_big_from(&new_expr, &born_int)),
+                        nonbasic_var,
+                    );
                     match Self::narrow_big_lin(&exact) {
                         Some(new_row) => {
                             let committed = if int_row_from_lin(&new_row).is_some() {
@@ -4280,7 +4387,9 @@ impl Simplex {
             let entering_val = match (&new_expr, entering_wide.as_ref()) {
                 (Some(e), _) => self.eval_expr(e),
                 (None, Some(w)) => self.eval_big_expr(w),
-                (None, None) => None,
+                // The born-integer entering row: the integer evaluator
+                // (zero-gcd fast path on integral assignments).
+                (None, None) => born_int.as_ref().and_then(|b| self.eval_int_expr(b)),
             };
             match entering_val {
                 Some(v) => self.assignment[entering] = v,
@@ -4420,8 +4529,23 @@ impl Simplex {
         // VarId is never a row owner again — ids are not recycled).
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.remove(&basic_var);
-        match (new_expr, entering_wide) {
-            (Some(new_expr), _) => {
+        match (new_expr, entering_wide, born_int) {
+            (_, _, Some(born)) => {
+                // The born-integer entering row: commits in its integer
+                // form — the canonical row materializes lazily like any
+                // other (Phase 3's last piece: the hot path never builds
+                // the entering row's canonical form).
+                let entering_terms: SmallVec<[VarId; 4]> =
+                    born.terms.iter().map(|(v, _)| *v).collect();
+                self.rows_ver = self.rows_ver.wrapping_add(1);
+                self.retire_wide_point(nonbasic_var);
+                self.tableau
+                    .insert(nonbasic_var, TableRow::Int(Arc::new(born)));
+                for v in entering_terms {
+                    self.column_push_known(v, nonbasic_var);
+                }
+            }
+            (Some(new_expr), _, None) => {
                 let entering_terms: SmallVec<[VarId; 4]> =
                     new_expr.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
@@ -4439,7 +4563,7 @@ impl Simplex {
                     self.column_push_known(v, nonbasic_var);
                 }
             }
-            (None, Some(wide)) => {
+            (None, Some(wide), None) => {
                 // The dual-width entering side: the entering variable's
                 // row lives exactly in the wide store (pivoting and
                 // propagation skip it; its value is re-derived exactly).
@@ -4455,7 +4579,7 @@ impl Simplex {
                 }
                 self.assignment_current = false;
             }
-            (None, None) => {}
+            (None, None, None) => {}
         }
         // Commit the substituted rows and maintain their column entries.
         // Substitution merges `new_expr` into the old row term-by-term, and a
@@ -5173,6 +5297,42 @@ impl Simplex {
     /// overflow while the final fits (magnitudes cancel), so the retry
     /// recovers the exact value and only a genuinely unrepresentable final
     /// declines to `None`.
+    /// Evaluate an integer-form row over the current assignment:
+    /// `(Σ Nᵢ·aᵢ + N_c)/D` — the born-integer entering row's value
+    /// (Phase 3).  INTEGRAL-ASSIGNMENT FAST PATH: when every referenced
+    /// value's real and delta parts carry denominator 1 (the common
+    /// tableau state), the sum is pure `i128` accumulation (products
+    /// ≤ 2^125 by the budget invariant) with ONE final
+    /// `checked_ratio_i128` — zero gcds.  A fractional assignment falls
+    /// back to the canonical evaluation (the mixed case only).
+    /// Semantically identical to `eval_expr(&materialize_lin(row))` —
+    /// exact arithmetic under a common denominator.
+    fn eval_int_expr(&self, row: &IntRow) -> Option<DeltaRational> {
+        let d = row.denom as i128;
+        let mut real_num: i128 = row.const_num;
+        let mut delta_num: i128 = 0;
+        for (v, n) in &row.terms {
+            let vi = *v as usize;
+            let a = self.assignment.get(vi)?;
+            if a.real.denom() != &1 || a.delta.denom() != &1 {
+                // Fractional assignment: evaluate the canonical form (per
+                // the common-denominator identity, the same value).
+                return self.eval_expr(&materialize_lin(row));
+            }
+            real_num = real_num.checked_add((*n).checked_mul(*a.real.numer() as i128)?)?;
+            if a.delta.numer() != &0 {
+                delta_num = delta_num.checked_add((*n).checked_mul(*a.delta.numer() as i128)?)?;
+            }
+        }
+        let real = checked_ratio_i128(real_num, d)?;
+        let delta = if delta_num == 0 {
+            Rational64::zero()
+        } else {
+            checked_ratio_i128(delta_num, d)?
+        };
+        Some(DeltaRational { real, delta })
+    }
+
     fn eval_expr(&self, expr: &LinExpr) -> Option<DeltaRational> {
         let num_vars = self.assignment.len();
         // A term referencing a WIDE-POINT non-basic must contribute its
@@ -6952,10 +7112,21 @@ impl Simplex {
             if self.wide_rows.contains_key(owner) {
                 return false;
             }
-            let Some(coef) = self
-                .row_lin_view(*owner)
-                .and_then(|row| row.terms.iter().find(|(vv, _)| *vv == j).map(|(_, c)| *c))
-            else {
+            // ONE coefficient from the store's own form — an Int row
+            // yields it with a single `checked_ratio_i128` (no
+            // materialization: this scan runs per owner per candidate,
+            // and a full Cow materialize here measured as real cost once
+            // the churn left rows in integer form).
+            let coef = match self.tableau.get(owner) {
+                Some(TableRow::Lin(row)) | Some(TableRow::LinNoInt(row)) => {
+                    row.terms.iter().find(|(vv, _)| *vv == j).map(|(_, c)| *c)
+                }
+                Some(TableRow::Int(row)) => row
+                    .numerator_of(j)
+                    .and_then(|n| checked_ratio_i128(n, row.denom as i128)),
+                None => continue,
+            };
+            let Some(coef) = coef else {
                 continue;
             };
             let old = match self.assignment.get(oi) {

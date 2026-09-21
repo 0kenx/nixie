@@ -2360,3 +2360,61 @@ fn integer_tableau_rows_materialize_consistently_after_pivots() {
         "session must have left integer-form rows: {int_rows}"
     );
 }
+
+/// The born-integer entering row is value-identical to the historical
+/// `build_pivot_expr` solved form (Phase 3's equivalence: materializing
+/// the born row yields exactly the canonical solved form, term order
+/// included).
+#[test]
+fn born_entering_row_matches_the_canonical_solved_form() {
+    let mut rng = FfLcg::new(0xB0D0_5EED);
+    let mut checked = 0usize;
+    let mut skipped = 0usize;
+    for _ in 0..2000 {
+        const NVARS: u32 = 6;
+        let mut row = ff_random_row(&mut rng, NVARS);
+        let entering_var: VarId = rng.below(NVARS as u64) as VarId;
+        if !row
+            .terms
+            .iter()
+            .any(|(v, c)| *v == entering_var && !c.is_zero())
+        {
+            row.terms.retain(|(v, _)| *v != entering_var);
+            row.add_term(
+                entering_var,
+                Rational64::from_integer(1 + rng.below(4) as i64),
+            );
+        }
+        let Some(leaving_int) = int_row_from_lin(&row) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(n_e) = leaving_int.numerator_of(entering_var) else {
+            skipped += 1;
+            continue;
+        };
+        let born = born_entering_row(&leaving_int, n_e, 99, entering_var);
+        // The reference: the historical solve over the materialized row.
+        let lin = materialize_lin(&leaving_int);
+        let coef = lin
+            .terms
+            .iter()
+            .find(|(v, _)| *v == entering_var)
+            .map(|(_, c)| *c)
+            .expect("entering term present");
+        let Some(reference) = Simplex::build_pivot_expr(&lin, coef, 99, entering_var)
+            .or_else(|| Simplex::build_pivot_expr_exact(&lin, coef, 99, entering_var))
+        else {
+            skipped += 1;
+            continue;
+        };
+        let born_lin = materialize_lin(&born);
+        assert_eq!(
+            born_lin.terms, reference.terms,
+            "term vector (order included)"
+        );
+        assert_eq!(born_lin.constant, reference.constant);
+        checked += 1;
+    }
+    assert!(checked > 1500, "grid must exercise the mass: {checked}");
+}
