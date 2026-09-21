@@ -193,3 +193,16 @@ next decode) and `gap_s20261000_i129` (the simplex resource-limit tail).
 
 The arc's cumulative fixed-seed survey run: 150 → 110 → 91 → 79 → 75 →
 73 → 78 → 76 → 18 → **2**.
+
+## Update (i504 closed): the fixed-seed survey at 1 member
+
+`8eede1d7`: the certificate now verifies the PUBLISHED model —
+model-first user-var reads (compound constant spellings evaluated
+exactly), a once-per-certificate δ₀ instantiation for live real reads
+(`certify_delta0`), and `CmpStrictCertify` with read provenance
+(strict-at-equality is decisively false when every contributing read was
+concrete; a live read that may have dropped a positive delta keeps the
+soften).  i504 answers `sat` (model z3-validated).  **The fixed-seed
+survey residual: 1 member — i129, the simplex resource-limit tail (a
+different class).**  The arc's cumulative run: 150 → … → 18 → 2 → **1**.
+The next hunt is fresh-seed surveying (the fixed seeds are exhausted).
