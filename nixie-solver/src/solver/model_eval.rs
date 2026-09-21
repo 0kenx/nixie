@@ -1054,7 +1054,6 @@ impl Solver {
         true
     }
 
-
     /// Whether the current model gives two same-function applications
     /// equal-valued arguments but divergent results.  Argument values fold
     /// from the tableau (`ArithSolver::value`, plus a linear walk for
@@ -1828,12 +1827,8 @@ impl Solver {
             // model assignments, so every assertion mentioning one evaluated
             // `Undetermined` and the certificate failed closed on the whole
             // div/mod class (item 96's J5-(b2) residual).
-            TermKind::Div(a, b) => {
-                Opened::Frame(Frame::binary(*a, *b, EagerKind::IntDiv, depth))
-            }
-            TermKind::Mod(a, b) => {
-                Opened::Frame(Frame::binary(*a, *b, EagerKind::IntMod, depth))
-            }
+            TermKind::Div(a, b) => Opened::Frame(Frame::binary(*a, *b, EagerKind::IntDiv, depth)),
+            TermKind::Mod(a, b) => Opened::Frame(Frame::binary(*a, *b, EagerKind::IntMod, depth)),
             TermKind::Lt(a, b) => Opened::Frame(Frame::binary(
                 *a,
                 *b,
@@ -2281,7 +2276,10 @@ fn eval_bv_value(
 
 #[cfg(test)]
 mod tests {
-    use super::{ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal, combine_eq, combine_eq_certify, combine_int_div_mod};
+    use super::{
+        ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal, combine_eq, combine_eq_certify,
+        combine_int_div_mod,
+    };
     use crate::solver::Solver;
     use crate::solver::types::Model;
     use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -2726,26 +2724,26 @@ mod tests {
         // SMT-LIB Euclidean semantics: 0 <= a mod b < |b| for BOTH divisor
         // signs; the quotient adjusts so a = b*q + r holds.
         let cases = [
-            (7i64, 2i64, 3i64, 1i64),   // 7 div 2 = 3, mod = 1
-            (-7, 2, -4, 1),             // floor toward -inf
-            (7, -2, -3, 1),             // remainder non-negative
-            (-7, -2, 4, 1),             // both negative
+            (7i64, 2i64, 3i64, 1i64), // 7 div 2 = 3, mod = 1
+            (-7, 2, -4, 1),           // floor toward -inf
+            (7, -2, -3, 1),           // remainder non-negative
+            (-7, -2, 4, 1),           // both negative
             (6, 3, 2, 0),
             (-6, 3, -2, 0),
         ];
         for (a, b, q, r) in cases {
             let div = combine_int_div_mod(&num_big(a), &num_big(b), false);
             match div {
-                EvalOutcome::Value(EvalVal::NumBig(v)) => assert_eq!(
-                    *v.numer(), num_bigint::BigInt::from(q), "{a} div {b}"
-                ),
+                EvalOutcome::Value(EvalVal::NumBig(v)) => {
+                    assert_eq!(*v.numer(), num_bigint::BigInt::from(q), "{a} div {b}")
+                }
                 other => panic!("{a} div {b} -> {other:?}"),
             }
             let m = combine_int_div_mod(&num_big(a), &num_big(b), true);
             match m {
-                EvalOutcome::Value(EvalVal::NumBig(v)) => assert_eq!(
-                    *v.numer(), num_bigint::BigInt::from(r), "{a} mod {b}"
-                ),
+                EvalOutcome::Value(EvalVal::NumBig(v)) => {
+                    assert_eq!(*v.numer(), num_bigint::BigInt::from(r), "{a} mod {b}")
+                }
                 other => panic!("{a} mod {b} -> {other:?}"),
             }
         }
@@ -2786,10 +2784,7 @@ mod tests {
             "the -2 = -2 collision that was J5-(b2)'s blocker"
         );
         let n3 = EvalVal::Num(num_rational::Rational64::from_integer(3));
-        assert_eq!(
-            combine_eq_certify(&n2, &n3),
-            Value(EvalVal::Bool(false))
-        );
+        assert_eq!(combine_eq_certify(&n2, &n3), Value(EvalVal::Bool(false)));
         assert_eq!(
             combine_eq_certify(&num_big(-2), &num_big(-2)),
             Value(EvalVal::Bool(true))

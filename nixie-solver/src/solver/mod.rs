@@ -1021,9 +1021,6 @@ impl EvalVal {
     }
 }
 
-
-
-
 impl Default for Solver {
     fn default() -> Self {
         Self::new()
