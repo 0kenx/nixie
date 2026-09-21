@@ -589,11 +589,55 @@ fn deep_variable_add_chain_is_decided_unsat() {
 }
 
 /// The honest path is intact for structures no normalization applies to:
-/// a 12 500-deep nested `neg` chain still trips the guard and still
-/// answers `unknown` (never a guess) — the rescue must not weaken the
-/// stack-safety contract.
+/// a 12 500-deep chain of FRESH function applications (the bottom-up
+/// simplifier never descends into applications, so no fold rung can
+/// collapse it) still trips the guard and still answers `unknown` (never
+/// a guess) — the rescue ladder must not weaken the stack-safety
+/// contract.
 #[test]
 fn deep_unnormalizable_assertion_still_answers_unknown() {
+    const STACK_SIZE: usize = 1 << 17;
+    const DEPTH: usize = 12_500;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut solver = Solver::new();
+            let mut manager = TermManager::new();
+            // A chain of unary uninterpreted applications: every fold
+            // rung is a no-op on it (`fold_ground` finds no ground
+            // constants; `simplify` never descends into applications),
+            // so the guard trips exactly as before the ladder existed.
+            let x = manager.mk_var("x", manager.sorts.int_sort);
+            let mut chain = x;
+            for _ in 0..DEPTH {
+                chain = manager.mk_apply("f", [chain], manager.sorts.int_sort);
+            }
+            let eq = manager.mk_eq(chain, x);
+            solver.assert(eq, &mut manager);
+            assert!(
+                solver.encode_depth_exceeded,
+                "a genuinely deep non-normalizable assertion must still trip the guard"
+            );
+            assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
+        })
+        .expect("spawning a 128 KiB-stack thread should succeed");
+
+    handle
+        .join()
+        .expect("unnormalizable-deep assert+check must return");
+}
+
+/// The rescue ladder's second rung (the iterative bottom-up simplify,
+/// which carries the guard-equality elimination): a deep structure that
+/// the ground fold cannot touch but the bottom-up rewrite CAN collapses
+/// and answers HONESTLY instead of `unknown` — the measured class is the
+/// nec-smt neg/ite spine.  A 12 500-deep even `neg` chain equal to `x`
+/// is valid, so the honest verdict is `sat`; the 128 KiB stack pins that
+/// the rung itself is heap-iterative (no native recursion on the deep
+/// term).
+#[test]
+fn deep_neg_chain_is_rescued_by_the_bottom_up_fold_rung() {
     const STACK_SIZE: usize = 1 << 17;
     const DEPTH: usize = 12_500;
 
@@ -610,16 +654,20 @@ fn deep_unnormalizable_assertion_still_answers_unknown() {
             let eq = manager.mk_eq(chain, x);
             solver.assert(eq, &mut manager);
             assert!(
-                solver.encode_depth_exceeded,
-                "a genuinely deep non-normalizable assertion must still trip the guard"
+                !solver.encode_depth_exceeded,
+                "the fold rescue must collapse the even-neg chain below the guard"
             );
-            assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
+            assert_eq!(
+                solver.check(&mut manager),
+                SolverResult::Sat,
+                "12 500 nested negations of x equal x: satisfiable, honestly"
+            );
         })
         .expect("spawning a 128 KiB-stack thread should succeed");
 
     handle
         .join()
-        .expect("unnormalizable-deep assert+check must return");
+        .expect("rescued-deep assert+check must return");
 }
 
 /// Doubling DAG: level `i+1` references level `i` **twice**, alternating
@@ -1321,4 +1369,28 @@ fn check_sat_only_respects_false_and_truncation_flags() {
         SolverResult::Unknown,
         "check_sat_only must not guess over a truncated encoding"
     );
+}
+
+/// The fold pass's default-on end-to-end contract: a self-referential
+/// select refutes by pure value reasoning, so the ASSERTED goal reaches
+/// the constant gate (`has_false_assertion`) and `check` answers `Unsat`
+/// without a search — the nec-smt class's shape at solver level, no env
+/// flag needed (the campaign-flipped default; kill-switch documented in
+/// `assert_fold::enabled`).
+#[test]
+fn assert_fold_refutes_select_end_to_end_by_default() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let x = manager.mk_var("x", manager.sorts.int_sort);
+    let five = manager.mk_int(5);
+    let three = manager.mk_int(3);
+    let guard = manager.mk_eq(five, x);
+    let sel = manager.mk_ite(guard, three, x);
+    let goal = manager.mk_eq(sel, five);
+    solver.assert(goal, &mut manager);
+    assert!(
+        solver.has_false_assertion,
+        "the default-on fold must refute the self-referential select at assert time"
+    );
+    assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }

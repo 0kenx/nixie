@@ -302,6 +302,39 @@ impl Solver {
         false
     }
 
+    /// The depth guard's fold-rescue ladder, shared by `assert` and
+    /// `assert_named`: rung 1 is the iterative ground-constant fold
+    /// (`fold_ground`); rung 2 is the iterative, memoized BOTTOM-UP
+    /// simplify (`TermManager::simplify`: explicit heap stack, so it is
+    /// depth-safe where `ctx_simplify`'s native mutual recursion is not).
+    /// Rung 2 carries the guard-equality elimination — `eq_ite_rules`
+    /// fires in `simplify`'s `Eq` arm as well — which collapses the
+    /// nec-smt priority-select ite spines the ground fold cannot touch
+    /// (a spine that folds to `false` answers `unsat` through the
+    /// constant gate; one that folds to any shallow term proceeds
+    /// through the normal pipeline instead of being split or refused).
+    ///
+    /// Returns the rescued (shallow-enough) replacement, or `None` when
+    /// the term is still genuinely deep after both rungs (the
+    /// `deep_split` rescue and the honest `Unknown` refusal follow as
+    /// before).  Every rewrite here is an unconditional equivalence, so
+    /// any replacement preserves the assertion's meaning exactly.
+    pub(super) fn deep_fold_rescue(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
+        if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
+            return Some(folded);
+        }
+        let simplified = manager.simplify(term);
+        if simplified != term && !self.term_exceeds_encode_depth(simplified, manager) {
+            return Some(simplified);
+        }
+        None
+    }
+
     /// Returns `true` when the term rooted at `root` nests deeper than
     /// [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT).
     ///

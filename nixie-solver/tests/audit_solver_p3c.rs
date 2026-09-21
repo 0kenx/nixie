@@ -169,7 +169,14 @@ fn deep_formula_answers_unknown_not_overflow() {
         t = tm.mk_ite(p, t, e);
     }
     solver.assert(t, &mut tm);
-    assert_eq!(solver.check(&mut tm), SolverResult::Unknown);
+    // Post-fold-ladder contract: the depth guard's rescue rung (the
+    // explicit-stack bottom-up simplify) MERGES this same-condition spine
+    // (`ite(p, ite(p, a, b), c)` -> `ite(p, a, c)`), so the nest collapses
+    // to a shallow form and the solver returns the formula's TRUE verdict
+    // (`sat`: set p = true) instead of a spurious refusal.  The audit's
+    // real invariant -- no native-stack overflow on a pathological nest --
+    // is unchanged; `Unknown` was the refusal's symptom, not the property.
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
 
 // ========  ========

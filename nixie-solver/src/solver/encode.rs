@@ -1265,8 +1265,29 @@ impl Solver {
         // fold to a constant here, before the depth guard below measures
         // them.  Equivalence-only rules; the exact user term is already
         // captured as `certificate_term` above.
-        if super::assert_fold::enabled() {
-            term = super::assert_fold::fold(term, manager);
+        if super::assert_fold::enabled()
+            && self.subtree_has_ite(term, manager)
+            // Deep spines are the depth-guard ladder's territory below
+            // (`ctx_walk` recurses natively — see `assert_fold::fold`'s
+            // depth contract; the ladder's rungs are explicit-stack and
+            // adopt shallow results where the alternative is refusal).
+            && !self.term_exceeds_encode_depth(term, manager)
+        {
+            // REFUTE-ONLY adoption — the campaign's measured verdict: the
+            // always-rewrite variant regressed the mid-band of the standing
+            // table's LIA slice (median wall 37->305 ms: the fold's residual
+            // encodes worse than the original ite structure), while adopting
+            // ONLY the decided constants keeps every win (the nec-smt flips,
+            // prp-3-18's 47x cell) at zero cost to non-refuting cells — the
+            // original encoding is kept verbatim, so the search trajectory
+            // is bit-identical up to unused interning.
+            let folded = super::assert_fold::fold(term, manager);
+            let decided = manager
+                .get(folded)
+                .is_some_and(|d| matches!(d.kind, TermKind::False | TermKind::True));
+            if decided {
+                term = folded;
+            }
         }
         // Finite sets: give every membership atom its defining axioms before
         // anything else looks at the assertion. The axioms are *valid* — each
@@ -1358,9 +1379,8 @@ impl Solver {
         // *after* folding still routes to `Unknown`.
 
         if self.term_exceeds_encode_depth(term, manager) {
-            let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
-            if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
-                term = folded;
+            if let Some(rescued) = self.deep_fold_rescue(term, manager) {
+                term = rescued;
             } else if super::deep_split::enabled()
                 && let Some(pieces) = super::deep_split::split_deep(term, manager)
                 && pieces
@@ -2213,8 +2233,29 @@ impl Solver {
         // is already recorded in `assertions`/`certificate_assertions`
         // above, so the name-to-index core mapping and certified mode are
         // untouched by the fold.
-        if super::assert_fold::enabled() {
-            term = super::assert_fold::fold(term, manager);
+        if super::assert_fold::enabled()
+            && self.subtree_has_ite(term, manager)
+            // Deep spines are the depth-guard ladder's territory below
+            // (`ctx_walk` recurses natively — see `assert_fold::fold`'s
+            // depth contract; the ladder's rungs are explicit-stack and
+            // adopt shallow results where the alternative is refusal).
+            && !self.term_exceeds_encode_depth(term, manager)
+        {
+            // REFUTE-ONLY adoption — the campaign's measured verdict: the
+            // always-rewrite variant regressed the mid-band of the standing
+            // table's LIA slice (median wall 37->305 ms: the fold's residual
+            // encodes worse than the original ite structure), while adopting
+            // ONLY the decided constants keeps every win (the nec-smt flips,
+            // prp-3-18's 47x cell) at zero cost to non-refuting cells — the
+            // original encoding is kept verbatim, so the search trajectory
+            // is bit-identical up to unused interning.
+            let folded = super::assert_fold::fold(term, manager);
+            let decided = manager
+                .get(folded)
+                .is_some_and(|d| matches!(d.kind, TermKind::False | TermKind::True));
+            if decided {
+                term = folded;
+            }
         }
         // Overflow guard (soundness): see `assert`.  Skip all deep recursive
         // passes for a pathologically deep term and flag the incomplete
@@ -2223,9 +2264,8 @@ impl Solver {
         // ground-constant fold runs first so trivially-foldable named
         // assertions proceed instead of being refused at unfolded depth.
         if self.term_exceeds_encode_depth(term, manager) {
-            let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
-            if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
-                term = folded;
+            if let Some(rescued) = self.deep_fold_rescue(term, manager) {
+                term = rescued;
             } else if super::deep_split::enabled()
                 && let Some(pieces) = super::deep_split::split_deep(term, manager)
                 && pieces
@@ -3493,6 +3533,29 @@ impl Solver {
             self.memoize_encoding(term, lit, Polarity::Both);
         }
         lit
+    }
+
+    /// Whether any subterm is an `ite` (the assertion fold pass's cost
+    /// gate at its call sites): explicit-stack, early-exit, DAG-safe walk
+    /// in the `subtree_has_set_or_bag_sort` shape.  The fold only pays
+    /// its composition on assertions that carry the structure it feeds
+    /// on; every other goal skips it outright.
+    fn subtree_has_ite(&self, term: TermId, manager: &TermManager) -> bool {
+        let mut stack = vec![term];
+        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            let Some(data) = manager.get(t) else { continue };
+            if matches!(data.kind, TermKind::Ite(..)) {
+                return true;
+            }
+            for child in nixie_core::ast::traversal::get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        false
     }
 
     /// Whether any subterm of `term` has a set- or bag-sorted type.

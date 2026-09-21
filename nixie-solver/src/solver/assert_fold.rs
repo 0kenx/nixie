@@ -30,13 +30,18 @@
 
 use nixie_core::ast::{TermId, TermManager};
 
-/// Whether the fold pass is armed (`NIXIE_ASSERT_FOLD` set).  Probe-only
-/// until the measurement campaign flips the default.
+/// Whether the fold pass is armed.  DEFAULT ON (the measurement
+/// campaign's verdict — see `2026-09-21-assert-fold-default.md`): the
+/// nec-smt corpus flips 69+ `unknown`→`unsat` cells with zero verdict
+/// disagreements against z3 4.16.0, the standing table's non-fold cells
+/// hold their verdicts, and the ite structural gate keeps non-ite goals
+/// at zero cost.  `NIXIE_ASSERT_FOLD=0` is the kill-switch (diagnostics,
+/// bisection).
 pub(super) fn enabled() -> bool {
     #[cfg(feature = "std")]
     {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ON.get_or_init(|| std::env::var_os("NIXIE_ASSERT_FOLD").is_some())
+        *ON.get_or_init(|| !matches!(std::env::var("NIXIE_ASSERT_FOLD"), Ok(v) if v == "0"))
     }
     #[cfg(not(feature = "std"))]
     {
@@ -46,6 +51,14 @@ pub(super) fn enabled() -> bool {
 
 /// Fold one let-expanded assertion: bottom-up simplify, then the
 /// context walk.  Pure function of the term (no solver state).
+///
+/// DEPTH CONTRACT — the caller must NOT route a depth-exceeding term
+/// here: `simplify` is explicit-stack (heap frames), but `ctx_simplify`'s
+/// `ctx_walk` is mutually-recursive NATIVE code, and a 2500-deep spine
+/// walked on a small thread stack (the 128 KiB encode threads) overflows
+/// the process.  The call sites gate on
+/// [`term_exceeds_encode_depth`](super::Solver::term_exceeds_encode_depth)
+/// and give deep terms the bottom-up pass alone.
 pub(super) fn fold(term: TermId, manager: &mut TermManager) -> TermId {
     let bottom_up = manager.simplify(term);
     manager.ctx_simplify(bottom_up)
