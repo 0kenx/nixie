@@ -1269,21 +1269,25 @@ fn validate_generated_state(
     }
 }
 
-/// Focused regression for the closure-preservation probe of the
-/// epoch-static possible view (`still_reaches_closure`): disabling an edge
-/// whose tail retains an alternative route to the target keeps the
-/// memoized backward closure (no recompute, identical answers); disabling
-/// the last route drops it and the newly determined ¬reach propagates with
-/// exactly the false in-edges of the recomputed closure as the cut.
+/// Focused regression for the witness-checked closure preservation of
+/// the epoch-static possible view (see [`Backward`]'s witness docs):
+/// disabling an edge that is not any member's *witness* edge keeps the
+/// memoized backward closure exactly valid (no recompute, identical
+/// answers); disabling a member's witness drops the memo, and when the
+/// tail has no surviving route the recomputed closure makes the newly
+/// determined ¬reach propagate with exactly the false in-edges of the
+/// closure as the cut.
 ///
-/// The 1↔4 cycle exists to catch the probe's first (wrong) version, which
-/// exited at *any* closure member instead of at the target: after e1 and
-/// e3 die, vertex 1 still reaches members {1,4} of the stale closure, but
-/// only through the cycle that never gets back to 2 — a probe that
-/// accepts that keeps a too-large closure and misses the determined
-/// ¬reach(0,2) (the shape the exhaustive oracle caught).
+/// The 1↔4 cycle keeps the shape that caught the design's first (wrong)
+/// version — a probe that exited at *any* closure member instead of at
+/// the target: after e1 and e3 die, vertex 1 still reaches members
+/// {1,4} of the stale closure, but only through the cycle that never
+/// gets back to 2 — accepting that keeps a too-large closure and misses
+/// the determined ¬reach(0,2) (the shape the exhaustive oracle caught;
+/// the witness design rejects it structurally: e1/e3 are 1's witness
+/// edges, and the recomputed closure cannot sneak through 4).
 #[test]
-fn closure_probe_preserves_and_drops_exactly() {
+fn closure_witness_preserves_and_drops_exactly() {
     let mut tm = TermManager::new();
     let mut model = GraphModel::new(&tm);
     let g = model.new_graph();

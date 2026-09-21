@@ -153,3 +153,57 @@ scan itself; nothing above 3% anywhere else).
 - Theory-directed decisions remain the search-shape lever; matched-null
   discipline applies (untouched here — this landing is trajectory-inert,
   which is strictly stronger).
+
+## Addendum (2026-09-22, later): the probe was the residual — witness edges close it, geomean 0.965× → 0.818×, totals 0.906×
+
+Re-profiling the landed state at instruction level put the
+closure-preservation probe itself at ~50% of the worst instance
+(`v150_r4_s3`): in dense graphs every vertex is within two hops, so a
+probe explores the whole closure and scans each explored vertex's full
+row — O(closure × average out-degree) ≈ O(E) per disabled edge, the same
+order as the recompute it tries to avoid (it wins only on constants and
+by avoiding the memo-clear cascade).
+
+**The budget trap (measured, reverted).** Capping the probe at 16
+vertices to bound that cost made the worst instance **3.8× worse**
+(805M → 3.07G instructions): the probes were mostly *expensive
+successes* — closures genuinely preserved but provable only via long
+paths — and truncation converts every one into a memo drop plus an
+O(V+E) recompute, repeated per event. A cap on a preservation decision
+is not a policy knob; it is a regression generator. Reverted.
+
+**The witness design (landed).** `Backward` now stores the BFS parent
+edge of every closure member: a genuine, *simple* path to the target
+whose edges are all non-false (a surviving memo's witnesses can never
+have been disabled — a match drops the memo). Disabling `e = (a→b)`
+endangers the closure only through member `a`'s path, and a simple path
+uses exactly one out-edge of `a` — so the check
+`witness[a] == e` decides preserve-vs-drop in **O(1)**, with no
+truncation anywhere. A witness match (~1/out-degree of disables, and
+1/75 on the corpus graphs) drops the memo; the next query recomputes it
+exactly. Correctness is structural rather than exploratory: preserved
+and recomputed closures are both exact, so emitted answers — and hence
+`conflicts/decisions/propagations` — are **bit-identical** to both the
+probe design and the pre-arc propagator (verified via `STATS=1` on the
+worst instances).
+
+| | probe (morning) | witness |
+|---|---|---|
+| geomean | 0.965× | **0.818×** |
+| totals | 1.223× | **0.906×** (8.92G vs MonoSAT 9.84G — less total work) |
+| worst instance | 2.82× (`v150_r4_s3`) | **2.30×** (`v150_r16_s3`, a different outlier) |
+| instances below 1× | 32/61 | **40/61** |
+
+Validation re-run for the witness change: graph oracles 30/30 (incl. the
+renamed `closure_witness_preserves_and_drops_exactly` regression, whose
+1↔4-cycle shape the witness design rejects structurally), MonoSAT
+differential 1600/1600, Z3 4.16.0 parity 0/354 wrong, perf gate PASS at
+exactly 1.000 counters, workspace `--all-features` 12093/12093 (14
+corpus-path worktree artifacts, all pass with the corpora symlinked).
+
+**Where the remaining outliers live.** `v150_r16_s3` (2.30×, unchanged
+by both the probe and the witness): its cost is not closure maintenance
+— it is the per-event scan plus the fixed SMT stack, i.e. the shared
+per-assertion/BCP machinery every theory pays. The corpus as a whole is
+now below MonoSAT on total work; closing the outliers means the shared
+stack (interning/Tseitin/EUF), not the graph propagator.

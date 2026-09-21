@@ -446,10 +446,22 @@ impl Bfs {
 /// Negative ("possible") reachability over the backward closure, following
 /// MonoSAT's `buildNonReachReason`: `seen` is the set of vertices that can
 /// reach the target through possible edges (paths of length ≥ 0).
+///
+/// `witness` is the BFS parent edge of each member from the closure's
+/// construction: for every `v ∈ seen \ {target}` it names one out-edge of
+/// `v` that begins a genuine, simple path to the target through *current*
+/// non-false edges — while the closure survives, no disabled edge has ever
+/// matched a member's witness (a match drops the whole memo), so every
+/// witness path stays valid. This makes "does disabling edge `e` shrink
+/// this closure?" an O(1) check for the dominant case: `e = (a→b)` can
+/// only endanger member `a` when `witness[a] == e` (a witness path is
+/// simple, so no other member's path uses `e`; and every edge of `a`'s
+/// path except its witness has a different tail).
 #[derive(Default)]
 struct Backward {
     target: usize,
     seen: Vec<bool>,
+    witness: Vec<Option<u32>>,
 }
 
 fn backward_seen(
@@ -464,69 +476,8 @@ fn backward_seen(
     Backward {
         target: search.source,
         seen: search.visited,
+        witness: search.parent_edge,
     }
-}
-
-/// Does `from` reach `target` through currently non-false edges other
-/// than `except`, using only `seen` as intermediate vertices? `seen` is
-/// the exactly-maintained backward closure of `target` *before* the
-/// disabled edge is applied: every vertex of any surviving path to
-/// `target` (other than `from` itself) reaches `target` in the pre-event
-/// graph, hence lies in `seen` — so pruning the search at non-`seen`
-/// vertices is both sound and bounds the probe by the closure. Returns
-/// true exactly when `from` still reaches `target`, which (see
-/// [`ViewCache::apply_edge_event`]) is the precise condition under which
-/// the closure is unchanged by the disabled edge. Iterative BFS over the
-/// static forward CSR.
-fn still_reaches_closure(
-    possible_out: &Csr,
-    values: &[EdgeValue],
-    from: VertexId,
-    except: u32,
-    seen: &[bool],
-    target: VertexId,
-) -> bool {
-    let vertices = seen.len();
-    let s = from.0 as usize;
-    let t = target.0 as usize;
-    if s >= vertices || t >= vertices {
-        return false;
-    }
-    if s == t {
-        // The disabled edge leaves the target itself; any path through it
-        // already reached `target` before using it, so the closure cannot
-        // have changed for this edge.
-        return true;
-    }
-    let mut visited = vec![false; vertices];
-    // Note: `from ∈ seen` does *not* short-circuit true — membership was
-    // established through a path that may be exactly the disabled edge.
-    // A witness requires a real (≥ 1 edge) path of surviving edges.
-    let mut queue = Vec::new();
-    queue.push(s);
-    visited[s] = true;
-    let mut head = 0;
-    while head < queue.len() {
-        let v = queue[head];
-        head += 1;
-        for k in possible_out.row(v) {
-            let edge = possible_out.edges[k];
-            if edge == except || values[edge as usize] == EdgeValue::False {
-                continue;
-            }
-            let w = possible_out.neighbours[k] as usize;
-            if w == t {
-                return true;
-            }
-            // Prune at non-closure vertices: they provably cannot lie on
-            // any surviving path to `target`.
-            if seen[w] && !visited[w] {
-                visited[w] = true;
-                queue.push(w);
-            }
-        }
-    }
-    false
 }
 
 impl Backward {
@@ -629,28 +580,22 @@ impl ViewCache {
             self.merge_new_edge(spec, e.from, e.to, edge);
         } else if value == EdgeValue::False {
             // A disabled edge e = (a -> b) can shrink a memoized backward
-            // closure C_t only if b lies in C_t (otherwise e contributed
-            // no path to t). Given b ∈ C_t, the closure is provably
-            // **unchanged** exactly when a still reaches C_t without e:
-            // any old member's path through e reroutes through a's
-            // surviving path, so C_t ⊆ C_t' ⊆ C_t. That side condition is
-            // a local probe (early-exit BFS from a, see
-            // [`still_reaches_closure`]) — typically a handful of vertices
-            // — and only its failure justifies the full closure recompute
-            // (the memo is dropped and rebuilt lazily on the next query).
-            // A memoized possible cycle dies only if it uses this edge; a
-            // memoized cycle *absence* is stable under shrinking.
+            // closure C_t only through member `a` (a witness path is
+            // simple: no other member's path can use e, whose tail is a;
+            // and if b ∉ C_t the edge contributed no path at all). Given
+            // b ∈ C_t, the closure is provably **unchanged** exactly when
+            // a still reaches t without e — and a's witness edge (see
+            // [`Backward`]) certifies that in O(1) whenever it is not e
+            // itself: the witness path is built of surviving edges and
+            // begins with that edge, so it never touches e. Only a
+            // witness match pays the memo drop and the lazy recompute on
+            // the next query. A memoized possible cycle dies only if it
+            // uses this edge; a memoized cycle *absence* is stable under
+            // shrinking.
             for memo in self.backward_searches.iter_mut() {
                 if let Some(backward) = memo
                     && backward.sees(e.to)
-                    && !still_reaches_closure(
-                        &self.possible_out,
-                        &self.values,
-                        e.from,
-                        edge,
-                        &backward.seen,
-                        VertexId(backward.target as u32),
-                    )
+                    && backward.witness[e.from.0 as usize] == Some(edge)
                 {
                     *memo = None;
                 }
@@ -730,14 +675,14 @@ struct ViewCache {
     /// the end of [`GraphModel::run_graph`] re-verifies the `Sat`
     /// certificate as defense in depth.
     possible_dirty: bool,
-    /// All-edges forward CSR (serves the possible-cycle search and the
-    /// closure-preservation probes).
+    /// All-edges forward CSR (serves the possible-cycle search).
     possible_out: Csr,
     /// All-edges reverse CSR (serves the backward closures).
     possible_in: Csr,
-    /// Possible-view backward BFS by target vertex. Recomputed exactly
-    /// (skip-false BFS over the static CSR) after a disabled edge whose
-    /// head lies in the closure; untouched memos stay exactly valid.
+    /// Possible-view backward BFS by target vertex, each with its BFS
+    /// witness edges (see [`Backward`]). A disabled edge drops the memo
+    /// only when it matches a member's witness (O(1) check); untouched
+    /// memos stay exactly valid.
     backward_searches: Vec<Option<Backward>>,
     /// `find_cycle` over the possible view; recomputed exactly after a
     /// disabled edge on the memoized cycle. A memoized cycle *absence*
@@ -1183,9 +1128,7 @@ impl GraphModel {
         // are read-only below; the memos fill in lazily.
         let cache = &mut self.caches[g];
         if cache.possible_dirty {
-            // Epoch start: rebuild the all-edges CSRs once (both sides —
-            // the forward CSR also serves the closure-preservation probes
-            // in [`ViewCache::apply_edge_event`]) and reset the
+            // Epoch start: rebuild the all-edges CSRs once and reset the
             // possible-side memos.
             cache.possible_out.rebuild_all(spec, false);
             cache.possible_in.rebuild_all(spec, true);

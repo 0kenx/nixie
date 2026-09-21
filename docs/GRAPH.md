@@ -139,20 +139,22 @@ default decisions are complete for this fragment.
   the all-edges CSRs are built once per backtrack epoch and every query
   traverses them skipping currently-false edges, so nothing is ever
   rebuilt on events. Backward closures and possible-cycle memos are kept
-  exactly valid by precise dirty-marking: disabling an edge drops a
-  closure memo only when its head lies in the closure *and* the tail's
-  surviving route to the target is refuted by a closure-bounded probe
-  (`still_reaches_closure`) — a full recompute happens only when the
-  closure genuinely shrank. An all-fixed exactness gate re-verifies the
-  `Sat` certificate as defense in depth. Measured against MonoSAT on
-  deterministic instruction counts (pinned `perf stat -e instructions:u`,
-  medians-free, ±0.001% stable — see the 2026-09-22 study): **geomean
-  0.97× (parity), totals 1.22×, worst instance 2.82×** on the 61-instance
-  n∈{25..150} corpus; 32/61 instances execute *fewer* instructions than
-  MonoSAT. Search counters are bit-identical to the pre-change
-  propagator on every corpus instance, so the restructure is
-  trajectory-inert. The remaining gap is term interning + the general SMT
-  stack, not the graph theory.
+  exactly valid by **witness-checked** dirty-marking: each closure member
+  carries its BFS witness edge (the first edge of a genuine, simple,
+  surviving path to the target), and a disabled edge `(a→b)` drops a
+  closure memo only when it is exactly `a`'s witness edge — an O(1)
+  check, with the drop repaying one lazy recompute on the next query. A
+  memoized possible cycle dies only if the disabled edge is on it. An
+  all-fixed exactness gate re-verifies the `Sat` certificate as defense
+  in depth. Measured against MonoSAT on deterministic instruction counts
+  (pinned `perf stat -e instructions:u`, ±0.001% stable — see the
+  2026-09-22 study): **geomean 0.82×, totals 0.91×, worst instance
+  2.30×** on the 61-instance n∈{25..150} corpus — less total work than
+  MonoSAT on the corpus (8.9G vs 9.8G instructions), with 40/61
+  instances individually below it. Search counters are bit-identical to
+  the pre-change propagator on every measured corpus instance, so the
+  restructure is trajectory-inert. The remaining gap concentrates in a
+  few outliers and the general SMT stack, not the graph theory.
 - **Watch terms**: registration rejects watch lists in which two distinct
   terms encode to the same SAT variable (e.g. a term and its negation
   both watched) — the O(1) per-assignment event routing keeps one watch
