@@ -860,6 +860,15 @@ pub struct Solver {
     /// ..)` candidate — see `combine_eq`).  Saved/restored around the
     /// certificate's evaluations; evaluation-local, never trailed.
     pub(super) eq_collision_verifies: std::cell::Cell<bool>,
+    /// The certificate's δ-instantiation (`real + δ₀·delta` concretizes the
+    /// strict-bound deltas — the same trick as the dive leaf's snapshot,
+    /// item 90): computed once per [`Solver::model_certifies_assertions`]
+    /// from [`ArithSolver::delta_instantiation_exact`]; `None` when no
+    /// positive δ₀ exists (a point that violates its own strict bounds —
+    /// the certificate then reads without instantiation and the boundary
+    /// comparisons soften as ever).  Evaluation-local, never trailed.
+    pub(super) certify_delta0: std::cell::RefCell<Option<num_rational::BigRational>>,
+
     /// Minted CDCL-visible LIA branch atoms (`(>= form k)`, the item-96
     /// channel — see the `LiaBranchRequest` type in the arithmetic solver).
     /// Memo: an already-minted atom is never re-minted (the term is
@@ -1020,9 +1029,6 @@ impl EvalVal {
         }
     }
 }
-
-
-
 
 impl Default for Solver {
     fn default() -> Self {
@@ -1349,6 +1355,7 @@ impl Solver {
             case_split_terms: FxHashSet::default(),
             lia_branch_atoms: FxHashSet::default(),
             eq_collision_verifies: std::cell::Cell::new(false),
+            certify_delta0: std::cell::RefCell::new(None),
             lia_branch_rounds: 0,
             case_split_rounds: 0,
             model_blocking_active: 0,

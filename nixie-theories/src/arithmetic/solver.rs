@@ -1821,12 +1821,48 @@ impl ArithSolver {
         }
     }
 
-    /// Get the current value of a variable
+    /// A concrete δ₀ the current point tolerates (every live strict bound
+    /// satisfied under `real + δ₀·delta`), or `None` — the certificate's
+    /// instantiation (see the solver's `certify_delta0`).
+    #[must_use]
+    pub fn delta_instantiation_exact(&self) -> Option<num_rational::BigRational> {
+        self.simplex.delta_instantiation_exact()
+    }
+
+    /// The delta-AWARE term read for the model certificate: the leaf
+    /// snapshot first (already concrete — `delta = 0`), then the honest
+    /// delta read (the same guards as [`Self::value`]), with NO integrality
+    /// rounding (the caller instantiates or rounds as its semantics need).
+    ///
+    /// This is the channel the certificate's strict-comparison class needs:
+    /// [`Self::value`] drops the delta part, so a real resting exactly ON a
+    /// strict bound (`x > 4` with the point `(4, +1)`) reads as the boundary
+    /// `4` and the comparison softens — with the delta in hand the
+    /// certificate instantiates a concrete witness (`4 + δ₀`) and decides.
+    #[must_use]
+    pub fn delta_value_term(&self, term: TermId) -> Option<super::delta::DeltaRational> {
+        let &var = self.term_to_var.get(&term)?;
+        if self.simplex.is_wide_basic(var) && self.simplex.delta_value_exact(var).is_none() {
+            return None;
+        }
+        if let Some(v) = self.lia_model.get(&var) {
+            use num_traits::ToPrimitive as _;
+            let real = Rational64::new_raw(v.numer().to_i64()?, v.denom().to_i64()?);
+            return Some(super::delta::DeltaRational::from_rational(real));
+        }
+        if self.simplex.is_wide_point(var) {
+            self.simplex.delta_value_exact(var)
+        } else {
+            Some(self.simplex.delta_value(var))
+        }
+    }
+
+    /// Get the current value of a variable.
     ///
     /// For integer arithmetic (LIA), this properly rounds values that have
-    /// infinitesimal components from strict inequalities:
-    /// - If value is `r + δ` (positive delta), return `ceil(r)` for integers
-    /// - If value is `r - δ` (negative delta), return `floor(r)` for integers
+    /// infinitesimal components from strict inequalities: if the value is
+    /// `r + δ` (positive delta), returns `ceil(r)` for integers; if it is
+    /// `r - δ` (negative delta), returns `floor(r)`.
     #[must_use]
     pub fn value(&self, term: TermId) -> Option<Rational64> {
         let &var = self.term_to_var.get(&term)?;

@@ -440,6 +440,7 @@ impl super::Solver {
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
             lia_branch_atoms: _,  // PER-SEARCH: the minted atoms are SAT-database
             eq_collision_verifies: _, // EVALUATION-LOCAL: saved/restored
+            certify_delta0: _,    // EVALUATION-LOCAL: same lifetime as the flag above
             // around each certificate evaluation, never read across checks.
             // clauses like case-split lemmas — retracted by `pop` — and the
             // memo is cleared at `check_core` entry with the rounds counter

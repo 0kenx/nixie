@@ -346,3 +346,46 @@ Battery: workspace suite 12 096 passed (15 = the documented
 corpus-missing class); clippy/fmt/rustdoc clean; parity 176/177 Correct
 0 wrong (z3 4.16.0); perf gate PASS; 3×400 mixed (20262530-32) + 3×300
 wide (20262540-42) fresh differentials clean; debug panic sweep 177/177.
+
+## Addendum 3 — i504 closed: the certificate verifies the PUBLISHED model (δ-instantiated); 18 → 1
+
+The last J5 member (i504) decoded layer by layer (a session of probe
+traps: manual re-evaluations outside the certificate mode and probes read
+after the mode's RESTORE are both misleading — probe before the restore):
+
+* The refusing conjunct is `not (or ..)`: three disjuncts false, the last
+  a MIXED `Mul(real·int) > 4` whose operands read exactly `4 > 4` — the
+  strict-at-boundary soften.
+* The candidate's model is **z3-VALID** (forced-certification + binding +
+  negation) — the certificate was evaluating a DIFFERENT point than the
+  model it publishes (live tableau reads vs the published snapshot —
+  item 90's popped-state divergence, now on the certificate side).
+
+**The fixes** (three pieces, all fail-closed):
+1. **Certificate-mode user-var reads are MODEL-FIRST**: the value the
+   model PUBLISHES (including compound constant spellings — evaluated
+   exactly through the same evaluator) wins over the live tableau; the
+   certificate verifies what `get-model` will print.
+2. **δ-instantiation for live real reads** (`certify_delta0`, computed
+   once per certificate from `ArithSolver::delta_instantiation_exact`,
+   now exposed): a live real var reads `real + δ₀·delta` — concrete, so
+   strict comparisons at the boundary DECIDE.  `None` (no valid δ₀)
+   keeps the honest soften.
+3. **`CmpStrictCertify` with read provenance** (a thread-local
+   live-read flag, reset per conjunct): strict-at-equality is decisively
+   FALSE when every contributing read was concrete (published or
+   δ₀-instantiated — `a > a` is false under the published point); a live
+   read may have dropped a positive delta, where equality stays
+   ambiguous (the soften, as ever).
+
+**Measured**: i504 answers `sat` (model z3-validated by binding +
+negation); the fixed-seed survey residual is now **1 member** (i129, the
+simplex resource-limit tail — a different class entirely).  Unit pin:
+the concrete-strict-at-equality semantics and the provenance govern.
+
+Battery: workspace suite 12 097 passed (15 = the documented
+corpus-missing class); clippy/fmt/rustdoc clean; parity 176/177 Correct
+0 wrong (z3 4.16.0); perf gate PASS; 3×400 mixed (20262550-52) + 3×300
+wide (20262560-62) fresh differentials clean; debug panic sweep 177/177.
+
+The arc's cumulative fixed-seed survey run: 150 → … → 18 → 2 → **1**.
