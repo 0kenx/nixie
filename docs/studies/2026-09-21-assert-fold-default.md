@@ -108,3 +108,14 @@ exposed:
   — a 3 ms cell at load 12 measures 15 ms; use par2 + both-solved
   median + per-cell direct A/B for landing decisions (the operator's
   standing instruction, now with a documented mechanism).
+
+## Addendum: the conj-level probe's demand pool (text-level scan)
+
+The removed check-time conj-level fold (cross-assertion context) has a
+pool of **9 312 multi-assert ite-bearing scripts (10.1 % of the
+92 377-file corpus)** — dominated by QF_BV (7 750), then QF_UF (614),
+QF_NIA (506), QF_LIA (341).  Whether cross-assertion context actually
+folds a measurable subset is unmeasured (needs solver runs: re-express
+the goal as `(assert (and …))` + `(simplify …)` on a sample and compare
+against the per-assertion outcome) — the owning session's first probe,
+cheap and single-threaded.
