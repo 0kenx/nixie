@@ -88,3 +88,15 @@ BVE landing):
   window did.  A `for family in QF_BV` copy of `run_perf.sh` placed in
   `bench/smt_perf/` (same SCRIPT_DIR depth) re-runs one leg on the
   identical slice — the splice vehicle.
+
+## 2026-09-21 (early afternoon): LIA leg reproduces at true calm; the at-cap conflict-total caveat
+
+At sustained load ~7 (the first true-calm window of the day): QF_LIA
+**33/60, par2 9100, both-solved median 0.52-0.55, 0 disagreements** —
+the campaign snapshot's numbers reproduce exactly.  Note on the
+conflict TOTAL: 4502 here vs the morning's 3209 — the total is
+load-sensitive through WHICH at-cap cells complete (a ~1300-conflict
+cell in the ~9 s band bounces); per-cell counters are the reliable
+datum, totals only at identical completion sets.  The BV leg ran into
+a mid-run load spike (69; z3's own solved set dropped 54→52 — the
+contamination canary); discarded, full re-run pending the next window.
