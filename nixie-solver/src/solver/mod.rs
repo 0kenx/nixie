@@ -5537,10 +5537,10 @@ pub(crate) fn freeze_collapse_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("NIXIE_FREEZE_COLLAPSE").as_deref() != Ok("0"))
 }
 
+mod assert_fold;
 mod branch_priority;
 mod bv_elim_uncnstr;
 mod bv_preprocess;
-mod assert_fold;
 mod deep_split;
 mod dispatch_pure_bv;
 mod fp_hybrid;
