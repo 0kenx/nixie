@@ -101,3 +101,18 @@ valuable, not less:
    extraction; land behind `NIXIE_GATE_SUBSUME=1` (default off), pin
    with differential unit tests, then the powered experiment — and
    re-power fold+skip on the same corpus (the composition thesis).
+
+## UPDATE (same day, later session): item 3 EXECUTED — see
+`docs/studies/2026-09-21-gate-subsumption-class-units.md`
+
+The port landed AND the chase found a **pre-existing default-config
+false `sat`** in the base fold (class-crossing level-0 units — a
+16-clause UNSAT instance answered `sat` on the plain CLI; now fixed in
+`substitute_equivalent_literals_round`, pinned by
+`fold_class_unit_regression.rs`).  The composed stack
+(SSR+pre-search+gate-subsume) then **flipped the powered verdict** the
+earlier session refused: corpus geomean ≈ **0.93** (WS 2.01→0.51,
+x9 1.77→1.29, frb 0.49 held, Carry the remaining 1.78 family risk),
+zero verdict mismatches.  Still default-off — the flip decision
+belongs to the next session with the Carry risk addressed (a family
+gate or the fold+skip interaction on Carry specifically).

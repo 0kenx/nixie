@@ -441,6 +441,7 @@ pub(crate) mod test_knobs {
         static SSR_BIN: Cell<Option<bool>> = const { Cell::new(None) };
         static ELS_PRE: Cell<Option<bool>> = const { Cell::new(None) };
         static FOLD_SKIP: Cell<Option<(bool, u64)>> = const { Cell::new(None) };
+        static GATE_SUB: Cell<Option<bool>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set_kitten_sweep(v: Option<bool>) {
@@ -481,6 +482,15 @@ pub(crate) mod test_knobs {
 
     pub(crate) fn els_presearch_override() -> Option<bool> {
         ELS_PRE.with(Cell::get)
+    }
+
+    /// Test override for [`crate::gate_subsume_enabled`].
+    pub(crate) fn set_gate_subsume(v: Option<bool>) {
+        GATE_SUB.with(|c| c.set(v));
+    }
+
+    pub(crate) fn gate_subsume_override() -> Option<bool> {
+        GATE_SUB.with(Cell::get)
     }
 
     /// Test override for [`crate::fold_bve_skip_policy`]: `Some((armed,
@@ -883,6 +893,39 @@ fn fold_bve_skip_policy_from_env() -> (bool, u64) {
     #[cfg(not(feature = "std"))]
     {
         (false, 25)
+    }
+}
+
+#[cfg(test)]
+#[doc(hidden)]
+pub fn gate_subsume_enabled() -> bool {
+    if let Some(over) = crate::test_knobs::gate_subsume_override() {
+        return over;
+    }
+    gate_subsume_enabled_from_env()
+}
+
+/// Env-only variant; the cfg(test) twin consults the `test_knobs`
+/// override first.
+#[cfg(not(test))]
+#[doc(hidden)]
+pub fn gate_subsume_enabled() -> bool {
+    gate_subsume_enabled_from_env()
+}
+
+fn gate_subsume_enabled_from_env() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    #[cfg(feature = "std")]
+    {
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_GATE_SUBSUME")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
     }
 }
 

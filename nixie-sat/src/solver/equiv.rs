@@ -261,9 +261,72 @@ impl Solver {
             return SubstOutcome::Ok;
         }
 
+        // ======== Class-crossing level-0 units (kissat's closure
+        // `propagate_units_and_equivalences` shape). ========
+        // An equivalence class mixes assigned and unassigned members only
+        // until the assignment crosses it: the class is entailed by live
+        // evidence, so a level-0-assigned literal forces its
+        // representative (and an assigned representative forces every
+        // member).  Without this derivation the fold of an ASSIGNED member
+        // onto an UNASSIGNED rep retires every connecting clause
+        // (satisfied/tautology through the very same class + trail
+        // values) while the rep stays free to branch: the search then
+        // satisfies the reduced formula and the model reconstruction
+        // assigns the member from the rep -- clobbering the level-0 fact
+        // (the 2026-09-21 ce2_min false-sat: unit ¬2, class {2 ≡ 1},
+        // model 2 := 1 = true violating ¬2; plain default-config CLI).
+        // The derived units ride the round's existing new_units pipeline
+        // (assigned + propagated after the watch/BIG rebuild).
+        let mut class_units: SmallVec<[Lit; 8]> = SmallVec::new();
+        for (c, &r) in sub.iter().enumerate() {
+            if r.code() as usize == c {
+                continue;
+            }
+            let l = Lit::from_code(c as u32);
+            match (self.trail.lit_value(l), self.trail.lit_value(r)) {
+                (LBool::True, LBool::Undef) => class_units.push(r),
+                (LBool::False, LBool::Undef) => class_units.push(r.negate()),
+                (LBool::Undef, LBool::True) => class_units.push(l),
+                (LBool::Undef, LBool::False) => class_units.push(l.negate()),
+                // Opposite level-0 values across one entailed class: the
+                // formula (whose consequences the trail holds) is unsat.
+                (LBool::True, LBool::False) | (LBool::False, LBool::True) => {
+                    self.trivially_unsat = true;
+                    return SubstOutcome::Unsat;
+                }
+                (LBool::True, LBool::True)
+                | (LBool::False, LBool::False)
+                | (LBool::Undef, LBool::Undef) => {}
+            }
+        }
+
+        // ======== Gate-modulo forward subsumption (kissat's matching
+        // pass, `gate_subsume.rs`) ========
+        // Inside the closure, before the fold writes back — kissat's exact
+        // placement.  Whole-clause retirement only (no strengthening:
+        // the post-substitution forward+self-subsumption sequence has the
+        // ≈1/15k wrong-model interaction noted at the caller in `mod.rs`;
+        // in-closure whole-clause retirement does not take that shape).
+        // Gated default-off (`NIXIE_GATE_SUBSUME=1`); its retirements run
+        // through `retire_clause`, so they decrement `num_original` and
+        // count toward the fold-collapse accounting that arms
+        // `NIXIE_FOLD_BVE_SKIP`.
+        if crate::gate_subsume_enabled() && self.destructive_preprocessing_safe() {
+            let subsumed = self.forward_subsume_matching(sub);
+            self.stats.gate_subsumed += subsumed as u64;
+            #[cfg(feature = "std")]
+            if subsumed > 0 && super::learn::inproc_round_trace_enabled() {
+                eprintln!("gate_subsume: retired {subsumed} clauses");
+            }
+            if self.trivially_unsat {
+                return SubstOutcome::Unsat;
+            }
+        }
+
         // ======== Rewrite every live clause through the map. ========
         let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
         let mut new_units: SmallVec<[Lit; 64]> = SmallVec::new();
+        new_units.extend(class_units.iter().copied());
         let mut eliminated = 0usize;
 
         // Reusable per-clause buffers (perf, 2026-09-11): this loop is one

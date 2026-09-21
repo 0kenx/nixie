@@ -27,6 +27,9 @@ mod and_gate_tests;
 mod eager_sub_tests;
 #[cfg(test)]
 mod fold_bve_skip_tests;
+mod gate_subsume;
+#[cfg(test)]
+mod gate_subsume_tests;
 #[cfg(test)]
 mod otfs_tests;
 mod search_ext;
@@ -1008,6 +1011,10 @@ pub struct SolverStats {
     pub unit_clauses: u64,
     /// Number of variables eliminated by equivalent-literal substitution.
     pub substitutions: u64,
+    /// Clauses retired by gate-modulo forward subsumption inside the
+    /// equivalence-closure round (`gate_subsume.rs`; the kissat
+    /// `forward_subsume_matching_clauses` port).
+    pub gate_subsumed: u64,
     /// Number of variables eliminated by bounded variable elimination (BVE).
     pub bve_eliminated: u64,
     /// Number of auxiliary variables introduced by (mid-search) structured
