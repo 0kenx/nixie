@@ -56,6 +56,21 @@ at the day's one true-calm window (33/60, par2 9100, median 0.52-0.55);
 the full snapshot (BV leg) remains blocked on machine load — still the
 next agent's cheap closure.
 
+**The integer tableau, Phase 1 LANDED (both stages).**  Stage A
+(`c5e8026a`, the behavior-identical bridge: `TableRow` storage, the
+`row_lin` memoizing choke point, the Cow view, form-independent
+`term_vars`) and Stage B (`45a2c742`, the win: `substitute_row_ff`
+returns the `IntRow` alone, pivot commits store `TableRow::Int`, the
+canonical write-back defers to first read, the `int_rows` cache
+deleted, a `LinNoInt` negative variant guards the over-budget tail).
+Measured: the write-back (`checked_ratio_i128`, 21.9 % of the churn
+probe's wall) VANISHES; `materialize_lin` 2.3 %; end-to-end
+17.6 s → 14.9 s with bit-identical counters; full bar green (gate
+1.000/1.000, parity 176/177).  **Phase 2/3 remain** (the entering-rule
+trio and `build_pivot_expr` still materialize one canonical row per
+round; the born-integer solved form is Phase 3) — entry: the design
+study's execution record.  Binary `precompile/45a2c742`.
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and
