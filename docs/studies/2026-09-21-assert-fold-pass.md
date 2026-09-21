@@ -91,3 +91,24 @@ reference solver's shape, but the table decides, not the analogy.
   showed it — re-check before concluding a purge.
 - Commit WIP early: uncommitted work in a worktree is one purge away
   from gone; the shared object store is the durable place.
+
+## Incident addendum (post-landing): a checkout clobbered a live edit
+
+The landing's primary-tree reconciliation
+(`git checkout HEAD -- <my four files>`) overwrote an UNSTAGED live
+edit another agent had started on `nixie-solver/src/solver/encode.rs`
+in the shared primary between 02:20 and 03:25 (their campaign's
+surviving artifacts: `nixie-sat/src/solver/{lib,eliminate,mod}.rs`,
+`encode/tests.rs`, `encode_guards.rs`, the untracked
+`fold_bve_skip_tests.rs` — a `NIXIE_FOLD_BVE_SKIP` policy slice).  The
+pre-checkout status showed `MM` on `encode.rs`; only the staged half
+was the ref-move's reversed diff — the unstaged half was their work,
+now unrecoverable (never added; not in fsck).  The tree still builds
+green and their tests reference nothing missing, so the lost edit was
+likely a small call-site/knob plumb.  **The trap, recorded**: when
+landing through `update-ref` + `checkout HEAD -- <files>` into a dirty
+shared primary, read the status PER FILE first — an `MM` means the
+second `M` is someone's live work; materialize only files that show no
+worktree-vs-index delta, or coordinate.  My apologies to the owner —
+if your encode.rs edit was more than a plumb, say so in your handoff
+and this session's measurements will help re-validate it.
