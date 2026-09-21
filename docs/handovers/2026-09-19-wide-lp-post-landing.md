@@ -125,11 +125,17 @@ the journal (the pop-hole trap item 76 documents). With `BoundValue`,
 the journal entries are bound clones as today — the widening changes
 nothing structurally.
 
-### 6. The ndir2 general gate (standing)
+### 6. The ndir2 general gate (standing — RE-MEASURED 2026-09-21, verdict: keep-off)
 
 `NIXIE_S6_NDIR2` stays default-off (items 50/61); the pinned form is
-default-on. If revisiting: the trade map predates the wide-LP build —
-re-measure it against the new baseline before deciding.
+default-on. The revisit condition was met and executed
+(`docs/studies/2026-09-21-ndir2-remeasured.md`, binary `fa30412c`):
+the fi1 deflection wall DISSOLVED on the transformed tree (sat at
+10/10 seeds armed), but the gate buys nothing on any current surface
+(wide fuzz: zero wins, one seed mildly worse; the LIA mass 11/12
+bit-identical) while its MBQI cadence cost persists (420 s cap vs
+188 s default on the screening cell). Any future case for the general
+gate needs NEW win evidence — the old deflection story is dead.
 
 ### 7. Hygiene: the generator's SHAPES lack the boundary literals
 
