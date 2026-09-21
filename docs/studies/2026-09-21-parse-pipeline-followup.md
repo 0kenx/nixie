@@ -196,3 +196,49 @@ restructuring of the watch world priced so far (CSR flip, counting-sort
 materialization, exact reserves) measured negative on the paired
 instruction corpus; the load-path wall now sits where the architecture
 sits.
+
+## Addendum 4 — the sys front closes: the fault census, the recycling
+## insight, and the two-lens do-not-retry
+
+The wall anatomy's follow-through.  **Fault counts are NOT
+deterministic** (the same binary spans 603k–635k on the anatomy —
+ASLR/mimalloc slab-boundary variance, ±3%): every fault claim needs
+band-vs-band separation.
+
+The census (post-mmap, ~613k ± 30k): the file's map pages ~130k; the
+arena ~150k (600 MB, 12-byte packed headers — kissat-class, the
+reserve formula exact); var arrays ~125k; the BIG ~106k; the `lits`
+intermediate 60k; the watch world the remainder (~2× noise, its slack
+NOT additive — see below).
+
+Two experiments closed the attackable items:
+
+1. **The exact-capacity watch materialization, re-judged on the wall
+   lens — negative a second time.**  The earlier refusal was
+   instruction-lensed (+5.4% user on the load cells); on the
+   sys-dominated class that trade looked flippable (+50ms user for the
+   slack's sys).  Measured: **faults 660–725k vs the 603–635k band**
+   (all three rounds above the band) — WORSE, and sys followed (12.6/
+   10.0 vs 9.9/9.5 in the two decodable rounds).  Root insight:
+   **mimalloc recycles the freed doubling blocks** — the push-growth
+   path's churn reuses pages, while 15.8M fresh exact allocations touch
+   NEW slabs.  The "2× live bytes of doubling slack" in the census was
+   never fresh-page waste.  Do-not-retry (third lens would need a
+   different allocator).
+2. **The `lits` streaming (−60k faults)** — designed, not built: the
+   chunked scanner couples with the exact arena reserve (losing
+   `lits.len()` forces either a 2× over-reserve — more faults than it
+   saves — or a second counting pass — the user cost it was avoiding).
+   With the win at 2× the noise band and four of five load-path
+   restructures now priced negative, the honest call is to stop.
+
+**Where the wall gap finally sits**: user ≈ 1.0 s (parse at −47%,
+irreducible compute) + sys ≈ 5–6 s of which ~85 % is the resident
+formula's pages (arena 600 MB + watch data ~480 MB + var arrays ~0.5 GB
++ BIG 0.3 GB) and the watch world's 380 MB of `Vec` headers (95k pages,
+~24 B per literal — the one pure-waste item).  Its replacement (the CSR
+world) exists, is validated, is opt-in (`NIXIE_CSR_B=1`), and is
+refused as the default by the search corpus ledger (1.16× instructions
+on search-heavy cells — compute-bound there, so wall-refused too).
+The load-path wall is now an architecture statement, not an
+optimization backlog.

@@ -3532,11 +3532,13 @@ impl Solver {
     /// per watched literal, ~18.7M on the 9.4M-variable class) that the
     /// single counting-sort build eliminates outright.
     pub fn begin_deferred_watches(&mut self) {
-        // CSR-B world only: the Vec-world arm of the counting-sort
-        // materialization measured NEGATIVE on the load cells (paired
-        // instruction corpus 2026-09-21: 6s299b685 +5.4%, 6s163 +5.0%,
-        // search cells flat) — mimalloc's small-alloc path makes the
-        // per-clause push growth cheaper than 15.8M exact allocations.
+        // CSR-B world only.  The Vec-world exact-capacity arm has now
+        // priced negative TWICE, under both lenses: instructions (+5.4%
+        // user on the load cells, 2026-09-21) AND page faults (660-725k
+        // vs 613k baseline on the anatomy — mimalloc RECYCLES the freed
+        // doubling blocks, so the push-growth path's churn reuses pages
+        // while 15.8M fresh exact allocations touch new slabs).  Do not
+        // retry a third time without a different allocator.
         if crate::watched::csr_b_enabled() {
             self.deferred_watch_attach = true;
         }
