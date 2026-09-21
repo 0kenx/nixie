@@ -183,3 +183,38 @@ trade.
 **Do not tune the floor on Carry** — 3-10-seed geomeans on a cell with
 180× default seed-spread are chaos; any threshold that "fixes" it is
 overfitting the reshuffle.
+
+## Addendum 3 — the discriminator search closes: no pre-pass signal exists; the flip is a trade-off call
+
+The composed-stack flip (refused on the Carry band) had one untried
+structural discriminator: arming gate-subsume on the fold's collapse.
+Measured per family (`fold_round` trace, now landed under
+`NIXIE_INPROC_TRACE`):
+
+| family | substitutions/round | arena retirements | gate-subsume retirements | stack effect |
+|---|---|---|---|---|
+| Carry_Bits_Fast | 132–202 | **0** | 1–3 | **1.6–2.2× worse** |
+| WS_500_16 | **0** | **0** | 510 | **5.3× better** |
+| frb35-17-5 | **0** | **0** | 0 | neutral (the fold's win) |
+| bv_ILA | 50,832 | **0** | (phase-1 armed) | 2× better (the fold's) |
+
+Two closure results.  (1) **The "fold collapse" concept was measuring
+the wrong thing all along**: the fold collapses through SUBSTITUTIONS
+and BIG edges — the arena's `num_original` never drops on these
+families (the equivalence evidence is binary-graph edges, not arena
+clauses), so both `fold_retired` accounting (the `NIXIE_FOLD_BVE_SKIP`
+gate's numerator) and any retirement-ratio discriminator read zero.
+(2) **Substitutions do not separate winners from losers either** — WS
+substitutes nothing yet gains 5.3× from the pass; Carry substitutes
+hundreds and loses.  The only predictor of the pass's effect is its
+own retirement yield, known only after the perturbing work.  There is
+no cheap pre-pass arm; the volume floor (candidate count) was the
+closest available and does not separate Carry.
+
+**The flip decision is therefore a trade-off call, not an engineering
+problem**: accept ~1.6–2.2× on the Carry family (chaotic magnitude,
+8/10 seeds directionally worse) for a 0.82–0.93 corpus conflict
+geomean and kissat-parity end-to-end on the gate-dense anatomy
+(8,098 vs 8,399 tonight), or keep the stack opt-in.  Per
+BENCHMARKING's family band it stays refused; the map above is the
+complete evidence for whoever owns that call.

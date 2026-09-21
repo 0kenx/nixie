@@ -4760,6 +4760,12 @@ impl Solver {
                     self.drat_emit_empty(None);
                     return SolverResult::Unsat;
                 }
+                #[cfg(feature = "std")]
+                if learn::inproc_round_trace_enabled() {
+                    let subst = self.stats.substitutions - subst_before;
+                    let retired = orig_before.saturating_sub(self.clauses.num_original());
+                    eprintln!("fold_round: substitutions={subst} retired={retired}/{orig_before}");
+                }
                 if self.stats.substitutions == subst_before
                     && self.clauses.num_original() == orig_before
                 {
