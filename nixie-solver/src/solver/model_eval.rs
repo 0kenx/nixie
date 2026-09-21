@@ -163,6 +163,15 @@ enum EagerKind {
         /// `true` for `<=`, `false` for `>=`.
         less: bool,
     },
+    /// `=` under the CERTIFICATE: an exact value collision VERIFIES the
+    /// equality (it holds under the assignment); distinct values falsify
+    /// it.  The certificate's positive direction — the refutation gates'
+    /// [`EagerKind::Eq`] keeps collisions `Undetermined`.
+    EqCertify,
+    /// SMT-LIB `div` on Int (Euclidean: the remainder is non-negative).
+    IntDiv,
+    /// SMT-LIB `mod` on Int (Euclidean: `0 <= mod < |divisor|`).
+    IntMod,
 }
 
 /// How far an `ite` has got.
@@ -692,6 +701,7 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
     match (kind, values) {
         (EagerKind::Not, [EvalVal::Bool(b)]) => EvalOutcome::boolean(!b),
         (EagerKind::Eq, [a, b]) => combine_eq(a.clone(), b.clone()),
+        (EagerKind::EqCertify, [a, b]) => combine_eq_certify(a, b),
         (EagerKind::Sub, [EvalVal::Num(x), EvalVal::Num(y)]) => match x.checked_sub(y) {
             Some(d) => EvalOutcome::number(d),
             // Beyond width is not unverifiable: the exact difference is
@@ -744,10 +754,57 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
             (Some(a), Some(b)) => EvalOutcome::boolean(if less { a <= b } else { a >= b }),
             _ => EvalOutcome::UNDETERMINED,
         },
+        (EagerKind::IntDiv, [x, y]) => combine_int_div_mod(x, y, false),
+        (EagerKind::IntMod, [x, y]) => combine_int_div_mod(x, y, true),
         // Ill-typed operands (a Bool where a number was wanted, or the other
         // way round).  The gate has nothing to say about such a term.
         _ => EvalOutcome::UNDETERMINED,
     }
+}
+
+/// Combine the operands of SMT-LIB integer `div`/`mod` (Euclidean: the
+/// remainder is always non-negative, `0 <= a mod b < |b|`).
+///
+/// EXACT at any width (the operands are widened to `BigInt` before the
+/// division; a quotient that fits `Rational64` is published narrow only via
+/// `number_big`'s callers — here the value stays exact-big, which every
+/// comparison and the model printer handle).  Fail-closed classes, each
+/// [`EvalOutcome::UNDETERMINED`] (never a guess, never a fabricated
+/// refutation):
+/// * a non-integer operand value (a well-sorted Int term under an integral
+///   model never produces one; a fractional read is a broken model the
+///   gate must not launder);
+/// * a zero divisor (SMT-LIB leaves `div`/`mod` by zero UNINTERPRETED —
+///   there is no semantics to evaluate).
+fn combine_int_div_mod(a: &EvalVal, b: &EvalVal, want_mod: bool) -> EvalOutcome {
+    use num_integer::Integer;
+    let (Some(x), Some(y)) = (a.to_big(), b.to_big()) else {
+        return EvalOutcome::UNDETERMINED;
+    };
+    let (num, den) = (x.numer().clone(), x.denom().clone());
+    let (dnum, dden) = (y.numer().clone(), y.denom().clone());
+    if den != num_bigint::BigInt::from(1) || dden != num_bigint::BigInt::from(1) {
+        return EvalOutcome::UNDETERMINED;
+    }
+    if dnum.is_zero() {
+        return EvalOutcome::UNDETERMINED;
+    }
+    // Euclidean division from truncation: `a = b·q + r` with `0 <= r < |b|`
+    // (adjust the truncated pair when the remainder came out negative).
+    let (mut q, mut r) = num.div_rem(&dnum);
+    if r < 0.into() {
+        if dnum > 0.into() {
+            q -= 1;
+            r += dnum.clone();
+        } else {
+            q += 1;
+            r -= dnum.clone();
+        }
+    }
+    let value = if want_mod { r } else { q };
+    EvalOutcome::Value(EvalVal::NumBig(Box::new(num_rational::BigRational::from(
+        value,
+    ))))
 }
 
 /// Combine the operand values of `=`.
@@ -759,6 +816,21 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
 /// when they were never asserted equal.  Reporting a collision as
 /// `Undetermined` also keeps a negated equality (`distinct` / `not (= ..)`)
 /// inconclusive there instead of a false violation.
+/// Combine `=` under the CERTIFICATE (see [`EagerKind::EqCertify`]): the
+/// equality is fully decidable both ways between EXACT reads — a collision
+/// holds under the assignment (positive verification), distinct values
+/// falsify it (the candidate is refused).  Big/narrow mixes compare exactly.
+/// Booleans decide as ever.
+fn combine_eq_certify(a: &EvalVal, b: &EvalVal) -> EvalOutcome {
+    match (a, b) {
+        (EvalVal::Bool(x), EvalVal::Bool(y)) => EvalOutcome::boolean(x == y),
+        _ => match (a.to_big(), b.to_big()) {
+            (Some(x), Some(y)) => EvalOutcome::boolean(x == y),
+            _ => EvalOutcome::UNDETERMINED,
+        },
+    }
+}
+
 fn combine_eq(a: EvalVal, b: EvalVal) -> EvalOutcome {
     match (a, b) {
         (EvalVal::Bool(x), EvalVal::Bool(y)) => EvalOutcome::boolean(x == y),
@@ -950,6 +1022,11 @@ impl Solver {
         let Some(model) = self.model.as_ref() else {
             return false;
         };
+        // CERTIFICATE mode: an exact `=` collision verifies (see
+        // [`EagerKind::EqCertify`]); restored before returning — the flag
+        // is evaluation-local by contract.
+        let saved = self.eq_collision_verifies.get();
+        self.eq_collision_verifies.set(true);
         // Value-only derivation, sharing the refutation gate's `And`-spine
         // flattening but *never* the SAT core's committed polarity: that
         // shortcut trusts the core's atom decisions, and a certificate
@@ -966,12 +1043,17 @@ impl Solver {
             for &conj in &conjuncts {
                 match self.eval_in_model_outcome(conj, model, manager, 0) {
                     EvalOutcome::Value(EvalVal::Bool(true)) => {}
-                    _ => return false,
+                    _other => {
+                        self.eq_collision_verifies.set(saved);
+                        return false;
+                    }
                 }
             }
         }
+        self.eq_collision_verifies.set(saved);
         true
     }
+
 
     /// Whether the current model gives two same-function applications
     /// equal-valued arguments but divergent results.  Argument values fold
@@ -1537,6 +1619,9 @@ impl Solver {
                 },
                 depth,
             )),
+            TermKind::Eq(a, b) if self.eq_collision_verifies.get() => {
+                Opened::Frame(Frame::binary(*a, *b, EagerKind::EqCertify, depth))
+            }
             TermKind::Eq(a, b) => {
                 // Bit-vector equality is evaluated concretely (see
                 // `eval_bv_value`): the main evaluator only models Booleans and
@@ -1736,6 +1821,19 @@ impl Solver {
                 depth,
             )),
             TermKind::Neg(a) => Opened::Frame(Frame::unary(*a, EagerKind::Neg, depth)),
+            // SMT-LIB integer div/mod: exact Euclidean evaluation with
+            // fail-closed zero-divisor and non-integral operands (see
+            // `combine_int_div_mod`).  Without these arms the terms fell to
+            // the opaque-leaf catch-all — a div/mod term is never in the
+            // model assignments, so every assertion mentioning one evaluated
+            // `Undetermined` and the certificate failed closed on the whole
+            // div/mod class (item 96's J5-(b2) residual).
+            TermKind::Div(a, b) => {
+                Opened::Frame(Frame::binary(*a, *b, EagerKind::IntDiv, depth))
+            }
+            TermKind::Mod(a, b) => {
+                Opened::Frame(Frame::binary(*a, *b, EagerKind::IntMod, depth))
+            }
             TermKind::Lt(a, b) => Opened::Frame(Frame::binary(
                 *a,
                 *b,
@@ -2183,7 +2281,7 @@ fn eval_bv_value(
 
 #[cfg(test)]
 mod tests {
-    use super::{ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal};
+    use super::{ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal, combine_eq, combine_eq_certify, combine_int_div_mod};
     use crate::solver::Solver;
     use crate::solver::types::Model;
     use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -2613,5 +2711,95 @@ mod tests {
 
         assert_eq!(value, EvalOutcome::Undetermined);
         assert!(!refused);
+    }
+
+    // ---- item 96's J5-(b2): div/mod evaluation + certificate equality ----
+
+    fn num_big(n: i64) -> EvalVal {
+        EvalVal::NumBig(Box::new(num_rational::BigRational::from(
+            num_bigint::BigInt::from(n),
+        )))
+    }
+
+    #[test]
+    fn int_div_mod_euclidean_signs() {
+        // SMT-LIB Euclidean semantics: 0 <= a mod b < |b| for BOTH divisor
+        // signs; the quotient adjusts so a = b*q + r holds.
+        let cases = [
+            (7i64, 2i64, 3i64, 1i64),   // 7 div 2 = 3, mod = 1
+            (-7, 2, -4, 1),             // floor toward -inf
+            (7, -2, -3, 1),             // remainder non-negative
+            (-7, -2, 4, 1),             // both negative
+            (6, 3, 2, 0),
+            (-6, 3, -2, 0),
+        ];
+        for (a, b, q, r) in cases {
+            let div = combine_int_div_mod(&num_big(a), &num_big(b), false);
+            match div {
+                EvalOutcome::Value(EvalVal::NumBig(v)) => assert_eq!(
+                    *v.numer(), num_bigint::BigInt::from(q), "{a} div {b}"
+                ),
+                other => panic!("{a} div {b} -> {other:?}"),
+            }
+            let m = combine_int_div_mod(&num_big(a), &num_big(b), true);
+            match m {
+                EvalOutcome::Value(EvalVal::NumBig(v)) => assert_eq!(
+                    *v.numer(), num_bigint::BigInt::from(r), "{a} mod {b}"
+                ),
+                other => panic!("{a} mod {b} -> {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn int_div_mod_fail_closed() {
+        // Division by zero is UNINTERPRETED in SMT-LIB: never a guess.
+        assert_eq!(
+            combine_int_div_mod(&num_big(7), &num_big(0), false),
+            EvalOutcome::Undetermined
+        );
+        // A non-integral operand value (a broken model read) must not be
+        // laundered into an integer quotient.
+        let half = EvalVal::NumBig(Box::new(num_rational::BigRational::new(
+            num_bigint::BigInt::from(1),
+            num_bigint::BigInt::from(2),
+        )));
+        assert_eq!(
+            combine_int_div_mod(&half, &num_big(2), false),
+            EvalOutcome::Undetermined
+        );
+    }
+
+    #[test]
+    fn certificate_equality_decides_both_ways() {
+        use EvalOutcome::Value;
+        // An exact collision VERIFIES (the equality holds under the
+        // assignment); distinct values falsify — narrow and big both.
+        assert_eq!(
+            combine_eq_certify(&EvalVal::Bool(true), &EvalVal::Bool(true)),
+            Value(EvalVal::Bool(true))
+        );
+        let n2 = EvalVal::Num(num_rational::Rational64::from_integer(-2));
+        assert_eq!(
+            combine_eq_certify(&n2, &n2),
+            Value(EvalVal::Bool(true)),
+            "the -2 = -2 collision that was J5-(b2)'s blocker"
+        );
+        let n3 = EvalVal::Num(num_rational::Rational64::from_integer(3));
+        assert_eq!(
+            combine_eq_certify(&n2, &n3),
+            Value(EvalVal::Bool(false))
+        );
+        assert_eq!(
+            combine_eq_certify(&num_big(-2), &num_big(-2)),
+            Value(EvalVal::Bool(true))
+        );
+        assert_eq!(
+            combine_eq_certify(&num_big(-2), &num_big(3)),
+            Value(EvalVal::Bool(false))
+        );
+        // And the REFUTATION-side combine keeps collisions Undetermined
+        // (a collision must never veto a `not (= ..)` candidate).
+        assert_eq!(combine_eq(n2.clone(), n2), EvalOutcome::Undetermined);
     }
 }

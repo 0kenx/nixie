@@ -303,3 +303,46 @@ clean; parity **176/177 Correct 0 wrong** (z3 4.16.0); perf gate PASS;
 3×400 mixed (20262500-02) + 3×300 wide (20262510-12) + a clean-build
 1×400 (20262520) fresh differentials — zero disagreements, zero refuted
 models; debug panic sweep 177/177.
+
+## Addendum 2 — J5-(b2) closed: the certificate learns div/mod and equality (same day)
+
+The residual 18 (post-J5-(a)) re-attributed on the current tree (with the
+parallel sessions' assert-fold landing: 6+9+3 across the fixed seeds,
+same count): 17 J5 / 1 simplex-rl.  Decoded on i31: the certificate
+returned `Undetermined` — **`Div`/`Mod` terms had NO case in the shared
+evaluator** (they fell to the opaque-leaf catch-all; a div/mod term is
+never in the model assignments), and after that fix the remaining blocker
+was **`combine_eq`'s designed collision-conservativeness**: the model
+makes the disjunct `(= lhs -2)` TRUE by an exact collision (`-2 = -2`),
+but the shared `=` returns `Undetermined` on equal numerics — correct for
+the REFUTATION gates (a collision must never veto a `not (= ..)`
+candidate) and over-conservative for the CERTIFICATE's positive
+direction.
+
+**The fixes**:
+* `EagerKind::IntDiv`/`IntMod` + `combine_int_div_mod`: EXACT Euclidean
+  div/mod on `BigInt` operands (`a = b·q + r, 0 ≤ r < |b|`), fail-closed
+  on a zero divisor (SMT-LIB leaves it uninterpreted) and on non-integral
+  operand values.
+* `EagerKind::EqCertify` + `combine_eq_certify`, selected by the
+  evaluation-local `eq_collision_verifies` mode `model_certifies_assertions`
+  sets around its evaluations: an exact collision VERIFIES the equality
+  (it holds under the assignment), distinct falsifies (narrow and big,
+  mixed via `to_big`); the refutation gates keep `combine_eq` untouched.
+  In certificate mode `not (= ..)` over a collision now correctly
+  REFUSES (the candidate violates its own assertion) — the asymmetry the
+  two gates always needed.
+
+**Measured**: the fixed-seed survey **18 → 2 members** (16 recovered);
+all 16 verdicts z3-agreeing; **all 16 models z3-validated by binding +
+negation**; zero false models; the ledger empty.  The residual 2: i504
+(another `Undetermined` source — a linear-arithmetic one, no div/mod in
+the tree; the next decode) and i129 (the simplex resource-limit tail).
+
+Unit pins: the Euclidean sign table, the fail-closed classes, and the
+collision-semantics asymmetry (both directions of both gates).
+
+Battery: workspace suite 12 096 passed (15 = the documented
+corpus-missing class); clippy/fmt/rustdoc clean; parity 176/177 Correct
+0 wrong (z3 4.16.0); perf gate PASS; 3×400 mixed (20262530-32) + 3×300
+wide (20262540-42) fresh differentials clean; debug panic sweep 177/177.
