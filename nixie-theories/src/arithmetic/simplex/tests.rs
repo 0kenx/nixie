@@ -2230,35 +2230,33 @@ fn substitute_row_ff_matches_rational_reference_seeded_grid() {
         let ff = substitute_row_ff(&r_int, n_e, &e_int, entering_var);
         let reference = Simplex::substitute_row_fast(&row, sc, &entering, entering_var);
         match (ff, reference) {
-            (Some((lin, int_form)), Some(ref_row)) => {
+            (Some(new_int), Some(ref_row)) => {
                 both += 1;
+                // The INTEGER path's product materializes to exactly the
+                // rational reference (value-identity, order included — the
+                // laziness contract).
+                let lin = materialize_lin(&new_int);
                 assert_eq!(lin.terms, ref_row.terms, "term vector (order included)");
                 assert_eq!(lin.constant, ref_row.constant);
-                if let Some(i) = &int_form {
-                    assert!(ff_encoding_is_faithful(&lin).is_some() || i.denom == 1);
-                    if ff_encoding_is_faithful(&lin).is_some() {
-                        assert_eq!(
-                            i.terms.len(),
-                            lin.terms.len(),
-                            "encoding names exactly the live terms"
-                        );
-                    }
-                } else {
-                    // Admission decline: the canonical row exists but its
-                    // joint form exceeds budget — the negative marker.
-                    assert!(
-                        ff_encoding_is_faithful(&lin).is_none() || int_row_from_lin(&lin).is_none(),
-                        "admission declined for a budget-fitting row"
-                    );
-                }
+                // Round-trip: the materialized canonical re-encodes to the
+                // same integer form (joint-canonical both ways).
+                let re_enc = int_row_from_lin(&lin);
+                assert_eq!(
+                    re_enc.as_ref(),
+                    Some(&new_int),
+                    "materialize/encode round-trip is the identity"
+                );
             }
             (Some(_), None) => panic!("integer path succeeded where rational refused"),
-            (None, Some(_)) => panic!("integer path refused where rational succeeded"),
-            (None, None) => both_declined += 1,
+            // The integer path's decline (result numerators past
+            // INT_ROW_BUDGET but within i64, or either input over
+            // budget) is NOT an error: the caller falls back to the
+            // rational paths and derives the same canonical row.
+            (None, _) => both_declined += 1,
         }
     }
     assert!(
-        both > 3000,
+        both > 2500,
         "grid must exercise the both-succeed mass: {both}"
     );
     assert!(
@@ -2303,7 +2301,12 @@ fn int_row_budget_boundaries() {
 /// maintenance sites (pivot commits, wide captures, migrations, resets)
 /// actually leave it true.
 #[test]
-fn int_row_cache_pointer_coherence_after_pivots() {
+fn integer_tableau_rows_materialize_consistently_after_pivots() {
+    // After a solving session with real pivots (and a push/pop cycle),
+    // every integer-form row must materialize to a canonical row whose
+    // value matches the assignment the search maintained (the laziness
+    // contract: materialization is a pure function of the content, and
+    // the churn mass leaves rows in Int form).
     let mut simplex = Simplex::new();
     let x = simplex.new_var();
     let y = simplex.new_var();
@@ -2313,15 +2316,13 @@ fn int_row_cache_pointer_coherence_after_pivots() {
     simplex.set_lower(z, Rational64::zero(), 2);
     simplex.set_upper(x, Rational64::from_integer(6), 3);
     simplex.set_upper(y, Rational64::from_integer(6), 4);
-    // A dense interacting row set: equalities and mixed bounds force
-    // substitutions across several pivots.
     let mut e1 = LinExpr::new();
     e1.add_term(x, Rational64::from_integer(2));
-    e1.add_term(y, Rational64::from_integer(-3));
+    e1.add_term(y, Rational64::new(-3, 2));
     e1.add_constant(Rational64::from_integer(1));
     simplex.add_eq(e1, 10);
     let mut e2 = LinExpr::new();
-    e2.add_term(y, Rational64::from_integer(4));
+    e2.add_term(y, Rational64::new(4, 3));
     e2.add_term(z, Rational64::from_integer(5));
     e2.add_constant(Rational64::from_integer(-2));
     simplex.add_eq(e2, 11);
@@ -2332,33 +2333,30 @@ fn int_row_cache_pointer_coherence_after_pivots() {
     simplex.add_le(e3, 12);
     simplex.push();
     simplex.set_lower(x, Rational64::from_integer(1), 13);
-    simplex.set_upper(z, Rational64::from_integer(4), 14);
+    simplex.set_upper(z, Rational64::new(7, 2), 14);
     let _ = simplex.check();
     simplex.pop();
     let _ = simplex.check();
-    let mut checked = 0usize;
-    for (var, entry) in &simplex.int_rows {
-        let live = simplex
-            .tableau
-            .get(var)
-            .expect("cache entry names a variable with a live narrow row");
-        let live_lin = match live {
-            TableRow::Lin(arc) => arc.clone(),
-            TableRow::Int(_) => {
-                // An integer-form row has no canonical arc; the cache
-                // entry for it would be rebuilt on demand (and Stage A
-                // never stores Int rows) — accept by key identity here.
-                continue;
-            }
-        };
-        assert!(
-            Arc::ptr_eq(&entry.src, &live_lin),
-            "stale fraction-free entry for var {var}"
-        );
-        checked += 1;
+    let mut int_rows = 0usize;
+    let keys: Vec<VarId> = simplex.tableau.keys().copied().collect();
+    for var in keys {
+        if !matches!(simplex.tableau.get(&var), Some(TableRow::Int(_))) {
+            continue;
+        }
+        int_rows += 1;
+        // Materialize and verify: the row evaluates (over the current
+        // assignment) to the basic's own assignment value — the invariant
+        // the delta propagation maintained.
+        let lin = simplex.row_lin(var).expect("row exists");
+        let vi = var as usize;
+        let want = simplex.eval_expr(&lin);
+        let got = simplex.assignment.get(vi).copied();
+        if let (Some(w), Some(g)) = (want, got) {
+            assert_eq!(w, g, "materialized row {var} disagrees with the assignment");
+        }
     }
     assert!(
-        checked >= 2,
-        "session must have populated the cache: {checked}"
+        int_rows >= 1,
+        "session must have left integer-form rows: {int_rows}"
     );
 }

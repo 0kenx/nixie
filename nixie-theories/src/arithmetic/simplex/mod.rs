@@ -842,11 +842,9 @@ const INT_ROW_BUDGET: u128 = 1 << 62;
 /// of `D` absent from every term's reduced denominator would divide every
 /// numerator, contradicting joint-canonicity.
 ///
-/// NEVER stored independently of the row it mirrors — see
-/// [`Simplex::int_rows`]: every cache entry carries the `Arc<LinExpr>` it
-/// was built from and is only read back when the pointer still matches the
-/// tableau's row, so a stale encoding is unreachable (rows are
-/// content-replaced, never edited in place).
+/// In the integer tableau, an `IntRow` IS the tableau row's primary
+/// form ([`TableRow::Int`]) — the canonical `LinExpr` materializes from it
+/// lazily ([`materialize_lin`]), so the two can never disagree.
 #[derive(Debug, Clone, Default, PartialEq)]
 struct IntRow {
     /// Terms: (variable, integer numerator)
@@ -897,41 +895,36 @@ impl IntRow {
 /// is zero exactly when the canonical coefficient is).
 #[derive(Debug, Clone)]
 enum TableRow {
-    /// Canonical rational row.
+    /// Canonical rational row; the fraction-free form is buildable but
+    /// unbuilt (the next pivot's substitution attempt builds it once).
     Lin(Arc<LinExpr>),
+    /// Canonical rational row whose content has NO fraction-free form
+    /// within [`INT_ROW_BUDGET`] (the negative marker — the build was
+    /// attempted at commit and declined).  Prevents a per-pivot rebuild
+    /// on the over-budget tail.
+    LinNoInt(Arc<LinExpr>),
     /// Fraction-free form; canonical pending first coefficient access.
     Int(Arc<IntRow>),
 }
 
 impl TableRow {
-    /// The row's term VARIABLES (no coefficients) — form-independent
-    /// (zero numerators never exist in either form's term list).
-    fn term_vars(&self) -> SmallVec<[VarId; 4]> {
+    /// The row's canonical form (materializing `Int` on the fly, no
+    /// memoization — for callers that already hold `&self`).
+    fn lin_owned(&self) -> LinExpr {
         match self {
-            TableRow::Lin(row) => row.terms.iter().map(|(v, _)| *v).collect(),
-            TableRow::Int(row) => row.terms.iter().map(|(v, _)| *v).collect(),
+            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.as_ref().clone(),
+            TableRow::Int(int_row) => materialize_lin(int_row),
         }
     }
-}
-
-/// One [`Simplex::int_rows`] entry: the fraction-free encoding of exactly
-/// one tableau row, plus the `Arc<LinExpr>` it was built from (the pointer
-/// the read path re-validates — see [`Simplex::int_rows`]).
-struct IntCacheEntry {
-    src: Arc<LinExpr>,
-    row: Option<Arc<IntRow>>,
-}
-
-impl core::fmt::Debug for IntCacheEntry {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // The tableau's own Debug derives need this; the `src` Arc is
-        // identified by pointer (the coherence key), not by full row dump.
-        write!(
-            f,
-            "IntCacheEntry({:#x}, {})",
-            Arc::as_ptr(&self.src) as usize,
-            self.row.is_some()
-        )
+    /// The row's term VARIABLES (no coefficients) — form-independent
+    /// (zero numerators never exist in any form's term list).
+    fn term_vars(&self) -> SmallVec<[VarId; 4]> {
+        match self {
+            TableRow::Lin(row) | TableRow::LinNoInt(row) => {
+                row.terms.iter().map(|(v, _)| *v).collect()
+            }
+            TableRow::Int(row) => row.terms.iter().map(|(v, _)| *v).collect(),
+        }
     }
 }
 
@@ -1038,7 +1031,7 @@ fn substitute_row_ff(
     n_e: i128,
     entering: &IntRow,
     nonbasic_var: VarId,
-) -> Option<(LinExpr, Option<IntRow>)> {
+) -> Option<IntRow> {
     let d_r = row.denom as i128;
     let d_e = entering.denom as i128;
     // Budget invariants (structural: entries only come from budget-checked
@@ -1108,30 +1101,25 @@ fn substitute_row_ff(
         }
         const_num /= g;
     }
-    // Canonical write-back: one reduction per term (the single gcd this
-    // path pays per term, against the fused multiply-add's three-plus).
-    let out_const = checked_ratio_i128(const_num, d)?;
-    let mut out = LinExpr::new();
-    out.constant = out_const;
-    out.terms.reserve(nums.len());
-    for (v, n) in &nums {
-        out.terms.push((*v, checked_ratio_i128(*n, d)?));
-    }
-    // Cache admission only within the budget; the canonical row itself is
-    // already fully valid.
+    // No canonical write-back: the row COMMITS in its integer form and
+    // `materialize_lin` produces the canonical row lazily on the first
+    // coefficient read (the integer-tableau bridge).  Admission is the
+    // same budget the write-back's `checked_ratio_i128` calls enforced —
+    // and a budget-admitted row ALWAYS narrows (|N|, D <= 2^62 implies
+    // the reduced parts fit i64), so the write-back could never decline
+    // where admission passed; dropping it changes nothing about which
+    // rows take this path.
     let fits = d <= INT_ROW_BUDGET as i128
         && const_num.unsigned_abs() <= INT_ROW_BUDGET
         && nums.iter().all(|(_, n)| n.unsigned_abs() <= INT_ROW_BUDGET);
-    let int_form = if fits {
-        Some(IntRow {
-            terms: nums.clone(),
-            const_num,
-            denom: d as i64,
-        })
-    } else {
-        None
-    };
-    Some((out, int_form))
+    if !fits {
+        return None;
+    }
+    Some(IntRow {
+        terms: nums,
+        const_num,
+        denom: d as i64,
+    })
 }
 
 /// Canonical positive rescaling of a row's coefficients: multiply the whole
@@ -1440,23 +1428,6 @@ pub struct Simplex {
     /// wide-LP wall's remaining territory made sound and partial: no
     /// wrapped verdicts, decided wherever representability allows.
     wide_rows: FxHashMap<VarId, BigLinExpr>,
-    /// Fraction-free ([`IntRow`]) encodings of the narrow tableau's rows —
-    /// the pivot substitution's fast path.  Each entry carries the exact
-    /// `Arc<LinExpr>` it was built from and is ONLY read when that pointer
-    /// is still the tableau's row (`Arc::ptr_eq`): rows are content-
-    /// replaced, never edited in place, so a pointer match is a content
-    /// match and a stale encoding is structurally unreachable.  `row:
-    /// None` is a NEGATIVE entry — this exact row (by pointer) exceeds the
-    /// [`INT_ROW_BUDGET`] width, so the per-term rational path owns it;
-    /// without the negative marker every pivot would re-derive the lcm
-    /// chain for the over-budget tail.
-    ///
-    /// Maintained at exactly the row-content mutation sites: pivot commits
-    /// (leaving removal, entering insert, per-row substitution commits,
-    /// wide captures), the `update_row_exact` narrow→wide migration, and
-    /// `reset`.  `intern_row` inserts lazily materialize on first
-    /// substitution (a miss builds and inserts).
-    int_rows: FxHashMap<VarId, IntCacheEntry>,
     /// Exact POINT values of variables (basic or non-basic) whose current
     /// assignment does not fit `Rational64` width — the point-value
     /// counterpart of `wide_rows`: a non-basic snapped to a wide bound
@@ -1585,7 +1556,6 @@ impl Simplex {
             upper: Vec::new(),
             tableau: FxHashMap::default(),
             wide_rows: FxHashMap::default(),
-            int_rows: FxHashMap::default(),
             wide_points: FxHashMap::default(),
             wide_pending: false,
             columns: FxHashMap::default(),
@@ -2123,10 +2093,10 @@ impl Simplex {
     /// in its integer form is materialized for the caller (unmemoized —
     /// the canary path is cold).
     pub fn row_of(&self, slack: VarId) -> Option<std::sync::Arc<LinExpr>> {
-        match self.tableau.get(&slack)? {
-            TableRow::Lin(arc) => Some(arc.clone()),
-            TableRow::Int(int_row) => Some(std::sync::Arc::new(materialize_lin(int_row))),
-        }
+        Some(std::sync::Arc::new(match self.tableau.get(&slack)? {
+            TableRow::Lin(arc) | TableRow::LinNoInt(arc) => arc.as_ref().clone(),
+            TableRow::Int(int_row) => materialize_lin(int_row),
+        }))
     }
 
     /// A slack's wide defining row (the atom-row canary).
@@ -4059,10 +4029,7 @@ impl Simplex {
         // mutation (the transactional validate-then-commit contract callers
         // and the overflow regression test rely on).
         //
-        // Each entry also carries the new row's fraction-free encoding for
-        // the [`Simplex::int_rows`] cache (`None` = this content is over
-        // budget / not encodable — the negative marker).
-        let mut row_updates: Vec<(VarId, LinExpr, bool, Option<IntRow>)> = Vec::new();
+        let mut row_updates: Vec<(VarId, TableRow, bool)> = Vec::new();
         let mut wide_updates: Vec<(VarId, BigLinExpr)> = Vec::new();
         if let Some(col) = self.columns.get(&nonbasic_var).cloned() {
             for &var in col.iter() {
@@ -4097,15 +4064,54 @@ impl Simplex {
                         Self::substitute_big_row(&wrow, &sc_b, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&updated) {
                         Some(narrow) => {
-                            let int_form = int_row_from_lin(&narrow);
-                            row_updates.push((var, narrow, true, int_form));
+                            // Commit-time negative marker (the same build
+                            // the cache paid): buildable -> retryable `Lin`,
+                            // else `LinNoInt`.
+                            let committed = if int_row_from_lin(&narrow).is_some() {
+                                TableRow::Lin(Arc::new(narrow))
+                            } else {
+                                TableRow::LinNoInt(Arc::new(narrow))
+                            };
+                            row_updates.push((var, committed, true));
                         }
                         None => wide_updates.push((var, updated)),
                     }
                     continue;
                 }
-                let Some(row) = self.row_lin(var) else {
+                let Some(entry) = self.tableau.get(&var).cloned() else {
                     continue;
+                };
+                // FRACTION-FREE FAST PATH (the Bareiss layer, integer-tableau
+                // native): a row already stored in its integer form
+                // substitutes WITHOUT materializing — integer mul-sub +
+                // one row-level gcd chain, and the RESULT commits as an
+                // `Int` row (the canonical write-back deferred to the
+                // first coefficient read; the churn mass re-substitutes
+                // rows far more often than anything reads them, so the
+                // deferral collapses the write-back floor).
+                //
+                // GATE — at least one side must carry a fraction: an
+                // all-INTEGRAL substitution is already gcd-free on the
+                // historical path (`try_add_term_mul`'s integer fast
+                // path), where the fraction-free form's `i128` numerators
+                // are pure tax (measured: the integral cells regressed
+                // ~1.1x ungated).  An integral x integral substitution
+                // stays integral, so the gate is stable across pivots.
+                if let Some(e_int) = entering_int.as_ref()
+                    && let TableRow::Int(r_int) = &entry
+                    && (r_int.denom > 1 || e_int.denom > 1)
+                    && let Some(n_e) = r_int.numerator_of(nonbasic_var)
+                    && let Some(new_int) = substitute_row_ff(r_int, n_e, e_int, nonbasic_var)
+                {
+                    row_updates.push((var, TableRow::Int(Arc::new(new_int)), leaving_row_is_wide));
+                    continue;
+                }
+                // Canonical view for the paths below (a fresh Lin row, a
+                // negative LinNoInt row, or a materialized Int row whose
+                // ff declined).
+                let row = match &entry {
+                    TableRow::Lin(arc) | TableRow::LinNoInt(arc) => arc.clone(),
+                    TableRow::Int(int_row) => Arc::new(materialize_lin(int_row)),
                 };
                 let Some(sc) = row
                     .terms
@@ -4115,57 +4121,20 @@ impl Simplex {
                 else {
                     continue;
                 };
-                // Fraction-free fast path (the Bareiss layer): with a
-                // pointer-validated cache entry for THIS row content and a
-                // within-budget entering row, the substitution runs as
-                // integer multiply-subtract on the numerators plus one
-                // row-level gcd chain — replacing ~3.5 gcds/term of fused
-                // rational multiply-add with one per-term reduction.  The
-                // output is bit-identical to `substitute_row_fast` (same
-                // canonical values, same term order, same zero-drop), so
-                // the search trajectory is unchanged; a decline (per-term
-                // width) falls through to the historical paths, which
-                // produce the same row by exact `BigRational` arithmetic.
-                // The cache read validates `Arc::ptr_eq` against the
-                // tableau's current row: entries are keyed by content
-                // identity (rows are content-replaced, never edited in
-                // place), so a stale encoding cannot be read.
-                //
-                // GATE — at least one side must carry a fraction: an
-                // all-INTEGRAL substitution is already gcd-free on the
-                // historical path (`try_add_term_mul`'s integer fast
-                // path), where the fraction-free form's `i128` numerators
-                // and cache traffic are pure tax (measured: the integral
-                // cells regressed ~1.1× ungated; the fractional mass is
-                // where the ~3 gcds/term live).  An integral×integral
-                // substitution stays integral, so the gate is stable
-                // across pivots through the cached denominators.
-                if let Some(e_int) = entering_int.as_ref() {
-                    let cached = match self.int_rows.get(&var) {
-                        Some(e) if Arc::ptr_eq(&e.src, &row) => e.row.clone(),
-                        _ => {
-                            // Miss: build once for this content (lcm chain),
-                            // park it (or its negative marker) for every
-                            // later pivot through this row.
-                            let built = int_row_from_lin(&row);
-                            let entry = IntCacheEntry {
-                                src: row.clone(),
-                                row: built.clone().map(Arc::new),
-                            };
-                            let back = entry.row.clone();
-                            self.int_rows.insert(var, entry);
-                            back
-                        }
-                    };
-                    if let Some(r_int) = cached
-                        && (r_int.denom > 1 || e_int.denom > 1)
-                        && let Some(n_e) = r_int.numerator_of(nonbasic_var)
-                        && let Some((fast, int_form)) =
-                            substitute_row_ff(&r_int, n_e, e_int, nonbasic_var)
-                    {
-                        row_updates.push((var, fast, leaving_row_is_wide, int_form));
-                        continue;
-                    }
+                // A buildable-but-unbuilt (Lin) row takes its one-shot ff
+                // attempt through a freshly built integer form — the
+                // build's cost replaces the write-back it saves, and a
+                // success turns the row Int-native for every later pivot.
+                if entering_wide.is_none()
+                    && matches!(entry, TableRow::Lin(_))
+                    && let Some(e_int) = entering_int.as_ref()
+                    && let Some(r_int) = int_row_from_lin(&row)
+                    && (r_int.denom > 1 || e_int.denom > 1)
+                    && let Some(n_e) = r_int.numerator_of(nonbasic_var)
+                    && let Some(new_int) = substitute_row_ff(&r_int, n_e, e_int, nonbasic_var)
+                {
+                    row_updates.push((var, TableRow::Int(Arc::new(new_int)), leaving_row_is_wide));
+                    continue;
                 }
                 // Same fast-then-exact discipline as the entering row: the
                 // substitution's intermediates (`sc·const`, merged
@@ -4185,17 +4154,25 @@ impl Simplex {
                     _ => None, // wide entering row: no narrow fast path
                 };
                 if let Some(fast) = fast {
-                    // Admit the rational fast path's result to the
-                    // fraction-free cache when it fits, so later pivots
-                    // take the integer path through this row.
-                    let int_form = int_row_from_lin(&fast);
-                    row_updates.push((var, fast, leaving_row_is_wide, int_form));
+                    // Commit-time negative marker: the same int-form build
+                    // the cache paid, now deciding Lin (retryable) vs
+                    // LinNoInt (the over-budget tail never rebuilds).
+                    let committed = if int_row_from_lin(&fast).is_some() {
+                        TableRow::Lin(Arc::new(fast))
+                    } else {
+                        TableRow::LinNoInt(Arc::new(fast))
+                    };
+                    row_updates.push((var, committed, leaving_row_is_wide));
                 } else {
                     let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
                         Some(new_row) => {
-                            let int_form = int_row_from_lin(&new_row);
-                            row_updates.push((var, new_row, leaving_row_is_wide, int_form));
+                            let committed = if int_row_from_lin(&new_row).is_some() {
+                                TableRow::Lin(Arc::new(new_row))
+                            } else {
+                                TableRow::LinNoInt(Arc::new(new_row))
+                            };
+                            row_updates.push((var, committed, leaving_row_is_wide));
                         }
                         None => {
                             wide_updates.push((var, exact));
@@ -4289,7 +4266,7 @@ impl Simplex {
         // (the full re-evaluation was the top arithmetic consumer on dense
         // CAV/QF_LIA rows).
         if let Some(delta) = snap_delta {
-            for (var, new_row, was_wide, _int_form) in &row_updates {
+            for (var, new_form, was_wide) in &row_updates {
                 let vi = *var as usize;
                 if vi >= self.assignment.len() {
                     continue;
@@ -4312,20 +4289,29 @@ impl Simplex {
                 // exact evaluation read the point).  Skip the incremental
                 // update; the commit's exact recomputation owns the entry.
                 if !self.wide_points.is_empty()
-                    && new_row
-                        .terms
+                    && new_form
+                        .term_vars()
                         .iter()
-                        .any(|(v, _)| self.wide_points.contains_key(v))
+                        .any(|v| self.wide_points.contains_key(v))
                 {
                     self.assignment_current = false;
                     continue;
                 }
-                if let Some(coef) = new_row
-                    .terms
-                    .iter()
-                    .find(|(v, _)| *v == basic_var)
-                    .map(|(_, c)| *c)
-                {
+                // The leaving basic's coefficient in the new row, read
+                // from whichever form the row committed in (one gcd for
+                // an Int row — the deferred write-back's only per-pivot
+                // residual).
+                let coef_opt = match new_form {
+                    TableRow::Lin(row) | TableRow::LinNoInt(row) => row
+                        .terms
+                        .iter()
+                        .find(|(v, _)| *v == basic_var)
+                        .map(|(_, c)| *c),
+                    TableRow::Int(row) => row
+                        .numerator_of(basic_var)
+                        .and_then(|n| checked_ratio_i128(n, row.denom as i128)),
+                };
+                if let Some(coef) = coef_opt {
                     // Checked delta arithmetic: a silent overflow here would
                     // corrupt every later decision built on this assignment.
                     if let Some(d) = checked_mul_delta(delta, coef)
@@ -4333,7 +4319,7 @@ impl Simplex {
                     {
                         #[cfg(debug_assertions)]
                         {
-                            let want = self.eval_expr(new_row);
+                            let want = self.eval_expr(&new_form.lin_owned());
                             debug_assert!(
                                 want.is_none_or(|w| w == sum),
                                 "delta propagation mismatch: delta={delta:?} coef={coef:?} got={sum:?} want={want:?}"
@@ -4351,7 +4337,7 @@ impl Simplex {
                         // The re-evaluation is the cost the incremental path
                         // exists to avoid, hence opt-in.
                         if self.delta_verify
-                            && let Some(want) = self.eval_expr(new_row)
+                            && let Some(want) = self.eval_expr(&new_form.lin_owned())
                             && want != sum
                         {
                             // The canary's AUDIBLE trip (item 85's proof
@@ -4401,7 +4387,6 @@ impl Simplex {
         self.tableau.remove(&basic_var);
         // The leaving row's fraction-free encoding dies with the row (the
         // VarId is never a row owner again — ids are not recycled).
-        self.int_rows.remove(&basic_var);
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.wide_rows.remove(&basic_var);
         match (new_expr, entering_wide) {
@@ -4414,19 +4399,7 @@ impl Simplex {
                 self.retire_wide_point(nonbasic_var);
                 let entering_arc = Arc::new(new_expr);
                 self.tableau
-                    .insert(nonbasic_var, TableRow::Lin(entering_arc.clone()));
-                // The entering row's fraction-free encoding was already
-                // built for the substitution loop — link it to the COMMITTED
-                // arc so the pointer validation reads this exact content.
-                if let Some(e_int) = entering_int {
-                    self.int_rows.insert(
-                        nonbasic_var,
-                        IntCacheEntry {
-                            src: entering_arc,
-                            row: Some(Arc::new(e_int)),
-                        },
-                    );
-                }
+                    .insert(nonbasic_var, TableRow::Lin(entering_arc));
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
                     // listed it as a row owner; push without the membership
@@ -4460,7 +4433,7 @@ impl Simplex {
         // column removed (a stale `columns[v]` entry for a cancelled term made
         // `on_nonbasic_bound_change` skip real dependents and let later edits
         // miss rows entirely: corrupted tableau, wrong answers).
-        for (var, new_row, was_wide, int_form) in row_updates {
+        for (var, new_form, was_wide) in row_updates {
             // Diff-based column maintenance: the column index is exact, so a
             // term present in both rows needs no touch, a dropped term needs
             // removal, and an added term is guaranteed absent from the column
@@ -4477,14 +4450,15 @@ impl Simplex {
             };
             let (dropped, added): (SmallVec<[VarId; 4]>, SmallVec<[VarId; 4]>) = match old_terms {
                 Some(old_terms) => {
+                    let new_vars = new_form.term_vars();
                     let mut dropped = SmallVec::new();
                     for v in old_terms.iter() {
-                        if !new_row.terms.iter().any(|(nv, _)| nv == v) {
+                        if !new_vars.contains(v) {
                             dropped.push(*v);
                         }
                     }
                     let mut added = SmallVec::new();
-                    for (v, _) in new_row.terms.iter() {
+                    for v in new_vars.iter() {
                         if !old_terms.contains(v) {
                             added.push(*v);
                         }
@@ -4502,18 +4476,7 @@ impl Simplex {
                 self.column_push_known(v, var);
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
-            let new_arc = Arc::new(new_row);
-            self.tableau.insert(var, TableRow::Lin(new_arc.clone()));
-            // Link the new content's fraction-free encoding (or its
-            // negative marker) to the committed arc — pointer validation
-            // on every read keeps a stale encoding unreachable.
-            self.int_rows.insert(
-                var,
-                IntCacheEntry {
-                    src: new_arc.clone(),
-                    row: int_form.map(Arc::new),
-                },
-            );
+            self.tableau.insert(var, new_form);
             // A row that narrowed back from the wide store leaves it (the
             // tableau entry is now authoritative) — and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
@@ -4524,8 +4487,11 @@ impl Simplex {
             // decline).
             if was_wide {
                 let vi = var as usize;
-                let row = new_arc;
-                if vi < self.assignment.len() {
+                // Materialize memoized (the row was just inserted).
+                let row = self.row_lin(var);
+                if vi < self.assignment.len()
+                    && let Some(row) = row
+                {
                     match self.eval_expr(row.as_ref()) {
                         Some(v) => {
                             self.assignment[vi] = v;
@@ -4576,7 +4542,6 @@ impl Simplex {
             self.tableau.remove(&var);
             // The row left the narrow tableau: its fraction-free encoding
             // must not survive where the row no longer lives.
-            self.int_rows.remove(&var);
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.wide_rows.insert(var, new_wide);
         }
@@ -4592,9 +4557,9 @@ impl Simplex {
     #[cfg(debug_assertions)]
     fn debug_verify_columns(&self) {
         for (var, row) in &self.tableau {
-            for t in row.term_vars().iter().copied() {
+            for t in row.term_vars().iter() {
                 debug_assert!(
-                    self.columns.get(&t).is_some_and(|c| c.contains(var)),
+                    self.columns.get(t).is_some_and(|c| c.contains(var)),
                     "columns[{t}] missing row {var} that references it"
                 );
             }
@@ -4604,7 +4569,7 @@ impl Simplex {
                 let references = self
                     .tableau
                     .get(r)
-                    .is_some_and(|row| row.term_vars().contains(&t))
+                    .is_some_and(|row| row.term_vars().contains(t))
                     || self
                         .wide_rows
                         .get(r)
@@ -4618,7 +4583,7 @@ impl Simplex {
         for (var, w) in &self.wide_rows {
             for (t, _) in &w.terms {
                 debug_assert!(
-                    self.columns.get(&t).is_some_and(|c| c.contains(var)),
+                    self.columns.get(t).is_some_and(|c| c.contains(var)),
                     "columns[{t}] missing wide row {var} that references it"
                 );
             }
@@ -5345,11 +5310,7 @@ impl Simplex {
             if let Some(entry) = self.tableau.remove(&var) {
                 // The narrow store's fraction-free encoding dies with the
                 // narrow row (wide rows never take the integer path).
-                self.int_rows.remove(&var);
-                let lin = match &entry {
-                    TableRow::Lin(arc) => arc.as_ref().clone(),
-                    TableRow::Int(int_row) => materialize_lin(int_row),
-                };
+                let lin = entry.lin_owned();
                 let big = BigLinExpr {
                     terms: lin.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
                     constant: big_r64(&lin.constant),
@@ -6477,7 +6438,6 @@ impl Simplex {
         self.upper.clear();
         self.tableau.clear();
         self.wide_rows.clear();
-        self.int_rows.clear();
         self.wide_points.clear();
         self.wide_pending = false;
         self.columns.clear();
@@ -6715,7 +6675,7 @@ impl Simplex {
                 ));
             }
         }
-        for (b, row) in self.tableau.iter() {
+        for (b, _row) in self.tableau.iter() {
             // CHECKED evaluation: the invariant runs on wide trajectories
             // whose row products legitimately leave `i64` width — an
             // overflowing row is unverifiable cheaply here, not a panic
@@ -7162,7 +7122,7 @@ impl Simplex {
     fn row_lin(&mut self, var: VarId) -> Option<Arc<LinExpr>> {
         let entry = self.tableau.get_mut(&var)?;
         match entry {
-            TableRow::Lin(arc) => Some(arc.clone()),
+            TableRow::Lin(arc) | TableRow::LinNoInt(arc) => Some(arc.clone()),
             TableRow::Int(int_row) => {
                 let lin = materialize_lin(int_row);
                 let arc = Arc::new(lin);
@@ -7181,7 +7141,9 @@ impl Simplex {
     /// signal to migrate that reader to `&mut`.
     fn row_lin_view(&self, var: VarId) -> Option<std::borrow::Cow<'_, LinExpr>> {
         match self.tableau.get(&var)? {
-            TableRow::Lin(arc) => Some(std::borrow::Cow::Borrowed(arc.as_ref())),
+            TableRow::Lin(arc) | TableRow::LinNoInt(arc) => {
+                Some(std::borrow::Cow::Borrowed(arc.as_ref()))
+            }
             TableRow::Int(int_row) => Some(std::borrow::Cow::Owned(materialize_lin(int_row))),
         }
     }
@@ -7206,7 +7168,9 @@ impl Simplex {
             .iter()
             .map(|(v, entry)| {
                 let cow = match entry {
-                    TableRow::Lin(arc) => std::borrow::Cow::Borrowed(arc.as_ref()),
+                    TableRow::Lin(arc) | TableRow::LinNoInt(arc) => {
+                        std::borrow::Cow::Borrowed(arc.as_ref())
+                    }
                     TableRow::Int(int_row) => std::borrow::Cow::Owned(materialize_lin(int_row)),
                 };
                 (*v, cow)

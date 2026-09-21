@@ -124,3 +124,36 @@ falls with it.
   the CAV completing cells' medians.
 * Full bar: nextest, clippy/fmt/doc, Z3 parity, the wide-literal
   differentials.
+
+## Execution record: Phase 1 landed (Stages A and B, same day)
+
+**Stage A (`c5e8026a`)** — the bridge, behavior-identical: `TableRow`
+storage, the memoizing `row_lin` choke point, the `&self` Cow view
+(`row_lin_view`), form-independent `term_vars`; every insert still
+`Lin`.  Verified: theories 1670, solver 1198, probe counter identity.
+
+**Stage B** — the win: `substitute_row_ff` loses its canonical
+write-back (returns the `IntRow`; the write-back could never decline
+where the 2^62 admission passed, so the path partition is unchanged),
+pivot commits store `TableRow::Int`, the delta-propagation reads its
+one coefficient from the integer form (one `checked_ratio_i128` per
+row — the deferral's only per-pivot residual), and the old
+ptr-validated `int_rows` cache is DELETED (the store holds Int natively;
+a `LinNoInt` negative variant prevents per-pivot rebuilds on the
+over-budget tail; commit-time int-form builds are the same k-gcd cost
+the cache paid).
+
+**Measured (problem__011, the standing churn probe):**
+`checked_ratio_i128` — 21.9 % of wall — VANISHES from the profile
+(the write-back is dead); `materialize_lin` (the lazy path) is 2.3 %;
+`pivot` self drops 39 % → 11.6 %; `gcd_i128` absorbs the residual
+chain reduction (17 % → 22 %).  End-to-end: 17.6 s → 14.9 s (~1.18×),
+counters BIT-IDENTICAL (the laziness changes WHEN a row is canonical,
+never WHAT it is).  Gate PASS 1.000/1.000; parity 176/177 clean; CAV
+40-cell sweep identical (one baseline-leg cap timeout under load).
+
+The remaining arithmetic mass is the substitution's gcd CHAIN plus the
+entering/leaving row materializations — Phase 2/3 territory (the
+entering-rule trio and `build_pivot_expr` still materialize one
+canonical row per pivot round; the born-integer solved form is
+Phase 3).  The write-back floor itself is CLOSED.
