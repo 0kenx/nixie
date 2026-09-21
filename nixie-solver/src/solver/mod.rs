@@ -3245,8 +3245,17 @@ impl Solver {
         // same terms the constructor's eager EUF intern is about to register
         // as application arguments — so compound linear arguments get their
         // definitional arithmetic rows before the first search misses the
-        // congruence they enable.
-        self.intern_compound_uf_args_into_arith(manager);
+        // congruence they enable.  With no uninterpreted function anywhere
+        // in the goal there are no application arguments to repair, so the
+        // vocabulary walk is provably empty — skip it (a full
+        // var-table walk per check otherwise, on every UF-free goal).
+        let goal_has_uf = self
+            .last_features
+            .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions))
+            .has_uf();
+        if goal_has_uf {
+            self.intern_compound_uf_args_into_arith(manager);
+        }
 
         // Run SAT solver with theory integration
         let zero_term = manager.mk_int(0);
@@ -4699,7 +4708,17 @@ impl Solver {
                     // UFLRA FFT false-loop class).  Internalize each such
                     // argument with its *definitional* row — a tautology that
                     // only names the fresh variable, constraining nothing.
-                    self.intern_compound_uf_args_into_arith(manager);
+                    // (Same no-UF skip as the base-scope site: with no
+                    // uninterpreted functions the repair walk is provably
+                    // empty.  Quantified goals mint UF-shaped lemmas only
+                    // when the goal itself carries uninterpreted functions.)
+                    let round_goal_has_uf = self
+                        .last_features
+                        .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions))
+                        .has_uf();
+                    if round_goal_has_uf {
+                        self.intern_compound_uf_args_into_arith(manager);
+                    }
                     let zero_term = manager.mk_int(0);
                     theory_manager = TheoryManager::new(
                         manager,

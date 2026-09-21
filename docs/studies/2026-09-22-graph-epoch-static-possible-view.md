@@ -320,3 +320,44 @@ Validation: workspace `--all-features` 12113/12113, bit-identical
 counters 12/12 vs the pre-change build, MonoSAT differential 300/300,
 Z3 4.16.0 parity 0/354 wrong, perf gate PASS at exactly 1.000
 counters, clippy/fmt/rustdoc clean.
+
+## Addendum (2026-09-22, fourth session): the tail is flat — one more inert gate, one measured-negative skip, and the stop decision
+
+Re-profiling the outlier at the current head showed the post-gates
+tail is now genuinely flat: driver-side term minting (`mk_not` + `main`
+≈ 17%), the hash-consing insert/probe mass (≈ 17%, spread across the
+term→var table, the watch-registration maps, and the elim-uncnstr
+occurrence bookkeeping), memory traffic (`memmove`/`memset`/mimalloc
+≈ 15%), one SAT var + one congruence entry per encoded atom
+(structural), and the one-per-goal feature walk. No remaining symbol
+is both large and in this arc's lane.
+
+Two slices were tried:
+
+- **UF interface-repair gate (landed)**: `intern_compound_uf_args_
+  into_arith` walked the whole encoded vocabulary (per check, whenever
+  the vocabulary grew) even when the goal has no uninterpreted
+  function anywhere — its candidates are `Apply` arguments, and an
+  `Apply` node requires an arity>0 UF symbol, which is exactly what
+  `StaticFeatures::has_uf()` counts. Gated at both call sites; the
+  worst instance drops 142.8M → 141.2M instructions (−1.2%), counters
+  bit-identical, full stack green.
+- **BV link/blast skip while `bv_terms.is_empty()` (measured
+  NEGATIVE, reverted)**: skipping the per-assertion link/blast pass
+  when no BV term was ever encoded — provably a no-op walk — *added*
+  3.5M instructions (~+2.4%) on the same instances. The walks it
+  removed were already cheap at this head (they no longer appear in
+  the top symbols), and the change's code-layout shift alone costs
+  more than the walks. Reverted; recorded as a reminder that
+  instruction deltas under ~2% in this pipeline can be layout noise
+  in either direction — the deterministic counter is bit-identity,
+  and instruction deltas at this scale need the before/after pair
+  measured on the same binary layout to be meaningful.
+
+This closes the engagement from the graph side: corpus geomean
+0.75× / totals 0.82× vs MonoSAT (below parity on both), heavy half
+0.60×, worst outlier ~2.0× with the residual attributed to the
+structural SMT-API cost (hash-consing, one-var-per-atom, teardown)
+and to the simplifier/parse surface owned by the assert-fold and
+parser arcs. Further outlier work belongs to those owners with this
+study's profiles as the entry point.
