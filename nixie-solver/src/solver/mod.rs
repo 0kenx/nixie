@@ -852,6 +852,14 @@ pub struct Solver {
     /// makes the in-loop non-convex-LIA refinement terminate (see
     /// [`Solver::refine_int_case_split`]).
     pub(super) case_split_terms: FxHashSet<TermId>,
+    /// CERTIFICATE-mode numeric equality: during
+    /// [`Solver::model_certifies_assertions`] the shared evaluator treats an
+    /// exact value COLLISION on `=` as TRUE (the equality holds under the
+    /// assignment — a positive verification), while the refutation gates keep
+    /// the collision `Undetermined` (a collision must never veto a `not (=
+    /// ..)` candidate — see `combine_eq`).  Saved/restored around the
+    /// certificate's evaluations; evaluation-local, never trailed.
+    pub(super) eq_collision_verifies: std::cell::Cell<bool>,
     /// Minted CDCL-visible LIA branch atoms (`(>= form k)`, the item-96
     /// channel — see the `LiaBranchRequest` type in the arithmetic solver).
     /// Memo: an already-minted atom is never re-minted (the term is
@@ -1012,6 +1020,9 @@ impl EvalVal {
         }
     }
 }
+
+
+
 
 impl Default for Solver {
     fn default() -> Self {
@@ -1337,6 +1348,7 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             lia_branch_atoms: FxHashSet::default(),
+            eq_collision_verifies: std::cell::Cell::new(false),
             lia_branch_rounds: 0,
             case_split_rounds: 0,
             model_blocking_active: 0,

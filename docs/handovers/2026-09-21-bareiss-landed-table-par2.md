@@ -17,6 +17,20 @@ timeout -> `sat`/905 ms; standing LIA 33/60, par2 9429 -> 9088, median
 `precompile/6853f25c`).
 
 ----
+**Morning follow-up (post-branch-channel).**  The arithmetic arc's
+rung 3 landed (`0edc05fc`: the branch channel is the DEFAULT) — the
+standing LIA counters now read **5517 -> 4502 -> 3209** across the arc
+(Bareiss inert, the fold's refuted cells, then the channel's
+recoveries; the measurement log has the runs).  The Bareiss follow-up
+question (entering-solve zero-gcd) resolved **NEGATIVE** by profile:
+<=2 % of the arithmetic mass — recorded, do not revisit without a
+profile that moves it.  A clean calm-load wall snapshot of the
+combined tree could NOT land this morning (one run rode my own
+concurrent symbolized build — scheduling mistake, discarded; two rode
+other agents' campaigns at load 10-399, discarded) — **the next
+agent's cheap closure** is exactly the handover's step-1 recipe: the
+table at sustained load <= ~8 on `precompile/cf8e497c` (or newer).
+
 **Date:** 2026-09-21 (small hours).  **Arc:** executing
 `docs/handovers/2026-09-20-smt-perf-arc-executed.md` — the calm-load
 table (step 1), the Bareiss/row-denominator layer (step 2, landed), and

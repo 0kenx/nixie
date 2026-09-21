@@ -178,3 +178,18 @@ dive-leaf divergence, the next open item) + the ray/smx tails.
 
 The arc's cumulative fixed-seed survey run: 150 → 110 → 91 → 79 → 75 →
 73 → 78 → 76 (flip) → **18**.
+
+## Update (J5-(b2) closed): 18 → 2 members
+
+`1c71f4d9`: the certificate evaluator learns integer div/mod (exact
+Euclidean, fail-closed on zero divisors / non-integral operands — the
+terms previously fell to the opaque-leaf catch-all) and certificate-mode
+equality (an exact collision VERIFIES the positive `=`; the refutation
+gates keep their collision-conservatism untouched).  **16 of 18 members
+recovered; all verdicts z3-agreeing; all 16 models z3-validated; zero
+false.**  The residual 2: `gap_s20261001_i504` (a LINEAR-arithmetic
+`Undetermined` source — no div/mod in the refusing conjunct's tree; the
+next decode) and `gap_s20261000_i129` (the simplex resource-limit tail).
+
+The arc's cumulative fixed-seed survey run: 150 → 110 → 91 → 79 → 75 →
+73 → 78 → 76 → 18 → **2**.

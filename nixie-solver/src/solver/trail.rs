@@ -439,6 +439,8 @@ impl super::Solver {
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
             lia_branch_atoms: _,  // PER-SEARCH: the minted atoms are SAT-database
+            eq_collision_verifies: _, // EVALUATION-LOCAL: saved/restored
+            // around each certificate evaluation, never read across checks.
             // clauses like case-split lemmas — retracted by `pop` — and the
             // memo is cleared at `check_core` entry with the rounds counter
             // (`check_core` owns both; see `MAX_LIA_BRANCH_ROUNDS`).

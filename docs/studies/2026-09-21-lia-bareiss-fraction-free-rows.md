@@ -123,3 +123,18 @@ VarId never owns a row again (ids are not recycled).
   that variable); the ff path's `row.contains` append-guard correctly
   dropped it.  Worth knowing: that guard is load-bearing for exactly the
   no-op case, not a bug.
+
+## Addendum: the named follow-up resolves NEGATIVE (post-branch-channel profile)
+
+Re-profiled the churn probe (`CAV/45-vars/problem__022`, 12 s window)
+after the branch channel became the default (`0edc05fc`): `pivot` self
+36.3 % (the inlined integer loop — the work), the canonical write-back
+family `checked_ratio_i128` + `gcd_i128` + the `BigUint::gcd` ICF twin
+≈ 31 % (the per-term single-gcd floor of `LinExpr` output), and the
+residual per-term rational callers (`Ratio::reduce` + `CheckedMul/Add`
+≈ 11 % — the cut/patch/B&B machinery, not the substitution).  The
+entering-solve follow-up (zero-gcd re-denomination from the cached
+`IntRow`) is 1/46th of the substitution mass ≈ **≤2 %** — below any
+hot-path-change bar.  Not taken; do not revisit without a profile that
+moves it.  The owning item on this family remains the pivot VOLUME
+(the internal B&B's node count), architectural, per the standing map.
