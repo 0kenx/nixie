@@ -69,3 +69,22 @@ BVE landing):
   30 s — the pivot VOLUME (internal B&B) is unchanged, as mapped; a
   fresh symbolized profile of it is in the Bareiss study's addendum
   (the follow-up question resolved negative, ≤2 %).
+
+## 2026-09-21 (midday): the combined-tree calm snapshot — three discarded legs, one splice
+
+- 12:40 full run: LIA leg clean (load 4.9–8.3; 33/60, dis 0, conflicts
+  4502 — counter-stable with the campaign snapshot); **BV leg
+  contaminated** (load crept 10.8→26.9 from 12:45; z3 dropped to
+  52/60, nixie 53 — both below their calm levels).  BV leg discarded.
+- 12:56 full run: the LIA leg itself rode load up to 15 (geomean 359.8
+  vs the clean 231.1, median 0.83 vs 0.56 — both solvers slowed);
+  whole run discarded.
+- 13:29 BV-only leg (the deterministic slice re-run alone): clean
+  (load 7.2–8.2), spliced with the 12:40 LIA leg into the committed
+  snapshot (`7c38a5f9`; splice and load records disclosed in its
+  run_note).
+- Operational note: the load oscillates in ~10–15 min campaign cycles
+  today; a full 8-min two-leg window never held, a 3-min single-leg
+  window did.  A `for family in QF_BV` copy of `run_perf.sh` placed in
+  `bench/smt_perf/` (same SCRIPT_DIR depth) re-runs one leg on the
+  identical slice — the splice vehicle.
