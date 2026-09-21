@@ -936,3 +936,23 @@ could not be *established* is never grounds for rejection, only one proved too h
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or
   does O2 need a state abstraction first? Unknown until measured.
 - Apalache's current temporal fragment — see Step 0 above.
+
+## PlusCal (2026-09-21)
+
+A PlusCal algorithm is a TLA+ *comment* — `(* --algorithm … *)` — which is
+why a front end can accept every PlusCal specification and never see the
+algorithm. `nixie_tla_syntax::pcal` is the missing layer: it extracts the
+algorithm from the comment stream, parses it (both p- and c-syntax) over
+this front end's own lexer and expression parser, and translates to plain
+TLA+ through the reference's phases — required-label insertion, cluster
+splitting, symbol disambiguation, the control-flow explosion into `pc`
+guards and updates, and text generation. The label-placement rules are the
+semantics (a statement cluster between labels is one atomic step), so the
+verification is behavioural: `bench/tla_pcal` runs four parity gates
+against `pcal.trans`, culminating in TLC generating successor pairs from
+both its translation and ours and both translations' `Init`/`Next` having
+to hold on both dumps. See `bench/tla_pcal/METHODOLOGY.md`.
+
+Procedures (`call`/`return` with the stack variable) are declined with a
+named error: nothing in the corpus uses them, and a partial implementation
+would be a silent wrong answer.

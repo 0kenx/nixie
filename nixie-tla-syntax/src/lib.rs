@@ -69,6 +69,7 @@ pub mod lexer;
 pub mod module;
 pub mod op;
 pub mod parser;
+pub mod pcal;
 pub mod span;
 pub mod token;
 

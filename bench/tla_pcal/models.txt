@@ -1,0 +1,19 @@
+# PlusCal state-parity models: <corpus-relative spec> <model cfg in models/>
+#
+# A representative subset: every construct class of the corpus is exercised
+# (multiprocess fair processes, uniprocess loops, c-syntax, goto, either,
+# macros, process-local variables, pc elision, single `=` processes). The
+# configs are hand-written small instances: the corpus's own .cfg files
+# mostly assign constants by DEFINITION REPLACEMENT (x <- Def), which binds
+# an operator rather than a value and cannot be replayed against a state
+# dump; and several specs EXTEND TLAPS.tla, which no available library
+# provides (Simple, SimpleRegular, Barriers, Bakery, Lock -- declined for
+# that reason, covered by the parse/level/definition gates).
+#
+specifications/DiningPhilosophers/DiningPhilosophers.tla	DiningPhilosophers.cfg
+specifications/N-Queens/QueensPluscal.tla	QueensPluscal.cfg
+specifications/transaction_commit/2PCwithBTM.tla	2PCwithBTM.cfg
+specifications/MultiPaxos-SMR/MultiPaxos.tla	MultiPaxos.cfg
+# specifications/LearnProofs/AddTwo.tla -- EXTENDS TLAPS, unavailable
+# specifications/locks_auxiliary_vars/Peterson.tla -- EXTENDS TLAPS, unavailable
+specifications/dijkstra-mutex/DijkstraMutex.tla	DijkstraMutex.cfg

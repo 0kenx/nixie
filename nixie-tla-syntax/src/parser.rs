@@ -118,6 +118,14 @@ impl Parser {
         self.peek().kind == TokenKind::Eof
     }
 
+    /// Whether the whole stream has been consumed. Public for consumers
+    /// that drive [`Parser::parse_expr`] over a bounded token slice, as the
+    /// PlusCal front end does.
+    #[must_use]
+    pub fn exhausted(&self) -> bool {
+        self.at_eof()
+    }
+
     fn advance(&mut self) -> Token {
         let tok = self.peek().clone();
         if self.pos < self.tokens.len().saturating_sub(1) {
