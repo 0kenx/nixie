@@ -3060,60 +3060,141 @@ impl Simplex {
         // Otherwise (some variable free to move) no pivot can repair a
         // wide row — the honest `resource_limit` decline.
         if verdict.is_ok() && (self.wide_pending || !self.wide_rows.is_empty()) {
-            // Convergence classification (refutation and honest decline
-            // only — the REPAIR role moved into `make_feasible`, whose
-            // leaving rule now scans the wide store too, one pivot at a
-            // time under the single Bland-governed driver; the interleaved
-            // repair loop this replaces re-feasibilized between repairs
-            // and could orbit).  A wide row that is still VIOLATED here is
-            // one the driver could not repair (no eligible entering column
-            // existed, or the pivot budget overflowed): the interval
-            // refutation either proves the current region infeasible (a
-            // Farkas conflict explained through the determining bounds'
-            // reasons — bounds-only reasoning, sound whatever the
-            // assignment vector says), or the state is beyond this check
-            // and the honest `resource_limit` decline applies.  An
-            // UNDECIDABLE evaluation (a stale reference) can never back a
-            // verdict — decline.
-            //
-            // Classification order is the VARIABLE order (smallest id
-            // first), never the HashMap iteration order: the verdict must
-            // not depend on hash layout.
-            let mut wide_snapshot: Vec<(VarId, BigLinExpr)> =
-                self.wide_rows.clone().into_iter().collect();
-            wide_snapshot.sort_by_key(|(v, _)| *v);
-            for (var, wexpr) in wide_snapshot {
-                let idx = var as usize;
-                let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
-                    || self.upper.get(idx).is_some_and(|b| b.is_some());
-                if !bounded {
-                    continue;
-                }
-                match self.wide_row_violated(&wexpr, idx) {
-                    Some(true) => {
-                        // Interval refutation: the row's achievable
-                        // value range under the variables' bounds,
-                        // computed exactly (delta-aware), versus the
-                        // basic's bounds — disjoint means no assignment
-                        // of the bounded variables can satisfy the row:
-                        // a genuine Farkas conflict explained through
-                        // the determining bounds' reasons.
-                        if let Some(conflict) = self.wide_row_refuted_by_bounds(&wexpr, idx) {
-                            return Err(conflict);
+            // Convergence classification with the WIDE-DRIVEN REPAIR STEP:
+            // a violated wide row whose achievable range OVERLAPS its bound
+            // window is repairable in principle — the old behavior declined
+            // the whole check (`resource_limit`, honest `unknown`) because
+            // no pivot could reach it (wide rows were unpivable).  The
+            // pivot's wide-leaving branch now solves the wide row exactly
+            // for an eligible entering column (the DdM repair step, exact
+            // arithmetic), so the overlap case attempts a bounded sequence
+            // of repairs before any decline.  Each repair re-feasibilizes
+            // the narrow rows the substitution touched and re-classifies;
+            // the budget bounds the loop, and an undecidable row or a
+            // repair with no eligible column still declines honestly.
+            const MAX_WIDE_REPAIRS: usize = 32;
+            let mut repairs: usize = 0;
+            loop {
+                let mut declined = false;
+                let mut repaired = false;
+                for (var, wexpr) in self.wide_rows.clone() {
+                    let idx = var as usize;
+                    let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
+                        || self.upper.get(idx).is_some_and(|b| b.is_some());
+                    if !bounded {
+                        continue;
+                    }
+                    match self.wide_row_violated(&wexpr, idx) {
+                        Some(true) => {
+                            // Interval refutation: the row's achievable
+                            // value range under the variables' bounds,
+                            // computed exactly (delta-aware), versus the
+                            // basic's bounds — disjoint means no assignment
+                            // of the bounded variables can satisfy the row:
+                            // a genuine Farkas conflict explained through
+                            // the determining bounds' reasons.
+                            if let Some(conflict) = self.wide_row_refuted_by_bounds(&wexpr, idx) {
+                                return Err(conflict);
+                            }
+                            // Overlapping range: repairable.  Attempt one
+                            // wide pivot (snapping the leaving basic to
+                            // the bound it violates), then re-feasibilize
+                            // and re-classify.
+                            if repairs >= MAX_WIDE_REPAIRS {
+                                declined = true;
+                                break;
+                            }
+                            // The violated side must be read from the EXACT
+                            // evaluation, never the stored entry: a wide
+                            // basic's entry is stale BY DESIGN whenever its
+                            // exact value does not narrow (the wide pass only
+                            // stores narrowing values), so the entry-based
+                            // inference picked the wrong side on exactly
+                            // those rows — every repair then searched the
+                            // reversed direction, found no eligible column,
+                            // and declined a repairable row.
+                            let bound_kind = match self.eval_big_raw(&wexpr) {
+                                Some((real, delta)) => {
+                                    let above_upper =
+                                        self.upper.get(idx).and_then(|o| o.as_ref()).is_some_and(
+                                            |hi| {
+                                                let b_real = hi.value.real_big();
+                                                match real.cmp(&b_real) {
+                                                    core::cmp::Ordering::Equal => {
+                                                        delta > hi.value.delta_big()
+                                                    }
+                                                    core::cmp::Ordering::Greater => true,
+                                                    core::cmp::Ordering::Less => false,
+                                                }
+                                            },
+                                        );
+                                    if above_upper {
+                                        BoundType::Upper
+                                    } else {
+                                        BoundType::Lower
+                                    }
+                                }
+                                None => {
+                                    // Undecidable evaluation: the classification's
+                                    // `None` arm below owns this row.
+                                    BoundType::Lower
+                                }
+                            };
+                            let Some(entering) = self.find_wide_pivot_col(
+                                &wexpr,
+                                &Bound {
+                                    kind: bound_kind,
+                                    value: BoundValue::Narrow(DeltaRational::zero()),
+                                    reason: 0,
+                                    aux_reasons: smallvec::SmallVec::new(),
+                                },
+                            ) else {
+                                // No eligible entering column: every
+                                // repair direction is blocked at its
+                                // bound — not a state this classification
+                                // can repair; decline honestly.
+
+                                declined = true;
+                                break;
+                            };
+                            repairs += 1;
+                            if !self.pivot(var, entering, SnapBound::from_violated(bound_kind)) {
+                                return verdict;
+                            }
+                            repaired = true;
+                            break;
                         }
-                        // Overlapping range the driver could not reach:
-                        // the honest `resource_limit` decline.
+                        Some(false) => {}
+                        None => {
+                            // Undecidable (stale reference): nothing here
+                            // can certify the row, so no verdict may rest
+                            // on it.
+                            declined = true;
+                            break;
+                        }
+                    }
+                }
+                if declined || !repaired {
+                    if declined {
                         self.resource_limit = true;
+                    }
+                    break;
+                }
+                // The substitution touched narrow rows: re-feasibilize
+                // before the next classification round.
+                if !self.assignment_current {
+                    self.crash_basis();
+                    if self.resource_limit {
                         break;
                     }
-                    Some(false) => {}
-                    None => {
-                        // Undecidable (stale reference): nothing here
-                        // can certify the row, so no verdict may rest
-                        // on it.
-                        self.resource_limit = true;
-                        break;
+                }
+                match self.make_feasible() {
+                    Ok(()) => {
+                        if self.resource_limit {
+                            break;
+                        }
                     }
+                    Err(conflict) => return Err(conflict),
                 }
             }
         }
@@ -3305,15 +3386,7 @@ impl Simplex {
                     bland_mode = true;
                 }
             }
-            // A WIDE leaving basic (its defining row lives in the wide
-            // store) takes the exact-row entering rule — eligibility over
-            // the exact coefficients, smallest eligible index
-            // (Bland-shaped); the narrow rules read the narrow store and
-            // would find no row at all.
-            let wide_wexpr = self.wide_rows.get(&basic_var).cloned();
-            let pivot_col = if let Some(wexpr) = wide_wexpr.as_ref() {
-                self.find_wide_pivot_col(wexpr, &bound)
-            } else if bland_mode {
+            let pivot_col = if bland_mode {
                 self.find_bland_pivot_col(basic_var, &bound)
             } else {
                 self.find_pivot_col(basic_var, &bound)
@@ -3334,23 +3407,6 @@ impl Simplex {
                     }
                 }
                 None => {
-                    if let Some(wexpr) = wide_wexpr.as_ref() {
-                        // No eligible entering column over the exact wide
-                        // row: the interval refutation may still prove the
-                        // current region infeasible (a genuine Farkas
-                        // conflict through the determining bounds'
-                        // reasons — bounds-only reasoning, valid whatever
-                        // the assignment vector says); an overlapping
-                        // window is a state this driver cannot repair —
-                        // the honest resource-limit decline.
-                        if let Some(conflict) =
-                            self.wide_row_refuted_by_bounds(wexpr, basic_var as usize)
-                        {
-                            return Err(conflict);
-                        }
-                        self.resource_limit = true;
-                        return Ok(());
-                    }
                     return Err(self.explain_conflict(basic_var, &bound));
                 }
             }
@@ -3843,14 +3899,6 @@ impl Simplex {
         }
         best_var
     }
-    /// Find a basic variable that violates its bounds
-    /// Find the smallest-indexed basic variable violating a bound.
-    ///
-    /// Z3's `find_smallest_inf_column` (see
-    /// `lp_primal_core_solver.h::one_iteration_tableau_rows`): the leaving
-    /// variable is the *smallest-indexed* infeasible basic column, so the
-    /// pivot sequence is deterministic (independent of hash iteration order)
-    /// and degenerate repeats are easy to detect for the Bland-mode switch.
     fn find_violating(&self) -> Option<(VarId, Bound)> {
         let mut worst: Option<(VarId, Bound)> = None;
         for var in self.tableau.keys() {
@@ -3866,30 +3914,6 @@ impl Simplex {
                 Some(hi.clone())
             } else {
                 None
-            };
-            if let Some(bound) = viol
-                && worst.as_ref().is_none_or(|(v, _)| *var < *v)
-            {
-                worst = Some((*var, bound));
-            }
-        }
-        // The WIDE store's basics join the SAME smallest-index leaving
-        // rule: one feasibility driver over both stores, the shape of Z3's
-        // single exact tableau (`one_iteration_tableau_rows` leaves by
-        // `find_smallest_inf_column`, store-agnostic).  The split driver
-        // this replaces — narrow repairs here, wide repairs in `check`'s
-        // own loop with a full re-feasibilization between them — let each
-        // half undo the other's moves (two operators with no common
-        // progress measure orbit: the measured period-1 and period-2
-        // cycles of the wide-repair stall class).  Undecidable evaluations
-        // are skipped (the convergence classification in `check` owns
-        // their honest decline); a violated wide row yields its violated
-        // bound — kind and reasons — exactly as a narrow violation does,
-        // and `pivot` already solves wide leaving basics exactly.
-        for (var, wexpr) in self.wide_rows.iter() {
-            let idx = *var as usize;
-            let Some(viol) = self.wide_row_violated_bound(wexpr, idx) else {
-                continue;
             };
             if let Some(bound) = viol
                 && worst.as_ref().is_none_or(|(v, _)| *var < *v)
