@@ -68,6 +68,7 @@ env_flag_fn!(
     conflict_trace,
     "NIXIE_CONFLICT_TRACE"
 );
+#[cfg(debug_assertions)]
 env_flag_fn!(
     /// `NIXIE_CHECK_FIXPOINT` — assignment-fixpoint re-check.
     check_fixpoint,
