@@ -42,3 +42,24 @@ Nixie's model/certificate checking is included. Keep all certification gates.
 
 Complete release-mode AGENTS.md verification, Z3 parity and the perf landing
 gate before landing. Record negative experiments rather than dropping them.
+
+## Second stage, before its edits or measurements
+
+The first candidate 0bb2d4f6 has identical transcripts but selection ratios
+0.9629 ordinary / 0.9637 certified: neutral and below the go bar. Keep it as
+an ablation, not a standalone performance success. Its profile still shows
+domain construction/filtering prominently. Inspection finds two redundant
+operations: unknown indicators scan the current BigInt domain for membership,
+and domain reconstruction clones values which it discards when a true
+indicator fixes that domain.
+
+Use the same snapshot's fixed-premise flag to answer membership for an unknown
+indicator: with validated unique values and a valid snapshot, it is excluded
+exactly when a different indicator is fixed true. Continue all global trials
+in their original order, even for such excluded candidates. During snapshot
+construction, borrow the fixed value and stop cloning alternatives once one
+is seen; materialize the same final domain. Check snapshot identity against
+an independent reconstruction for every partial assignment, including invalid
+states. No scheduling rule or explanation change. The full candidate must
+meet the original go bar against 345ecfec; report the 0bb2d4f6 ablation too.
+Confirmation seeds 10..19 remain unmeasured for either candidate.
