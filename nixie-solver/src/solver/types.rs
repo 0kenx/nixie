@@ -334,6 +334,12 @@ pub struct SolverConfig {
     /// SAT engine as an external branching oracle so theory-relevant
     /// variables are decided first. Default `false`. (Ported from v0.3.2.)
     pub enable_domain_first_branching: bool,
+    /// The δ of the transcendental theory's δ-satisfiability, stored in
+    /// units of 1e-9 (`(set-option :delta …)`; default 0.001 → 1_000_000)
+    /// because `SolverConfig` is `Eq` (the verdict cache compares it by
+    /// value).  A constraint `e ⋀ c` is decided against the weakened bound
+    /// `c ± δ·(1+|c|)`.  See `docs/TRANS.md`.
+    pub trans_delta_nanos: i64,
 }
 
 impl Default for SolverConfig {
@@ -375,6 +381,7 @@ impl SolverConfig {
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
+            trans_delta_nanos: 1_000_000,
         }
     }
 
@@ -410,6 +417,7 @@ impl SolverConfig {
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
+            trans_delta_nanos: 1_000_000,
         }
     }
 
@@ -445,6 +453,7 @@ impl SolverConfig {
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
+            trans_delta_nanos: 1_000_000,
         }
     }
 
@@ -482,6 +491,7 @@ impl SolverConfig {
             finite_expansion_budget: 0,
             nonlinear_model_search: false,
             enable_domain_first_branching: false,
+            trans_delta_nanos: 1_000_000,
         }
     }
 

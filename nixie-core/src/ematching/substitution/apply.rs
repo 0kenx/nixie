@@ -628,6 +628,30 @@ fn rebuild(
             let a = sub(a);
             manager.mk_neg(a)
         }
+        TermKind::Exp(a) => {
+            let a = sub(a);
+            manager.mk_exp(a)
+        }
+        TermKind::Log(a) => {
+            let a = sub(a);
+            manager.mk_log(a)
+        }
+        TermKind::Sin(a) => {
+            let a = sub(a);
+            manager.mk_sin(a)
+        }
+        TermKind::Cos(a) => {
+            let a = sub(a);
+            manager.mk_cos(a)
+        }
+        TermKind::Atan(a) => {
+            let a = sub(a);
+            manager.mk_atan(a)
+        }
+        TermKind::Sqrt(a) => {
+            let a = sub(a);
+            manager.mk_sqrt(a)
+        }
         TermKind::Add(args) => {
             let new: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
             manager.mk_add(new)

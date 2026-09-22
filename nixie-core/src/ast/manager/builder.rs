@@ -6,7 +6,7 @@ use crate::prelude::*;
 use crate::sort::{SortId, SortKind};
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
-use num_traits::{Euclid, One, ToPrimitive, Zero};
+use num_traits::{Euclid, One, Signed, ToPrimitive, Zero};
 // ---------------------------------------------------------------------------
 // Constant folding at construction time (Z3's `arith_rewriter` policy).
 //
@@ -68,6 +68,30 @@ fn unified_arith_sort<'a>(
 
 /// View a term as an integer constant (for folding), by value.
 #[must_use]
+/// Exact integer square root (floor) via Newton — used by `mk_sqrt`'s
+/// perfect-square fold.
+fn isqrt_bigint(n: &BigInt) -> BigInt {
+    if n.is_zero() {
+        return BigInt::zero();
+    }
+    let mut x = BigInt::from(1) << ((n.bits() / 2) + 1);
+    loop {
+        let q = n / &x;
+        let y = (x.clone() + q) >> 1;
+        if y >= x {
+            break;
+        }
+        x = y;
+    }
+    while &x * &x > *n {
+        x -= 1;
+    }
+    while (&x + 1) * (&x + 1) <= *n {
+        x += 1;
+    }
+    x
+}
+
 fn int_const_of(t: TermId, manager: &TermManager) -> Option<BigInt> {
     match &manager.get(t)?.kind {
         TermKind::IntConst(v) => Some(v.clone()),
@@ -822,6 +846,115 @@ impl TermManager {
             }
         }
         self.intern(TermKind::Div(lhs, rhs), sort)
+    }
+
+    // ======== Transcendental functions (Real -> Real) ========
+    //
+    // These make the constraint language undecidable; the transcendental
+    // theory solves them with delta-satisfiability (interval constraint
+    // propagation, `nixie-theories/src/trans/`).  The builders only fold
+    // the cases whose value is an EXACT rational (e^0 = 1, log 1 = 0,
+    // sin 0 = 0, cos 0 = 1, atan 0 = 0, sqrt of a perfect-square rational);
+    // everything else stays symbolic — a transcendental of a constant is a
+    // genuinely irrational value and folding it to a float would be a
+    // fabrication.
+
+    /// `e^x` (exact fold: `exp 0 = 1`).
+    #[must_use]
+    pub fn mk_exp(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && c.is_zero()
+        {
+            return self.mk_real(Rational64::from_integer(1));
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Exp(arg), real)
+    }
+
+    /// `log(x)` (natural).  Total semantics: `log(x ≤ 0) = −∞`.  The fold
+    /// `log 1 = 0` is exact.
+    #[must_use]
+    pub fn mk_log(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && c == BigRational::from_integer(BigInt::from(1))
+        {
+            return self.mk_real(Rational64::from_integer(0));
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Log(arg), real)
+    }
+
+    /// `sin(x)` (exact folds: `sin 0 = 0`).
+    #[must_use]
+    pub fn mk_sin(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && c.is_zero()
+        {
+            return self.mk_real(Rational64::from_integer(0));
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Sin(arg), real)
+    }
+
+    /// `cos(x)` (exact folds: `cos 0 = 1`).
+    #[must_use]
+    pub fn mk_cos(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && c.is_zero()
+        {
+            return self.mk_real(Rational64::from_integer(1));
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Cos(arg), real)
+    }
+
+    /// `atan(x)` (exact folds: `atan 0 = 0`).
+    #[must_use]
+    pub fn mk_atan(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && c.is_zero()
+        {
+            return self.mk_real(Rational64::from_integer(0));
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Atan(arg), real)
+    }
+
+    /// `sqrt(x)`.  Total semantics: `sqrt(x < 0) = 0`.  Folds exactly when
+    /// the operand is a nonnegative rational that is a perfect square of a
+    /// representable rational.
+    #[must_use]
+    pub fn mk_sqrt(&mut self, arg: TermId) -> TermId {
+        if let Some(c) = self.arith_const_of(arg)
+            && !c.is_negative()
+        {
+            // sqrt(n/d) = sqrt(n·d)/d: rational iff n·d is a perfect
+            // square integer.  Use exact integer isqrt on n·d.
+            let n = c.numer().abs();
+            let d = c.denom();
+            let nd = &n * d;
+            let r = isqrt_bigint(&nd);
+            if &r * &r == nd
+                && let Some(v) = narrow_rational(BigRational::new(r, d.clone()))
+            {
+                return self.mk_real(v);
+            }
+        }
+        let real = self.sorts.real_sort;
+        self.intern(TermKind::Sqrt(arg), real)
+    }
+
+    /// The arithmetic constant of a term, as an exact `BigRational` (`Real`
+    /// or `Int` constants alike — `Int` embeds into `Real`).
+    fn arith_const_of(&self, t: TermId) -> Option<BigRational> {
+        match self.get(t).map(|x| &x.kind) {
+            Some(TermKind::RealConst(r)) => Some(BigRational::new(
+                BigInt::from(*r.numer()),
+                BigInt::from(*r.denom()),
+            )),
+            Some(TermKind::IntConst(n)) => Some(BigRational::from(n.clone())),
+            _ => None,
+        }
     }
 
     /// Create a modulo operation

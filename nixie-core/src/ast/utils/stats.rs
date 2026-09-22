@@ -248,6 +248,12 @@ fn combine_complexity(
         Some(
             TermKind::Not(a)
             | TermKind::Neg(a)
+            | TermKind::Exp(a)
+            | TermKind::Log(a)
+            | TermKind::Sin(a)
+            | TermKind::Cos(a)
+            | TermKind::Atan(a)
+            | TermKind::Sqrt(a)
             | TermKind::BvNot(a)
             | TermKind::StrLen(a)
             | TermKind::StrToInt(a)

@@ -107,6 +107,15 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
 
         TermKind::Neg(arg) => infer_arithmetic_sort(*arg, manager),
 
+        // Transcendentals are Real -> Real (see `mk_exp` and friends:
+        // the builder rejects non-Real operands).
+        TermKind::Exp(_)
+        | TermKind::Log(_)
+        | TermKind::Sin(_)
+        | TermKind::Cos(_)
+        | TermKind::Atan(_)
+        | TermKind::Sqrt(_) => Ok(manager.sorts.real_sort),
+
         // ITE inherits sort from branches
         TermKind::Ite(_, then_branch, _) => {
             if let Some(then_term) = manager.get(*then_branch) {

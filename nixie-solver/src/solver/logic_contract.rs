@@ -119,6 +119,17 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
+    // Nonlinear real arithmetic WITH transcendental functions (dReal's
+    // fragment: exp/log/sin/cos/atan/sqrt, decided by delta-ICP — see
+    // docs/TRANS.md).  `unsat` is exact; `sat` is delta-satisfiability.
+    (
+        "QF_NRT",
+        LogicSpec {
+            arith: true,
+            nonlinear: true,
+            ..LogicSpec::NONE
+        },
+    ),
     ("QF_IDL", LogicSpec::linear_arith(true, true)),
     ("QF_RDL", LogicSpec::linear_arith(false, true)),
     (
@@ -1293,6 +1304,21 @@ impl Capabilities {
                     }
                     stack.push(*a);
                     stack.push(*b);
+                }
+                TermKind::Exp(a)
+                | TermKind::Log(a)
+                | TermKind::Sin(a)
+                | TermKind::Cos(a)
+                | TermKind::Atan(a)
+                | TermKind::Sqrt(a) => {
+                    // Transcendentals are real nonlinear arithmetic plus a
+                    // theory QF_NRA-family headers do not spell: classify
+                    // as nonlinear reals (the QF_NRT header and the open
+                    // logics route them to the delta-ICP dispatcher).
+                    caps.arith = true;
+                    caps.nonlinear = true;
+                    caps.real_terms = true;
+                    stack.push(*a);
                 }
                 TermKind::Neg(a) => {
                     // Negation of a literal (`(- 1)`) is a literal —

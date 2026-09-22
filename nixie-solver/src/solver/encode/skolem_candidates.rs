@@ -197,7 +197,14 @@ impl Solver {
                         stack.push(a);
                     }
                 }
-                TermKind::Not(a) | TermKind::Neg(a) => {
+                TermKind::Not(a)
+                | TermKind::Neg(a)
+                | TermKind::Exp(a)
+                | TermKind::Log(a)
+                | TermKind::Sin(a)
+                | TermKind::Cos(a)
+                | TermKind::Atan(a)
+                | TermKind::Sqrt(a) => {
                     stack.push(*a);
                 }
                 TermKind::Xor(a, b)

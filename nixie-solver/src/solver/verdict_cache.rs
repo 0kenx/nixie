@@ -184,6 +184,8 @@ impl Solver {
         // not of the current one (§8): it travels with the verdict.
         self.ff_certificate = None;
         self.last_check = None;
+        // A delta-sat flag belongs to the check that produced it.
+        self.trans_delta_sat = false;
         // The algebraic side-channel belongs to the check that populated it
         // (upstream v0.3.3): it travels with the model, not the stack.
         self.nl_algebraic_values.clear();

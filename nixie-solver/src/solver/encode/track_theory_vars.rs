@@ -200,7 +200,15 @@ impl Solver {
                     stack.push(*rhs);
                     stack.push(*lhs);
                 }
-                TermKind::Neg(arg) | TermKind::Not(arg) | TermKind::BvNot(arg) => {
+                TermKind::Neg(arg)
+                | TermKind::Not(arg)
+                | TermKind::BvNot(arg)
+                | TermKind::Exp(arg)
+                | TermKind::Log(arg)
+                | TermKind::Sin(arg)
+                | TermKind::Cos(arg)
+                | TermKind::Atan(arg)
+                | TermKind::Sqrt(arg) => {
                     if !self.claim_tracked_compound(current) {
                         continue;
                     }

@@ -244,6 +244,23 @@ impl Solver {
                     stack.push(*b);
                 }
                 TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+                // Transcendental functions are never linear-representable:
+                // the linear parser has no row for them, so an atom carrying
+                // one is a free Boolean to the SAT core — the honesty gate
+                // must answer `unknown` unless the delta-ICP dispatcher
+                // (`check_trans`) took the goal.  Without this arm a
+                // `(= (exp x) 2.0)` answered a spurious `sat`.
+                TermKind::Exp(a)
+                | TermKind::Log(a)
+                | TermKind::Sin(a)
+                | TermKind::Cos(a)
+                | TermKind::Atan(a)
+                | TermKind::Sqrt(a) => {
+                    if !self.trans_dispatch_answered {
+                        return true;
+                    }
+                    stack.push(*a);
+                }
                 TermKind::Sequence(_, args)
                 | TermKind::And(args)
                 | TermKind::Or(args)
@@ -288,7 +305,13 @@ impl Solver {
                 | TermKind::DtSelector { .. }
                 | TermKind::Div(_, _)
                 | TermKind::Mod(_, _)
-                | TermKind::Ite(_, _, _) => return true,
+                | TermKind::Ite(_, _, _)
+                | TermKind::Exp(_)
+                | TermKind::Log(_)
+                | TermKind::Sin(_)
+                | TermKind::Cos(_)
+                | TermKind::Atan(_)
+                | TermKind::Sqrt(_) => return true,
                 TermKind::Add(args) | TermKind::Mul(args) => {
                     for &a in args {
                         stack.push(a);
@@ -509,6 +532,12 @@ impl Solver {
             }
             TermKind::Not(a)
             | TermKind::Neg(a)
+            | TermKind::Exp(a)
+            | TermKind::Log(a)
+            | TermKind::Sin(a)
+            | TermKind::Cos(a)
+            | TermKind::Atan(a)
+            | TermKind::Sqrt(a)
             | TermKind::SetSingleton(a)
             | TermKind::SetCard(a)
             | TermKind::SetComplement(a)
