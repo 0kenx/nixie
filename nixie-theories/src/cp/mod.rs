@@ -483,8 +483,9 @@ impl CpModel {
             ctx.propagate(consequence);
             return PropagatorResult::Unsat(reasons);
         }
+        let feasibility = feasibility::Feasibility::new(&domains);
         for constraint in &self.constraints {
-            match self.feasible(constraint, &domains, &presences) {
+            match feasibility.feasible(constraint, &presences) {
                 Some(true) => {}
                 Some(false) => {
                     let Some(consequence) =
@@ -514,13 +515,9 @@ impl CpModel {
                     .filter(|c| c.contains_variable(CpVar(i)))
                 {
                     let feasible = match constraint {
-                        Constraint::Cumulative(..) => self.feasible_at(
-                            constraint,
-                            &domains,
-                            &presences,
-                            CpVar(i),
-                            &d.values[j],
-                        ),
+                        Constraint::Cumulative(..) => {
+                            feasibility.feasible_at(constraint, &presences, CpVar(i), &d.values[j])
+                        }
                         Constraint::AllDifferent(_)
                         | Constraint::Table(_)
                         | Constraint::Regular(..)
@@ -532,7 +529,8 @@ impl CpModel {
                                 candidate[i] = vec![d.values[j].clone()];
                                 candidate
                             });
-                            self.feasible(constraint, candidate, &presences)
+                            feasibility::Feasibility::new(candidate)
+                                .feasible(constraint, &presences)
                         }
                     };
                     match feasible {
@@ -566,7 +564,7 @@ impl CpModel {
                 let mut candidate = presences.clone();
                 candidate[index] = Some(truth);
                 for constraint in &self.constraints {
-                    match self.presence_feasible(constraint, &domains, &candidate) {
+                    match feasibility.presence_feasible(constraint, &candidate) {
                         Some(true) => {}
                         Some(false) => {
                             let conclusion = if truth {

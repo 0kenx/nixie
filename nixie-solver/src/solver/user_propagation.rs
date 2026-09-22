@@ -295,10 +295,15 @@ impl Solver {
             return false;
         };
         let mut values = Vec::new();
+        // This invocation holds one immutable model/theory snapshot. Reuse
+        // concrete evaluations, never SAT phases or callback-provided values.
+        // The cache dies before another check/model/scope can be observed.
+        let mut evaluated = FxHashMap::default();
         for &(term, _) in &self.user_state.watches {
             match self.eval_in_model_outcome(term, model, tm, 0) {
                 model_eval::EvalOutcome::Value(EvalVal::Bool(value)) => {
-                    values.push((term, tm.mk_bool(value)))
+                    values.push((term, tm.mk_bool(value)));
+                    evaluated.insert(term, value);
                 }
                 _ => return false,
             }
@@ -307,9 +312,13 @@ impl Solver {
         for statement in &self.user_state.cp_originals {
             if statement
                 .check_model(
-                    |atom| match self.eval_in_model_outcome(atom, model, tm, 0) {
-                        model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
-                        _ => None,
+                    |atom| {
+                        evaluated.get(&atom).copied().or_else(|| {
+                            match self.eval_in_model_outcome(atom, model, tm, 0) {
+                                model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
+                                _ => None,
+                            }
+                        })
                     },
                     &mut cp_budget,
                 )
@@ -324,12 +333,14 @@ impl Solver {
         // propagator and the certificate checker's closures).
         for statement in &self.user_state.graph_statements {
             let ok = statement
-                .check_model(
-                    &|atom| match self.eval_in_model_outcome(atom, model, tm, 0) {
-                        model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
-                        _ => None,
-                    },
-                )
+                .check_model(&|atom| {
+                    evaluated.get(&atom).copied().or_else(|| {
+                        match self.eval_in_model_outcome(atom, model, tm, 0) {
+                            model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
+                            _ => None,
+                        }
+                    })
+                })
                 .is_ok();
             if !ok {
                 return false;
@@ -351,10 +362,14 @@ impl Solver {
                             (term == tm.mk_bool(true)
                                 || term == tm.mk_bool(false)
                                 || self.user_state.literals.contains_key(&term))
-                                && matches!(
-                                    self.eval_in_model_outcome(term, model, tm, 0),
-                                    model_eval::EvalOutcome::Value(EvalVal::Bool(true))
-                                )
+                                && *evaluated.entry(term).or_insert_with(|| {
+                                    // An undetermined/non-Boolean premise fails
+                                    // closed just as a concretely false one does.
+                                    matches!(
+                                        self.eval_in_model_outcome(term, model, tm, 0),
+                                        model_eval::EvalOutcome::Value(EvalVal::Bool(true))
+                                    )
+                                })
                         })
             })
     }
@@ -609,6 +624,74 @@ mod tests {
         fn final_check(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
             ctx.propagate(self.0.clone());
             PropagatorResult::Sat
+        }
+    }
+
+    #[test]
+    fn model_replay_evaluates_formulas_and_drops_values_between_models() {
+        let mut tm = TermManager::new();
+        let p = tm.mk_var("replay_p", tm.sorts.bool_sort);
+        let q = tm.mk_var("replay_q", tm.sorts.bool_sort);
+        let not_p = tm.mk_not(p);
+        let condition = tm.mk_and(vec![not_p, q]);
+        let mut solver = Solver::new();
+        assert!(
+            solver
+                .register_user_propagator(
+                    Box::new(UnregisteredCertificate(Consequence::new(
+                        condition,
+                        vec![condition; 32],
+                    ))),
+                    &[p, not_p, condition],
+                    &mut tm,
+                )
+                .is_ok()
+        );
+        for (pv, qv, expected) in [
+            (false, Some(true), true),
+            (true, Some(true), false),
+            (false, Some(false), false),
+            (false, None, false),
+            (false, Some(true), true),
+        ] {
+            let mut model = Model::new();
+            model.set(p, tm.mk_bool(pv));
+            if let Some(qv) = qv {
+                model.set(q, tm.mk_bool(qv));
+            }
+            solver.model = Some(model);
+            assert_eq!(solver.validate_user_model(&tm), expected);
+        }
+    }
+
+    #[test]
+    fn model_replay_checks_unwatched_negations_and_rejects_foreign_vocabulary() {
+        for foreign in [false, true] {
+            let mut tm = TermManager::new();
+            let p = tm.mk_var("replay_p", tm.sorts.bool_sort);
+            let q = tm.mk_var("replay_foreign", tm.sorts.bool_sort);
+            let not_p = tm.mk_not(p);
+            let premise = if foreign { q } else { not_p };
+            let mut solver = Solver::new();
+            assert!(
+                solver
+                    .register_user_propagator(
+                        Box::new(UnregisteredCertificate(Consequence::new(
+                            tm.mk_true(),
+                            vec![premise; 32],
+                        ))),
+                        &[p],
+                        &mut tm,
+                    )
+                    .is_ok()
+            );
+            for pv in [false, true, false] {
+                let mut model = Model::new();
+                model.set(p, tm.mk_bool(pv));
+                model.set(q, tm.mk_true());
+                solver.model = Some(model);
+                assert_eq!(solver.validate_user_model(&tm), !foreign && !pv);
+            }
         }
     }
 

@@ -376,3 +376,10 @@ copying all domains. This preserves the same filtering and explanations,
 including tasks sharing a start variable. The scoped public-API benchmark
 and controlled instruction measurements are recorded in
 [the scheduling performance study](studies/2026-09-22-cp-scheduling-perf.md).
+
+Cumulative bounds are also reused lazily within each callback; singleton
+trials never modify these cached extrema. During independent model replay,
+concrete Boolean evaluations are reused only within that model's validation.
+Every statement, certificate and consequence remains checked. The
+[Z3-reference study](studies/2026-09-22-cp-scheduling-bounds.md) reports explicit
+Nixie/Z3 instruction ratios separately from Nixie before/after measurements.

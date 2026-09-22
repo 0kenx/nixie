@@ -91,3 +91,29 @@ retained next to the canonical JSON records. No callback `unknown` is counted
 as a successful SAT solve. The solver cases exercise admission and cancellation
 with ample capacity; these small cases measure integration overhead, not hard
 resource-packing search or scalable proof enumeration.
+
+## Z3 performance reference and the next optimization
+
+The [bounds/replay protocol](bounds_protocol.md) extends the grid to 8x16
+end-to-end cases and uses installed Z3 4.16.0 as the external performance
+reference. `reference.py` emits equivalent exact QF_LIA schedules, checks both
+returned Z3 models independently, records immutable instruction cells and
+reports Nixie/Z3 ratios separately from Nixie before/after ratios:
+
+```sh
+python3 bench/cp_perf/reference.py run --binary precompile/BASE/cp-scheduling-bench \
+  --sha BASE --arm baseline --source . --root precompile
+python3 bench/cp_perf/reference.py run --binary /path/to/z3 \
+  --sha BASE --arm reference --source . --root precompile
+python3 bench/cp_perf/reference.py run --binary precompile/CAND/cp-scheduling-bench \
+  --sha CAND --arm treatment --source . --root precompile
+python3 bench/cp_perf/reference.py report --root precompile \
+  --baseline BASE --treatment CAND --reference BASE --csv paired.csv
+```
+
+Add `--first-seed 10` to runs and report for held-out confirmation. The Z3
+record's source revision identifies the benchmark-driving Nixie checkout;
+Z3 itself is identified by its actual version and binary hash. See the
+[study](../../docs/studies/2026-09-22-cp-scheduling-bounds.md) for limitations,
+model-check accounting and results. Run harness tests with
+`python3 -m unittest discover -s bench/cp_perf -p 'test_reference.py'`.

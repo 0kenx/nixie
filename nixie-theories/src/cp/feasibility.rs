@@ -1,28 +1,57 @@
 use super::*;
+use core::cell::OnceCell;
 
-impl CpModel {
+type Bounds<'a> = Option<(&'a BigInt, &'a BigInt)>;
+
+// One immutable callback snapshot. Both cache levels are lazy: callbacks with
+// no active cumulative task, and non-cumulative globals, allocate nothing here.
+// The borrowed domains cannot change while their extrema are retained. Trials
+// bypass these cells, and the entire object is dropped at the callback boundary.
+pub(super) struct Feasibility<'a> {
+    domains: &'a [Vec<BigInt>],
+    bounds: OnceCell<Vec<OnceCell<Bounds<'a>>>>,
+}
+
+impl<'a> Feasibility<'a> {
+    pub(super) fn new(domains: &'a [Vec<BigInt>]) -> Self {
+        Self {
+            domains,
+            bounds: OnceCell::new(),
+        }
+    }
+
+    fn bounds(&self, var: CpVar) -> Option<Bounds<'a>> {
+        let domain = self.domains.get(var.0)?;
+        let cells = self
+            .bounds
+            .get_or_init(|| self.domains.iter().map(|_| OnceCell::new()).collect());
+        let cell = cells.get(var.0)?;
+        // Outer None is an invalid variable; cached inner None is an empty
+        // domain. Keep the distinction between Unknown and infeasibility.
+        Some(*cell.get_or_init(|| Some((domain.iter().min()?, domain.iter().max()?))))
+    }
+
     // Borrow the singleton override for cumulative trials. Every occurrence of
     // this start variable sees the same value, including tasks with different
     // presence conditions. Other globals retain their existing implementation.
     pub(super) fn feasible_at(
         &self,
         constraint: &Constraint,
-        domains: &[Vec<BigInt>],
         presences: &[Option<bool>],
         var: CpVar,
         value: &BigInt,
     ) -> Option<bool> {
         match constraint {
             Constraint::Cumulative(tasks, capacity) => {
-                cumulative_feasible(tasks, capacity, domains, presences, Some((var, value)))
+                cumulative_feasible(tasks, capacity, self, presences, Some((var, value)))
             }
             Constraint::AllDifferent(_)
             | Constraint::Table(_)
             | Constraint::Regular(..)
             | Constraint::Circuit(_) => {
-                let mut candidate = domains.to_vec();
+                let mut candidate = self.domains.to_vec();
                 *candidate.get_mut(var.0)? = vec![value.clone()];
-                self.feasible(constraint, &candidate, presences)
+                Feasibility::new(&candidate).feasible(constraint, presences)
             }
         }
     }
@@ -33,10 +62,9 @@ impl CpModel {
     pub(super) fn presence_feasible(
         &self,
         constraint: &Constraint,
-        domains: &[Vec<BigInt>],
         presences: &[Option<bool>],
     ) -> Option<bool> {
-        if !self.feasible(constraint, domains, presences)? {
+        if !self.feasible(constraint, presences)? {
             return Some(false);
         }
         if let Constraint::Cumulative(tasks, _) = constraint {
@@ -48,8 +76,8 @@ impl CpModel {
                 }
                 let var = scheduled.task.start;
                 let mut supported = false;
-                for start in &domains[var.0] {
-                    if self.feasible_at(constraint, domains, presences, var, start)? {
+                for start in &self.domains[var.0] {
+                    if self.feasible_at(constraint, presences, var, start)? {
                         supported = true;
                         break;
                     }
@@ -67,9 +95,9 @@ impl CpModel {
     pub(super) fn feasible(
         &self,
         constraint: &Constraint,
-        domains: &[Vec<BigInt>],
         presences: &[Option<bool>],
     ) -> Option<bool> {
+        let domains = self.domains;
         Some(match constraint {
             Constraint::AllDifferent(vars) => matching(vars, domains)?,
             Constraint::Table(statement) => statement.rows().iter().any(|tuple| {
@@ -132,7 +160,7 @@ impl CpModel {
                 true
             }
             Constraint::Cumulative(tasks, capacity) => {
-                cumulative_feasible(tasks, capacity, domains, presences, None)?
+                cumulative_feasible(tasks, capacity, self, presences, None)?
             }
         })
     }
@@ -143,7 +171,7 @@ impl CpModel {
 fn cumulative_feasible(
     tasks: &[ScheduledTask],
     capacity: &BigInt,
-    domains: &[Vec<BigInt>],
+    state: &Feasibility<'_>,
     presences: &[Option<bool>],
     trial: Option<(CpVar, &BigInt)>,
 ) -> Option<bool> {
@@ -164,11 +192,11 @@ fn cumulative_feasible(
         if task.demand > *capacity {
             return Some(false);
         }
-        let domain = match trial {
-            Some((var, value)) if var == task.start => core::slice::from_ref(value),
-            _ => domains.get(task.start.0)?.as_slice(),
+        let bounds = match trial {
+            Some((var, value)) if var == task.start => Some((value, value)),
+            _ => state.bounds(task.start)?,
         };
-        let (Some(earliest), Some(latest)) = (domain.iter().min(), domain.iter().max()) else {
+        let Some((earliest, latest)) = bounds else {
             return Some(false);
         };
         let end = earliest + &task.duration;
