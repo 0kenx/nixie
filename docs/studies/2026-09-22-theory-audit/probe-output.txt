@@ -1,0 +1,22 @@
+integer parity spfa=true: Ok, x=Some(Ratio { numer: 1, denom: 2 })
+real strict spfa=true: Ok
+zero coefficients spfa=true: Ok
+pop source edges spfa=true: Ok
+unconstrained check: Ok
+unconstrained implied bounds: Some(Ratio { numer: 0, denom: 1 }) Some(Ratio { numer: 0, denom: 1 })
+integer parity spfa=false: Ok, x=Some(Ratio { numer: 1, denom: 2 })
+real strict spfa=false: Ok
+zero coefficients spfa=false: Ok
+pop source edges spfa=false: Conflict([1, 2])
+unconstrained check: Ok
+unconstrained implied bounds: Some(Ratio { numer: 0, denom: 1 }) Some(Ratio { numer: 0, denom: 1 })
+model based x=0 y=0 x!=y: Sat
+integer 0 <= x < 1/2: Conflict([0, 1])
+inconsistent sum conflict core: Conflict([1, 0, 1])
+fp widen 1 to 2: Sat
+disjoint same singleton: Ok(true)
+set popped cardinality: Ok(false)
+set contradictory assertions: Sat
+polite unconstrained reals x != y: Unsat([TermId(10)])
+array scoped merge pop panics: true
+array negative atom: Unsat([TermId(1)])
