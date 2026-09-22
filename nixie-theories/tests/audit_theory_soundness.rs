@@ -39,7 +39,7 @@ fn f1_candidate_conflicts_are_scoped_and_not_global_refutations() {
         let a = c.euf_mut().intern(t(100));
         let b = c.euf_mut().intern(t(200));
         c.euf_mut().assert_diseq(a, b, t(300));
-        assert!(matches!(c.check(), Ok(TheoryResult::Unknown)));
+        assert!(matches!(c.check(), Ok(TheoryResult::Sat)));
         assert!(!c.euf().are_equal_immutable(a, b));
         assert!(c.get_model().is_empty());
         // The rejected x=y candidate must not poison a later valid model.
@@ -81,15 +81,14 @@ fn f3_ground_widening_is_exact() {
 }
 
 #[test]
-fn f3_symbolic_conversion_declines_without_fabricating_a_model() {
+fn f3_symbolic_conversion_rejects_inconsistent_values_without_fabricating_a_model() {
     let mut s = FpSolver::new();
     s.new_fp(t(1), FpFormat::FLOAT32);
     s.assert_fp_to_fp(t(2), t(1), FpFormat::FLOAT64);
-    // Constants supplied AFTER the symbolic conversion do not turn the
-    // incomplete encoding into a supported one.
+    // Constants supplied AFTER conversion exercise its symbolic circuit.
     s.assert_const(t(1), &FpValue::from_f32(1.0));
     s.assert_const(t(2), &FpValue::from_f64(2.0));
-    assert!(matches!(s.check(), Ok(TheoryResult::Unknown)));
+    assert!(matches!(s.check(), Ok(TheoryResult::Unsat(_))));
     assert!(s.get_value(t(2)).is_none());
     assert!(s.get_model().is_empty());
 
@@ -224,8 +223,8 @@ fn f4_negated_subset_requires_a_witness_and_cardinality_requires_a_model() {
     s.reset();
     let a = s.new_set_var("a", SetSort::IntSet);
     s.add_constraint(card(a, 3)).unwrap();
-    assert!(!s.check().unwrap());
-    assert!(s.get_model(a).is_none());
+    assert!(s.check().unwrap());
+    assert_eq!(s.get_model(a).unwrap().len(), 3);
 }
 
 #[test]
@@ -278,7 +277,7 @@ fn f5_opaque_assertions_never_certify_sat() {
     s.push();
     assert!(matches!(s.assert_true(t(1)), Ok(TheoryResult::Unknown)));
     s.assert_false(t(1)).unwrap();
-    assert!(matches!(Theory::check(&mut s), Ok(TheoryResult::Unknown)));
+    assert!(matches!(Theory::check(&mut s), Ok(TheoryResult::Unsat(_))));
     s.pop();
     assert!(matches!(Theory::check(&mut s), Ok(TheoryResult::Sat)));
 }

@@ -18,7 +18,9 @@ use nixie_core::error::Result;
 use smallvec::SmallVec;
 
 mod relations;
+mod witness;
 use relations::SetRelation;
+pub use witness::SetModelValue;
 
 /// Set variable identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -429,6 +431,7 @@ pub type SetResult<T> = core::result::Result<T, SetConflict>;
 /// Set solver state for push/pop
 #[derive(Debug, Clone)]
 struct SolverState {
+    unexplained_domain: bool,
     num_vars: usize,
     num_constraints: usize,
     num_card_constraints: usize,
@@ -447,8 +450,8 @@ pub struct SetSolver {
     config: SetConfig,
     /// Persistent membership relations, including definitions of auxiliaries.
     relations: Vec<SetRelation>,
-    /// A concretely validated finite model, invalidated on mutation.
-    model: Option<Vec<FxHashSet<u32>>>,
+    /// A concretely validated finite/cofinite model, invalidated on mutation.
+    model: Option<Vec<SetModelValue>>,
     /// Set variables
     vars: Vec<SetVar>,
     /// Variable name to ID mapping
@@ -457,6 +460,10 @@ pub struct SetSolver {
     card_constraints: Vec<CardConstraint>,
     /// General constraints
     constraints: Vec<SetConstraint>,
+    /// Optional input literals explaining each top-level decoded constraint.
+    constraint_reasons: Vec<Option<TermId>>,
+    /// Public mutable domain access cannot supply a literal explanation.
+    unexplained_domain: bool,
     /// Propagation queue
     propagation_queue: VecDeque<SetVarId>,
     /// Current decision level
@@ -496,25 +503,11 @@ enum TrailEntry {
 
 /// Snapshot of a set variable for backtracking
 #[derive(Debug, Clone)]
-struct SetVarSnapshot {
-    must_members: FxHashSet<u32>,
-    must_not_members: FxHashSet<u32>,
-    may_members: Option<FxHashSet<u32>>,
-    card_bounds: (Option<i64>, Option<i64>),
-    is_empty: bool,
-    is_universal: bool,
-}
+struct SetVarSnapshot(SetVar);
 
 impl From<&SetVar> for SetVarSnapshot {
     fn from(var: &SetVar) -> Self {
-        Self {
-            must_members: var.must_members.clone(),
-            must_not_members: var.must_not_members.clone(),
-            may_members: var.may_members.clone(),
-            card_bounds: var.card_bounds,
-            is_empty: var.is_empty,
-            is_universal: var.is_universal,
-        }
+        Self(var.clone())
     }
 }
 
@@ -534,6 +527,8 @@ impl SetSolver {
             var_names: FxHashMap::default(),
             card_constraints: Vec::new(),
             constraints: Vec::new(),
+            constraint_reasons: Vec::new(),
+            unexplained_domain: false,
             propagation_queue: VecDeque::new(),
             level: 0,
             trail: Vec::new(),
@@ -566,8 +561,58 @@ impl SetSolver {
 
     /// Get a mutable variable by ID
     pub fn get_var_mut(&mut self, id: SetVarId) -> Option<&mut SetVar> {
+        if let Some(var) = self.get_var(id) {
+            self.trail.push(TrailEntry::VarAssign {
+                var: id,
+                snapshot: SetVarSnapshot::from(var),
+            });
+        }
+        self.unexplained_domain = true;
+        self.get_var_mut_internal(id)
+    }
+
+    fn get_var_mut_internal(&mut self, id: SetVarId) -> Option<&mut SetVar> {
         self.model = None;
         self.vars.get_mut(id.0 as usize)
+    }
+
+    /// Assert a decoded signed constraint and its explaining input literal.
+    /// The owner of the AST supplies the decoded semantics; an opaque TermId
+    /// alone cannot identify membership, cardinality, or the set operands.
+    pub fn assert_decoded(&mut self, literal: TermId, constraint: SetConstraint) -> Result<TR> {
+        let expressions: Vec<&SetExpr> = match &constraint {
+            SetConstraint::Member { set, .. } | SetConstraint::Cardinality { set, .. } => vec![set],
+            SetConstraint::Subset { lhs, rhs, .. }
+            | SetConstraint::Equal { lhs, rhs }
+            | SetConstraint::Disjoint { lhs, rhs } => vec![lhs, rhs],
+        };
+        for expr in expressions {
+            for v in expr.get_vars() {
+                if self.get_var(v).is_none() {
+                    return Err(nixie_core::error::NixieError::Unknown {
+                        reason: "decoded set literal references an unregistered variable".into(),
+                    });
+                }
+            }
+        }
+        let _ = self.add_constraint(constraint);
+        let Some(reason) = self.constraint_reasons.last_mut() else {
+            return Err(nixie_core::error::NixieError::Unknown {
+                reason: "decoded set assertion was not recorded".into(),
+            });
+        };
+        *reason = Some(literal);
+        <Self as Theory>::check(self)
+    }
+
+    fn opaque_contradiction(&self) -> Option<TermId> {
+        let mut polarities = FxHashMap::default();
+        for &(term, sign) in &self.pending_assertions {
+            if polarities.insert(term, sign).is_some_and(|old| old != sign) {
+                return Some(term);
+            }
+        }
+        None
     }
 
     /// Get a variable by name
@@ -605,6 +650,7 @@ impl SetSolver {
             self.conflict = Some(conflict.clone());
         }
         self.constraints.push(constraint);
+        self.constraint_reasons.push(None);
         applied
     }
 
@@ -640,7 +686,7 @@ impl SetSolver {
         }
 
         // Apply the constraint
-        if let Some(var) = self.get_var_mut(set_var) {
+        if let Some(var) = self.get_var_mut_internal(set_var) {
             let success = if sign {
                 var.add_must_member(element)
             } else {
@@ -725,7 +771,7 @@ impl SetSolver {
         }
 
         // Apply cardinality bounds
-        if let Some(var) = self.get_var_mut(set_var) {
+        if let Some(var) = self.get_var_mut_internal(set_var) {
             let success = match op {
                 CardConstraintKind::Equal => {
                     var.tighten_lower_card(bound) && var.tighten_upper_card(bound)
@@ -878,14 +924,14 @@ impl SetSolver {
             }
             SetExpr::Empty => {
                 let var = self.new_set_var(&format!("empty_{}", self.vars.len()), SetSort::IntSet);
-                if let Some(v) = self.get_var_mut(var) {
+                if let Some(v) = self.get_var_mut_internal(var) {
                     v.set_empty();
                 }
                 Ok(ExtractOpened::Leaf(var))
             }
             SetExpr::Universal => {
                 let var = self.new_set_var(&format!("univ_{}", self.vars.len()), SetSort::IntSet);
-                if let Some(v) = self.get_var_mut(var) {
+                if let Some(v) = self.get_var_mut_internal(var) {
                     v.is_universal = true;
                 }
                 Ok(ExtractOpened::Leaf(var))
@@ -894,7 +940,7 @@ impl SetSolver {
                 let elem_val = *elem;
                 let var = self.new_set_var(&format!("sing_{}", self.vars.len()), SetSort::IntSet);
                 // Cardinality exactly 1
-                if let Some(v) = self.get_var_mut(var) {
+                if let Some(v) = self.get_var_mut_internal(var) {
                     v.add_must_member(elem_val);
                     v.tighten_lower_card(1);
                     v.tighten_upper_card(1);
@@ -1031,10 +1077,15 @@ impl SetSolver {
         self.propagate_relations()
     }
 
-    /// Check consistency and validate a concrete finite model. `Ok(false)` is
-    /// incomplete, not unsatisfiable; cardinalities alone never certify SAT.
+    /// Check consistency and validate a finite/cofinite witness. `Ok(false)`
+    /// denotes an unresolved input or resource limit, never unsatisfiability.
     pub fn check(&mut self) -> SetResult<bool> {
         self.model = None;
+        if self.opaque_contradiction().is_some() {
+            return Err(Self::relation_conflict(
+                "both polarities of the same set atom are asserted",
+            ));
+        }
         if let Some(conflict) = &self.conflict {
             return Err(conflict.clone());
         }
@@ -1042,13 +1093,18 @@ impl SetSolver {
         if !self.pending_assertions.is_empty() {
             return Ok(false);
         }
-        self.validate_finite_model()
+        if self.validate_finite_model()? {
+            Ok(true)
+        } else {
+            self.search_set_witness()
+        }
     }
 
     /// Push a new decision level
     pub fn push(&mut self) {
         self.model = None;
         let state = SolverState {
+            unexplained_domain: self.unexplained_domain,
             num_vars: self.vars.len(),
             num_constraints: self.constraints.len(),
             num_card_constraints: self.card_constraints.len(),
@@ -1069,6 +1125,7 @@ impl SetSolver {
     pub fn pop(&mut self) {
         self.model = None;
         if let Some(state) = self.context_stack.pop() {
+            self.unexplained_domain = state.unexplained_domain;
             self.stats.num_backtracks += 1;
             self.level = self.level.saturating_sub(1);
 
@@ -1081,6 +1138,7 @@ impl SetSolver {
             // Restore state
             self.vars.truncate(state.num_vars);
             self.constraints.truncate(state.num_constraints);
+            self.constraint_reasons.truncate(state.num_constraints);
             self.card_constraints.truncate(state.num_card_constraints);
             self.pending_assertions
                 .truncate(state.num_pending_assertions);
@@ -1090,14 +1148,9 @@ impl SetSolver {
                 while self.trail.len() > boundary {
                     if let Some(entry) = self.trail.pop()
                         && let TrailEntry::VarAssign { var, snapshot } = entry
-                        && let Some(v) = self.get_var_mut(var)
+                        && let Some(v) = self.get_var_mut_internal(var)
                     {
-                        v.must_members = snapshot.must_members;
-                        v.must_not_members = snapshot.must_not_members;
-                        v.may_members = snapshot.may_members;
-                        v.card_bounds = snapshot.card_bounds;
-                        v.is_empty = snapshot.is_empty;
-                        v.is_universal = snapshot.is_universal;
+                        *v = snapshot.0;
                     }
                 }
             }
@@ -1120,6 +1173,8 @@ impl SetSolver {
         self.var_names.clear();
         self.card_constraints.clear();
         self.constraints.clear();
+        self.constraint_reasons.clear();
+        self.unexplained_domain = false;
         self.propagation_queue.clear();
         self.level = 0;
         self.trail.clear();
@@ -1144,9 +1199,19 @@ impl SetSolver {
         self.term_to_var.get(&term).copied()
     }
 
-    /// Get model for a variable
+    /// Get finite members; use `get_model_value` for a possible cofinite model.
     pub fn get_model(&self, var: SetVarId) -> Option<FxHashSet<u32>> {
-        self.model.as_ref()?.get(var.0 as usize).cloned()
+        let value = self.get_model_value(var)?;
+        if value.default_member {
+            None
+        } else {
+            Some(value.exceptions.clone())
+        }
+    }
+
+    /// Validated finite or cofinite set, including its default membership.
+    pub fn get_model_value(&self, var: SetVarId) -> Option<&SetModelValue> {
+        self.model.as_ref()?.get(var.0 as usize)
     }
 }
 
@@ -1190,7 +1255,21 @@ impl Theory for SetSolver {
             Ok(true) => Ok(TR::Sat),
             Ok(false) => Ok(TR::Unknown),
             Err(conflict) => {
+                if let Some(term) = self.opaque_contradiction() {
+                    return Ok(TR::Unsat(vec![term]));
+                }
                 self.conflict = Some(conflict.clone());
+                if !self.unexplained_domain
+                    && let Some(mut reasons) = self
+                        .constraint_reasons
+                        .iter()
+                        .copied()
+                        .collect::<Option<Vec<_>>>()
+                {
+                    reasons.sort_unstable();
+                    reasons.dedup();
+                    return Ok(TR::Unsat(reasons));
+                }
                 // Set literals cannot be fabricated into an empty TermId core.
                 Ok(TR::Unknown)
             }

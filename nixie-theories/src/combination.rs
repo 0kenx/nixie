@@ -56,8 +56,8 @@ use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
 use nixie_core::ast::TermId;
 use nixie_core::error::Result;
-#[cfg(test)]
 use num_rational::Rational64;
+mod arrangement_search;
 
 /// A shared variable between theories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -241,6 +241,9 @@ pub struct TheoryCombiner {
     lemma_cache: LruCache<TheoryLemma, ()>,
     /// Current arrangement being tested (for model-based)
     current_arrangement: Option<EqualityArrangement>,
+    /// Shared arithmetic values of the accepted combined witness. Scoped
+    /// search rolls back component state, so retain its witness separately.
+    arrangement_values: FxHashMap<TermId, num_rational::BigRational>,
     /// Relevancy tracking: terms that are relevant to the current search
     relevant_terms: FxHashSet<TermId>,
     /// Statistics for theory propagation
@@ -304,6 +307,7 @@ impl TheoryCombiner {
             mode,
             lemma_cache: LruCache::new(DEFAULT_MAX_LEMMA_CACHE_SIZE),
             current_arrangement: None,
+            arrangement_values: FxHashMap::default(),
             relevant_terms: FxHashSet::default(),
             stats: CombinerStats::default(),
         }
@@ -323,6 +327,7 @@ impl TheoryCombiner {
             mode: CombinationMode::NelsonOppen,
             lemma_cache: LruCache::new(effective),
             current_arrangement: None,
+            arrangement_values: FxHashMap::default(),
             relevant_terms: FxHashSet::default(),
             stats: CombinerStats::default(),
         }
@@ -377,8 +382,8 @@ impl TheoryCombiner {
     /// Check a complete arithmetic-model arrangement against EUF.
     ///
     /// Politeness does not make an arbitrary candidate arrangement compatible
-    /// with asserted EUF literals. A rejected candidate is `Unknown`, not a
-    /// refutation of all arrangements. Candidate assumptions are scoped.
+    /// with asserted EUF literals. Rejection starts scoped interface case
+    /// splitting; only exhaustion of all cases can refute the combined input.
     pub fn check_polite_combination(&mut self) -> Result<TheoryResult> {
         self.check_candidate_arrangement()
     }
@@ -430,14 +435,18 @@ impl TheoryCombiner {
         self.euf.pop();
         match probe? {
             TheoryResult::Sat => {
+                self.arrangement_values = self
+                    .shared_vars
+                    .iter()
+                    .filter_map(|&v| self.arith.value_exact(v).map(|value| (v, value)))
+                    .collect();
                 self.current_arrangement = Some(arrangement);
                 Ok(TheoryResult::Sat)
             }
             // Neither a conflict nor a propagation conditional on candidate
             // assumptions may escape as an unconditional fact.
-            TheoryResult::Unsat(_) | TheoryResult::Propagate(_) | TheoryResult::Unknown => {
-                Ok(TheoryResult::Unknown)
-            }
+            TheoryResult::Unsat(_) => self.search_arrangements(),
+            TheoryResult::Propagate(_) | TheoryResult::Unknown => Ok(TheoryResult::Unknown),
         }
     }
 
@@ -752,7 +761,7 @@ impl TheoryCombiner {
     }
 
     /// Use the complete arrangement of an arithmetic witness, including all
-    /// disequalities. Rejected arrangements remain incomplete (`Unknown`).
+    /// disequalities, and search alternatives when the initial candidate fails.
     fn check_model_based(&mut self) -> Result<TheoryResult> {
         self.check_candidate_arrangement()
     }

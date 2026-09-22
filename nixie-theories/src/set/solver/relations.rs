@@ -12,7 +12,7 @@ pub(super) enum SetRelation {
 }
 
 impl SetRelation {
-    fn vars(self) -> Vec<SetVarId> {
+    pub(super) fn vars(self) -> Vec<SetVarId> {
         match self {
             Self::Subset(a, b, _) | Self::Disjoint(a, b) | Self::Complement(a, b) => vec![a, b],
             Self::Union(r, a, b) | Self::Intersection(r, a, b) | Self::Difference(r, a, b) => {
@@ -23,7 +23,7 @@ impl SetRelation {
 
     /// Pointwise semantics. A negative subset is existential, so it is
     /// checked separately and must not be asserted for every element.
-    fn holds(self, bits: &[bool]) -> bool {
+    pub(super) fn holds(self, bits: &[bool]) -> bool {
         match self {
             Self::Subset(_, _, true) => !bits[0] || bits[1],
             Self::Subset(_, _, false) => true,
@@ -202,6 +202,16 @@ impl SetSolver {
                     }
                 }
             }
+        }
+        let values: Vec<_> = values
+            .into_iter()
+            .map(|exceptions| SetModelValue {
+                default_member: false,
+                exceptions,
+            })
+            .collect();
+        if !self.validate_set_witness(&values) {
+            return Ok(false);
         }
         self.model = Some(values);
         Ok(true)

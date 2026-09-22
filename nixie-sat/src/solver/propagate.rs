@@ -868,7 +868,11 @@ impl Solver {
                 //   whose level-0 premises have just been retracted is no
                 //   longer implied by the remaining constraints.
                 self.learned_clause_ids.push(clause_id);
-                if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                if let Some(current_level_clauses) = self
+                    .assertion_levels
+                    .last_mut()
+                    .map(|scope| &mut scope.clause_ids)
+                {
                     current_level_clauses.push(clause_id);
                 }
 

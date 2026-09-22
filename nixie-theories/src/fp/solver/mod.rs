@@ -8,6 +8,7 @@ use nixie_core::ast::TermId;
 use nixie_core::error::Result;
 use nixie_sat::{LBool, Lit, Solver as SatSolver, SolverResult, Var};
 use smallvec::SmallVec;
+mod conversion;
 /// IEEE 754 Floating-point format specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FpFormat {
@@ -99,6 +100,18 @@ pub struct FpValue {
     /// Significand bits (without implicit bit for normal numbers)
     pub significand: u64,
     /// Format specification
+    pub format: FpFormat,
+}
+/// Exact model bits for any registered FP format, including binary128.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FpExactValue {
+    /// Sign bit.
+    pub sign: bool,
+    /// Biased exponent, without truncation.
+    pub exponent: num_bigint::BigUint,
+    /// Fraction bits, excluding the implicit leading bit.
+    pub significand: num_bigint::BigUint,
+    /// Floating-point format.
     pub format: FpFormat,
 }
 impl FpValue {
@@ -917,11 +930,9 @@ impl FpSolver {
                 return;
             }
         }
-        // Symbolic cross-format conversion needs normalization and rounded
-        // exponent/significand circuits. A few special-case implications do
-        // not encode that relation. Leave no unjustified partial axioms and
-        // decline SAT until the full relation is supported.
-        self.has_unsupported_conversion = true;
+        if !self.encode_format_conversion(&op, &res) {
+            self.has_unsupported_conversion = true;
+        }
     }
     /// Convert FP to signed integer (with rounding mode).
     ///
@@ -1039,6 +1050,33 @@ impl FpSolver {
             format: fp.format,
         })
     }
+
+    /// Read a validated model value without the narrow `FpValue` width limit.
+    #[must_use]
+    pub fn get_value_exact(&self, term: TermId) -> Option<FpExactValue> {
+        let fp = self.term_to_fp.get(&term)?;
+        let read = |v: Var| {
+            self.last_sat_model
+                .get(v.index())
+                .filter(|bit| bit.is_defined())
+                .map(|bit| bit.is_true())
+        };
+        let sign = read(fp.sign)?;
+        let mut exponent = num_bigint::BigUint::from(0u8);
+        let mut significand = num_bigint::BigUint::from(0u8);
+        for (i, &bit) in fp.exponent.iter().enumerate() {
+            exponent.set_bit(i as u64, read(bit)?);
+        }
+        for (i, &bit) in fp.significand.iter().enumerate() {
+            significand.set_bit(i as u64, read(bit)?);
+        }
+        Some(FpExactValue {
+            sign,
+            exponent,
+            significand,
+            format: fp.format,
+        })
+    }
     /// Get all floating-point term IDs registered with this solver.
     pub fn get_interned_terms(&self) -> Vec<TermId> {
         self.term_to_fp.keys().copied().collect()
@@ -1149,40 +1187,19 @@ impl Theory for FpSolver {
         if self.last_sat_model.is_empty() {
             return Vec::new();
         }
-        let live = self.sat.model();
-        let snapshot = &self.last_sat_model;
-        let model = |idx: usize| -> Option<LBool> {
-            if let Some(v) = snapshot.get(idx)
-                && v.is_defined()
-            {
-                return Some(*v);
+        let mut value_to_terms: FxHashMap<FpExactValue, Vec<TermId>> = FxHashMap::default();
+        for &term in self.term_to_fp.keys() {
+            let Some(mut value) = self.get_value_exact(term) else {
+                continue;
+            };
+            let maximum = (num_bigint::BigUint::from(1u8) << value.format.exponent_bits as usize)
+                - num_bigint::BigUint::from(1u8);
+            if value.exponent == maximum && value.significand != num_bigint::BigUint::from(0u8) {
+                // SMT has one NaN value, regardless of sign and payload.
+                value.sign = false;
+                value.significand = num_bigint::BigUint::from(1u8);
             }
-            live.get(idx).copied()
-        };
-        let mut value_to_terms: FxHashMap<(bool, u64, u64, u32, u32), Vec<TermId>> =
-            FxHashMap::default();
-        for (&term, fp_var) in &self.term_to_fp {
-            let sign = model(fp_var.sign.index()).is_some_and(|v| v.is_true());
-            let mut exponent = 0u64;
-            for (i, &var) in fp_var.exponent.iter().enumerate() {
-                if model(var.index()).is_some_and(|v| v.is_true()) {
-                    exponent |= 1u64 << i;
-                }
-            }
-            let mut significand = 0u64;
-            for (i, &var) in fp_var.significand.iter().enumerate() {
-                if model(var.index()).is_some_and(|v| v.is_true()) {
-                    significand |= 1u64 << i;
-                }
-            }
-            let key = (
-                sign,
-                exponent,
-                significand,
-                fp_var.format.exponent_bits,
-                fp_var.format.significand_bits,
-            );
-            value_to_terms.entry(key).or_default().push(term);
+            value_to_terms.entry(value).or_default().push(term);
         }
         let mut assignments = Vec::new();
         for terms in value_to_terms.values() {

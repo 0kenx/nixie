@@ -1423,6 +1423,15 @@ pub(super) enum BranchSource {
     Fallback,
 }
 
+/// State restored when one user assertion scope is removed. Keep the clause
+/// ownership, trail prefix, and pre-existing contradiction in one snapshot.
+#[derive(Debug, Default)]
+pub(super) struct AssertionScope {
+    trail_size: usize,
+    trivially_unsat: bool,
+    clause_ids: Vec<ClauseId>,
+}
+
 /// CDCL SAT Solver
 #[derive(Debug)]
 pub struct Solver {
@@ -1508,18 +1517,14 @@ pub struct Solver {
     pub(super) analyze_stack: Vec<Lit>,
     /// Current restart threshold
     pub(super) restart_threshold: u64,
-    /// Assertions stack for incremental solving (number of original clauses)
-    pub(super) assertion_levels: Vec<usize>,
+    /// Assertion scope snapshots for incremental solving.
+    pub(super) assertion_levels: Vec<AssertionScope>,
     /// Set once `push()` is called.  Retracted clauses stay live in the database
     /// after `pop()` (watch lists are cleaned lazily), so the fully-falsified
     /// scan in `trail_falsifies_live_clause` cannot distinguish a genuinely
     /// broken trail from ordinary incremental bookkeeping; the check is disabled
     /// for the rest of this solver's life once incremental mode is entered.
     pub(super) ever_pushed: bool,
-    /// Trail sizes at each assertion level (for proper pop backtracking)
-    pub(super) assertion_trail_sizes: Vec<usize>,
-    /// Clause IDs added at each assertion level (for proper pop)
-    pub(super) assertion_clause_ids: Vec<Vec<ClauseId>>,
     /// Model (if sat)
     pub(super) model: Vec<LBool>,
     /// Whether formula is trivially unsatisfiable
@@ -2378,10 +2383,8 @@ impl Solver {
             learnt: SmallVec::new(),
             seen: Vec::new(),
             analyze_stack: Vec::new(),
-            assertion_levels: vec![0],
+            assertion_levels: vec![AssertionScope::default()],
             ever_pushed: false,
-            assertion_trail_sizes: vec![0],
-            assertion_clause_ids: vec![Vec::new()],
             model: Vec::new(),
             trivially_unsat: false,
             propagate_step_limit: None,
@@ -4059,7 +4062,11 @@ impl Solver {
                     // Clause already satisfied by a permanent assignment
                     let clause_id = self.clauses.add_original(clause_lits.iter().copied());
                     self.proof_set_clause_id(clause_id, proof_oid);
-                    if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                    if let Some(current_level_clauses) = self
+                        .assertion_levels
+                        .last_mut()
+                        .map(|scope| &mut scope.clause_ids)
+                    {
                         current_level_clauses.push(clause_id);
                     }
                     // BIG registration (and the phantom tick count) happens
@@ -4092,7 +4099,11 @@ impl Solver {
 
                 let clause_id = self.clauses.add_original(clause_lits.iter().copied());
                 self.proof_set_clause_id(clause_id, proof_oid);
-                if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+                if let Some(current_level_clauses) = self
+                    .assertion_levels
+                    .last_mut()
+                    .map(|scope| &mut scope.clause_ids)
+                {
                     current_level_clauses.push(clause_id);
                 }
                 // BIG registration (and the phantom tick count) happens
@@ -4182,7 +4193,11 @@ impl Solver {
         self.proof_set_clause_id(clause_id, proof_oid);
 
         // Track clause for incremental solving
-        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+        if let Some(current_level_clauses) = self
+            .assertion_levels
+            .last_mut()
+            .map(|scope| &mut scope.clause_ids)
+        {
             current_level_clauses.push(clause_id);
         }
 
@@ -5477,9 +5492,11 @@ impl Solver {
         // Use phase-saving backtrack to properly re-insert variables into decision heaps
         self.backtrack_with_phase_saving(0);
 
-        self.assertion_levels.push(self.clauses.num_original());
-        self.assertion_trail_sizes.push(self.trail.size());
-        self.assertion_clause_ids.push(Vec::new());
+        self.assertion_levels.push(AssertionScope {
+            trail_size: self.trail.size(),
+            trivially_unsat: self.trivially_unsat,
+            clause_ids: Vec::new(),
+        });
     }
 
     /// Pop to previous assertion level
@@ -5488,44 +5505,37 @@ impl Solver {
         self.clear_clause_traffic();
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
-        if self.assertion_levels.len() > 1 {
-            self.assertion_levels.pop();
+        if self.assertion_levels.len() > 1
+            && let Some(scope) = self.assertion_levels.pop()
+        {
+            // Empty clauses and contradictory units can exist only in this
+            // flag: they are not necessarily retained in the clause database.
+            // Restore the parent's contradiction, while discarding any new
+            // contradiction established using clauses from the removed scope.
+            self.trivially_unsat = scope.trivially_unsat;
+            let trail_size = scope.trail_size;
 
-            // `trivially_unsat` records that the empty clause was derived
-            // from LEVEL-0 facts alone.  Those facts are the current
-            // assertion level's clauses, and this pop is removing some of
-            // them, so the refutation no longer holds: keep the flag and a
-            // later `(check-sat)` after the pop answers a wrong `unsat`
-            // (the push/unsat/pop/check leak).  Clearing is always sound:
-            // the worst case is re-deriving the same empty clause.
-            self.trivially_unsat = false;
+            // Remove all original and learned clauses owned by this scope.
+            for clause_id in scope.clause_ids {
+                // Purge any binary-implication-graph edges for this clause
+                // before removing it. Unlike the watch lists (which lazily
+                // skip deleted clauses during propagation), the binary graph
+                // is consulted directly, so leaving stale edges behind would
+                // let a retracted binary clause keep propagating after pop().
+                self.purge_binary_edges(clause_id);
 
-            // Get the trail size to backtrack to
-            let trail_size = self.assertion_trail_sizes.pop().unwrap_or(0);
+                // Record the retraction in the DRAT proof (if enabled) before
+                // the clause's literals become inaccessible.
+                self.drat_delete(clause_id);
 
-            // Remove all clauses added at this assertion level
-            if let Some(clause_ids_to_remove) = self.assertion_clause_ids.pop() {
-                for clause_id in clause_ids_to_remove {
-                    // Purge any binary-implication-graph edges for this clause
-                    // before removing it. Unlike the watch lists (which lazily
-                    // skip deleted clauses during propagation), the binary graph
-                    // is consulted directly, so leaving stale edges behind would
-                    // let a retracted binary clause keep propagating after pop().
-                    self.purge_binary_edges(clause_id);
+                // Remove from clause database
+                self.clauses.remove(clause_id);
 
-                    // Record the retraction in the DRAT proof (if enabled) before
-                    // the clause's literals become inaccessible.
-                    self.drat_delete(clause_id);
+                // Remove from learned clause tracking if it's a learned clause
+                self.learned_clause_ids.retain(|&id| id != clause_id);
 
-                    // Remove from clause database
-                    self.clauses.remove(clause_id);
-
-                    // Remove from learned clause tracking if it's a learned clause
-                    self.learned_clause_ids.retain(|&id| id != clause_id);
-
-                    // Note: Watch lists will be cleaned up naturally during propagation
-                    // as they check if clauses are deleted before using them
-                }
+                // Note: Watch lists will be cleaned up naturally during propagation
+                // as they check if clauses are deleted before using them
             }
 
             // Backtrack trail to the exact size it was at push()
@@ -5593,9 +5603,6 @@ impl Solver {
             // beyond restoring the facts the pop erased. Mirrors the same rewind
             // in `Solver::restore_to_trail_size`.
             self.trail.reset_propagation_head();
-
-            // Clear the trivially_unsat flag as we've removed problematic clauses
-            self.trivially_unsat = false;
         }
     }
 
@@ -5650,11 +5657,7 @@ impl Solver {
         self.seen.clear();
         self.analyze_stack.clear();
         self.assertion_levels.clear();
-        self.assertion_levels.push(0);
-        self.assertion_trail_sizes.clear();
-        self.assertion_trail_sizes.push(0);
-        self.assertion_clause_ids.clear();
-        self.assertion_clause_ids.push(Vec::new());
+        self.assertion_levels.push(AssertionScope::default());
         self.model.clear();
         self.num_vars = 0;
         // Decision heuristics: `vsids`/`chb` are cleared below, but `vmtf`

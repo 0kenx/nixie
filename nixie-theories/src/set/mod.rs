@@ -72,7 +72,8 @@ pub use powerset::{
     PowersetBuilder, PowersetConstraint, PowersetIter, PowersetResult, PowersetStats,
 };
 pub use solver::{
-    SetConfig, SetConstraint, SetExpr, SetResult, SetSolver, SetStats, SetVar, SetVarId,
+    SetConfig, SetConstraint, SetExpr, SetModelValue, SetResult, SetSolver, SetStats, SetVar,
+    SetVarId,
 };
 pub use subset::{
     SubsetConstraint, SubsetDomain, SubsetGraph, SubsetPropagator, SubsetResult, SubsetStats,

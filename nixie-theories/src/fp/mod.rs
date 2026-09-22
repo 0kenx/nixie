@@ -24,4 +24,4 @@ pub mod ieee754_full;
 pub mod interval_arithmetic;
 mod solver;
 
-pub use solver::{FpFormat, FpRoundingMode, FpSolver, FpValue};
+pub use solver::{FpExactValue, FpFormat, FpRoundingMode, FpSolver, FpValue};

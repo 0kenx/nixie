@@ -528,7 +528,11 @@ impl Solver {
             // forget-and-retry could not cure (the leaked clauses sat below
             // the retry's checkpoint).  `forget_learned_since` remains the
             // finer-grained cleanup; this is the scope-grained backstop.
-            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+            if let Some(current_level_clauses) = self
+                .assertion_levels
+                .last_mut()
+                .map(|scope| &mut scope.clause_ids)
+            {
                 current_level_clauses.push(clause_id);
             }
 
@@ -548,7 +552,11 @@ impl Solver {
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
-            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+            if let Some(current_level_clauses) = self
+                .assertion_levels
+                .last_mut()
+                .map(|scope| &mut scope.clause_ids)
+            {
                 current_level_clauses.push(clause_id);
             }
 
@@ -583,7 +591,11 @@ impl Solver {
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
-            if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+            if let Some(current_level_clauses) = self
+                .assertion_levels
+                .last_mut()
+                .map(|scope| &mut scope.clause_ids)
+            {
                 current_level_clauses.push(clause_id);
             }
 
@@ -947,7 +959,11 @@ impl Solver {
         // through it; deletable reasons approximate that laziness while keeping
         // the `Reason::Propagation(ClauseId)` architecture.
         self.learned_clause_ids.push(clause_id);
-        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+        if let Some(current_level_clauses) = self
+            .assertion_levels
+            .last_mut()
+            .map(|scope| &mut scope.clause_ids)
+        {
             current_level_clauses.push(clause_id);
         }
         self.clauses.set_lbd(clause_id, lbd);
@@ -999,7 +1015,11 @@ impl Solver {
         // a level-0 theory fact is entailed by the current scope's atoms;
         // `pop` rolls the trail assignment but must also retract the unit
         // clause, else it survives as an unentailed permanent constraint.
-        if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
+        if let Some(current_level_clauses) = self
+            .assertion_levels
+            .last_mut()
+            .map(|scope| &mut scope.clause_ids)
+        {
             current_level_clauses.push(clause_id);
         }
         self.clauses.set_lbd(clause_id, 1);
