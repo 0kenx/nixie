@@ -32,7 +32,7 @@ def validate_records(records, manifest):
     for r in records:
         assert r['reference_versions'] == manifest['versions']
         arm = r['config']['id']; flags = r['config']['flags']
-        assert flags['library_revision'] == (experiment.BASELINE_SHA if arm == 'baseline' else manifest['sha'])
+        assert flags['library_revision'] == (experiment.BASELINE_SHA if arm == 'baseline' else manifest.get('candidate_library', manifest['sha']))
         assert r['binary']['sha256'] == flags['binary_sha256'] == manifest['hashes'][r['binary']['path']]
         for key, value in flags.items():
             if key.endswith('_sha256'):
@@ -95,7 +95,8 @@ def analyze(directory, output):
         if control == 'all': continue
         for subset, families in [('all', None), ('original', run.FAMILIES), ('target', TARGETS.get(control))]:
             if subset == 'target' and families is None: continue
-            for seeds in (list(range(10)), [103]):
+            groups = [('fresh-104', [104])] if experiment.SEEDS == [104] else [('0-9', list(range(10))), ('held-out-103', [103])]
+            for seed_label, seeds in groups:
                 ratios, lost, gained, both_unknown = [], [], [], []
                 for family, size in cases.CASES:
                     if families is not None and family not in families: continue
@@ -106,16 +107,17 @@ def analyze(directory, output):
                         elif au: lost.append((name, seed))
                         elif bu: gained.append((name, seed))
                         else: ratios.append(a['metrics']['primary']['value']/b['metrics']['primary']['value'])
-                comparisons.append(dict(control=control, subset=subset, seeds='held-out-103' if seeds == [103] else '0-9',
+                comparisons.append(dict(control=control, subset=subset, seeds=seed_label,
                                         pairs=len(ratios), ratio=geomean(ratios), lost=lost, gained=gained, both_unknown=both_unknown))
     (output/'comparisons.json').write_text(json.dumps(comparisons, indent=2)+'\n')
-    lines = ['| Case | Baseline | All | No coverage | No equalities | No cache | Eager |', '|---|---:|---:|---:|---:|---:|---:|']
+    labels = dict(baseline='Baseline', all='All', no_coverage='No coverage', no_equalities='No equalities', no_cache='No cache', eager='Eager')
+    lines = ['| Case | '+' | '.join(labels[a] for a in experiment.ARMS)+' |', '|---|'+('---:|'*len(experiment.ARMS))]
     for family, size in cases.CASES:
         name = f'{family}-{size}'; values = []
         for arm in experiment.ARMS:
             row = next(r for r in rows if r['case'] == name and r['arm'] == arm)
             value = row['instructions_median']
-            values.append(f"{value/1e6:.2f} ({row['solved']}/11)" if value else '— (0/11)')
+            values.append(f"{value/1e6:.2f} ({row['solved']}/{row['total']})" if value else f"— (0/{row['total']})")
         lines.append('| '+name+' | '+' | '.join(values)+' |')
     lines += ['', 'Median millions of instructions among known answers; Unknown costs excluded.', '',
               '| Comparator | Subset | Seeds | Pairs | All / comparator | Lost | Gained |', '|---|---|---|---:|---:|---:|---:|']
@@ -129,4 +131,10 @@ def analyze(directory, output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('records', type=Path); parser.add_argument('output', type=Path)
-    args = parser.parse_args(); analyze(args.records, args.output)
+    parser.add_argument('--eager-replay', action='store_true')
+    args = parser.parse_args()
+    if args.eager_replay:
+        experiment.SUITE = 'heap-four-eager-replay-v1'
+        experiment.ARMS = ('baseline', 'all', 'eager')
+        experiment.SEEDS = [104]
+    analyze(args.records, args.output)

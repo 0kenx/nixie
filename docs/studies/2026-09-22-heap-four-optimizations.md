@@ -130,6 +130,144 @@ The frozen-CLI perf landing gate passes: conflicts 1.000, decisions 1.000
 external cases. Baseline CLI is cached `40851e3e` (cb50c87e changed only study
 files); no verdict loss.
 
+The feature was measured at `16e323ec` against the clean baseline library.
+The later integration commit `fa7a2d36` also contains concurrently landed CP,
+FSM and array fixes. It passed every gate again: 12,243 nextest tests, 17 skipped;
+114 passing doc tests, 31 ignored; all 832 CVC5 cases; Z3 4.16.0 parity 176 correct,
+one inconclusive, zero wrong; perf-gate conflicts and decisions 1.000, secondary
+wall 0.99. Build, Clippy, formatting and documentation are clean. Integration
+builds used CPUs 4–7 while the frozen experiment stayed on CPU 2. Its release
+CLI and verification evidence are cached under `precompile/fa7a2d36/`.
+
+Main was fast-forwarded to the checked integration with unrelated dirty files
+preserved byte-for-byte. The experiment continues to use the exact frozen
+`16e323ec` client and harness; it does not attribute concurrent changes to heaps.
+
 ## Results
 
-Pending the preregistered run and landing gates.
+All **1,782 cells** completed exactly once. Every arm solved **275/297**
+complete workloads (187 Sat, 88 Unsat); its other 22 workloads were Unknown.
+No wrong answer and no lost or gained solve occurred. All 132 Unknown cells
+belong to the two cache-scope cases: 108 completed with a backend Unknown and
+24 hit the outer cap. Every PMU sample was available; partial Unknown costs
+are excluded from every ratio, not treated as completed work or agreement.
+
+The all-options arm uses **52.1% fewer instructions** than the original baseline
+on 250 shared pairs at seeds 0–9 (ratio 0.4794); held-out 103 gives 0.4682 over
+25 pairs. The original ten cases remain neutral (0.9929, held-out 0.9927).
+These aggregate baseline numbers do not replace the individual controls:
+
+* Coverage: all/no_coverage **0.1352** on its 30 target pairs, held-out
+  **0.1389** on three. This meets the benefit bar: about **86.5% less work**.
+* Equality propagation: all/no_equalities **0.3802** on 70 target pairs,
+  held-out **0.3537** on seven. This meets the bar: about **62.0% less work**.
+* Templates: no complete target pair. Across other known pairs the ratio is
+  **0.9999**, neutral. In the completed-but-Unknown `cache_scopes-8`, seed 0,
+  caching builds eight templates instead of 128; both arms have the same
+  5,220 conflicts and 3,970,597 propagations. This proves construction reuse,
+  **not an end-to-end speedup**. Keep the finding: increasing this symbolic
+  offset/scope workload under the same caps will not isolate construction cost;
+  investigate backend arithmetic/scoped rechecking before retrying it.
+* Lazy Boolean rows: all/eager **1.0197** on 50 target pairs, held-out
+  **1.0237** on five. It saves work on the satisfiable alternatives, but loses
+  on contradictory alternatives and especially the alias example (median
+  290.80M versus 242.83M instructions). The overall target verdict is negative;
+  a favorable satisfiable subcase does not justify enabling it globally.
+
+Baseline and control distributions (minimum, median, maximum), solved counts,
+and diagnostics are in [the CSV](2026-09-22-heap-four-optimizations.csv).
+The tables below report medians over all eleven seeds; the paired ratios keep
+seeds 0–9 and held-out 103 separate. No wall time selected a solver policy.
+
+| Case | Baseline | All | No coverage | No equalities | No cache | Eager |
+|---|---:|---:|---:|---:|---:|---:|
+| allocate-4 | 230.56 (11/11) | 230.66 (11/11) | 230.63 (11/11) | 230.63 (11/11) | 230.61 (11/11) | 230.60 (11/11) |
+| allocate-16 | 378.31 (11/11) | 378.47 (11/11) | 378.35 (11/11) | 378.35 (11/11) | 378.45 (11/11) | 378.44 (11/11) |
+| alias-4 | 227.00 (11/11) | 226.20 (11/11) | 226.19 (11/11) | 227.05 (11/11) | 226.19 (11/11) | 226.20 (11/11) |
+| alias-16 | 236.40 (11/11) | 227.99 (11/11) | 228.01 (11/11) | 236.49 (11/11) | 228.02 (11/11) | 228.03 (11/11) |
+| values-4 | 226.74 (11/11) | 226.76 (11/11) | 226.78 (11/11) | 226.79 (11/11) | 226.79 (11/11) | 226.80 (11/11) |
+| values-16 | 233.44 (11/11) | 233.35 (11/11) | 233.43 (11/11) | 233.43 (11/11) | 233.34 (11/11) | 233.40 (11/11) |
+| permutation-4 | 227.45 (11/11) | 226.79 (11/11) | 227.49 (11/11) | 226.78 (11/11) | 226.76 (11/11) | 226.79 (11/11) |
+| permutation-16 | 240.08 (11/11) | 233.38 (11/11) | 240.27 (11/11) | 233.39 (11/11) | 233.38 (11/11) | 233.33 (11/11) |
+| negative-4 | 226.88 (11/11) | 226.92 (11/11) | 226.93 (11/11) | 226.93 (11/11) | 226.91 (11/11) | 226.92 (11/11) |
+| negative-16 | 230.99 (11/11) | 231.05 (11/11) | 231.05 (11/11) | 231.06 (11/11) | 231.03 (11/11) | 231.00 (11/11) |
+| views-8 | 331.39 (11/11) | 237.29 (11/11) | 237.31 (11/11) | 264.58 (11/11) | 237.35 (11/11) | 237.32 (11/11) |
+| views-16 | 698.76 (11/11) | 249.12 (11/11) | 249.16 (11/11) | 333.44 (11/11) | 249.15 (11/11) | 249.12 (11/11) |
+| views-32 | 5188.79 (11/11) | 274.59 (11/11) | 274.51 (11/11) | 438.41 (11/11) | 274.68 (11/11) | 274.59 (11/11) |
+| free_views-8 | 832.25 (11/11) | 253.32 (11/11) | 832.26 (11/11) | 253.29 (11/11) | 253.30 (11/11) | 253.23 (11/11) |
+| free_views-16 | 2878.85 (11/11) | 316.50 (11/11) | 2879.04 (11/11) | 316.47 (11/11) | 316.33 (11/11) | 316.50 (11/11) |
+| free_views-32 | 8460.76 (11/11) | 733.17 (11/11) | 8458.88 (11/11) | 733.05 (11/11) | 732.96 (11/11) | 732.98 (11/11) |
+| symbolic_views-8 | 5632.55 (11/11) | 306.70 (11/11) | 308.98 (11/11) | 2212.49 (11/11) | 306.94 (11/11) | 306.80 (11/11) |
+| symbolic_views-16 | 39830.08 (11/11) | 383.20 (11/11) | 384.82 (11/11) | 13444.95 (11/11) | 383.22 (11/11) | 383.25 (11/11) |
+| offset_views-8 | 291.74 (11/11) | 233.29 (11/11) | 235.87 (11/11) | 239.59 (11/11) | 233.36 (11/11) | 233.25 (11/11) |
+| offset_views-16 | 553.25 (11/11) | 239.60 (11/11) | 245.34 (11/11) | 289.57 (11/11) | 239.95 (11/11) | 239.63 (11/11) |
+| cache_scopes-8 | — (0/11) | — (0/11) | — (0/11) | — (0/11) | — (0/11) | — (0/11) |
+| cache_scopes-16 | — (0/11) | — (0/11) | — (0/11) | — (0/11) | — (0/11) | — (0/11) |
+| boolean_sat-8 | 231.24 (11/11) | 226.59 (11/11) | 226.58 (11/11) | 226.58 (11/11) | 226.59 (11/11) | 231.41 (11/11) |
+| boolean_sat-16 | 244.37 (11/11) | 227.30 (11/11) | 227.17 (11/11) | 227.25 (11/11) | 227.20 (11/11) | 244.76 (11/11) |
+| boolean_unsat-8 | 230.15 (11/11) | 231.41 (11/11) | 231.43 (11/11) | 231.41 (11/11) | 231.35 (11/11) | 230.31 (11/11) |
+| boolean_unsat-16 | 242.09 (11/11) | 249.25 (11/11) | 249.27 (11/11) | 249.24 (11/11) | 249.15 (11/11) | 242.41 (11/11) |
+| boolean_alias-16 | 273.35 (11/11) | 290.80 (11/11) | 398.44 (11/11) | 290.82 (11/11) | 291.44 (11/11) | 242.83 (11/11) |
+
+Median millions of instructions among known answers; Unknown costs excluded.
+
+| Comparator | Subset | Seeds | Pairs | All / comparator | Lost | Gained |
+|---|---|---|---:|---:|---:|---:|
+| baseline | all | 0-9 | 250 | 0.4794 | 0 | 0 |
+| baseline | all | held-out-103 | 25 | 0.4682 | 0 | 0 |
+| baseline | original | 0-9 | 100 | 0.9929 | 0 | 0 |
+| baseline | original | held-out-103 | 10 | 0.9927 | 0 | 0 |
+| no_coverage | all | 0-9 | 250 | 0.7737 | 0 | 0 |
+| no_coverage | all | held-out-103 | 25 | 0.7764 | 0 | 0 |
+| no_coverage | original | 0-9 | 100 | 0.9966 | 0 | 0 |
+| no_coverage | original | held-out-103 | 10 | 0.9965 | 0 | 0 |
+| no_coverage | target | 0-9 | 30 | 0.1352 | 0 | 0 |
+| no_coverage | target | held-out-103 | 3 | 0.1389 | 0 | 0 |
+| no_equalities | all | 0-9 | 250 | 0.7615 | 0 | 0 |
+| no_equalities | all | held-out-103 | 25 | 0.7461 | 0 | 0 |
+| no_equalities | original | 0-9 | 100 | 0.9959 | 0 | 0 |
+| no_equalities | original | held-out-103 | 10 | 0.9953 | 0 | 0 |
+| no_equalities | target | 0-9 | 70 | 0.3802 | 0 | 0 |
+| no_equalities | target | held-out-103 | 7 | 0.3537 | 0 | 0 |
+| no_cache | all | 0-9 | 250 | 0.9999 | 0 | 0 |
+| no_cache | all | held-out-103 | 25 | 0.9999 | 0 | 0 |
+| no_cache | original | 0-9 | 100 | 1.0000 | 0 | 0 |
+| no_cache | original | held-out-103 | 10 | 1.0001 | 0 | 0 |
+| no_cache | target | 0-9 | 0 | — | 0 | 0 |
+| no_cache | target | held-out-103 | 0 | — | 0 | 0 |
+| eager | all | 0-9 | 250 | 1.0040 | 0 | 0 |
+| eager | all | held-out-103 | 25 | 1.0049 | 0 | 0 |
+| eager | original | 0-9 | 100 | 1.0000 | 0 | 0 |
+| eager | original | held-out-103 | 10 | 1.0000 | 0 | 0 |
+| eager | target | 0-9 | 50 | 1.0197 | 0 | 0 |
+| eager | target | held-out-103 | 5 | 1.0237 | 0 | 0 |
+
+
+The raw immutable records, every command, hashes, versions, scheduling evidence,
+program inputs and outputs remain under
+`precompile/16e323ec/benchmark/{runs/heap-four-optimizations-v1,heap-four-optimizations-v1}/`.
+`analyze_next.py` authenticates complete cell coverage, revision/host/config/binary
+provenance, expected answers and every completed Sat snapshot again before
+producing the checked-in CSV. No cells were rerun or replaced.
+
+
+
+## Default decision and fresh replay plan
+
+The completed seeds 0–9 show lazy/eager = 1.0197 on the 50 Boolean target
+pairs, including a substantial Boolean-alias regression. Held-out 103 gives
+1.0237. Lazy refinement did not meet the preregistered benefit bar: keep the
+implementation available but make it opt-in. Template caching preserves the
+backend encoding/trajectory while avoiding redundant construction; retain it,
+but its workload limits do not establish a throughput benefit.
+
+Before any new measurement, preregister a replay of baseline, all, and eager on
+all 27 cases at fresh seed **104**: 81 cells, the same frozen `16e323ec` client,
+same limits and independent checks. No old cells are rerun. `--eager-replay`
+selects this matrix; `--library-revision` records the actual frozen library
+separately from the runner's newer source revision. This checks the selected
+eager configuration, rather than presenting hindsight selection as a new gain.
+The planned production change after the first matrix is `lazy_boolean: false`
+in the default options. The benchmark client explicitly sets every option, so
+its eager arm is the exact selected solver configuration. Repeat all landing
+gates for the default change.

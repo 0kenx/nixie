@@ -172,3 +172,11 @@ checks. From a clean committed checkout, run `python3 bench/heap_perf/next_exper
 --baseline /absolute/cached/old/heap_perf_next --driver /absolute/cached/new/heap_perf_next
 --cvc5 /absolute/cvc5 --z3 /absolute/z3 --store /absolute/precompile`.
 Raw benchmark outputs stay in the result store, not Git.
+
+
+For the preregistered default-selection replay, pass `--eager-replay
+--library-revision 16e323ec065a6128b2317641237d636e632e119d` with the frozen
+16e323ec driver. This selects baseline/all/eager at fresh seed 104, never reruns
+the original cells, and records the library revision separately from the newer
+runner revision. Analyze that result directory with
+`analyze_next.py RECORDS OUTPUT --eager-replay`.

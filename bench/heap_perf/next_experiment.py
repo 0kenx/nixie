@@ -57,7 +57,9 @@ def run(args):
              Path(args.baseline), Path(args.driver)]
     hashes = {str(p): digest(p) for p in files}
     signatures = {str(p): (p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns) for p in files}
-    manifest = dict(suite=SUITE, sha=sha, baseline_library=BASELINE_SHA, versions=versions,
+    library_revision = args.library_revision or sha
+    assert subprocess.check_output(['git', 'rev-parse', library_revision], cwd=ROOT, text=True).strip() == library_revision
+    manifest = dict(suite=SUITE, sha=sha, baseline_library=BASELINE_SHA, candidate_library=library_revision, versions=versions,
                     arms=ARMS, seeds=SEEDS, cases=cases.CASES, hashes=hashes)
     manifest = json.loads(json.dumps(manifest))
     manifest_path = directory/'manifest.json'
@@ -87,7 +89,7 @@ def run(args):
                              anchor_cases_sha256=hashes[str(WORKER.with_name('anchor_cases.py'))],
                              client_sha256=hashes[str(WORKER.with_name('legacy_client.rs') if arm == 'baseline' else ROOT/'nixie-solver/examples/heap_perf_next.rs')],
                              shared_client_sha256=hashes[str(ROOT/'nixie-solver/examples/heap_perf_next_driver/mod.rs')],
-                             library_revision=BASELINE_SHA if arm == 'baseline' else sha,
+                             library_revision=BASELINE_SHA if arm == 'baseline' else library_revision,
                              binary_sha256=hashes[binary], build_profile='release', lto=True,
                              codegen_units=1, strip='none', incremental=False,
                              max_conflicts=10000, max_decisions=100000, timeout_ms=0)
@@ -166,4 +168,11 @@ if __name__ == '__main__':
     parser.add_argument('--z3', required=True)
     parser.add_argument('--store', type=Path, default=ROOT/'precompile')
     parser.add_argument('--cpu', type=int, default=2)
-    run(parser.parse_args())
+    parser.add_argument('--library-revision', help='exact revision of the frozen candidate library; defaults to HEAD')
+    parser.add_argument('--eager-replay', action='store_true', help='fresh seed 104: baseline, all, eager on all 27 cases')
+    args = parser.parse_args()
+    if args.eager_replay:
+        SUITE = 'heap-four-eager-replay-v1'
+        ARMS = ('baseline', 'all', 'eager')
+        SEEDS = [104]
+    run(args)
