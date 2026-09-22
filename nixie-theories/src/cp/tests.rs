@@ -56,6 +56,31 @@ fn indexed_domain_exclusions_match_search_for_every_partial_assignment() {
         let mut journal = Vec::new();
         let equalities = FxHashSet::default();
         let mut ctx = PropagatorContext::new(&mut queue, &mut journal, &fixed, &equalities);
+        let snapshot = cp.domains(&ctx);
+        for (i, domain) in cp.domains.iter().enumerate() {
+            let positives: Vec<_> = domain
+                .atoms
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| fixed.get(a) == Some(&tm.mk_true()))
+                .collect();
+            let expected: Vec<_> = if let Some(&(j, _)) = positives.last() {
+                vec![domain.values[j].clone()]
+            } else {
+                domain
+                    .atoms
+                    .iter()
+                    .zip(&domain.values)
+                    .filter(|(a, _)| !fixed.contains_key(a))
+                    .map(|(_, v)| v.clone())
+                    .collect()
+            };
+            assert_eq!(snapshot.values[i], expected);
+            assert_eq!(
+                snapshot.fixed_premises[i].map(|j| snapshot.reasons[j]),
+                positives.last().map(|(_, a)| **a)
+            );
+        }
         let result = cp.run(&mut ctx);
         if fixed.values().any(|&v| v == malformed) {
             assert_eq!(result, PropagatorResult::Unknown);
