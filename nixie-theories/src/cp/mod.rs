@@ -428,19 +428,22 @@ impl CpModel {
                             if fixed.is_some() {
                                 valid = false;
                             }
-                            fixed = Some(d.values[i].clone());
-                            remaining.push(d.values[i].clone());
+                            fixed = Some(&d.values[i]);
                         }
                         Some(v) if v == self.false_term => reasons.push(d.negations[i]),
                         Some(_) => {
                             valid = false;
                         }
-                        None => remaining.push(d.values[i].clone()),
+                        None => {
+                            if fixed.is_none() {
+                                remaining.push(d.values[i].clone());
+                            }
+                        }
                     }
                 }
                 fixed_premises.push(fixed_premise);
                 if let Some(value) = fixed {
-                    vec![value]
+                    vec![value.clone()]
                 } else {
                     remaining
                 }
@@ -529,7 +532,9 @@ impl CpModel {
                 if ctx.get_fixed_value(atom).is_some() {
                     continue;
                 }
-                let mut excluded = !domains[i].contains(&d.values[j]);
+                // With distinct declared values and a valid snapshot, this
+                // unknown indicator is excluded iff another value is fixed.
+                let mut excluded = fixed_premises[i].is_some();
                 let mut witness_constraint = None;
                 let mut materialized = None;
                 for constraint in self
