@@ -174,14 +174,26 @@ default decisions are complete for this fragment.
   each variable assignment into its own term's fixation, so nothing is
   silently dropped; justification-truth lookups decode through any entry
   on the variable.
-- **Certification**: graph registrations are trusted client callbacks
-  without independently checkable certificates. Proof-producing and
-  certified checks fail closed to `Unknown` for them (the same boundary as
-  arbitrary user propagators; built-in CP constraints are the model for how
-  certificates would be added). Ordinary solving is complete for the
-  fragment, and returned models are replayed through the propagator before
-  being reported. Unsat cores, when available, are relative to the
-  permanently installed graph constraints and do not serialize them.
+- **Certification**: graph registrations registered through
+  `register_graph` are **proved callbacks**. Every consequence carries a
+  `GraphCertificate`: the identity of an immutable `GraphStatement`
+  (vertices, every edge's pair and presence atom, the reified atoms),
+  retained by the solver at registration. Checking recomputes explicit
+  length-≥1 closures / Kahn acyclicity / cycle DFS over the statement —
+  a different algorithm from the propagator's incremental views — and
+  validates the exact implication (path lemmas over premise-true edges,
+  cut lemmas over non-refuted edges, cycle and acyclicity lemmas
+  likewise; foreign premises are weakening). Certified and
+  proof-producing modes therefore stand on the checked chain: models are
+  re-validated against the closure oracle (`GraphStatement::check_model`)
+  in both ordinary and certified runs, and unsat refutations are
+  reconstructed from certificate-checked graph lemmas plus LRAT
+  (`GraphLemma` records in the CP proof envelope, version 2). Registering
+  the propagator through raw `register_user_propagator` (bypassing
+  `register_graph`) retains no statements, so its certificate-carrying
+  consequences fail closed to `Unknown` — the same contract CP enforces
+  when bypassing `register_cp`. Unsat cores, when available, are relative
+  to the permanently installed graph constraints.
 
 ## A realistic network-policy example
 

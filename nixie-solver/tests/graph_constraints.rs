@@ -153,11 +153,8 @@ fn exhaustive_complete_graphs_models_match_oracle() {
         for mask in 0..(1usize << (n * n)) {
             let mut tm = TermManager::new();
             let (graph, model) = complete_graph(n, &mut tm, true);
-            let (propagator, watches) = model.into_propagator();
             let mut solver = Solver::new();
-            solver
-                .register_user_propagator(propagator, &watches, &mut tm)
-                .unwrap();
+            solver.register_graph(model, &mut tm).unwrap();
             for (i, &(u, v)) in graph.edges.iter().enumerate() {
                 let value = mask & (1 << i) != 0;
                 let term = if value {
@@ -208,11 +205,8 @@ fn exhaustive_flipped_atoms_are_unsat() {
                 }
                 let mut tm = TermManager::new();
                 let (graph, model) = complete_graph(n, &mut tm, true);
-                let (propagator, watches) = model.into_propagator();
                 let mut solver = Solver::new();
-                solver
-                    .register_user_propagator(propagator, &watches, &mut tm)
-                    .unwrap();
+                solver.register_graph(model, &mut tm).unwrap();
                 for (i, &(u, v)) in graph.edges.iter().enumerate() {
                     let value = mask & (1 << i) != 0;
                     solver.assert(
@@ -257,11 +251,8 @@ fn exhaustive_acyclic_classification() {
             for demand_dag in [true, false] {
                 let mut tm = TermManager::new();
                 let (graph, model) = complete_graph(n, &mut tm, true);
-                let (propagator, watches) = model.into_propagator();
                 let mut solver = Solver::new();
-                solver
-                    .register_user_propagator(propagator, &watches, &mut tm)
-                    .unwrap();
+                solver.register_graph(model, &mut tm).unwrap();
                 for (i, &(u, v)) in graph.edges.iter().enumerate() {
                     let value = mask & (1 << i) != 0;
                     solver.assert(
@@ -329,11 +320,8 @@ fn acyclic_four_vertices_sampled() {
             );
         }
         let acyclic = model.acyclic(g, &mut tm).unwrap();
-        let (propagator, watches) = model.into_propagator();
         let mut solver = Solver::new();
-        solver
-            .register_user_propagator(propagator, &watches, &mut tm)
-            .unwrap();
+        solver.register_graph(model, &mut tm).unwrap();
         for (i, &term) in terms.iter().enumerate() {
             solver.assert(if present[i] { term } else { tm.mk_not(term) }, &mut tm);
         }
@@ -382,11 +370,8 @@ fn partial_assignments_match_bruteforce() {
             }
             let mut tm = TermManager::new();
             let (graph, model) = complete_graph(n, &mut tm, true);
-            let (propagator, watches) = model.into_propagator();
             let mut solver = Solver::new();
-            solver
-                .register_user_propagator(propagator, &watches, &mut tm)
-                .unwrap();
+            solver.register_graph(model, &mut tm).unwrap();
             for i in 0..fixed_prefix {
                 let (u, v) = edges[i];
                 solver.assert(
@@ -434,11 +419,8 @@ fn reachability_scenarios() {
     let r_ac = model.reach(g, a, c, &mut tm).unwrap();
     let r_ca = model.reach(g, c, a, &mut tm).unwrap();
     let acyclic = model.acyclic(g, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(e_ab, &mut tm);
     solver.assert(e_bc, &mut tm);
     solver.assert(r_ac, &mut tm);
@@ -454,11 +436,8 @@ fn reachability_scenarios() {
     let e_ab = model.new_edge(g, a, b, &mut tm).unwrap();
     let r_aa = model.reach(g, a, a, &mut tm).unwrap();
     let acyclic = model.acyclic(g, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(e_ab, &mut tm);
     solver.assert(acyclic, &mut tm);
     solver.assert(r_aa, &mut tm);
@@ -471,11 +450,8 @@ fn reachability_scenarios() {
     let loop_edge = model.new_edge(g, u, u, &mut tm).unwrap();
     let r_uu = model.reach(g, u, u, &mut tm).unwrap();
     let acyclic = model.acyclic(g, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(loop_edge, &mut tm);
     solver.assert(r_uu, &mut tm);
     solver.assert(tm.mk_not(acyclic), &mut tm);
@@ -488,11 +464,8 @@ fn reachability_scenarios() {
     let d = model.add_vertex(g).unwrap();
     let e = model.new_edge(g, a, a, &mut tm).unwrap();
     let r_ad = model.reach(g, a, d, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(e, &mut tm);
     solver.assert(r_ad, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
@@ -510,11 +483,8 @@ fn cycles_and_mutual_reachability() {
     let r_ab = model.reach(g, a, b, &mut tm).unwrap();
     let r_ba = model.reach(g, b, a, &mut tm).unwrap();
     let acyclic = model.acyclic(g, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(r_ab, &mut tm);
     solver.assert(r_ba, &mut tm);
     solver.assert(acyclic, &mut tm);
@@ -531,10 +501,7 @@ fn cycles_and_mutual_reachability() {
     let r_ab2 = model2.reach(g2, a2, b2, &mut tm2).unwrap();
     let r_ba2 = model2.reach(g2, b2, a2, &mut tm2).unwrap();
     let r_aa2 = model2.reach(g2, a2, a2, &mut tm2).unwrap();
-    let (propagator, watches) = model2.into_propagator();
-    solver2
-        .register_user_propagator(propagator, &watches, &mut tm2)
-        .unwrap();
+    solver2.register_graph(model2, &mut tm2).unwrap();
     solver2.assert(r_ab2, &mut tm2);
     solver2.assert(r_ba2, &mut tm2);
     solver2.assert(r_aa2, &mut tm2);
@@ -554,11 +521,8 @@ fn push_pop_and_repeated_checks() {
     let e_ab = model.new_edge(g, a, b, &mut tm).unwrap();
     let r_ab = model.reach(g, a, b, &mut tm).unwrap();
     let acyclic = model.acyclic(g, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(acyclic, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
@@ -590,11 +554,8 @@ fn push_pop_and_repeated_checks() {
     let ac2 = model2.acyclic(g2, &mut tm2).unwrap();
     let r_ab2 = model2.reach(g2, a2, b2, &mut tm2).unwrap();
     let r_ba2 = model2.reach(g2, b2, a2, &mut tm2).unwrap();
-    let (propagator, watches) = model2.into_propagator();
     let mut solver2 = Solver::new();
-    solver2
-        .register_user_propagator(propagator, &watches, &mut tm2)
-        .unwrap();
+    solver2.register_graph(model2, &mut tm2).unwrap();
     solver2.assert(ac2, &mut tm2);
     solver2.assert(r_ab2, &mut tm2);
     assert_eq!(solver2.check(&mut tm2), SolverResult::Sat);
@@ -620,11 +581,8 @@ fn edges_combine_with_boolean_and_arithmetic_terms() {
     let b = model.add_vertex(g).unwrap();
     model.add_edge(g, a, b, pq, &mut tm).unwrap();
     let r_ab = model.reach(g, a, b, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(r_ab, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     assert!(model_bool(&solver, p, &tm) && model_bool(&solver, q, &tm));
@@ -641,11 +599,8 @@ fn edges_combine_with_boolean_and_arithmetic_terms() {
     let b = model.add_vertex(g).unwrap();
     model.add_edge(g, a, b, x3, &mut tm).unwrap();
     let r_ab = model.reach(g, a, b, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     solver.assert(r_ab, &mut tm);
     let four = tm.mk_int(num_bigint::BigInt::from(4));
     solver.assert(tm.mk_eq(x, four), &mut tm);
@@ -664,11 +619,8 @@ fn graph_constraints_combine_with_arithmetic() {
     let b = model.add_vertex(g).unwrap();
     let e = model.new_edge(g, a, b, &mut tm).unwrap();
     let r = model.reach(g, a, b, &mut tm).unwrap();
-    let (propagator, watches) = model.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    solver.register_graph(model, &mut tm).unwrap();
     // The edge is present exactly when x > 0; with x <= 0 and reachability
     // demanded, the instance is unsat through pure arithmetic.
     let zero = tm.mk_int(num_bigint::BigInt::from(0));
@@ -688,11 +640,8 @@ fn graph_constraints_combine_with_arithmetic() {
     let b2 = model2.add_vertex(g2).unwrap();
     let e2 = model2.new_edge(g2, a2, b2, &mut tm2).unwrap();
     let r2 = model2.reach(g2, a2, b2, &mut tm2).unwrap();
-    let (propagator, watches) = model2.into_propagator();
     let mut solver2 = Solver::new();
-    solver2
-        .register_user_propagator(propagator, &watches, &mut tm2)
-        .unwrap();
+    solver2.register_graph(model2, &mut tm2).unwrap();
     let zero2 = tm2.mk_int(num_bigint::BigInt::from(0));
     let positive2 = tm2.mk_gt(x2, zero2);
     let guard2 = tm2.mk_eq(positive2, e2);
@@ -723,11 +672,8 @@ fn certified_mode_fails_closed_for_graph_callbacks() {
     let mut tm = TermManager::new();
     let mut model = GraphModel::new(&tm);
     let (r_ab, r_ba, acyclic) = build(&mut tm, &mut model);
-    let (propagator, watches) = model.into_propagator();
     let mut plain = Solver::new();
-    plain
-        .register_user_propagator(propagator, &watches, &mut tm)
-        .unwrap();
+    plain.register_graph(model, &mut tm).unwrap();
     plain.assert(acyclic, &mut tm);
     plain.assert(r_ab, &mut tm);
     plain.assert(r_ba, &mut tm);
@@ -736,18 +682,46 @@ fn certified_mode_fails_closed_for_graph_callbacks() {
     let mut tm2 = TermManager::new();
     let mut model2 = GraphModel::new(&tm2);
     let (r_ab2, r_ba2, acyclic2) = build(&mut tm2, &mut model2);
-    let (propagator, watches) = model2.into_propagator();
     let mut certified = Solver::with_config(nixie_solver::SolverConfig::default().certified());
-    certified
-        .register_user_propagator(propagator, &watches, &mut tm2)
-        .unwrap();
+    certified.register_graph(model2, &mut tm2).unwrap();
     certified.assert(acyclic2, &mut tm2);
     certified.assert(r_ab2, &mut tm2);
     certified.assert(r_ba2, &mut tm2);
-    assert_eq!(
-        certified.check(&mut tm2),
-        SolverResult::Unknown,
-        "certified mode must fail closed for graph callbacks"
+    // Graph registrations are *proved* callbacks now: the refutation is
+    // reconstructed from certificate-checked path/cut lemmas plus LRAT.
+    assert_eq!(certified.check(&mut tm2), SolverResult::Unsat);
+    let (originals, graphs, assertions) = certified.cp_proof_inputs();
+    let proof = certified.get_cp_proof().expect("complete graph refutation");
+    assert!(
+        !proof.graph_lemmas.is_empty(),
+        "graph lemmas must enter the checked refutation"
+    );
+    proof
+        .check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+        .expect("exported graph refutation verifies");
+    // Tampering with the graph leaves fails closed.
+    let mut bad = proof.clone();
+    bad.graph_lemmas.clear();
+    assert!(
+        bad.check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+            .is_err()
+    );
+    let mut bad = proof.clone();
+    if let Some(lemma) = bad.graph_lemmas.first_mut() {
+        lemma.declaration = usize::MAX;
+    }
+    assert!(
+        bad.check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+            .is_err()
+    );
+    // A foreign conclusion (`true` is never a graph literal) is rejected.
+    let mut bad = proof.clone();
+    if let Some(lemma) = bad.graph_lemmas.first_mut() {
+        lemma.conclusion = tm2.mk_bool(true);
+    }
+    assert!(
+        bad.check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+            .is_err()
     );
 }
 
@@ -1018,15 +992,9 @@ fn multiple_registrations_are_enforced() {
     };
     let (m1, e1, r1) = build(&mut tm);
     let (m2, e2, r2) = build(&mut tm);
-    let (prop1, watch1) = m1.into_propagator();
-    let (prop2, watch2) = m2.into_propagator();
     let mut solver = Solver::new();
-    solver
-        .register_user_propagator(prop1, &watch1, &mut tm)
-        .unwrap();
-    solver
-        .register_user_propagator(prop2, &watch2, &mut tm)
-        .unwrap();
+    solver.register_graph(m1, &mut tm).unwrap();
+    solver.register_graph(m2, &mut tm).unwrap();
     // Model 1's reachability is refuted by disabling its edge, while model
     // 2's is satisfied by enabling its own (distinct) edge: both models are
     // enforced simultaneously.
@@ -1039,11 +1007,8 @@ fn multiple_registrations_are_enforced() {
     // ...while model 2's atom stays free to be satisfied.
     let mut tm2 = TermManager::new();
     let (m3, e3, r3) = build(&mut tm2);
-    let (prop3, watch3) = m3.into_propagator();
     let mut solver2 = Solver::new();
-    solver2
-        .register_user_propagator(prop3, &watch3, &mut tm2)
-        .unwrap();
+    solver2.register_graph(m3, &mut tm2).unwrap();
     solver2.assert(e3, &mut tm2);
     solver2.assert(r3, &mut tm2);
     assert_eq!(solver2.check(&mut tm2), SolverResult::Sat);
@@ -1119,4 +1084,49 @@ fn negated_duplicate_watch_terms_both_route() {
     solver3.assert(tm3.mk_not(x3), &mut tm3);
     solver3.assert(tm3.mk_not(reaches3), &mut tm3);
     assert_eq!(solver3.check(&mut tm3), SolverResult::Sat);
+}
+
+/// Mixed CP + graph registrations in one solver: both are proved
+/// callbacks, their statements are retained side by side, and the
+/// reconstructed refutation routes each lemma to its own originals.
+#[test]
+fn mixed_cp_and_graph_certifications() {
+    use nixie_theories::cp::CpModel;
+    let mut tm = TermManager::new();
+    // CP: x in {0,1}, y in {0,1}, alldifferent — unsat.
+    let mut cp = CpModel::new(&tm);
+    let mut mk = |name: &str| tm.mk_var(name, tm.sorts.bool_sort);
+    let x0 = mk("x0");
+    let x1 = mk("x1");
+    let y0 = mk("y0");
+    let y1 = mk("y1");
+    let x = cp
+        .variable(vec![(0.into(), x0), (1.into(), x1)], &mut tm)
+        .unwrap();
+    let y = cp
+        .variable(vec![(0.into(), y0), (1.into(), y1)], &mut tm)
+        .unwrap();
+    cp.alldifferent(vec![x, y]).unwrap();
+    // Graph: 0 -> 1 with edge atom x0 — reach must hold when x0 holds.
+    let mut graph = GraphModel::new(&tm);
+    let g = graph.new_graph();
+    let a = graph.add_vertex(g).unwrap();
+    let b = graph.add_vertex(g).unwrap();
+    graph.add_edge(g, a, b, x0, &mut tm).unwrap();
+    let reaches = graph.reach(g, a, b, &mut tm).unwrap();
+    let mut solver = Solver::with_config(nixie_solver::SolverConfig::default().with_proof());
+    solver.register_cp(cp, &mut tm).unwrap();
+    solver.register_graph(graph, &mut tm).unwrap();
+    // reach's only path is the x0-guarded edge, so asserting reach pins
+    // x0 (x=0); alldifferent then forces y=1 (y1). Consistent: Sat.
+    solver.assert(reaches, &mut tm);
+    solver.assert(y1, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+    solver.push();
+    // y0 too: y=0 ∧ y=1 breaks the exactly-one domain — and x0 ∧ y0
+    // breaks alldifferent regardless: Unsat under the scope.
+    solver.assert(y0, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+    solver.pop();
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }

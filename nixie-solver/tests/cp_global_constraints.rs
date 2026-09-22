@@ -155,18 +155,18 @@ fn integer_binding_combines_with_arithmetic() {
         "{:?}",
         solver.certification_failure()
     );
-    let (originals, assertions) = solver.cp_proof_inputs();
+    let (originals, graphs, assertions) = solver.cp_proof_inputs();
     solver
         .get_cp_proof()
         .unwrap()
-        .check(&originals, &assertions, &mut tm, 10_000_000)
+        .check(&originals, &graphs, &assertions, &mut tm, 10_000_000)
         .unwrap();
     let mut incomplete = solver.get_cp_proof().unwrap().clone();
     assert!(!incomplete.theory_lemmas.is_empty());
     incomplete.theory_lemmas.clear();
     assert!(
         incomplete
-            .check(&originals, &assertions, &mut tm, 10_000_000)
+            .check(&originals, &graphs, &assertions, &mut tm, 10_000_000)
             .is_err()
     );
 }

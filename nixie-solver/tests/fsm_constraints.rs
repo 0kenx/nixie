@@ -610,11 +610,15 @@ fn push_pop_lifecycle() {
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
 }
 
-/// Certification and proof boundaries: registered FSM constraints are
-/// unproved client callbacks; certified checks must fail closed to
-/// Unknown.
+/// Certification: FSM registrations are *proved* callbacks — the product
+/// graphs are validated against the automaton declarations at
+/// registration, every consequence carries a checkable path/cut witness,
+/// and certified verdicts stand on the checked chain (models re-validated
+/// against the closure oracle; refutations reconstructed from
+/// certificate-checked graph lemmas plus LRAT).
 #[test]
-fn certified_mode_fails_closed() {
+fn certified_mode_proves_fsm_results() {
+    // Certified Sat: acceptance with a free guard.
     let mut tm = TermManager::new();
     let mut model = FsmModel::new(&tm);
     let a = model.new_automaton(2, 1).unwrap();
@@ -630,7 +634,87 @@ fn certified_mode_fails_closed() {
     certified.assert(atom, &mut tm);
     assert_eq!(
         certified.check(&mut tm),
-        SolverResult::Unknown,
-        "certified mode must fail closed for FSM callbacks"
+        SolverResult::Sat,
+        "certified mode proves FSM models through checked certificates"
+    );
+
+    // Certified Unsat with a complete exported refutation: the word is
+    // longer than any consuming path, so acceptance is structurally
+    // impossible; the graph cut lemmas must enter the checked proof.
+    let mut tm2 = TermManager::new();
+    let mut model2 = FsmModel::new(&tm2);
+    let a2 = model2.new_automaton(2, 1).unwrap();
+    model2.set_initial(a2, 0).unwrap();
+    model2.add_accepting(a2, 1).unwrap();
+    let g2 = tm2.mk_var("t", tm2.sorts.bool_sort);
+    model2
+        .add_transition(a2, 0, 1, Label::Symbol(0), g2, &mut tm2)
+        .unwrap();
+    let atom2 = model2.accepts(a2, &[0, 0], &mut tm2).unwrap();
+    let mut certified2 = Solver::with_config(nixie_solver::SolverConfig::default().certified());
+    certified2.register_fsm(model2, &mut tm2).unwrap();
+    certified2.assert(atom2, &mut tm2);
+    assert_eq!(certified2.check(&mut tm2), SolverResult::Unsat);
+    let (originals, graphs, assertions) = certified2.cp_proof_inputs();
+    assert!(originals.is_empty());
+    let proof = certified2
+        .get_cp_proof()
+        .expect("complete FSM refutation over graph lemmas");
+    assert!(
+        !proof.graph_lemmas.is_empty(),
+        "FSM cut lemmas must enter the checked refutation"
+    );
+    proof
+        .check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+        .expect("exported FSM refutation verifies");
+    // Text roundtrip preserves the graph records (envelope v2).
+    let exported = proof.to_text();
+    assert!(exported.starts_with("nixie-cp-proof 2\n"));
+    let parsed = nixie_solver::CpProof::from_text(&exported).unwrap();
+    assert_eq!(parsed, *proof);
+    // Tampering fails closed: a foreign conclusion is rejected.
+    let mut bad = proof.clone();
+    if let Some(lemma) = bad.graph_lemmas.first_mut() {
+        lemma.conclusion = tm2.mk_bool(true);
+    }
+    assert!(
+        bad.check(&originals, &graphs, &assertions, &mut tm2, 1_000_000)
+            .is_err()
+    );
+}
+
+/// The retained originals anchor certificate checking to the *FSM inputs*:
+/// a graph-statement set foreign to the registration cannot authenticate
+/// the lemmas of its refutation.
+#[test]
+fn fsm_graph_lemmas_bind_to_registration_statements() {
+    let mut tm = TermManager::new();
+    let mut model = FsmModel::new(&tm);
+    let a = model.new_automaton(2, 1).unwrap();
+    model.set_initial(a, 0).unwrap();
+    model.add_accepting(a, 1).unwrap();
+    let g = tm.mk_var("t", tm.sorts.bool_sort);
+    model
+        .add_transition(a, 0, 1, Label::Symbol(0), g, &mut tm)
+        .unwrap();
+    let atom = model.accepts(a, &[0, 0], &mut tm).unwrap();
+    let mut solver = Solver::with_config(nixie_solver::SolverConfig::default().with_proof());
+    solver.register_fsm(model, &mut tm).unwrap();
+    solver.assert(atom, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+    let (originals, graphs, assertions) = solver.cp_proof_inputs();
+    let proof = solver.get_cp_proof().unwrap();
+    // The registered statements verify the lemmas...
+    assert!(
+        proof
+            .check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
+            .is_ok()
+    );
+    // ...and a different graph set (here: empty) cannot.
+    assert!(
+        proof
+            .check(&originals, &[], &assertions, &mut tm, 1_000_000)
+            .is_err(),
+        "graph lemmas must fail without their registered originals"
     );
 }

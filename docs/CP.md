@@ -108,7 +108,9 @@ equality atoms for this interface.
 
 Arbitrary client axioms have no proof exporter/checker: proof-producing or
 certified checks with arbitrary user callbacks return `Unknown`. Built-in CP
-registrations support the complete checked proof chain described below. SMT unsat cores, when available, are relative to the permanently installed
+registrations support the complete checked proof chain described below, as
+do graph and FSM registrations through `register_graph`/`register_fsm`
+(their `GraphLemma` records share the CP proof envelope, version 2). SMT unsat cores, when available, are relative to the permanently installed
 client constraints; they do not serialize those constraints.
 
 ## Reference and audit basis

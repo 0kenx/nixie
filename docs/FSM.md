@@ -161,25 +161,35 @@ automatically after `reset-assertions` (declarations survive, per SMT-LIB);
 
 ## Proof and certification boundary
 
-FSM registrations are **trusted client callbacks** — like graph
-registrations and arbitrary user propagators, they carry no independently
-checkable certificate, so proof-producing and certified checks **fail
-closed to `Unknown`** for them (the `unproved-callbacks` gate; built-in CP
-constraints are the model for adding certificates later — checked path/cut
-certificates validated against the retained FSM declarations would be the
-corresponding substantial implementation, deliberately not attempted in
-this slice). Ordinary solving is complete for the fragment:
+FSM registrations are **proved callbacks**. At registration,
+`FsmModel::graph_statements` re-derives every product graph from the
+original automaton declarations by an independent computation (matching
+labeled transitions advance a layer, epsilon stays, constant guards
+resolve to the asserted-true variable / no edge, duplicates collapse) and
+checks the statement's vertex count, edge set, and reach-atom pairs
+against it — a mismatch is an explicit error, so the retained statements
+that anchor certificate checking are provably the reduction of the
+declared automata and words. From there the graph certificate chain
+applies (`docs/GRAPH.md`):
 
-- every returned model is replayed through the propagator before being
-  reported (the generic model gate);
-- the acceptance atoms' defining clauses are ordinary assertions;
-- `FsmModel::accepts_under` is an **independent reference interpreter**
-  (iterative `(state, position)` search with epsilon steps — no product
-  construction) for validating models against the original declarations;
-  the test suites use it as the primary oracle.
+- every consequence carries a checkable path/cut witness over the
+  product statements; checking recomputes explicit closures — for the
+  FSM, a path lemma *is* an accepting run of the declared automaton and
+  a cut lemma *is* a set of disabled transitions blocking every
+  accepting run;
+- certified and proof-producing verdicts stand on the checked chain:
+  models are re-validated against the closure oracle (which, through the
+  registration-time equivalence, validates against the original
+  declarations), and unsat refutations are reconstructed from
+  certificate-checked graph lemmas plus LRAT (`GraphLemma` records in
+  the proof envelope, version 2).
 
-SMT unsat cores, when available, are relative to the permanently installed
-FSM constraints and do not serialize them.
+Ordinary solving remains complete for the fragment, and
+`FsmModel::accepts_under` is an **independent reference interpreter**
+(iterative `(state, position)` search with epsilon steps — no product
+construction) for validating models against the original declarations;
+the test suites use it as the primary oracle. SMT unsat cores, when
+available, are relative to the permanently installed FSM constraints.
 
 ## Test and audit basis
 

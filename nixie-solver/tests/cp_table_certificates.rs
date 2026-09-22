@@ -143,11 +143,12 @@ fn table_certificate_now_has_a_complete_lrat_chain() {
     solver.register_cp(cp, &mut tm).unwrap();
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
     assert!(solver.get_proof().is_none());
-    let (originals, assertions) = solver.cp_proof_inputs();
+    let (originals, graphs, assertions) = solver.cp_proof_inputs();
+    let _ = &graphs;
     solver
         .get_cp_proof()
         .unwrap()
-        .check(&originals, &assertions, &mut tm, 10_000_000)
+        .check(&originals, &graphs, &assertions, &mut tm, 10_000_000)
         .unwrap();
 }
 

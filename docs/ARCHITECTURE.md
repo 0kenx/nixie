@@ -163,6 +163,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Datatypes** | ADT with constructors, testers, selectors |
 | **Pseudo-Boolean** | Cardinality constraints, PB-specific propagation |
 | **Finite Graphs** | Reified directed reachability/acyclicity over fixed vertex universes; explained user-propagator integration (`docs/GRAPH.md`) |
+| **Guarded FSMs** | MonoSAT-style NFA acceptance of constant words with symbolic transition guards, lowered to graph reachability (`docs/FSM.md`) |
 | **CP Globals** | Finite-domain all-different/table/regular/circuit/cumulative; explained user-propagator integration (`docs/CP.md`) |
 | **Theory Combination** | Nelson-Oppen, model-based, delayed, polite combination |
 

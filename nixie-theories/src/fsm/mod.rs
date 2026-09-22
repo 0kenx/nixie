@@ -257,6 +257,9 @@ pub struct FsmModel {
     /// `(automaton, word) -> per-accepting-state reach atoms` composing
     /// each acceptance definition (see [`FsmModel::acceptance_reach_atoms`]).
     disjuncts: AcceptsDisjuncts,
+    /// Acceptance queries in creation order; `query_order[i]` owns product
+    /// graph `i` (one graph per built query, in the same order).
+    query_order: Vec<(usize, Vec<u32>)>,
     /// Salted counter for internally named acceptance atoms.
     accepts_counter: u64,
     true_term: TermId,
@@ -284,6 +287,7 @@ impl FsmModel {
             bindings: Vec::new(),
             used_names: FxHashSet::default(),
             disjuncts: FxHashMap::default(),
+            query_order: Vec::new(),
             accepts_counter: 0,
             true_term: tm.mk_bool(true),
             false_term: tm.mk_bool(false),
@@ -484,6 +488,9 @@ impl FsmModel {
         self.accepts_cache
             .entry((a.0, word.to_vec()))
             .or_insert(atom);
+        // Every built query owns exactly one product graph, in build order
+        // (cached lookups build nothing; the named form always builds).
+        self.query_order.push((a.0, word.to_vec()));
         self.disjuncts.insert((a.0, word.to_vec()), disjuncts);
         Ok(atom)
     }
@@ -640,6 +647,115 @@ impl FsmModel {
             true_var: self.true_var,
             bindings: self.bindings.clone(),
         }
+    }
+
+    /// The product-graph statements of every acceptance query, **validated
+    /// against the original automaton declarations by an independent
+    /// re-derivation**: for each query, the statement's vertex count, edge
+    /// set (pairs and guard atoms, including the asserted-true variable for
+    /// constant-`true` guards and the exclusion of statically dead
+    /// constant-`false` guards), and reach-atom pairs must equal exactly
+    /// what the declaration and word determine. A mismatch is an explicit
+    /// error — never a silently trusted reduction — so consumers retaining
+    /// these statements (certificate checking) are anchored to the FSM
+    /// inputs. Call before `into_propagator`/`register_fsm`.
+    pub fn graph_statements(
+        &mut self,
+        tm: &mut TermManager,
+    ) -> Result<Vec<crate::graph::GraphStatement>, FsmError> {
+        let statements = self.graph.statements();
+        if statements.len() != self.query_order.len() {
+            return Err(FsmError(
+                "internal: product graph count does not match the query log",
+            ));
+        }
+        let mut true_var = self.true_var;
+        for (qi, statement) in statements.iter().enumerate() {
+            let (a, word) = &self.query_order[qi];
+            let spec = self
+                .automaton(AutomatonHandle::new(*a))
+                .map_err(|_| FsmError("internal: query log references an unknown automaton"))?;
+            let initial = spec
+                .initial
+                .ok_or(FsmError("automaton has no initial state"))?;
+            let n = word.len();
+            let v = |q: u32, p: usize| q + (p as u32) * spec.states;
+
+            // Independent re-derivation of the expected edge set: matching
+            // labeled transitions advance a layer, epsilon stays, identical
+            // `(u, v, atom)` duplicates collapse, constant guards resolve
+            // to the asserted-true variable / no edge.
+            let mut expected: Vec<(u32, u32, TermId)> = Vec::new();
+            let mut seen: FxHashSet<(u32, u32, TermId)> = FxHashSet::default();
+            let mut push =
+                |from: u32, to: u32, t: &TransitionSpec, out: &mut Vec<(u32, u32, TermId)>| {
+                    let atom = match t.constant {
+                        Some(false) => return,
+                        Some(true) => *true_var.get_or_insert_with(|| {
+                            tm.mk_var(&format!("fsm{}_true", self.uid), tm.sorts.bool_sort)
+                        }),
+                        None => t.guard,
+                    };
+                    if seen.insert((from, to, atom)) {
+                        out.push((from, to, atom));
+                    }
+                };
+            for p in 0..=n {
+                for t in &spec.transitions {
+                    if t.label == Label::Epsilon {
+                        push(v(t.from, p), v(t.to, p), t, &mut expected);
+                    }
+                }
+            }
+            for (p, &symbol) in word.iter().enumerate() {
+                for t in &spec.transitions {
+                    if t.label == Label::Symbol(symbol) {
+                        push(v(t.from, p), v(t.to, p + 1), t, &mut expected);
+                    }
+                }
+            }
+            // Compare against the statement (order-independent).
+            let mut actual: Vec<(u32, u32, TermId)> = statement
+                .edges()
+                .iter()
+                .map(|&(from, to, atom, _)| (from, to, atom))
+                .collect();
+            actual.sort_unstable();
+            expected.sort_unstable();
+            if actual != expected {
+                return Err(FsmError(
+                    "internal: product graph disagrees with the automaton declaration",
+                ));
+            }
+            if statement.vertices_count() != spec.states as usize * (n + 1) {
+                return Err(FsmError(
+                    "internal: product graph vertex count disagrees with the declaration",
+                ));
+            }
+            // Reach atoms: exactly the final-layer pairs of the disjuncts.
+            let disjuncts = self
+                .disjuncts
+                .get(&(*a, word.clone()))
+                .ok_or(FsmError("internal: missing disjuncts for a built query"))?;
+            let mut expected_pairs: Vec<(u32, u32)> = disjuncts
+                .iter()
+                .map(|&(qf, _)| (v(initial, 0), v(qf, n)))
+                .collect();
+            expected_pairs.sort_unstable();
+            let mut actual_pairs: Vec<(u32, u32)> = statement
+                .reach_atoms()
+                .iter()
+                .map(|&(from, to, _, _)| (from, to))
+                .collect();
+            actual_pairs.sort_unstable();
+            if actual_pairs != expected_pairs {
+                return Err(FsmError(
+                    "internal: product reach atoms disagree with the acceptance definition",
+                ));
+            }
+        }
+        self.true_var = true_var;
+        Ok(statements)
     }
 
     /// All terms the propagator must watch (the underlying graph model's

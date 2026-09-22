@@ -32,7 +32,8 @@ fn hall(tm: &mut TermManager) -> Solver {
 fn full_export_roundtrip_and_tampering_fail_closed() {
     let mut tm = TermManager::new();
     let mut solver = hall(&mut tm);
-    let (originals, assertions) = solver.cp_proof_inputs();
+    let (originals, graphs, assertions) = solver.cp_proof_inputs();
+    let _ = &graphs;
     assert_eq!(
         solver.check(&mut tm),
         SolverResult::Unsat,
@@ -45,10 +46,10 @@ fn full_export_roundtrip_and_tampering_fail_closed() {
     let exported = proof.to_text();
     assert_eq!(CpProof::from_text(&exported).unwrap(), proof);
     proof
-        .check(&originals, &assertions, &mut tm, 1_000_000)
+        .check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
         .unwrap();
     let cnf = proof
-        .dimacs(&originals, &assertions, &mut tm, 1_000_000)
+        .dimacs(&originals, &graphs, &assertions, &mut tm, 1_000_000)
         .unwrap();
     let clauses: Vec<Vec<i32>> = cnf
         .lines()
@@ -67,39 +68,47 @@ fn full_export_roundtrip_and_tampering_fail_closed() {
     let mut bad = proof.clone();
     bad.lemmas.clear();
     assert!(
-        bad.check(&originals, &assertions, &mut tm, 1_000_000)
+        bad.check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
     let mut bad = proof.clone();
     bad.lemmas[0].declaration = usize::MAX;
     assert!(
-        bad.check(&originals, &assertions, &mut tm, 1_000_000)
+        bad.check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
     let mut bad = proof.clone();
     bad.lrat.clear();
     assert!(
-        bad.check(&originals, &assertions, &mut tm, 1_000_000)
+        bad.check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
     let mut bad = proof.clone();
     bad.lrat = "999999 0 0\n".into();
     assert!(
-        bad.check(&originals, &assertions, &mut tm, 1_000_000)
+        bad.check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
     let mut bad = proof.clone();
     bad.theory_lemmas.push(vec![(tm.mk_true(), false)]);
     assert!(
-        bad.check(&originals, &assertions, &mut tm, 1_000_000)
+        bad.check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
-    assert!(proof.check(&originals, &assertions, &mut tm, 0).is_err());
-    assert!(proof.check(&[], &assertions, &mut tm, 1_000_000).is_err());
+    assert!(
+        proof
+            .check(&originals, &graphs, &assertions, &mut tm, 0)
+            .is_err()
+    );
+    assert!(
+        proof
+            .check(&[], &graphs, &assertions, &mut tm, 1_000_000)
+            .is_err()
+    );
     let replacement = CpModel::new(&tm).statement();
     assert!(
         proof
-            .check(&[replacement], &assertions, &mut tm, 1_000_000)
+            .check(&[replacement], &graphs, &assertions, &mut tm, 1_000_000)
             .is_err()
     );
     for input in [
@@ -119,8 +128,10 @@ fn no_unjustified_leaf_can_enter_lrat() {
     let mut cp = CpModel::new(&tm);
     let (_, atoms) = variable(&mut cp, &mut tm, "x");
     let original = cp.statement();
+    let graphs: [nixie_theories::graph::GraphStatement; 0] = [];
     for conclusion in [tm.mk_false(), atoms[0], tm.mk_not(atoms[1])] {
         let proof = CpProof {
+            graph_lemmas: vec![],
             lemmas: vec![CpLemma {
                 declaration: 0,
                 conclusion,
@@ -131,7 +142,13 @@ fn no_unjustified_leaf_can_enter_lrat() {
         };
         assert!(
             proof
-                .check(std::slice::from_ref(&original), &[], &mut tm, 1_000_000)
+                .check(
+                    std::slice::from_ref(&original),
+                    &graphs,
+                    &[],
+                    &mut tm,
+                    1_000_000
+                )
                 .is_err()
         );
     }
@@ -173,12 +190,12 @@ fn proofs_follow_scopes_settings_reset_and_cached_checks() {
     assert!(solver.get_cp_proof().is_none());
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     proof
-        .check(&inputs.0, &inputs.1, &mut tm, 1_000_000)
+        .check(&inputs.0, &inputs.1, &inputs.2, &mut tm, 1_000_000)
         .unwrap();
     let current = solver.cp_proof_inputs();
     assert!(
         proof
-            .check(&current.0, &current.1, &mut tm, 1_000_000)
+            .check(&current.0, &current.1, &current.2, &mut tm, 1_000_000)
             .is_err()
     );
     assert_eq!(
@@ -239,7 +256,7 @@ fn enabling_proofs_after_an_unrecorded_search_reconstructs_the_chain() {
     solver
         .get_cp_proof()
         .unwrap()
-        .check(&inputs.0, &inputs.1, &mut tm, 1_000_000)
+        .check(&inputs.0, &inputs.1, &inputs.2, &mut tm, 1_000_000)
         .unwrap();
 }
 
@@ -257,7 +274,8 @@ fn multiple_declarations_with_shared_indicators_keep_their_own_meanings() {
     let mut solver = Solver::with_config(SolverConfig::default().certified());
     solver.register_cp(first, &mut tm).unwrap();
     solver.register_cp(second, &mut tm).unwrap();
-    let (originals, assertions) = solver.cp_proof_inputs();
+    let (originals, graphs, assertions) = solver.cp_proof_inputs();
+    let _ = &graphs;
     assert_eq!(
         solver.check(&mut tm),
         SolverResult::Unsat,
@@ -266,12 +284,13 @@ fn multiple_declarations_with_shared_indicators_keep_their_own_meanings() {
     );
     let proof = solver.get_cp_proof().unwrap();
     proof
-        .check(&originals, &assertions, &mut tm, 1_000_000)
+        .check(&originals, &graphs, &assertions, &mut tm, 1_000_000)
         .unwrap();
     assert!(
         proof
             .check(
                 &[originals[0].clone(), originals[0].clone()],
+                &graphs,
                 &assertions,
                 &mut tm,
                 1_000_000
@@ -282,6 +301,7 @@ fn multiple_declarations_with_shared_indicators_keep_their_own_meanings() {
         proof
             .check(
                 &[originals[1].clone(), originals[1].clone()],
+                &graphs,
                 &assertions,
                 &mut tm,
                 1_000_000

@@ -65,6 +65,11 @@ pub struct Consequence {
     /// Optional exactly-one domain witness. Consumers must authenticate
     /// its original statement and check the exact implication before use.
     pub domain_certificate: Option<crate::cp::domain_proof::DomainCertificate>,
+    /// Optional graph path/cut/cycle witness. Consumers must authenticate
+    /// its original statement and check the exact implication before use;
+    /// checking recomputes explicit closures over the immutable
+    /// declaration (the propagator stays untrusted).
+    pub graph_certificate: Option<crate::graph::proof::GraphCertificate>,
 }
 
 impl Consequence {
@@ -75,6 +80,7 @@ impl Consequence {
             justification,
             table_certificate: None,
             domain_certificate: None,
+            graph_certificate: None,
         }
     }
 }

@@ -24,6 +24,11 @@ pub(super) struct UserState {
     by_var: FxHashMap<nixie_sat::Var, Vec<(TermId, Lit)>>,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
+    /// Retained graph statements: the authenticated originals for graph
+    /// certificates (plain `register_graph` models and FSM product graphs
+    /// alike; the latter are validated against their automaton declarations
+    /// at registration).
+    pub(super) graph_statements: Vec<nixie_theories::graph::GraphStatement>,
     pub(super) closed: bool,
     pub(super) cp_originals: Vec<nixie_theories::cp::proof::CpStatement>,
     pub(super) unproved_callbacks: usize,
@@ -74,6 +79,17 @@ impl UserState {
                 .as_ref()
                 .is_none_or(|certificate| {
                     self.domains.iter().any(|original| {
+                        certificate.is_for(original)
+                            && certificate
+                                .check(original, consequence.term, &consequence.justification)
+                                .is_ok()
+                    })
+                })
+            && consequence
+                .graph_certificate
+                .as_ref()
+                .is_none_or(|certificate| {
+                    self.graph_statements.iter().any(|original| {
                         certificate.is_for(original)
                             && certificate
                                 .check(original, consequence.term, &consequence.justification)
@@ -162,12 +178,18 @@ impl Solver {
     /// `Unknown` for them. See `docs/GRAPH.md`.
     pub fn register_graph(
         &mut self,
-        model: nixie_theories::graph::GraphModel,
+        mut model: nixie_theories::graph::GraphModel,
         tm: &mut TermManager,
     ) -> Result<(), nixie_theories::graph::GraphError> {
+        let statements = model.statements();
         let (propagator, watches) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)
-            .map_err(|e| nixie_theories::graph::GraphError(e.0))
+            .map_err(|e| nixie_theories::graph::GraphError(e.0))?;
+        // Graph consequences carry checkable path/cut/cycle witnesses over
+        // the retained statements: this registration is a proved callback.
+        self.user_state.unproved_callbacks -= 1;
+        self.user_state.graph_statements.extend(statements);
+        Ok(())
     }
 
     /// Install guarded finite-state-machine constraints (reified
@@ -190,13 +212,19 @@ impl Solver {
     /// being reported. See `docs/FSM.md`.
     pub fn register_fsm(
         &mut self,
-        model: nixie_theories::fsm::FsmModel,
+        mut model: nixie_theories::fsm::FsmModel,
         tm: &mut TermManager,
     ) -> Result<(), nixie_theories::fsm::FsmError> {
         let registration = model.registration();
+        // Validate every product graph against its automaton declaration
+        // by independent re-derivation before trusting it: the retained
+        // originals anchor certificate checking to the FSM inputs.
+        let statements = model.graph_statements(tm)?;
         let (propagator, watches) = model.into_propagator();
         self.register_user_propagator(propagator, &watches, tm)
             .map_err(|e| nixie_theories::fsm::FsmError(e.0))?;
+        self.user_state.unproved_callbacks -= 1;
+        self.user_state.graph_statements.extend(statements);
         if let Some(true_var) = registration.true_var {
             self.assert(true_var, tm);
         }
@@ -273,6 +301,23 @@ impl Solver {
                     values.push((term, tm.mk_bool(value)))
                 }
                 _ => return false,
+            }
+        }
+        // Independent statement-level validation: every retained graph's
+        // reified atoms must equal the explicit closure/cycle oracle over
+        // the model's edge values (a different algorithm from both the
+        // propagator and the certificate checker's closures).
+        for statement in &self.user_state.graph_statements {
+            let ok = statement
+                .check_model(
+                    &|atom| match self.eval_in_model_outcome(atom, model, tm, 0) {
+                        model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
+                        _ => None,
+                    },
+                )
+                .is_ok();
+            if !ok {
+                return false;
             }
         }
         self.user_state.manager.push();

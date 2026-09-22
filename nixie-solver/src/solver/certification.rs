@@ -400,6 +400,7 @@ impl Solver {
                 .ok_or_else(|| "missing complete CP refutation".to_string())?
                 .check(
                     &self.user_state.cp_originals,
+                    &self.user_state.graph_statements,
                     &self.cp_user_assertions(),
                     manager,
                     10_000_000,

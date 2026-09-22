@@ -91,9 +91,12 @@
 //! assert_eq!(solver.check(&mut tm), nixie_solver::SolverResult::Sat);
 //! ```
 
+pub mod proof;
+
 use crate::prelude::*;
 use crate::user_propagator::{Consequence, PropagatorContext, PropagatorResult, UserPropagator};
 use nixie_core::ast::{TermId, TermManager};
+pub use proof::{GraphCertificate, GraphProofError, GraphStatement};
 
 /// Invalid graph construction (rejected before installing any constraint).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -902,6 +905,21 @@ fn find_cycle_filter(
     None
 }
 
+/// A consequence over one graph's literals, carrying that graph's
+/// certificate (statement identity) for independent lemma checking. The
+/// statement Arc is cloned before any mutable cache borrow.
+fn certified_consequence(
+    statement: &Option<Arc<GraphStatement>>,
+    term: TermId,
+    reasons: Vec<TermId>,
+) -> Consequence {
+    let mut consequence = Consequence::new(term, reasons);
+    consequence.graph_certificate = statement
+        .as_ref()
+        .map(|statement| GraphCertificate::new((**statement).clone()));
+    consequence
+}
+
 /// Per-instance salt for minted atom names, so two models over one term
 /// manager never silently share atoms through name interning.
 fn next_model_uid() -> u64 {
@@ -924,6 +942,9 @@ fn next_model_uid() -> u64 {
 pub struct GraphModel {
     uid: u64,
     graphs: Vec<GraphSpec>,
+    /// Lazily built immutable statements (identity anchors for graph
+    /// certificates); invalidated per graph by any later declaration.
+    proof_statements: Vec<Option<Arc<GraphStatement>>>,
     /// One incrementally maintained cache per graph (see [`ViewCache`]).
     caches: Vec<ViewCache>,
     /// Edge atom -> every (graph index, edge index) it guards, for O(1)
@@ -962,6 +983,7 @@ impl GraphModel {
         Self {
             uid: next_model_uid(),
             graphs: Vec::new(),
+            proof_statements: Vec::new(),
             caches: Vec::new(),
             edge_index: FxHashMap::default(),
             edge_terms: FxHashSet::default(),
@@ -987,6 +1009,7 @@ impl GraphModel {
     /// Create a new, initially empty graph.
     pub fn new_graph(&mut self) -> GraphHandle {
         self.graphs.push(GraphSpec::new(0));
+        self.proof_statements.push(None);
         self.caches.push(ViewCache::sized(0, 0));
         GraphHandle(self.graphs.len() - 1)
     }
@@ -999,6 +1022,7 @@ impl GraphModel {
         }
         let id = VertexId(self.graphs[g.0].vertices as u32);
         self.graphs[g.0].vertices += 1;
+        self.invalidate_statement(g);
         // The graph grew: extend the per-vertex tables by one row. The
         // contract requires every vertex before `into_propagator`, so the
         // cache is still pristine here and one appended row is exactly
@@ -1073,6 +1097,7 @@ impl GraphModel {
             atom,
             negation,
         });
+        self.invalidate_statement(g);
         Ok(atom)
     }
 
@@ -1132,6 +1157,7 @@ impl GraphModel {
             self.reach_atom_fixed.resize(g.0 + 1, Vec::new());
         }
         self.reach_atom_fixed[g.0].push(None);
+        self.invalidate_statement(g);
         Ok(atom)
     }
 
@@ -1149,6 +1175,7 @@ impl GraphModel {
         let negation = tm.mk_not(atom);
         self.system_terms.insert(atom);
         self.graph_mut(g)?.acyclic = Some((atom, negation));
+        self.invalidate_statement(g);
         Ok(atom)
     }
 
@@ -1199,9 +1226,69 @@ impl GraphModel {
         watches
     }
 
+    /// Drop graph `g`'s built statement (a declaration changed it).
+    fn invalidate_statement(&mut self, g: GraphHandle) {
+        if let Some(slot) = self.proof_statements.get_mut(g.0) {
+            *slot = None;
+        }
+    }
+
+    /// Build (or return the cached) immutable statement of graph `g`. The
+    /// statement freezes the declaration: vertices, every edge's pair and
+    /// (atom, negation), the reified reach atoms, and the acyclicity atom.
+    /// The `Arc` over the edge list is the statement's identity anchor
+    /// (edge lists are append-only before registration).
+    fn ensure_statement(&mut self, g: GraphHandle) -> Option<Arc<GraphStatement>> {
+        if g.0 >= self.graphs.len() {
+            return None;
+        }
+        if let Some(built) = &self.proof_statements[g.0] {
+            return Some(Arc::clone(built));
+        }
+        let spec = &self.graphs[g.0];
+        let edges: Arc<[(u32, u32, TermId, TermId)]> = spec
+            .edges
+            .iter()
+            .map(|e| (e.from.0, e.to.0, e.atom, e.negation))
+            .collect();
+        let reach: Arc<[(u32, u32, TermId, TermId)]> = spec
+            .reach
+            .iter()
+            .map(|r| (r.from.0, r.to.0, r.atom, r.negation))
+            .collect();
+        let statement = Arc::new(GraphStatement::new(
+            spec.vertices,
+            Arc::clone(&edges),
+            reach,
+            spec.acyclic,
+            self.false_term,
+        ));
+        self.proof_statements[g.0] = Some(Arc::clone(&statement));
+        Some(statement)
+    }
+
+    /// The immutable statements of all graphs, in declaration order, for
+    /// `Solver::register_graph` to retain and authenticate graph
+    /// certificates against. Call before `into_propagator` (the same
+    /// build serves the propagator's certificate attachments, so the
+    /// retained originals and the emitted witnesses always agree).
+    pub fn statements(&mut self) -> Vec<GraphStatement> {
+        for g in 0..self.graphs.len() {
+            self.ensure_statement(GraphHandle(g));
+        }
+        self.proof_statements
+            .iter()
+            .flatten()
+            .map(|statement| (**statement).clone())
+            .collect()
+    }
+
     /// Consume the model into a callback and the watch list for
     /// `Solver::register_user_propagator` (or use `Solver::register_graph`).
     pub fn into_propagator(mut self) -> (Box<dyn UserPropagator>, Vec<TermId>) {
+        for g in 0..self.graphs.len() {
+            self.ensure_statement(GraphHandle(g));
+        }
         let watches = self.watches();
         for (g, spec) in self.graphs.iter().enumerate() {
             for (i, edge) in spec.edges.iter().enumerate() {
@@ -1229,11 +1316,16 @@ impl GraphModel {
     fn run(&mut self, ctx: &mut PropagatorContext) -> PropagatorResult {
         let mut complete = true;
         for g in 0..self.graphs.len() {
+            let statement = self.proof_statements.get(g).cloned().flatten();
             match self.run_graph(g, ctx) {
                 PropagatorResult::Unsat(reasons) => {
                     // The queued consequence carries the same signed reasons
                     // so search-time conflicts become ordinary clauses.
-                    ctx.propagate(Consequence::new(self.false_term, reasons.clone()));
+                    ctx.propagate(certified_consequence(
+                        &statement,
+                        self.false_term,
+                        reasons.clone(),
+                    ));
                     return PropagatorResult::Unsat(reasons);
                 }
                 PropagatorResult::Sat => {}
@@ -1257,6 +1349,9 @@ impl GraphModel {
     /// [`ViewCache`]. The all-fixed gate at the end re-verifies the `Sat`
     /// certificate as defense in depth.
     fn run_graph(&mut self, g: usize, ctx: &mut PropagatorContext) -> PropagatorResult {
+        // Clone the statement Arc up front: everything below holds mutable
+        // cache borrows, and the certificate only needs the identity.
+        let statement = self.proof_statements.get(g).cloned().flatten();
         let spec = &self.graphs[g];
         let vertices = spec.vertices;
         let edge_count = spec.edges.len();
@@ -1364,7 +1459,7 @@ impl GraphModel {
                         return PropagatorResult::Unsat(conflict);
                     }
                     None => {
-                        ctx.propagate(Consequence::new(negation, reasons));
+                        ctx.propagate(certified_consequence(&statement, negation, reasons));
                     }
                     Some(false) => {}
                 }
@@ -1391,7 +1486,7 @@ impl GraphModel {
                             return PropagatorResult::Unsat(conflict);
                         }
                         None => {
-                            ctx.propagate(Consequence::new(atom, reasons));
+                            ctx.propagate(certified_consequence(&statement, atom, reasons));
                         }
                         Some(true) => {}
                     }
@@ -1463,7 +1558,7 @@ impl GraphModel {
                     }
                     if forced_reaches {
                         if let Some(reasons) = forced_path {
-                            ctx.propagate(Consequence::new(reach.atom, reasons));
+                            ctx.propagate(certified_consequence(&statement, reach.atom, reasons));
                         }
                         continue;
                     }
@@ -1477,7 +1572,7 @@ impl GraphModel {
                     };
                     if !backward.possible_reaches(spec, values, reach.from) {
                         let reasons = backward.cut_negations(spec, values);
-                        ctx.propagate(Consequence::new(reach.negation, reasons));
+                        ctx.propagate(certified_consequence(&statement, reach.negation, reasons));
                     }
                 }
             }

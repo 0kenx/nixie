@@ -3,6 +3,19 @@
 use super::*;
 use nixie_theories::cp::proof::CpStatement;
 
+/// A finite-graph implication naming an independently supplied graph
+/// statement (reachability/acyclicity path, cut or cycle lemma).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphLemma {
+    /// Index in the retained graph-statement list, not a statement from
+    /// the proof.
+    pub declaration: usize,
+    /// Signed Boolean conclusion; false represents conflict.
+    pub conclusion: TermId,
+    /// Signed Boolean antecedents.
+    pub premises: Vec<TermId>,
+}
+
 /// A finite-domain implication naming an independently supplied CP declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpLemma {
@@ -23,6 +36,9 @@ pub struct CpLemma {
 pub struct CpProof {
     /// CP explanation clauses (including exactly-one domain reasoning).
     pub lemmas: Vec<CpLemma>,
+    /// Graph explanation clauses (path/cut/cycle lemmas over retained
+    /// graph statements — plain graph registrations and FSM products).
+    pub graph_lemmas: Vec<GraphLemma>,
     /// Additional independently checked EUF/linear-arithmetic clauses.
     pub theory_lemmas: Vec<Vec<(TermId, bool)>>,
     /// Text LRAT, whose input clause IDs refer to the canonical encoding.
@@ -34,9 +50,19 @@ impl CpProof {
     /// Original inputs are deliberately external: a proof cannot choose the
     /// problem it claims to refute. Term IDs refer to that retained problem.
     pub fn to_text(&self) -> String {
-        let mut text = String::from("nixie-cp-proof 1\n");
+        let mut text = String::from("nixie-cp-proof 2\n");
         for lemma in &self.lemmas {
             text.push_str(&format!("cp {} {}", lemma.declaration, lemma.conclusion.0));
+            for premise in &lemma.premises {
+                text.push_str(&format!(" {}", premise.0));
+            }
+            text.push('\n');
+        }
+        for lemma in &self.graph_lemmas {
+            text.push_str(&format!(
+                "graph {} {}",
+                lemma.declaration, lemma.conclusion.0
+            ));
             for premise in &lemma.premises {
                 text.push_str(&format!(" {}", premise.0));
             }
@@ -57,11 +83,14 @@ impl CpProof {
     /// Parse an untrusted envelope. Parsing does not verify the proof.
     pub fn from_text(text: &str) -> Result<Self, String> {
         let mut lines = text.split_inclusive('\n');
-        if lines.next() != Some("nixie-cp-proof 1\n") {
-            return Err("unsupported CP proof envelope".to_string());
+        // Version 1 predates graph records; version 2 adds them.
+        match lines.next() {
+            Some("nixie-cp-proof 1\n") | Some("nixie-cp-proof 2\n") => {}
+            _ => return Err("unsupported CP proof envelope".to_string()),
         }
         let mut proof = Self {
             lemmas: Vec::new(),
+            graph_lemmas: Vec::new(),
             theory_lemmas: Vec::new(),
             lrat: String::new(),
         };
@@ -95,6 +124,29 @@ impl CpProof {
                         premises,
                     });
                 }
+                Some("graph") => {
+                    let declaration = words
+                        .next()
+                        .ok_or("missing declaration")?
+                        .parse()
+                        .map_err(|_| "invalid declaration")?;
+                    let conclusion = TermId(
+                        words
+                            .next()
+                            .ok_or("missing conclusion")?
+                            .parse()
+                            .map_err(|_| "invalid conclusion")?,
+                    );
+                    let mut premises = Vec::new();
+                    for word in words {
+                        premises.push(TermId(word.parse().map_err(|_| "invalid premise")?));
+                    }
+                    proof.graph_lemmas.push(GraphLemma {
+                        declaration,
+                        conclusion,
+                        premises,
+                    });
+                }
                 Some("smt") => {
                     let mut lemma = Vec::new();
                     while let Some(atom) = words.next() {
@@ -117,6 +169,7 @@ impl CpProof {
     fn encoding(
         &self,
         originals: &[CpStatement],
+        graph_originals: &[nixie_theories::graph::GraphStatement],
         assertions: &[TermId],
         manager: &mut TermManager,
         mut work_limit: u64,
@@ -145,6 +198,20 @@ impl CpProof {
             clause.push(checker.encode(lemma.conclusion, manager)?);
             checker.buffer_clause(clause);
         }
+        for lemma in &self.graph_lemmas {
+            let original = graph_originals
+                .get(lemma.declaration)
+                .ok_or_else(|| "unregistered graph proof declaration".to_string())?;
+            original
+                .check_lemma(lemma.conclusion, &lemma.premises)
+                .map_err(|e| e.to_string())?;
+            let mut clause = Vec::new();
+            for &premise in &lemma.premises {
+                clause.push(!checker.encode(premise, manager)?);
+            }
+            clause.push(checker.encode(lemma.conclusion, manager)?);
+            checker.buffer_clause(clause);
+        }
         if checker.assert_euf_lemmas(&self.theory_lemmas, manager) != 0 {
             return Err("invalid or unsupported SMT leaf in CP proof".to_string());
         }
@@ -156,11 +223,12 @@ impl CpProof {
     pub fn check(
         &self,
         originals: &[CpStatement],
+        graph_originals: &[nixie_theories::graph::GraphStatement],
         assertions: &[TermId],
         manager: &mut TermManager,
         work_limit: u64,
     ) -> Result<(), String> {
-        let checker = self.encoding(originals, assertions, manager, work_limit)?;
+        let checker = self.encoding(originals, graph_originals, assertions, manager, work_limit)?;
         let clauses = dimacs_clauses(&checker);
         let report = nixie_proof::lrat_check::check_lrat_proof(&clauses, &self.lrat);
         if report.verified {
@@ -178,12 +246,13 @@ impl CpProof {
     pub fn dimacs(
         &self,
         originals: &[CpStatement],
+        graph_originals: &[nixie_theories::graph::GraphStatement],
         assertions: &[TermId],
         manager: &mut TermManager,
         work_limit: u64,
     ) -> Result<String, String> {
         use core::fmt::Write;
-        let checker = self.encoding(originals, assertions, manager, work_limit)?;
+        let checker = self.encoding(originals, graph_originals, assertions, manager, work_limit)?;
         let mut output = format!(
             "p cnf {} {}\n",
             checker.solver.num_vars(),
@@ -210,9 +279,16 @@ fn dimacs_clauses(checker: &BooleanLratChecker) -> Vec<Vec<i32>> {
 impl Solver {
     /// Original inputs to `CpProof::check`, kept separately from its untrusted
     /// fields. Capture at the assertion scope being checked (including assumptions).
-    pub fn cp_proof_inputs(&self) -> (Vec<CpStatement>, Vec<TermId>) {
+    pub fn cp_proof_inputs(
+        &self,
+    ) -> (
+        Vec<CpStatement>,
+        Vec<nixie_theories::graph::GraphStatement>,
+        Vec<TermId>,
+    ) {
         (
             self.user_state.cp_originals.clone(),
+            self.user_state.graph_statements.clone(),
             self.cp_user_assertions(),
         )
     }
@@ -226,6 +302,7 @@ impl Solver {
     fn build_cp_proof(&self, manager: &mut TermManager) -> Result<CpProof, String> {
         let mut proof = CpProof {
             lemmas: Vec::new(),
+            graph_lemmas: Vec::new(),
             theory_lemmas: Vec::new(),
             lrat: String::new(),
         };
@@ -249,6 +326,23 @@ impl Solver {
                     conclusion: *conclusion,
                     premises: premises.clone(),
                 });
+                continue;
+            }
+            // Graph path/cut/cycle lemmas check against the retained graph
+            // statements (explicit closures; the propagator is untrusted).
+            let mut graph_verified = None;
+            for (i, original) in self.user_state.graph_statements.iter().enumerate() {
+                if original.check_lemma(*conclusion, premises).is_ok() {
+                    graph_verified = Some(i);
+                    break;
+                }
+            }
+            if let Some(declaration) = graph_verified {
+                proof.graph_lemmas.push(GraphLemma {
+                    declaration,
+                    conclusion: *conclusion,
+                    premises: premises.clone(),
+                });
             }
         }
         if !self.derived_reasons.lemma_log_poisoned {
@@ -261,6 +355,7 @@ impl Solver {
         }
         let checker = proof.encoding(
             &self.user_state.cp_originals,
+            &self.user_state.graph_statements,
             &self.cp_user_assertions(),
             manager,
             10_000_000,
@@ -271,6 +366,7 @@ impl Solver {
         self.complete_cp_leaves(&mut proof, checker, manager)?;
         let checker = proof.encoding(
             &self.user_state.cp_originals,
+            &self.user_state.graph_statements,
             &self.cp_user_assertions(),
             manager,
             10_000_000,
@@ -298,6 +394,7 @@ impl Solver {
         proof.lrat = transcript.proof;
         proof.check(
             &self.user_state.cp_originals,
+            &self.user_state.graph_statements,
             &self.cp_user_assertions(),
             manager,
             10_000_000,

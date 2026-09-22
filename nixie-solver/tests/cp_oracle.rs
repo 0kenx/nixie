@@ -410,11 +410,12 @@ fn check_solver(solver: &mut Solver, tm: &mut TermManager, oracle: &Oracle<'_>, 
         oracle.case
     );
     if expected == SolverResult::Unsat {
-        let (originals, assertions) = solver.cp_proof_inputs();
+        let (originals, graphs, assertions) = solver.cp_proof_inputs();
+        let _ = &graphs;
         solver
             .get_cp_proof()
             .unwrap()
-            .check(&originals, &assertions, tm, 10_000_000)
+            .check(&originals, &graphs, &assertions, tm, 10_000_000)
             .unwrap();
     }
     if expected == SolverResult::Sat {
