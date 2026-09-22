@@ -7,6 +7,38 @@
 use super::*;
 
 #[test]
+fn merge_only_pop_keeps_term_identity_across_nested_node_creation() {
+    let mut solver = EufSolver::new();
+    let a_term = TermId::new(1);
+    let b_term = TermId::new(2);
+    let a = solver.intern(a_term);
+    let b = solver.intern(b_term);
+    let fa = solver.intern_app(TermId::new(3), 0, [a]);
+    let fb = solver.intern_app(TermId::new(4), 0, [b]);
+    let original_map = solver.term_to_node.clone();
+    for _ in 0..4 {
+        solver.push();
+        solver.merge(a, b, TermId::new(10)).expect("merge");
+        assert!(solver.are_equal(fa, fb));
+        solver.push();
+        let new_term = TermId::new(5);
+        let node = solver.intern_app(new_term, 1, [a]);
+        assert_eq!(solver.term_to_node(new_term), Some(node));
+        solver.pop();
+        assert_eq!(solver.term_to_node(new_term), None);
+        assert!(solver.are_equal(fa, fb));
+        // Outer scope has no surviving new nodes; rollback must preserve
+        // each term's own node identity, not its temporary representative.
+        solver.pop();
+        assert!(!solver.are_equal(a, b));
+        assert!(!solver.are_equal(fa, fb));
+        assert_eq!(solver.term_to_node, original_map);
+        assert_eq!(solver.intern(a_term), a);
+        assert_eq!(solver.intern(b_term), b);
+    }
+}
+
+#[test]
 fn test_euf_basic() {
     let mut solver = EufSolver::new();
 

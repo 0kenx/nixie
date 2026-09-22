@@ -389,12 +389,18 @@ impl Solver {
                 model.set(v, val);
             }
         }
-        // Independently execute every ORIGINAL assertion, not the reduced copy.
+        // The model is now fixed. Share computed values across ORIGINAL
+        // assertions, but never across model completion or solver checks.
+        let mut evaluator = Evaluator::new(&model, tm);
         for &root in &roots {
-            let Some(v) = evaluate(&model, root, tm) else {
+            let Some(v) = evaluator.eval(root) else {
                 return Some(SolverResult::Unknown);
             };
-            if !tm.get(v).is_some_and(|t| matches!(t.kind, TermKind::True)) {
+            if !evaluator
+                .tm
+                .get(v)
+                .is_some_and(|t| matches!(t.kind, TermKind::True))
+            {
                 return Some(SolverResult::Unknown);
             }
         }
@@ -408,159 +414,198 @@ impl Solver {
 /// It reads model assignments only for variables and ordinary scalar terms;
 /// native operators are always executed from their operands.
 pub(super) fn evaluate(model: &Model, root: TermId, tm: &mut TermManager) -> Option<TermId> {
-    let mut values = FxHashMap::default();
-    let mut sequences: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
-    let mut active = FxHashSet::default();
-    let mut stack = vec![(root, false)];
-    while let Some((id, done)) = stack.pop() {
-        if values.contains_key(&id) {
-            continue;
+    Evaluator::new(model, tm).eval(root)
+}
+
+/// A cache belongs to one immutable model and one term manager. Holding both
+/// borrows prevents mutation of the model or reuse with another manager while
+/// cached values remain live. Model completion uses fresh, separate evaluators.
+struct Evaluator<'a> {
+    model: &'a Model,
+    tm: &'a mut TermManager,
+    values: FxHashMap<TermId, TermId>,
+    sequences: FxHashMap<TermId, Vec<TermId>>,
+    #[cfg(test)]
+    expanded: usize,
+}
+
+impl<'a> Evaluator<'a> {
+    fn new(model: &'a Model, tm: &'a mut TermManager) -> Self {
+        Self {
+            model,
+            tm,
+            values: FxHashMap::default(),
+            sequences: FxHashMap::default(),
+            #[cfg(test)]
+            expanded: 0,
         }
-        let t = tm.get(id)?.clone();
-        let assignment = if matches!(t.kind, TermKind::Var(_)) {
-            model.get(id).filter(|v| *v != id)
-        } else {
-            None
-        };
-        if !done {
-            if !active.insert(id) {
-                return None;
+    }
+
+    fn eval(&mut self, root: TermId) -> Option<TermId> {
+        let Self {
+            model,
+            tm,
+            values,
+            sequences,
+            ..
+        } = self;
+        let mut active = FxHashSet::default();
+        let mut stack = vec![(root, false)];
+        while let Some((id, done)) = stack.pop() {
+            if values.contains_key(&id) {
+                continue;
             }
-            stack.push((id, true));
-            if let Some(v) = assignment {
-                stack.push((v, false));
+            let t = tm.get(id)?.clone();
+            let assignment = if matches!(t.kind, TermKind::Var(_)) {
+                model.get(id).filter(|v| *v != id)
             } else {
-                stack.extend(get_children(&t.kind).into_iter().rev().map(|c| (c, false)));
-            }
-            continue;
-        }
-        active.remove(&id);
-        if let Some(v) = assignment {
-            if tm.get(v)?.sort != t.sort {
-                return None;
-            }
-            values.insert(id, *values.get(&v)?);
-            if let Some(xs) = sequences.get(&v).cloned() {
-                sequences.insert(id, xs);
-            }
-            continue;
-        }
-        let v = match &t.kind {
-            TermKind::Sequence(op, args) => {
-                let checked = tm.mk_sequence(*op, args).ok()?;
-                if tm.get(checked)?.sort != t.sort {
+                None
+            };
+            if !done {
+                #[cfg(test)]
+                {
+                    self.expanded += 1;
+                }
+
+                if !active.insert(id) {
                     return None;
                 }
-                let xs = match (*op, args.as_slice()) {
-                    (SeqOp::Empty(_), []) => Vec::new(),
-                    (SeqOp::Unit, [a]) => vec![*values.get(a)?],
-                    (SeqOp::Concat, _) => {
-                        let mut all = Vec::new();
-                        for a in args {
-                            all.extend_from_slice(sequences.get(a)?);
-                            if all.len() > MAX_ELEMENTS {
-                                return None;
+                stack.push((id, true));
+                if let Some(v) = assignment {
+                    stack.push((v, false));
+                } else {
+                    stack.extend(get_children(&t.kind).into_iter().rev().map(|c| (c, false)));
+                }
+                continue;
+            }
+            active.remove(&id);
+            if let Some(v) = assignment {
+                if tm.get(v)?.sort != t.sort {
+                    return None;
+                }
+                values.insert(id, *values.get(&v)?);
+                if let Some(xs) = sequences.get(&v).cloned() {
+                    sequences.insert(id, xs);
+                }
+                continue;
+            }
+            let v = match &t.kind {
+                TermKind::Sequence(op, args) => {
+                    let checked = tm.mk_sequence(*op, args).ok()?;
+                    if tm.get(checked)?.sort != t.sort {
+                        return None;
+                    }
+                    let xs = match (*op, args.as_slice()) {
+                        (SeqOp::Empty(_), []) => Vec::new(),
+                        (SeqOp::Unit, [a]) => vec![*values.get(a)?],
+                        (SeqOp::Concat, _) => {
+                            let mut all = Vec::new();
+                            for a in args {
+                                all.extend_from_slice(sequences.get(a)?);
+                                if all.len() > MAX_ELEMENTS {
+                                    return None;
+                                }
+                            }
+                            all
+                        }
+                        (SeqOp::Len, [a]) => {
+                            values.insert(
+                                id,
+                                tm.mk_int(num_bigint::BigInt::from(sequences.get(a)?.len())),
+                            );
+                            continue;
+                        }
+                        (SeqOp::Nth, [a, i]) => {
+                            let index = integer(tm, *values.get(i)?)?.to_usize()?;
+                            let v = *sequences.get(a)?.get(index)?;
+                            // A sequence-valued nth is a constructor value already
+                            // evaluated as an element; recover its concrete spine.
+                            if element(tm, t.sort).is_some() {
+                                sequences.insert(id, list(tm, v)?);
+                            }
+                            values.insert(id, v);
+                            continue;
+                        }
+                        (SeqOp::Extract, [a, i, n]) => {
+                            let a = sequences.get(a)?;
+                            let start = integer(tm, *values.get(i)?)?;
+                            let count = integer(tm, *values.get(n)?)?;
+                            // Filter by exact integer inequalities. Unlike the
+                            // reducer this never converts the requested endpoints.
+                            a.iter()
+                                .enumerate()
+                                .filter(|(k, _)| {
+                                    let k = num_bigint::BigInt::from(*k);
+                                    start >= 0.into() && k >= start && k < &start + &count
+                                })
+                                .map(|(_, v)| *v)
+                                .collect()
+                        }
+                        (SeqOp::Update, [a, i, b]) => {
+                            let a = sequences.get(a)?;
+                            let b = sequences.get(b)?;
+                            let start = integer(tm, *values.get(i)?)?;
+                            let mut out = Vec::with_capacity(a.len());
+                            for (k, &old) in a.iter().enumerate() {
+                                let offset = num_bigint::BigInt::from(k) - &start;
+                                let replacement = if start >= 0.into() {
+                                    offset.to_usize().and_then(|j| b.get(j)).copied()
+                                } else {
+                                    None
+                                };
+                                out.push(replacement.unwrap_or(old));
+                            }
+                            out
+                        }
+                        _ => return None,
+                    };
+                    let v = value(tm, t.sort, &xs)?;
+                    sequences.insert(id, xs);
+                    v
+                }
+                TermKind::Eq(a, b) if sequences.contains_key(a) || sequences.contains_key(b) => {
+                    let a = *values.get(a)?;
+                    let b = *values.get(b)?;
+                    // Canonical concrete sequence values have constructor equality.
+                    // For elements whose equality still needs theory evaluation,
+                    // compare them individually, including nested sequences.
+                    concrete_equal(model, tm, a, b)?
+                }
+                TermKind::Distinct(args) => {
+                    if args.len().saturating_mul(args.len().saturating_sub(1)) / 2 > MAX_ELEMENTS {
+                        return None;
+                    }
+                    let mut all = true;
+                    for (i, a) in args.iter().enumerate() {
+                        for b in &args[i + 1..] {
+                            let eq = concrete_equal(model, tm, *values.get(a)?, *values.get(b)?)?;
+                            match tm.get(eq)?.kind {
+                                TermKind::True => all = false,
+                                TermKind::False => {}
+                                _ => return None,
                             }
                         }
-                        all
                     }
-                    (SeqOp::Len, [a]) => {
-                        values.insert(
-                            id,
-                            tm.mk_int(num_bigint::BigInt::from(sequences.get(a)?.len())),
-                        );
-                        continue;
-                    }
-                    (SeqOp::Nth, [a, i]) => {
-                        let index = integer(tm, *values.get(i)?)?.to_usize()?;
-                        let v = *sequences.get(a)?.get(index)?;
-                        // A sequence-valued nth is a constructor value already
-                        // evaluated as an element; recover its concrete spine.
-                        if element(tm, t.sort).is_some() {
-                            sequences.insert(id, list(tm, v)?);
-                        }
-                        values.insert(id, v);
-                        continue;
-                    }
-                    (SeqOp::Extract, [a, i, n]) => {
-                        let a = sequences.get(a)?;
-                        let start = integer(tm, *values.get(i)?)?;
-                        let count = integer(tm, *values.get(n)?)?;
-                        // Filter by exact integer inequalities. Unlike the
-                        // reducer this never converts the requested endpoints.
-                        a.iter()
-                            .enumerate()
-                            .filter(|(k, _)| {
-                                let k = num_bigint::BigInt::from(*k);
-                                start >= 0.into() && k >= start && k < &start + &count
-                            })
-                            .map(|(_, v)| *v)
-                            .collect()
-                    }
-                    (SeqOp::Update, [a, i, b]) => {
-                        let a = sequences.get(a)?;
-                        let b = sequences.get(b)?;
-                        let start = integer(tm, *values.get(i)?)?;
-                        let mut out = Vec::with_capacity(a.len());
-                        for (k, &old) in a.iter().enumerate() {
-                            let offset = num_bigint::BigInt::from(k) - &start;
-                            let replacement = if start >= 0.into() {
-                                offset.to_usize().and_then(|j| b.get(j)).copied()
-                            } else {
-                                None
-                            };
-                            out.push(replacement.unwrap_or(old));
-                        }
-                        out
-                    }
-                    _ => return None,
-                };
-                let v = value(tm, t.sort, &xs)?;
-                sequences.insert(id, xs);
-                v
-            }
-            TermKind::Eq(a, b) if sequences.contains_key(a) || sequences.contains_key(b) => {
-                let a = *values.get(a)?;
-                let b = *values.get(b)?;
-                // Canonical concrete sequence values have constructor equality.
-                // For elements whose equality still needs theory evaluation,
-                // compare them individually, including nested sequences.
-                concrete_equal(model, tm, a, b)?
-            }
-            TermKind::Distinct(args) => {
-                if args.len().saturating_mul(args.len().saturating_sub(1)) / 2 > MAX_ELEMENTS {
-                    return None;
+                    if all { tm.mk_true() } else { tm.mk_false() }
                 }
-                let mut all = true;
-                for (i, a) in args.iter().enumerate() {
-                    for b in &args[i + 1..] {
-                        let eq = concrete_equal(model, tm, *values.get(a)?, *values.get(b)?)?;
-                        match tm.get(eq)?.kind {
-                            TermKind::True => all = false,
-                            TermKind::False => {}
-                            _ => return None,
-                        }
+                TermKind::Forall { .. }
+                | TermKind::Exists { .. }
+                | TermKind::Let { .. }
+                | TermKind::Match { .. } => return None,
+                _ => {
+                    let rebuilt = tm.rebuild_children_with(t.kind.clone(), t.sort, &|c| {
+                        values.get(&c).copied().unwrap_or(c)
+                    });
+                    if contains(&[rebuilt], tm) {
+                        return None;
                     }
+                    model.eval_scalar(rebuilt, tm)
                 }
-                if all { tm.mk_true() } else { tm.mk_false() }
-            }
-            TermKind::Forall { .. }
-            | TermKind::Exists { .. }
-            | TermKind::Let { .. }
-            | TermKind::Match { .. } => return None,
-            _ => {
-                let rebuilt = tm.rebuild_children_with(t.kind.clone(), t.sort, &|c| {
-                    values.get(&c).copied().unwrap_or(c)
-                });
-                if contains(&[rebuilt], tm) {
-                    return None;
-                }
-                model.eval_scalar(rebuilt, tm)
-            }
-        };
-        values.insert(id, v);
+            };
+            values.insert(id, v);
+        }
+        values.get(&root).copied()
     }
-    values.get(&root).copied()
 }
 
 fn concrete_equal(model: &Model, tm: &mut TermManager, a: TermId, b: TermId) -> Option<TermId> {
@@ -595,6 +640,65 @@ fn concrete_equal(model: &Model, tm: &mut TermManager, a: TermId, b: TermId) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validation_shares_a_sequence_dag_across_roots() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.seq(tm.sorts.int_sort);
+        let q = tm.mk_var("q", sort);
+        let elements: Vec<_> = (0..128).map(|i| tm.mk_int(i)).collect();
+        let concrete = value(&mut tm, sort, &elements).expect("value");
+        let roots: Vec<_> = elements
+            .iter()
+            .map(|&i| {
+                let read = tm.mk_sequence(SeqOp::Nth, &[q, i]).expect("nth");
+                tm.mk_eq(read, i)
+            })
+            .collect();
+        let mut model = Model::new();
+        model.set(q, concrete);
+        let truth = tm.mk_true();
+        let mut evaluator = Evaluator::new(&model, &mut tm);
+        for &root in &roots {
+            assert_eq!(evaluator.eval(root), Some(truth));
+        }
+        // Each constant, unit, read and equality is visited once, together
+        // with the shared variable and concat. Per-root evaluation was O(n²).
+        assert_eq!(evaluator.expanded, 4 * elements.len() + 2);
+        let expanded = evaluator.expanded;
+        for &root in &roots {
+            assert_eq!(evaluator.eval(root), Some(truth));
+        }
+        assert_eq!(evaluator.expanded, expanded);
+    }
+
+    #[test]
+    fn evaluator_caches_do_not_survive_model_changes_or_failed_walks() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.seq(tm.sorts.int_sort);
+        let q = tm.mk_var("q", sort);
+        let r = tm.mk_var("r", sort);
+        let empty = value(&mut tm, sort, &[]).expect("empty");
+        let one = tm.mk_int(1);
+        let unit = value(&mut tm, sort, &[one]).expect("unit");
+        let len = tm.mk_sequence(SeqOp::Len, &[q]).expect("len");
+        let zero = tm.mk_int(0);
+        let mut model = Model::new();
+        model.set(q, r);
+        model.set(r, q);
+        {
+            let mut evaluator = Evaluator::new(&model, &mut tm);
+            assert_eq!(evaluator.eval(len), None, "cyclic model is refused");
+            assert_eq!(evaluator.eval(one), Some(one), "failed walk is isolated");
+        }
+        model.set(q, empty);
+        assert_eq!(evaluate(&model, len, &mut tm), Some(zero));
+        model.set(q, unit);
+        // Also ensure a model assignment cannot poison cached native results.
+        model.set(len, zero);
+        assert_eq!(evaluate(&model, len, &mut tm), Some(one));
+    }
+
     #[test]
     fn interpreter_ignores_fabricated_sequence_operator_assignments() {
         let mut tm = TermManager::new();

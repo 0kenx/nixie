@@ -1289,6 +1289,7 @@ impl Theory for EufSolver {
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
             let num_nodes = state.num_nodes;
+            let removed_nodes = self.nodes.len() > num_nodes;
 
             // A new epoch begins: every equality atom becomes eligible for
             // enqueue again (the SAT core may have unassigned it above the
@@ -1449,8 +1450,14 @@ impl Theory for EufSolver {
             // term maps to the node created for it (never to a borrowed congruent
             // one), and nodes are truncated in LIFO order, so this drops exactly
             // the terms first interned inside the popped scope.
-            self.term_to_node
-                .retain(|_term, &mut idx| (idx as usize) < num_nodes);
+            // Most theory backtracks only undo merges. Since each map entry
+            // names its own creation node, a scope that created no nodes cannot
+            // have invalidated any entry. Avoid a full-vocabulary scan there;
+            // retain the exact existing removal order when nodes were created.
+            if removed_nodes {
+                self.term_to_node
+                    .retain(|_term, &mut idx| (idx as usize) < num_nodes);
+            }
 
             // Rewind sig_trail to the saved limit, undoing all sig/fp insertions
             // made since the matching push().  Mirrors UnionFind::pop() exactly.

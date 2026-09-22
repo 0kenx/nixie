@@ -106,6 +106,9 @@ let-expanded assertions, using a separate implementation of extraction and
 update (exact index comparisons versus the reducer's clipped slices).
 Native compound-node model assignments cannot override sequence semantics.
 Only a concretely true result for every assertion publishes the model.
+After model completion, validation shares an evaluation cache across the
+original assertions. The cache borrows that immutable model and one term
+manager, and is discarded after validation; public queries use fresh caches.
 `Model::eval`, `(get-value)` and `(get-model)` use native sequence terms and
 printing. The older generic `nixie_core::model::Value` API has no sequence
 value variant and its default factory returns `None`; callers must not

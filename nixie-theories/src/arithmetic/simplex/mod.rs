@@ -1,6 +1,13 @@
 // Copyright 2026 COOLJAPAN OU (Team KitaSan)
 // SPDX-License-Identifier: Apache-2.0
 
+/// Diagnostic-only flag, fixed for the process like the SAT tracing flags.
+/// Bound writes are a hot path: do not scan the process environment per write.
+fn bound_tripwire_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok())
+}
+
 use super::delta::{BigDeltaRational, BoundValue, DeltaRational};
 use crate::config::SimplexConfig;
 #[allow(unused_imports)]
@@ -2410,7 +2417,7 @@ impl Simplex {
         // debug_assert because the RAW `set_*` API's contract legitimately
         // includes loosening (pop-free test scaffolding exercises it); the
         // production writers are the guarded ones above.
-        if std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok()
+        if bound_tripwire_enabled()
             && let Some(old) = self.lower.get(idx).and_then(Option::as_ref)
             && value < old.value
         {
@@ -2459,7 +2466,7 @@ impl Simplex {
         let idx = var as usize;
         // Tripwire: see `set_lower_delta` — a strengthening direction for
         // uppers means the NEW value is GREATER (looser) than the live one.
-        if std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok()
+        if bound_tripwire_enabled()
             && let Some(old) = self.upper.get(idx).and_then(Option::as_ref)
             && value > old.value
         {
