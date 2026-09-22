@@ -113,7 +113,7 @@ struct ContextState {
     num_selects: usize,
     num_stores: usize,
     num_diseqs: usize,
-    num_pending_lemmas: usize,
+    pending_lemmas: Vec<PendingLemma>,
     num_trail: usize,
     num_merge_log: usize,
 }
@@ -574,17 +574,16 @@ impl Theory for ArraySolver {
         true
     }
 
-    fn assert_true(&mut self, term: TermId) -> Result<TheoryResult> {
-        // Assuming term is an equality, intern and merge
-        let _ = self.intern(term);
-        Ok(TheoryResult::Sat)
+    fn assert_true(&mut self, _term: TermId) -> Result<TheoryResult> {
+        Err(nixie_core::error::NixieError::Unknown {
+            reason: "ArraySolver needs decoded operands; use intern/merge/assert_diseq".into(),
+        })
     }
 
-    fn assert_false(&mut self, term: TermId) -> Result<TheoryResult> {
-        // Assuming term is an equality, assert disequality
-        let node = self.intern(term);
-        self.assert_diseq(node, node, term);
-        Ok(TheoryResult::Sat)
+    fn assert_false(&mut self, _term: TermId) -> Result<TheoryResult> {
+        Err(nixie_core::error::NixieError::Unknown {
+            reason: "ArraySolver cannot decode an opaque equality TermId".into(),
+        })
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
@@ -610,7 +609,7 @@ impl Theory for ArraySolver {
             num_selects: self.selects.len(),
             num_stores: self.stores.len(),
             num_diseqs: self.diseqs.len(),
-            num_pending_lemmas: self.pending_lemmas.len(),
+            pending_lemmas: self.pending_lemmas.clone(),
             num_trail: self.trail.len(),
             num_merge_log: self.merge_log.len(),
         });
@@ -622,7 +621,6 @@ impl Theory for ArraySolver {
             self.next_node = state.num_nodes as u32;
             self.node_to_term.truncate(state.num_nodes);
             self.arrays.truncate(state.num_nodes);
-            self.parent.truncate(state.num_nodes);
 
             // Undo union-find operations via trail
             while self.trail.len() > state.num_trail {
@@ -630,6 +628,8 @@ impl Theory for ArraySolver {
                     self.parent[node as usize] = old_parent;
                 }
             }
+
+            self.parent.truncate(state.num_nodes);
 
             // Remove terms added after push
             self.term_to_node
@@ -639,7 +639,8 @@ impl Theory for ArraySolver {
             self.selects.truncate(state.num_selects);
             self.stores.truncate(state.num_stores);
             self.diseqs.truncate(state.num_diseqs);
-            self.pending_lemmas.truncate(state.num_pending_lemmas);
+            self.pending_lemmas = state.pending_lemmas;
+            self.shared_equalities.clear();
             self.merge_log.truncate(state.num_merge_log);
 
             // Clear conflict
