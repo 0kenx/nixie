@@ -383,6 +383,11 @@ impl Solver {
                 .push(super::trail::TrailOp::ArrayAxiomInstanceAdded { term: inst });
             let lit = self.encode(inst, manager);
             let _ = self.sat.add_clause([lit]);
+            if std::env::var("NIXIE_ARRAY_LEMMA_LOG").is_ok() {
+                use nixie_core::smtlib::Printer;
+                let p = Printer::new(manager);
+                eprintln!("ARRAY-LEMMA: {}", p.print_term(inst));
+            }
             added = true;
         }
 
@@ -1424,14 +1429,31 @@ fn build_connected_upward_read_over_write(
             upward_defined.insert((store_term, j));
         }
     }
-    // Aliased form: an asserted `var = store(base, i, v)` also carries the
+    // Aliased form: an ASSERTED `var = store(base, i, v)` also carries the
     // read on the VAR itself (same axiom, and the var is what other input
     // atoms mention).
+    //
+    // The `asserted_aliases` gate is the soundness line this loop walks:
+    // these lemmas carry the alias as NO antecedent, so they are theorems
+    // only when the `var = store(...)` equality is a level-0 conjunct of
+    // the input.  A CONDITIONAL alias -- the same equality sitting inside
+    // an `or` / `ite` / `=>`, which `aliases` also records for the guarded
+    // families -- is true in some branches and not others, and an unguarded
+    // miss-case lemma read off it (`i \u{2260} j \u{21d2} select(var, j) =
+    // select(base, j)`) is simply false whenever another branch ran
+    // instead.  Found as a false `unsat` on a PlusCal-translated
+    // two-process spec, where the transition relation's disjunction made
+    // every `pc' = [pc EXCEPT ...]` exactly such a conditional alias and
+    // the fabricated lemmas killed the satisfiable interleavings (see
+    // `tests/array_axioms_conditional_alias.rs`).
     for (&var, store_terms) in &collected.aliases {
         if !connected.contains(&var) {
             continue;
         }
         for &store_term in store_terms {
+            if !collected.asserted_aliases.contains(&(var, store_term)) {
+                continue;
+            }
             let Some((base, store_idx, stored_val)) = as_store(store_term, manager) else {
                 continue;
             };
@@ -2382,5 +2404,83 @@ mod s8_iterative_tests {
         let mut out = ArrayStructure::default();
         collect_array_structure(ga, true, &tm, &mut visited, &mut out);
         assert_eq!(out.interface_arrays, vec![a]);
+    }
+}
+
+#[cfg(test)]
+mod conditional_alias_tests {
+    use crate::Context;
+    use nixie_core::ast::TermManager;
+
+    /// A satisfiable two-array goal every disjunct of whose transition-like
+    /// assertions equates a variable with a store: the conditional-alias
+    /// shape.  Satisfiable by driving the second index (`pc@2 1 -> 2 -> pc2
+    /// index 1 untouched`), so any `unsat` here is a fabricated lemma.
+    ///
+    /// Found as a false `unsat` on a PlusCal-translated two-process
+    /// specification (multiprocess translations put every
+    /// `pc' = [pc EXCEPT ![self] = ...]` inside the transition relation's
+    /// disjunction, so *every* alias they contain is conditional): the
+    /// upward aliased read-over-write loop iterated `aliases` — which
+    /// deliberately includes conditional aliases for the guarded families —
+    /// and asserted the unguarded miss-case lemmas as facts, killing the
+    /// satisfiable interleavings.  The gate is `asserted_aliases`.
+    #[test]
+    fn conditional_alias_upward_read_over_write_does_not_fabricate() {
+        let script = r#"
+(declare-fun x0 () (Array Int Int)) (declare-fun x1 () (Array Int Int)) (declare-fun x2 () (Array Int Int))
+(declare-fun pc0 () (Array Int Int)) (declare-fun pc1 () (Array Int Int)) (declare-fun pc2 () (Array Int Int))
+(declare-fun bs () (Array Int Int)) (declare-fun bi () (Array Int Int))
+(assert (= pc0 (store (store bs 1 0) 2 0)))
+(assert (= x0 (store (store bi 1 0) 2 0)))
+(assert (or
+  (and (= 0 (select pc0 1)) (= x1 (store x0 1 1)) (= pc1 (store pc0 1 1)))
+  (and (= (select pc0 1) 1) (= pc1 (store pc0 1 2)) (= x1 x0))
+  (and (= 0 (select pc0 2)) (= x1 (store x0 2 1)) (= pc1 (store pc0 2 1)))
+  (and (= (select pc0 2) 1) (= pc1 (store pc0 2 2)) (= x1 x0))))
+(assert (or
+  (and (= 0 (select pc1 1)) (= x2 (store x1 1 1)) (= pc2 (store pc1 1 1)))
+  (and (= (select pc1 1) 1) (= pc2 (store pc1 1 2)) (= x2 x1))
+  (and (= 0 (select pc1 2)) (= x2 (store x1 2 1)) (= pc2 (store pc1 2 1)))
+  (and (= (select pc1 2) 1) (= pc2 (store pc1 2 2)) (= x2 x1))))
+(assert (not (= 2 (select pc2 1))))
+(check-sat)
+"#;
+        let mut ctx = Context::new();
+        let out = ctx.execute_script(script).expect("executes");
+        let verdict = out
+            .iter()
+            .rev()
+            .find(|l| matches!(l.as_str(), "sat" | "unsat" | "unknown"))
+            .cloned()
+            .unwrap_or_else(|| "no-verdict".to_string());
+        assert_eq!(verdict, "sat");
+    }
+
+    /// The bug's signature in isolation: the miss-case lemma
+    /// `i != j => select(var, j) = select(base, j)` read off a CONDITIONAL
+    /// alias simplifies, when `i` and `j` are distinct literals, to the bare
+    /// unguarded equality `select(x1, 2) = select(x2, 2)` — false in the
+    /// branch that stores at index 2 instead.  Z3 confirms the goal is sat;
+    /// this pins that our verdict agrees.
+    #[test]
+    fn conditional_alias_miss_case_lemma_is_guarded() {
+        let mut tm = TermManager::new();
+        let script = r#"
+(declare-fun x1 () (Array Int Int)) (declare-fun x2 () (Array Int Int))
+(assert (or (= x2 (store x1 1 1)) (= x2 (store x1 2 1))))
+(assert (not (= (select x1 2) (select x2 2))))
+(check-sat)
+"#;
+        let mut ctx = Context::new();
+        let _ = &mut tm;
+        let out = ctx.execute_script(script).expect("executes");
+        let verdict = out
+            .iter()
+            .rev()
+            .find(|l| matches!(l.as_str(), "sat" | "unsat" | "unknown"))
+            .cloned()
+            .unwrap_or_else(|| "no-verdict".to_string());
+        assert_eq!(verdict, "sat");
     }
 }

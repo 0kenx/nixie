@@ -103,6 +103,24 @@ All four are pinned by unit tests or would be re-caught by the gates.
    wall as the bag-BMC declines.
 3. The delta-propagation proof obligation (study item 85).
 
+**Follow-up session (2026-09-22), landed:** pinning the translate→BMC path
+as a permanent test found a **solver soundness bug** — the upward aliased
+read-over-write loop in `nixie-solver/src/solver/array_axioms.rs` iterated
+*conditional* aliases (any `var = store(...)` inside an `or`, which every
+multiprocess translation's `pc' = [pc EXCEPT ...]` is) and asserted the
+unguarded miss-case lemmas as facts, producing false `unsat` / false
+`NoViolationWithin`. Diagnosed by dumping the per-depth assertion set and
+cross-checking the identical formula with Z3; fixed by gating on the
+already-documented `asserted_aliases` distinction; pinned twice over
+(`conditional_alias_tests`, plus the BMC pipeline tests, one of which
+asserts the two-array shape never answers a false clean). Verified:
+12,174 workspace tests, Z3 parity 100% (0 decisive mismatches), perf gate
+PASS (counters 1.000). The tlaplus-examples BMC corpus moved from
+15 clean / 0 violations / 1 unknown to 13 / 1 flagged / 2 — the two
+flipped specs were false cleans. Also added: `smtrepro` (solver-level
+SMT2 driver), `bmcdump` (per-depth BMC query dumper) and `dumptrans`
+examples — the debug tooling this diagnosis needed.
+
 Small follow-ups worth a session, in order of value: TLC-model coverage
 for the specs that `EXTENDS TLAPS.tla` (needs a TLAPS.tla source — none
 on this machine); the symmetric-decline set on MultiPaxos shrinks if the

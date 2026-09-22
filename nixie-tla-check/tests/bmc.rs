@@ -650,3 +650,105 @@ TypeOK == x \in Int
         Outcome::NoViolationWithin(3)
     );
 }
+
+// ---- the PlusCal pipeline ---------------------------------------------------
+
+/// A small PlusCal algorithm, translated by `nixie_tla_syntax::pcal` and then
+/// bounded-model-checked unchanged — the path the handoff called "feed the
+/// existing pipeline unchanged". This pins it as a test: a regression in the
+/// translator that breaks parsing, lowering, typing or encoding of its own
+/// output fails here, not in a manual smoke run.
+///
+/// One function-valued variable (`pc`, which every multiprocess translation
+/// has) plus a scalar; the shapes with two function-valued state variables
+/// both updated in one step currently stop at the set-theory honesty gate
+/// (see `RING_TWO_ARRAYS` below).
+const RING: &str = r"
+---- MODULE RingPcal ----
+EXTENDS Integers
+
+(* --algorithm Ring
+variables seen = 0, done = 0
+process P \in 1..2
+begin
+  A: seen := self;
+  B: done := done + 1;
+end process;
+end algorithm; *)
+
+TypeOK == /\ seen \in 0..2
+          /\ done \in 0..2
+
+Underdone == done < 2
+DoneBound == done <= 2
+====
+";
+
+/// The same algorithm with a per-process array variable — the standard
+/// PlusCal shape (`x[self] := …`), and the shape that made the array-alias
+/// soundness bug visible: the transition relation's disjunction puts every
+/// `pc' = [pc EXCEPT ![self] = …]` inside an `or`, and the fabricated
+/// unguarded alias lemmas killed the satisfiable interleavings, answering
+/// `NoViolationWithin` for a property TLC refutes in four steps. The pin
+/// asserts the honest current verdict: `Unknown`, never a false clean.
+const RING_TWO_ARRAYS: &str = r"
+---- MODULE RingPcal2 ----
+EXTENDS Integers
+
+(* --algorithm Ring
+variables x = [i \in 1..2 |-> 0], done = 0
+process P \in 1..2
+begin
+  A: x[self] := self;
+  B: done := done + 1;
+end process;
+end algorithm; *)
+
+Underdone == done < 2
+====
+";
+
+fn pcal_check(algorithm_src: &str, inv: &str, depth: u32) -> Outcome {
+    let translated = nixie_tla_syntax::pcal::translate_file(algorithm_src).expect("translates");
+    check(&translated.text, "Init", "Next", inv, depth)
+}
+
+#[test]
+fn a_pluscal_spec_checks_through_the_whole_pipeline() {
+    // Every process increments `done` exactly once: after both processes
+    // have run their two statements the invariant `done < 2` fails, and not
+    // before.
+    assert_eq!(
+        pcal_check(RING, "Underdone", 10),
+        Outcome::Violation { step: 4 }
+    );
+}
+
+#[test]
+fn a_two_array_pluscal_spec_never_answers_a_false_clean() {
+    // With two function-valued variables updated in the same step, the
+    // satisfying assignment needs set atoms the native set encoding cannot
+    // yet certify, so the honest verdict is `Unknown` — pinned here so that
+    // a regression back to the fabricated-lemma `NoViolationWithin`
+    // (the false clean this shape once produced) fails loudly instead of
+    // silently passing.
+    assert!(matches!(
+        pcal_check(RING_TWO_ARRAYS, "Underdone", 10),
+        Outcome::Unknown(_)
+    ));
+}
+
+#[test]
+fn a_pluscal_spec_is_safe_within_the_bound() {
+    assert_eq!(pcal_check(RING, "TypeOK", 6), Outcome::NoViolationWithin(6));
+}
+
+#[test]
+fn a_pluscal_bound_the_spec_cannot_exceed_holds() {
+    // `done` increments once per process, so `done <= 2` always holds —
+    // the checker must not invent a state past the bound.
+    assert_eq!(
+        pcal_check(RING, "DoneBound", 8),
+        Outcome::NoViolationWithin(8)
+    );
+}

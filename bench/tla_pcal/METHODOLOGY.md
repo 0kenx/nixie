@@ -85,6 +85,12 @@ unchanged (the output is ordinary TLA+). Smoke results on our translations:
 Walls, each checked differentially (the oracle's own translation run
 through the same checker):
 
+- **Two function-valued state variables updated in the same step** (the
+  standard `x[self] := …` multiprocess shape): the satisfying assignment
+  needs set atoms the native set encoding cannot certify, so the verdict is
+  an honest `Unknown` — never a false clean. Getting here *found a solver
+  soundness bug* (below).
+
 - QueensPluscal: `Next` hits the enumerable-domain wall (a symbolic `todo`
   set with no candidate list) — identical on the oracle's translation.
 - DijkstraMutex: fails the typechecker's occurs-check on a recursive
@@ -144,6 +150,24 @@ TLA_PCAL_TLC_SECONDS=600 bench/tla_pcal/run_parity.sh   # bigger models
 `TLA2TOOLS_JAR` overrides the oracle jar; `CARGO_TARGET_DIR` is honored
 (the shared `target/` cannot host a link step when its disk is full).
 The oracle rewrites its input in place; it always runs on scratch copies.
+
+## The solver bug the pipeline test found
+
+The first `translate → Bmc::check` test asserted a violation TLC confirms
+in four steps on a two-process translation; the checker answered
+`NoViolationWithin` — a **false clean**, the catastrophic class. Bisection
+(via `bmcdump` printing the per-depth assertion set, cross-checked with
+Z3 on the identical formula) traced it to
+`nixie-solver`'s upward aliased read-over-write loop, which iterated the
+*conditional* alias set: every `pc' = [pc EXCEPT ![self] = …]` inside the
+transition relation's disjunction is such an alias, and the unguarded
+miss-case lemmas it fabricated killed the satisfiable interleavings.
+Fixed by gating that loop on level-0 `asserted_aliases` (the distinction
+the collector had already documented); pinned by
+`conditional_alias_tests` in `array_axioms.rs`. The corpus effect was
+measured: 15 false cleans → 13 clean + 1 flagged (possibly-spurious,
+under a dropped ASSUME) violation + 2 honest `Unknown`, over the same 16
+checked specs.
 
 ## Bugs this suite caught during development
 
