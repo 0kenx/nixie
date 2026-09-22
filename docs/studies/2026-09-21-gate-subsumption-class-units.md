@@ -263,3 +263,20 @@ specced).
 per `smt-lib/PROVENANCE.md`'s Zenodo recipe (record 16740866) before
 the flip's guards ran — the three QF_BV known-unsound regressions
 (bench_679, ext_con_064, s3_clnt_1) pass under the flipped default.
+
+## Addendum 5 — the flip's 10-seed replication (and the honest WS number)
+
+The paired-instruction tool correctly voids itself against the pre-flip
+pin (trajectories shift by design), but its raw default-seed rows
+exposed seed-sensitivity on the win cells — so the four decisive cells
+were re-run at 10 seeds (wall, interleaved, cap 150 s):
+
+| cell | off median | on median | ratio | distribution notes |
+|---|---:|---:|---:|---|
+| WS_500_16 | 21.0 s | 12.5 s | **0.60** | the 3-seed 0.20× was seed-luck on the high side; the win is real but smaller (both arms span 8–84 s) |
+| frb35-17-5 | 45.7 s | 13.5 s | **0.30** | on's WORST seed (32.9 s) beats off's MEDIAN (45.7) |
+| b21 | 10.2 s | 9.9 s | 0.97 | neutral |
+| Carry_Bits_Fast | 2.0 s | 2.8 s | 1.41 | +0.8 s median absolute — the known cost |
+
+The par-2 flip's verdict is unchanged at 10 seeds (frb alone carries
+it); the WS effect size is now stated honestly at 0.60×, not 0.20×.
