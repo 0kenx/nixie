@@ -36,7 +36,7 @@
 //!
 //! ## Polite Combination
 //! From Jovanović & Barrett (2010), for "polite" theories:
-//! - A theory is polite if it can witness all possible arrangements of shared variables
+//! - Candidate arrangements must still satisfy all asserted theory literals
 //! - More efficient than Nelson-Oppen when applicable (e.g., arithmetic is polite)
 //! - Requires theories to construct models that satisfy arbitrary equality arrangements
 //! - Best performance when all theories are polite
@@ -56,6 +56,7 @@ use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
 use nixie_core::ast::TermId;
 use nixie_core::error::Result;
+#[cfg(test)]
 use num_rational::Rational64;
 
 /// A shared variable between theories
@@ -115,9 +116,43 @@ impl EqualityArrangement {
     #[must_use]
     pub fn is_complete(&self, vars: &[TermId]) -> bool {
         // A complete arrangement specifies the relationship between all pairs
-        let n = vars.len();
-        let expected_pairs = n * (n - 1) / 2;
-        self.equalities.len() + self.disequalities.len() >= expected_pairs
+        let mut vars = vars.to_vec();
+        vars.sort_unstable();
+        vars.dedup();
+        let mut parent: Vec<_> = (0..vars.len()).collect();
+        let root = |parent: &[usize], mut i: usize| {
+            while parent[i] != i {
+                i = parent[i];
+            }
+            i
+        };
+        for &(a, b) in &self.equalities {
+            let (Ok(a), Ok(b)) = (vars.binary_search(&a), vars.binary_search(&b)) else {
+                return false;
+            };
+            let ra = root(&parent, a);
+            let rb = root(&parent, b);
+            parent[ra] = rb;
+        }
+        let mut disequal = FxHashSet::default();
+        for &(a, b) in &self.disequalities {
+            let (Ok(a), Ok(b)) = (vars.binary_search(&a), vars.binary_search(&b)) else {
+                return false;
+            };
+            let ra = root(&parent, a);
+            let rb = root(&parent, b);
+            if ra == rb {
+                return false;
+            }
+            disequal.insert((ra.min(rb), ra.max(rb)));
+        }
+        (0..vars.len()).all(|i| {
+            (0..i).all(|j| {
+                let a = root(&parent, i);
+                let b = root(&parent, j);
+                a == b || disequal.contains(&(a.min(b), a.max(b)))
+            })
+        })
     }
 }
 
@@ -179,6 +214,7 @@ impl TheoryLemma {
     }
 
     /// Check if this lemma is stronger than another (synonym for subsumes)
+    #[cfg(test)]
     fn is_stronger_than(&self, other: &TheoryLemma) -> bool {
         self.subsumes(other)
     }
@@ -234,7 +270,9 @@ pub struct CombinerStats {
 
 #[derive(Debug, Clone)]
 struct CombinerState {
-    num_pending: usize,
+    pending: Vec<(TermId, TermId, TheoryId)>,
+    shared_vars: FxHashSet<TermId>,
+    term_theory: FxHashMap<TermId, TheoryId>,
     lemma_cache_size: usize,
     relevant_terms_size: usize,
 }
@@ -292,6 +330,7 @@ impl TheoryCombiner {
 
     /// Set the combination mode
     pub fn set_mode(&mut self, mode: CombinationMode) {
+        self.current_arrangement = None;
         self.mode = mode;
     }
 
@@ -316,7 +355,7 @@ impl TheoryCombiner {
     ///
     /// When combining a polite theory T1 with any theory T2:
     /// - We only need to check satisfiability of T2 with the arrangement
-    /// - T1 can always be extended to satisfy any consistent arrangement
+    /// - Each candidate arrangement must be checked against the literals of T1
     /// - This avoids the expensive equality propagation of Nelson-Oppen
     ///
     /// Reference: "Polite Theories Revisited" by Jovanović & Barrett (2010)
@@ -335,66 +374,70 @@ impl TheoryCombiner {
         }
     }
 
-    /// Perform polite theory combination check
+    /// Check a complete arithmetic-model arrangement against EUF.
     ///
-    /// When combining theories where at least one is polite, we can use a more
-    /// efficient checking procedure:
-    ///
-    /// 1. Check the non-polite theory (e.g., arithmetic) for satisfiability
-    /// 2. Extract the arrangement of shared variables from its model
-    /// 3. The polite theory (e.g., EUF) can always be extended to match this arrangement
-    ///
-    /// This avoids the O(2^n) equality propagation of Nelson-Oppen
+    /// Politeness does not make an arbitrary candidate arrangement compatible
+    /// with asserted EUF literals. A rejected candidate is `Unknown`, not a
+    /// refutation of all arrangements. Candidate assumptions are scoped.
     pub fn check_polite_combination(&mut self) -> Result<TheoryResult> {
-        // Check if we can use polite combination
-        // EUF is polite, so we check arithmetic first then extend EUF
-        let euf_is_polite = self.is_theory_polite(TheoryId::EUF);
+        self.check_candidate_arrangement()
+    }
 
-        if euf_is_polite {
-            // Arithmetic is the "difficult" theory, EUF is polite
-            // 1. Check arithmetic for satisfiability
-            match self.arith.check() {
-                Ok(TheoryResult::Sat) => {
-                    // 2. Extract arrangement of shared variables from arithmetic model
-                    let arrangement = self.extract_arrangement_from_arith();
-
-                    // 3. Assert this arrangement in EUF
-                    // Note: We use a special reason term (0) to indicate polite combination arrangement
-                    let polite_reason = TermId::new(0);
-                    for (a, b) in &arrangement.equalities {
-                        self.euf.merge(a.raw(), b.raw(), polite_reason)?;
-                    }
-                    for (a, b) in &arrangement.disequalities {
-                        self.euf.assert_diseq(a.raw(), b.raw(), polite_reason);
-                    }
-
-                    // 4. Check EUF (should always succeed for polite theories)
-                    match self.euf.check() {
-                        Ok(TheoryResult::Sat) => Ok(TheoryResult::Sat),
-                        Ok(TheoryResult::Unsat(conflict)) => {
-                            // This shouldn't happen for a truly polite theory
-                            // But we handle it gracefully
-                            Ok(TheoryResult::Unsat(conflict))
-                        }
-                        Ok(TheoryResult::Unknown) => Ok(TheoryResult::Unknown),
-                        Ok(TheoryResult::Propagate(_)) => {
-                            // Propagate and continue checking
-                            Ok(TheoryResult::Sat)
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
-                Ok(TheoryResult::Unsat(conflict)) => Ok(TheoryResult::Unsat(conflict)),
-                Ok(TheoryResult::Unknown) => Ok(TheoryResult::Unknown),
-                Ok(TheoryResult::Propagate(_)) => {
-                    // Propagate and retry
-                    Ok(TheoryResult::Sat)
-                }
-                Err(e) => Err(e),
+    fn check_candidate_arrangement(&mut self) -> Result<TheoryResult> {
+        self.current_arrangement = None;
+        match self.propagate()? {
+            TheoryResult::Sat => {}
+            other => return Ok(other),
+        }
+        match self.euf.check()? {
+            TheoryResult::Sat => {}
+            other => return Ok(other),
+        }
+        // Even an otherwise unconstrained shared variable needs a value in
+        // the candidate. Do not silently omit unvalued interface terms.
+        for &term in &self.shared_vars {
+            self.arith.intern(term);
+        }
+        match self.arith.check()? {
+            TheoryResult::Sat => {}
+            other => return Ok(other),
+        }
+        if self
+            .shared_vars
+            .iter()
+            .any(|&v| self.arith.value_exact(v).is_none())
+        {
+            return Ok(TheoryResult::Unknown);
+        }
+        let arrangement = self.extract_arrangement_from_arith();
+        if !arrangement.is_complete(&self.shared_vars.iter().copied().collect::<Vec<_>>()) {
+            return Ok(TheoryResult::Unknown);
+        }
+        self.euf.push();
+        let probe = (|| {
+            for &(a, b) in &arrangement.equalities {
+                let na = self.euf.intern(a);
+                let nb = self.euf.intern(b);
+                self.euf.merge(na, nb, TermId::new(0))?;
             }
-        } else {
-            // Fall back to standard Nelson-Oppen
-            self.check_nelson_oppen()
+            for &(a, b) in &arrangement.disequalities {
+                let na = self.euf.intern(a);
+                let nb = self.euf.intern(b);
+                self.euf.assert_diseq(na, nb, TermId::new(0));
+            }
+            self.euf.check()
+        })();
+        self.euf.pop();
+        match probe? {
+            TheoryResult::Sat => {
+                self.current_arrangement = Some(arrangement);
+                Ok(TheoryResult::Sat)
+            }
+            // Neither a conflict nor a propagation conditional on candidate
+            // assumptions may escape as an unconditional fact.
+            TheoryResult::Unsat(_) | TheoryResult::Propagate(_) | TheoryResult::Unknown => {
+                Ok(TheoryResult::Unknown)
+            }
         }
     }
 
@@ -420,10 +463,10 @@ impl TheoryCombiner {
         // become disequalities -- the arrangement must partition the
         // variables consistently with the model, not assume everything is
         // pairwise distinct.
-        let mut by_value: FxHashMap<Rational64, Vec<TermId>> = FxHashMap::default();
+        let mut by_value: FxHashMap<num_rational::BigRational, Vec<TermId>> = FxHashMap::default();
         let mut unvalued: Vec<TermId> = Vec::new();
         for &v in &shared_vars {
-            match self.arith.value(v) {
+            match self.arith.value_exact(v) {
                 Some(val) => by_value.entry(val).or_default().push(v),
                 // A shared variable the arithmetic theory has no value for
                 // (e.g. not actually interned there) cannot be honestly
@@ -459,6 +502,7 @@ impl TheoryCombiner {
 
     /// Register a term with a specific theory
     pub fn register_term(&mut self, term: TermId, theory: TheoryId) {
+        self.current_arrangement = None;
         if let Some(existing) = self.term_theory.get(&term) {
             if *existing != theory {
                 // Term appears in multiple theories - it's shared
@@ -471,6 +515,7 @@ impl TheoryCombiner {
 
     /// Register a shared variable
     pub fn add_shared_var(&mut self, term: TermId) {
+        self.current_arrangement = None;
         self.shared_vars.insert(term);
     }
 
@@ -482,11 +527,13 @@ impl TheoryCombiner {
 
     /// Get mutable reference to EUF solver
     pub fn euf_mut(&mut self) -> &mut EufSolver {
+        self.current_arrangement = None;
         &mut self.euf
     }
 
     /// Get mutable reference to arithmetic solver
     pub fn arith_mut(&mut self) -> &mut ArithSolver {
+        self.current_arrangement = None;
         &mut self.arith
     }
 
@@ -504,6 +551,7 @@ impl TheoryCombiner {
 
     /// Propagate an equality from one theory to others
     pub fn propagate_equality(&mut self, a: TermId, b: TermId, source: TheoryId) {
+        self.current_arrangement = None;
         self.pending_equalities.push((a, b, source));
     }
 
@@ -575,6 +623,7 @@ impl TheoryCombiner {
     ///
     /// Dispatches to the appropriate combination method based on mode
     pub fn check(&mut self) -> Result<TheoryResult> {
+        self.current_arrangement = None;
         self.stats.theory_checks += 1;
         let result = match self.mode {
             CombinationMode::NelsonOppen => self.check_nelson_oppen(),
@@ -674,7 +723,10 @@ impl TheoryCombiner {
 
             // Propagate any new equalities (only mark progress if there was work)
             if !self.pending_equalities.is_empty() {
-                self.propagate()?;
+                match self.propagate()? {
+                    TheoryResult::Sat => {}
+                    other => return Ok(other),
+                }
                 changed = true;
             }
 
@@ -699,93 +751,10 @@ impl TheoryCombiner {
         if a.raw() <= b.raw() { (a, b) } else { (b, a) }
     }
 
-    /// Check using model-based theory combination
-    ///
-    /// Instead of eagerly propagating all equalities, model-based combination:
-    /// 1. Gets a model from one theory (e.g., EUF)
-    /// 2. Checks if other theories accept this arrangement
-    /// 3. If not, learns a blocking clause and tries another arrangement
-    ///
-    /// Known limitations (honest, not silently wrong):
-    /// - Only the arrangement's EQUALITIES are asserted into arithmetic
-    ///   (via `notify_equality`, encoding `a = b` as bounds). Arithmetic
-    ///   has no API for asserting a DISEQUALITY (that requires a
-    ///   disjunctive case-split -- `a < b OR a > b` -- which this crate's
-    ///   `ArithSolver` does not yet expose), so an inconsistency that only
-    ///   shows up through a disequality the EUF arrangement demands is not
-    ///   caught here.
-    /// - This checks exactly ONE arrangement per call rather than
-    ///   systematically searching alternative arrangements on conflict (the
-    ///   literature's full "model-based theory combination" backtracks
-    ///   over arrangements); the cached lemma at least prevents the SAME
-    ///   arrangement from being retried, but does not drive EUF toward a
-    ///   different one.
+    /// Use the complete arrangement of an arithmetic witness, including all
+    /// disequalities. Rejected arrangements remain incomplete (`Unknown`).
     fn check_model_based(&mut self) -> Result<TheoryResult> {
-        // First check EUF for consistency
-        match self.euf.check()? {
-            TheoryResult::Unsat(reason) => {
-                return Ok(TheoryResult::Unsat(reason));
-            }
-            TheoryResult::Unknown => {
-                return Ok(TheoryResult::Unknown);
-            }
-            _ => {}
-        }
-
-        // Extract the equality arrangement from EUF
-        let arrangement = self.extract_arrangement();
-        self.current_arrangement = Some(arrangement.clone());
-
-        // Check if arithmetic accepts this arrangement
-        self.push();
-
-        // Actually assert the arrangement's equalities into arithmetic
-        // (previously a no-op: `let _ = (a, b);`, so arithmetic's model
-        // could silently disagree with EUF's about shared variables and
-        // this function would still report `Sat`). If arithmetic itself
-        // rejects one of these equalities outright, that IS the genuine,
-        // correctly-attributed conflict -- report it directly rather than
-        // going on to call `check()` and blaming whatever THAT finds on
-        // this arrangement.
-        for &(a, b) in &arrangement.equalities {
-            // As in `propagate()`: `notify_equality` returning `false`
-            // means either "not relevant" (both sides unknown to
-            // arithmetic -- not a conflict) or a genuine rejection (both
-            // sides ARE known and still incompatible). Only the latter is
-            // an actual conflict.
-            let both_relevant = self.arith.is_relevant(a) && self.arith.is_relevant(b);
-            let accepted = self.arith.notify_equality(EqualityNotification {
-                lhs: a,
-                rhs: b,
-                reason: None,
-            });
-            if !accepted && both_relevant {
-                self.pop();
-                self.cache_lemma(TheoryLemma {
-                    assumptions: vec![a, b],
-                    conclusion: vec![],
-                    theory: self.arith.id(),
-                });
-                return Ok(TheoryResult::Unsat(vec![a, b]));
-            }
-        }
-
-        let arith_result = self.arith.check()?;
-        self.pop();
-
-        match arith_result {
-            TheoryResult::Sat => Ok(TheoryResult::Sat),
-            TheoryResult::Unsat(reason) => {
-                // Learn a blocking clause to avoid this arrangement
-                self.cache_lemma(TheoryLemma {
-                    assumptions: arrangement.equalities.iter().map(|(a, _)| *a).collect(),
-                    conclusion: vec![],
-                    theory: self.arith.id(),
-                });
-                Ok(TheoryResult::Unsat(reason))
-            }
-            other => Ok(other),
-        }
+        self.check_candidate_arrangement()
     }
 
     /// Check using delayed theory combination
@@ -823,35 +792,12 @@ impl TheoryCombiner {
         }
     }
 
-    /// Extract the current equality arrangement from EUF
-    fn extract_arrangement(&mut self) -> EqualityArrangement {
-        let mut arrangement = EqualityArrangement::new();
-        let shared: Vec<TermId> = self.shared_vars.iter().copied().collect();
-
-        for i in 0..shared.len() {
-            for j in (i + 1)..shared.len() {
-                let a = shared[i];
-                let b = shared[j];
-
-                let node_a = self.euf.intern(a);
-                let node_b = self.euf.intern(b);
-
-                if self.euf.are_equal(node_a, node_b) {
-                    arrangement.add_equality(a, b);
-                } else {
-                    arrangement.add_disequality(a, b);
-                }
-            }
-        }
-
-        arrangement
-    }
-
     /// Cache a theory lemma to avoid recomputation
     ///
     /// This also checks for subsumption: if a stronger lemma is already cached,
     /// we don't need to cache this weaker one.  The cache is bounded by
     /// `max_lemma_cache_size`; when full, the LRU entry is evicted automatically.
+    #[cfg(test)]
     fn cache_lemma(&mut self, lemma: TheoryLemma) {
         // Check if any existing lemma is stronger
         let has_stronger = self
@@ -975,8 +921,11 @@ impl TheoryCombiner {
 
     /// Push a context level
     pub fn push(&mut self) {
+        self.current_arrangement = None;
         self.context_stack.push(CombinerState {
-            num_pending: self.pending_equalities.len(),
+            pending: self.pending_equalities.clone(),
+            shared_vars: self.shared_vars.clone(),
+            term_theory: self.term_theory.clone(),
             lemma_cache_size: self.lemma_cache.len(),
             relevant_terms_size: self.relevant_terms.len(),
         });
@@ -986,8 +935,11 @@ impl TheoryCombiner {
 
     /// Pop a context level
     pub fn pop(&mut self) {
+        self.current_arrangement = None;
         if let Some(state) = self.context_stack.pop() {
-            self.pending_equalities.truncate(state.num_pending);
+            self.pending_equalities = state.pending;
+            self.shared_vars = state.shared_vars;
+            self.term_theory = state.term_theory;
 
             // Restore lemma cache to saved size, evicting the most-recently-added
             // entries (LRU tail = oldest entry, so truncate_to evicts the LRU ones
@@ -1007,22 +959,10 @@ impl TheoryCombiner {
     /// Get a model from the theories (for model reconstruction)
     #[must_use]
     pub fn get_model(&self) -> Vec<(TermId, TermId)> {
-        let mut model = Vec::new();
-
-        // Get EUF equalities
-        let shared: Vec<TermId> = self.shared_vars.iter().copied().collect();
-        for i in 0..shared.len() {
-            for j in (i + 1)..shared.len() {
-                let a = shared[i];
-                let b = shared[j];
-
-                // Check if they're equal in the model
-                // This is simplified - a full implementation would query the theories
-                model.push((a, b));
-            }
-        }
-
-        model
+        self.current_arrangement
+            .as_ref()
+            .map(|a| a.equalities.clone())
+            .unwrap_or_default()
     }
 
     /// Verify that a model satisfies all constraints

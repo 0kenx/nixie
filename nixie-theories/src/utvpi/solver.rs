@@ -3,11 +3,13 @@
 //! Implements satisfiability checking for UTVPI constraints using
 //! Bellman-Ford algorithm on the doubled graph.
 
-use super::graph::{DoubledGraph, DoubledNode, Sign, UtConstraint, UtEdge};
+use super::graph::{DoubledGraph, DoubledNode, Sign, UtConstraint};
+use crate::arithmetic::BigDeltaRational;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use nixie_core::ast::TermId;
-use num_rational::Rational64;
+use num_rational::{BigRational, Rational64};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 
 /// Configuration for UTVPI solver
 #[derive(Debug, Clone)]
@@ -69,16 +71,6 @@ impl PartialEq for UtvpiResult {
     }
 }
 
-/// A negative cycle in the doubled graph
-#[derive(Debug, Clone)]
-pub struct UtvpiNegativeCycle {
-    /// Edge indices forming the cycle
-    pub edges: Vec<usize>,
-    /// Total weight of the cycle (for diagnostics)
-    #[allow(dead_code)]
-    pub total_weight: Rational64,
-}
-
 /// UTVPI Theory Solver
 #[derive(Debug)]
 pub struct UtvpiSolver {
@@ -87,9 +79,9 @@ pub struct UtvpiSolver {
     /// Doubled graph
     graph: DoubledGraph,
     /// Distances from source
-    distances: HashMap<DoubledNode, Rational64>,
-    /// Parent edge for path reconstruction
-    parent_edge: HashMap<DoubledNode, usize>,
+    distances: Vec<BigDeltaRational>,
+    /// Independently validated exact variable assignments.
+    model: Vec<BigRational>,
     /// Are distances valid?
     distances_valid: bool,
     /// Statistics
@@ -102,8 +94,8 @@ impl UtvpiSolver {
         Self {
             config: UtvpiConfig::default(),
             graph: DoubledGraph::new(is_integer),
-            distances: HashMap::new(),
-            parent_edge: HashMap::new(),
+            distances: Vec::new(),
+            model: Vec::new(),
             distances_valid: false,
             stats: UtvpiStats::default(),
         }
@@ -114,8 +106,8 @@ impl UtvpiSolver {
         Self {
             config,
             graph: DoubledGraph::new(is_integer),
-            distances: HashMap::new(),
-            parent_edge: HashMap::new(),
+            distances: Vec::new(),
+            model: Vec::new(),
             distances_valid: false,
             stats: UtvpiStats::default(),
         }
@@ -172,284 +164,231 @@ impl UtvpiSolver {
         self.add_constraint(UtConstraint::new(x, a, y, b, bound, origin))
     }
 
-    /// Check consistency
+    /// Check consistency, including integer parity and a concrete witness.
     pub fn check(&mut self) -> UtvpiResult {
         self.stats.checks += 1;
-
-        let result = if self.config.use_spfa {
+        self.distances_valid = false;
+        self.model.clear();
+        let vars = self.graph.num_vars();
+        if self
+            .graph
+            .active_constraints()
+            .any(|(_, c)| (c.a != Sign::Zero && c.x >= vars) || (c.b != Sign::Zero && c.y >= vars))
+        {
+            return UtvpiResult::Unknown;
+        }
+        let consistent = if self.config.use_spfa {
             self.run_spfa()
         } else {
             self.run_bellman_ford()
         };
+        if !consistent {
+            return self.conflict();
+        }
+        if self.graph.is_integer() {
+            match self.enforce_parity() {
+                UtvpiResult::Ok => {}
+                UtvpiResult::Conflict(_) => return self.conflict(),
+                UtvpiResult::Unknown => return UtvpiResult::Unknown,
+            }
+        }
+        if !self.build_model() {
+            self.model.clear();
+            return UtvpiResult::Unknown;
+        }
+        self.distances_valid = true;
+        UtvpiResult::Ok
+    }
 
-        match result {
-            Ok(()) => {
-                self.distances_valid = true;
-                UtvpiResult::Ok
-            }
-            Err(cycle) => {
-                self.stats.conflicts += 1;
-                UtvpiResult::Conflict(cycle.edges)
-            }
+    fn conflict(&mut self) -> UtvpiResult {
+        self.stats.conflicts += 1;
+        // All active constraints are a sound (possibly nonminimal) core. The
+        // old reconstruction guessed a predecessor from a constraint ID even
+        // though each binary constraint has TWO edges, yielding invalid cores.
+        UtvpiResult::Conflict(self.graph.active_constraints().map(|(i, _)| i).collect())
+    }
+
+    fn node_index(&self, node: DoubledNode) -> usize {
+        if node.is_source() {
+            self.graph.num_nodes() as usize
+        } else {
+            2 * node.var_id as usize + usize::from(!node.positive)
         }
     }
 
-    /// Run standard Bellman-Ford algorithm
-    fn run_bellman_ford(&mut self) -> Result<(), UtvpiNegativeCycle> {
-        self.distances.clear();
-        self.parent_edge.clear();
-
-        // Initialize distances
-        self.distances
-            .insert(DoubledNode::SOURCE, Rational64::from_integer(0));
-
-        // Initialize all nodes with 0 (source is connected to all)
-        for node in self.graph.all_nodes() {
-            self.distances.insert(node, Rational64::from_integer(0));
+    fn plus(a: &BigDeltaRational, b: &BigDeltaRational) -> BigDeltaRational {
+        BigDeltaRational {
+            real: &a.real + &b.real,
+            delta: &a.delta + &b.delta,
         }
+    }
 
-        // Add source edges
-        for edge in self.graph.get_edges(DoubledNode::SOURCE) {
-            self.distances.insert(edge.to, edge.weight);
-        }
-
-        // Number of nodes = 2 * num_vars + 1 (source)
-        let n = (self.graph.num_nodes() + 1) as usize;
-
-        // Relax edges n times
-        for _ in 0..n {
+    /// Multi-source Bellman–Ford over exact infinitesimal weights. An update
+    /// on pass |V| certifies a negative cycle; no guessed cycle is needed.
+    fn run_bellman_ford(&mut self) -> bool {
+        let n = self.graph.num_nodes() as usize + 1;
+        self.distances = vec![BigDeltaRational::zero(); n];
+        for pass in 0..n {
             let mut changed = false;
-
             for edge in self.graph.all_edges() {
-                if let Some(&dist_from) = self.distances.get(&edge.from) {
-                    let new_dist = dist_from + edge.weight;
-                    let should_update = match self.distances.get(&edge.to) {
-                        None => true,
-                        Some(&d) => new_dist < d,
-                    };
-
-                    if should_update {
-                        self.distances.insert(edge.to, new_dist);
-                        self.parent_edge.insert(edge.to, edge.constraint_idx);
-                        changed = true;
-                    }
+                let from = self.node_index(edge.from);
+                let to = self.node_index(edge.to);
+                let next = Self::plus(&self.distances[from], &edge.weight);
+                if next < self.distances[to] {
+                    self.distances[to] = next;
+                    changed = true;
                 }
             }
-
             if !changed {
-                break;
+                return true;
+            }
+            if pass + 1 == n {
+                return false;
             }
         }
-
-        // Check for negative cycles
-        for edge in self.graph.all_edges() {
-            if let Some(&dist_from) = self.distances.get(&edge.from) {
-                let new_dist = dist_from + edge.weight;
-                if let Some(&dist_to) = self.distances.get(&edge.to)
-                    && new_dist < dist_to
-                {
-                    return Err(self.extract_cycle(edge));
-                }
-            }
-        }
-
-        Ok(())
+        true
     }
 
-    /// Run SPFA (Shortest Path Faster Algorithm)
-    fn run_spfa(&mut self) -> Result<(), UtvpiNegativeCycle> {
-        self.distances.clear();
-        self.parent_edge.clear();
-
-        let n = self.graph.num_nodes() + 1;
-        let mut queue: VecDeque<DoubledNode> = VecDeque::new();
-        let mut in_queue: HashSet<DoubledNode> = HashSet::new();
-        let mut visit_count: HashMap<DoubledNode, u32> = HashMap::new();
-
-        // Initialize source
-        self.distances
-            .insert(DoubledNode::SOURCE, Rational64::from_integer(0));
-        queue.push_back(DoubledNode::SOURCE);
-        in_queue.insert(DoubledNode::SOURCE);
-        visit_count.insert(DoubledNode::SOURCE, 1);
-
-        while let Some(u) = queue.pop_front() {
-            in_queue.remove(&u);
-
-            for edge in self.graph.get_edges(u) {
-                let dist_u = match self.distances.get(&u) {
-                    Some(&d) => d,
-                    None => continue,
-                };
-
-                let new_dist = dist_u + edge.weight;
-                let should_update = match self.distances.get(&edge.to) {
-                    None => true,
-                    Some(&d) => new_dist < d,
-                };
-
-                if should_update {
-                    self.distances.insert(edge.to, new_dist);
-                    self.parent_edge.insert(edge.to, edge.constraint_idx);
-
-                    if !in_queue.contains(&edge.to) {
+    /// Queue scheduling is only an optimization. Too many enqueues trigger
+    /// Bellman–Ford, never a conflict inferred from an enqueue count alone.
+    fn run_spfa(&mut self) -> bool {
+        let n = self.graph.num_nodes() as usize + 1;
+        self.distances = vec![BigDeltaRational::zero(); n];
+        let nodes: Vec<_> = self
+            .graph
+            .all_nodes()
+            .chain(core::iter::once(DoubledNode::SOURCE))
+            .collect();
+        let mut queue: VecDeque<_> = nodes.into_iter().collect();
+        let mut queued = vec![true; n];
+        let mut counts = vec![1usize; n];
+        let mut fallback = false;
+        'search: while let Some(node) = queue.pop_front() {
+            let from = self.node_index(node);
+            queued[from] = false;
+            for edge in self.graph.get_edges(node) {
+                let to = self.node_index(edge.to);
+                let next = Self::plus(&self.distances[from], &edge.weight);
+                if next < self.distances[to] {
+                    self.distances[to] = next;
+                    if !queued[to] {
+                        counts[to] += 1;
+                        if counts[to] > n {
+                            fallback = true;
+                            break 'search;
+                        }
+                        queued[to] = true;
                         queue.push_back(edge.to);
-                        in_queue.insert(edge.to);
-
-                        let count = visit_count.entry(edge.to).or_insert(0);
-                        *count += 1;
-
-                        // If a node is visited more than n times, negative cycle exists
-                        if *count > n {
-                            return Err(self.extract_cycle_from_node(edge.to));
-                        }
                     }
                 }
             }
         }
-
-        Ok(())
-    }
-
-    /// Extract negative cycle from a triggering edge
-    fn extract_cycle(&self, trigger_edge: &UtEdge) -> UtvpiNegativeCycle {
-        let mut cycle_edges = Vec::new();
-        let mut total_weight = Rational64::from_integer(0);
-        let mut visited: HashSet<DoubledNode> = HashSet::new();
-        let mut current = trigger_edge.to;
-
-        // Go back to find a node in the cycle
-        for _ in 0..=self.graph.num_nodes() {
-            if let Some(&edge_idx) = self.parent_edge.get(&current) {
-                if let Some(constraint) = self.graph.get_constraint(edge_idx) {
-                    // Find the source node for this constraint
-                    current = self.get_source_node_for_constraint(constraint);
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        let cycle_start = current;
-
-        // Extract the cycle
-        loop {
-            if visited.contains(&current) {
-                break;
-            }
-            visited.insert(current);
-
-            if let Some(&edge_idx) = self.parent_edge.get(&current) {
-                if let Some(constraint) = self.graph.get_constraint(edge_idx) {
-                    cycle_edges.push(edge_idx);
-
-                    // Find edge weight
-                    for edge in self
-                        .graph
-                        .get_edges(self.get_source_node_for_constraint(constraint))
-                    {
-                        if edge.constraint_idx == edge_idx && edge.to == current {
-                            total_weight += edge.weight;
-                            break;
-                        }
-                    }
-
-                    current = self.get_source_node_for_constraint(constraint);
-
-                    if current == cycle_start && !cycle_edges.is_empty() {
-                        break;
-                    }
-
-                    if cycle_edges.len() > self.graph.num_nodes() as usize + 1 {
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-
-        if cycle_edges.is_empty() {
-            cycle_edges.push(trigger_edge.constraint_idx);
-            total_weight = trigger_edge.weight;
-        }
-
-        UtvpiNegativeCycle {
-            edges: cycle_edges,
-            total_weight,
+        if fallback {
+            self.run_bellman_ford()
+        } else {
+            true
         }
     }
 
-    /// Extract cycle from a node known to be in a cycle
-    fn extract_cycle_from_node(&self, start: DoubledNode) -> UtvpiNegativeCycle {
-        let mut cycle_edges = Vec::new();
-        let mut total_weight = Rational64::from_integer(0);
-        let mut visited: HashSet<DoubledNode> = HashSet::new();
-        let mut current = start;
-
-        loop {
-            if visited.contains(&current) {
-                break;
-            }
-            visited.insert(current);
-
-            if let Some(&edge_idx) = self.parent_edge.get(&current) {
-                if let Some(constraint) = self.graph.get_constraint(edge_idx) {
-                    cycle_edges.push(edge_idx);
-
-                    let source = self.get_source_node_for_constraint(constraint);
-                    for edge in self.graph.get_edges(source) {
-                        if edge.constraint_idx == edge_idx && edge.to == current {
-                            total_weight += edge.weight;
-                            break;
-                        }
-                    }
-
-                    current = source;
-
-                    if current == start {
-                        break;
-                    }
-
-                    if cycle_edges.len() > self.graph.num_nodes() as usize + 1 {
-                        break;
-                    }
-                } else {
-                    break;
+    /// Nodes reachable along tight edges. This is an explicit heap walk.
+    fn tight_successors(&self, start: DoubledNode) -> Vec<bool> {
+        let mut seen = vec![false; self.distances.len()];
+        let mut todo = vec![start];
+        seen[self.node_index(start)] = true;
+        while let Some(node) = todo.pop() {
+            let from = self.node_index(node);
+            for edge in self.graph.get_edges(node) {
+                let to = self.node_index(edge.to);
+                if !seen[to]
+                    && self.distances[to] == Self::plus(&self.distances[from], &edge.weight)
+                {
+                    seen[to] = true;
+                    todo.push(edge.to);
                 }
-            } else {
-                break;
             }
         }
-
-        UtvpiNegativeCycle {
-            edges: cycle_edges,
-            total_weight,
-        }
+        seen
     }
 
-    /// Get source node for a constraint (helper for cycle extraction)
-    fn get_source_node_for_constraint(&self, constraint: &UtConstraint) -> DoubledNode {
-        // The source depends on the constraint type
-        match (constraint.a, constraint.b) {
-            (Sign::Positive, Sign::Negative) => DoubledNode::positive(constraint.y),
-            (Sign::Negative, Sign::Positive) => DoubledNode::positive(constraint.x),
-            (Sign::Positive, Sign::Positive) => DoubledNode::negative(constraint.y),
-            (Sign::Negative, Sign::Negative) => DoubledNode::positive(constraint.y),
-            (Sign::Positive, Sign::Zero) => DoubledNode::negative(constraint.x),
-            (Sign::Negative, Sign::Zero) => DoubledNode::positive(constraint.x),
-            (Sign::Zero, Sign::Positive) => DoubledNode::negative(constraint.y),
-            (Sign::Zero, Sign::Negative) => DoubledNode::positive(constraint.y),
-            (Sign::Zero, Sign::Zero) => DoubledNode::SOURCE,
+    /// Z3 theory_utvpi::check_z_consistency/enforce_parity: opposite nodes
+    /// with odd potential difference cannot be in the same tight SCC. Otherwise
+    /// decrement a tight successor closure excluding the complementary node.
+    fn enforce_parity(&mut self) -> UtvpiResult {
+        let n = self.graph.num_vars();
+        // Deterministic resource bound; reaching it is never a proof of UNSAT.
+        let budget = (n as usize + 1)
+            .saturating_mul(n as usize + 1)
+            .saturating_mul(16);
+        for _ in 0..budget {
+            let odd = (0..n).find(|&v| {
+                let difference =
+                    &self.distances[2 * v as usize].real - &self.distances[2 * v as usize + 1].real;
+                !(difference / BigRational::from_integer(2.into())).is_integer()
+            });
+            let Some(v) = odd else {
+                return UtvpiResult::Ok;
+            };
+            let pos = DoubledNode::positive(v);
+            let neg = DoubledNode::negative(v);
+            let mut closure = self.tight_successors(pos);
+            if closure[self.node_index(neg)] {
+                closure = self.tight_successors(neg);
+                if closure[self.node_index(pos)] {
+                    return UtvpiResult::Conflict(Vec::new());
+                }
+            }
+            for (i, reached) in closure.into_iter().enumerate() {
+                if reached {
+                    self.distances[i].real -= BigRational::one();
+                }
+            }
         }
+        UtvpiResult::Unknown
+    }
+
+    fn build_model(&mut self) -> bool {
+        let two = BigRational::from_integer(2.into());
+        let mut epsilon = BigRational::new(1.into(), 4.into());
+        // Choose one positive rational infinitesimal that preserves EVERY
+        // edge, as in Z3 theory_utvpi::compute_delta.
+        for edge in self.graph.all_edges() {
+            let from = &self.distances[self.node_index(edge.from)];
+            let to = &self.distances[self.node_index(edge.to)];
+            let real = &to.real - &from.real - &edge.weight.real;
+            let delta = &to.delta - &from.delta - &edge.weight.delta;
+            if real.is_positive() || (real.is_zero() && delta.is_positive()) {
+                return false;
+            }
+            if delta.is_positive() {
+                epsilon = epsilon.min(-real / (&two * delta));
+            }
+        }
+        self.model = (0..self.graph.num_vars() as usize)
+            .map(|v| {
+                let pos = &self.distances[2 * v];
+                let neg = &self.distances[2 * v + 1];
+                (&pos.real - &neg.real + (&pos.delta - &neg.delta) * &epsilon) / &two
+            })
+            .collect();
+        if self.graph.is_integer() && self.model.iter().any(|v| !v.is_integer()) {
+            return false;
+        }
+        // Independently evaluate ORIGINAL constraints, not just their encoding.
+        self.graph.active_constraints().all(|(_, c)| {
+            let value = |var: u32, sign: Sign| match sign {
+                Sign::Zero => BigRational::zero(),
+                Sign::Positive => self.model[var as usize].clone(),
+                Sign::Negative => -self.model[var as usize].clone(),
+            };
+            let lhs = value(c.x, c.a) + value(c.y, c.b);
+            let rhs = BigRational::new((*c.bound.numer()).into(), (*c.bound.denom()).into());
+            if c.strict { lhs < rhs } else { lhs <= rhs }
+        })
     }
 
     /// Push a new decision level
     pub fn push(&mut self) {
+        self.distances_valid = false;
         self.stats.pushes += 1;
         self.graph.push();
     }
@@ -463,59 +402,81 @@ impl UtvpiSolver {
         }
     }
 
-    /// Get variable value from the model
-    pub fn get_value(&self, var: u32) -> Option<Rational64> {
+    /// Exact validated value; unavailable after mutation or a non-SAT check.
+    pub fn get_value_exact(&self, var: u32) -> Option<&BigRational> {
         if !self.distances_valid {
             return None;
         }
-
-        // The value of x is (d(x⁺) - d(x⁻)) / 2
-        let pos = DoubledNode::positive(var);
-        let neg = DoubledNode::negative(var);
-
-        let d_pos = self.distances.get(&pos)?;
-        let d_neg = self.distances.get(&neg)?;
-
-        Some((*d_pos - *d_neg) / Rational64::from_integer(2))
+        self.model.get(var as usize)
     }
 
-    /// Get the model (all variable assignments)
+    /// Get a value if its numerator and denominator fit the narrow API.
+    pub fn get_value(&self, var: u32) -> Option<Rational64> {
+        let v = self.get_value_exact(var)?;
+        Some(Rational64::new_raw(
+            v.numer().to_i64()?,
+            v.denom().to_i64()?,
+        ))
+    }
+
+    /// Narrow model. Wide values are omitted, never truncated; use
+    /// `get_value_exact` when the narrow API cannot represent a value.
     pub fn get_model(&self) -> HashMap<u32, Rational64> {
-        let mut model = HashMap::new();
+        (0..self.graph.num_vars())
+            .filter_map(|v| self.get_value(v).map(|x| (v, x)))
+            .collect()
+    }
 
-        if !self.distances_valid {
-            return model;
+    /// Entailed (inclusive) upper bound from paths x⁻ -> x⁺, divided by two.
+    pub fn get_upper_bound(&self, var: u32) -> Option<Rational64> {
+        self.implied_bound(var, true)
+    }
+
+    /// Entailed (inclusive) lower bound from paths x⁺ -> x⁻, divided by -two.
+    pub fn get_lower_bound(&self, var: u32) -> Option<Rational64> {
+        self.implied_bound(var, false)
+    }
+
+    fn implied_bound(&self, var: u32, upper: bool) -> Option<Rational64> {
+        if !self.distances_valid || var >= self.graph.num_vars() {
+            return None;
         }
-
-        for var in 0..self.graph.num_vars() {
-            if let Some(value) = self.get_value(var) {
-                model.insert(var, value);
+        let start = DoubledNode {
+            var_id: var,
+            positive: !upper,
+        };
+        let target = start.complement();
+        let n = self.distances.len();
+        let mut distance: Vec<Option<BigDeltaRational>> = vec![None; n];
+        distance[self.node_index(start)] = Some(BigDeltaRational::zero());
+        for _ in 1..n {
+            let mut changed = false;
+            for edge in self.graph.all_edges() {
+                if let Some(from) = &distance[self.node_index(edge.from)] {
+                    let next = Self::plus(from, &edge.weight);
+                    let to = self.node_index(edge.to);
+                    if distance[to].as_ref().is_none_or(|old| &next < old) {
+                        distance[to] = Some(next);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
             }
         }
-
-        model
-    }
-
-    /// Get the implied upper bound for a variable
-    pub fn get_upper_bound(&self, var: u32) -> Option<Rational64> {
-        if !self.distances_valid {
-            return None;
+        let mut bound = distance[self.node_index(target)].as_ref()?.real.clone()
+            / BigRational::from_integer(2.into());
+        if self.graph.is_integer() {
+            bound = bound.floor();
         }
-
-        // Upper bound: d(x⁺) (distance to positive node)
-        let pos = DoubledNode::positive(var);
-        self.distances.get(&pos).copied()
-    }
-
-    /// Get the implied lower bound for a variable
-    pub fn get_lower_bound(&self, var: u32) -> Option<Rational64> {
-        if !self.distances_valid {
-            return None;
+        if !upper {
+            bound = -bound;
         }
-
-        // Lower bound: -d(x⁻)
-        let neg = DoubledNode::negative(var);
-        self.distances.get(&neg).map(|d| -*d)
+        Some(Rational64::new_raw(
+            bound.numer().to_i64()?,
+            bound.denom().to_i64()?,
+        ))
     }
 
     /// Get statistics
@@ -527,7 +488,7 @@ impl UtvpiSolver {
     pub fn reset(&mut self) {
         self.graph.reset();
         self.distances.clear();
-        self.parent_edge.clear();
+        self.model.clear();
         self.distances_valid = false;
     }
 

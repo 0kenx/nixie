@@ -260,12 +260,13 @@ pub struct FpSolver {
     term_to_fp: FxHashMap<TermId, FpVar>,
     /// Pending assertions
     assertions: Vec<(TermId, bool)>,
-    /// Context stack. Each entry records `(assertions.len(),
-    /// has_unsupported_conversion)` at push time so `pop` restores both.
-    context_stack: Vec<(usize, bool)>,
+    /// Scoped assertion, encoding and ground-constant state.
+    context_stack: Vec<FpScope>,
+    /// Explicitly asserted constants, independent of candidate SAT assignments.
+    constants: FxHashMap<TermId, FpValue>,
     /// Current rounding mode
     rounding_mode: FpRoundingMode,
-    /// Set to `true` when an FP<->integer / FP<->real conversion whose
+    /// Set to `true` when a symbolic or unrepresentable conversion whose
     /// bit-blasting this solver does not (yet) constrain has been asserted
     /// (see the conversion methods below). While set, a `Sat` verdict from
     /// the embedded SAT solver is NOT trustworthy -- the conversion's result
@@ -289,6 +290,14 @@ pub struct FpSolver {
     /// variable only assigned during search.
     last_sat_model: Vec<LBool>,
 }
+#[derive(Debug)]
+struct FpScope {
+    assertions: usize,
+    unsupported: bool,
+    terms: FxHashMap<TermId, FpVar>,
+    constants: FxHashMap<TermId, FpValue>,
+}
+
 impl Default for FpSolver {
     fn default() -> Self {
         Self::new()
@@ -303,6 +312,7 @@ impl FpSolver {
             term_to_fp: FxHashMap::default(),
             assertions: Vec::new(),
             context_stack: Vec::new(),
+            constants: FxHashMap::default(),
             rounding_mode: FpRoundingMode::default(),
             has_unsupported_conversion: false,
             shared_equalities: Vec::new(),
@@ -312,6 +322,7 @@ impl FpSolver {
     }
     /// Set the rounding mode
     pub fn set_rounding_mode(&mut self, mode: FpRoundingMode) {
+        self.last_sat_model.clear();
         self.rounding_mode = mode;
     }
     /// Get the current rounding mode
@@ -321,7 +332,15 @@ impl FpSolver {
     }
     /// Create a new floating-point variable
     pub fn new_fp(&mut self, term: TermId, format: FpFormat) {
-        if self.term_to_fp.contains_key(&term) {
+        self.last_sat_model.clear();
+        if format.exponent_bits < 2 || format.significand_bits < 2 {
+            self.has_unsupported_conversion = true;
+            return;
+        }
+        if let Some(existing) = self.term_to_fp.get(&term) {
+            if existing.format != format {
+                self.has_unsupported_conversion = true;
+            }
             return;
         }
         let sign = self.sat.new_var();
@@ -341,13 +360,56 @@ impl FpSolver {
             },
         );
     }
+    fn lookup_fp(&mut self, term: TermId) -> Option<FpVar> {
+        let value = self.term_to_fp.get(&term).cloned();
+        if value.is_none() {
+            self.has_unsupported_conversion = true;
+        }
+        value
+    }
+
+    fn compatible_fp(&mut self, a: Option<FpVar>, b: Option<FpVar>) -> Option<(FpVar, FpVar)> {
+        match (a, b) {
+            (Some(a), Some(b)) if a.format == b.format => Some((a, b)),
+            _ => {
+                self.has_unsupported_conversion = true;
+                None
+            }
+        }
+    }
+
     /// Assert a constant floating-point value
     pub fn assert_const(&mut self, term: TermId, value: &FpValue) {
+        self.last_sat_model.clear();
         self.new_fp(term, value.format);
         let fp = match self.term_to_fp.get(&term).cloned() {
             Some(fp) => fp,
             None => return,
         };
+        if fp.format != value.format
+            || fp.exponent.len() > 64
+            || fp.significand.len() > 64
+            || value
+                .exponent
+                .checked_shr(fp.exponent.len() as u32)
+                .is_some_and(|v| v != 0)
+            || value
+                .significand
+                .checked_shr(fp.significand.len() as u32)
+                .is_some_and(|v| v != 0)
+        {
+            self.has_unsupported_conversion = true;
+            return;
+        }
+        self.constants.insert(term, *value);
+        // SMT floating-point has one NaN value, regardless of the supplied
+        // sign/payload. Do not turn two encodings of that value into a conflict.
+        // The validated bit count also makes this safe for nonstandard formats.
+        let max_exponent = u64::MAX >> (64 - fp.exponent.len());
+        if value.exponent == max_exponent && value.significand != 0 {
+            self.assert_is_nan(term);
+            return;
+        }
         if value.sign {
             self.sat.add_clause([Lit::pos(fp.sign)]);
         } else {
@@ -405,10 +467,10 @@ impl FpSolver {
     /// treats `+0` and `-0` as equal and treats NaN as unequal to
     /// everything (including itself); see [`Self::assert_fp_ieee_eq`].
     pub fn assert_fp_eq(&mut self, a: TermId, b: TermId) {
+        self.last_sat_model.clear();
         let fp_a = self.term_to_fp.get(&a).cloned();
         let fp_b = self.term_to_fp.get(&b).cloned();
-        if let (Some(va), Some(vb)) = (fp_a, fp_b) {
-            assert_eq!(va.format, vb.format);
+        if let Some((va, vb)) = self.compatible_fp(fp_a, fp_b) {
             let a_is_nan = self.encode_is_nan(&va);
             let b_is_nan = self.encode_is_nan(&vb);
             let both_nan = self.new_and(a_is_nan, b_is_nan);
@@ -441,11 +503,11 @@ impl FpSolver {
     /// semantics (NaN is unequal to everything including itself; `+0` and
     /// `-0` compare equal).
     pub fn assert_fp_ieee_eq(&mut self, a: TermId, b: TermId) -> Var {
+        self.last_sat_model.clear();
         let fp_a = self.term_to_fp.get(&a).cloned();
         let fp_b = self.term_to_fp.get(&b).cloned();
         let result = self.sat.new_var();
-        if let (Some(va), Some(vb)) = (fp_a, fp_b) {
-            assert_eq!(va.format, vb.format);
+        if let Some((va, vb)) = self.compatible_fp(fp_a, fp_b) {
             let eq = self.encode_fp_ieee_eq(&va, &vb);
             self.encode_bit_eq(result, eq);
         }
@@ -541,28 +603,32 @@ impl FpSolver {
     }
     /// Assert that a term is NaN
     pub fn assert_is_nan(&mut self, term: TermId) {
-        if let Some(fp) = self.term_to_fp.get(&term).cloned() {
+        self.last_sat_model.clear();
+        if let Some(fp) = self.lookup_fp(term) {
             let is_nan = self.encode_is_nan(&fp);
             self.sat.add_clause([Lit::pos(is_nan)]);
         }
     }
     /// Assert that a term is infinite
     pub fn assert_is_infinite(&mut self, term: TermId) {
-        if let Some(fp) = self.term_to_fp.get(&term).cloned() {
+        self.last_sat_model.clear();
+        if let Some(fp) = self.lookup_fp(term) {
             let is_inf = self.encode_is_infinite(&fp);
             self.sat.add_clause([Lit::pos(is_inf)]);
         }
     }
     /// Assert that a term is zero
     pub fn assert_is_zero(&mut self, term: TermId) {
-        if let Some(fp) = self.term_to_fp.get(&term).cloned() {
+        self.last_sat_model.clear();
+        if let Some(fp) = self.lookup_fp(term) {
             let is_zero = self.encode_is_zero(&fp);
             self.sat.add_clause([Lit::pos(is_zero)]);
         }
     }
     /// Assert that a term is normal
     pub fn assert_is_normal(&mut self, term: TermId) {
-        if let Some(fp) = self.term_to_fp.get(&term).cloned() {
+        self.last_sat_model.clear();
+        if let Some(fp) = self.lookup_fp(term) {
             let is_nan = self.encode_is_nan(&fp);
             let is_inf = self.encode_is_infinite(&fp);
             let is_zero = self.encode_is_zero(&fp);
@@ -584,12 +650,15 @@ impl FpSolver {
     }
     /// Assert negation: result = -operand
     pub fn assert_fp_neg(&mut self, result: TermId, operand: TermId) {
+        self.last_sat_model.clear();
         let fp_op = self.term_to_fp.get(&operand).cloned();
         let fp_res = self.term_to_fp.get(&result).cloned();
-        if let (Some(op), Some(res)) = (fp_op, fp_res) {
-            assert_eq!(op.format, res.format);
-            self.sat.add_clause([Lit::neg(res.sign), Lit::neg(op.sign)]);
-            self.sat.add_clause([Lit::pos(res.sign), Lit::pos(op.sign)]);
+        if let Some((op, res)) = self.compatible_fp(fp_op, fp_res) {
+            let is_nan = self.encode_is_nan(&op);
+            self.sat
+                .add_clause([Lit::pos(is_nan), Lit::neg(res.sign), Lit::neg(op.sign)]);
+            self.sat
+                .add_clause([Lit::pos(is_nan), Lit::pos(res.sign), Lit::pos(op.sign)]);
             for (re, oe) in res.exponent.iter().zip(op.exponent.iter()) {
                 self.sat.add_clause([Lit::neg(*re), Lit::pos(*oe)]);
                 self.sat.add_clause([Lit::pos(*re), Lit::neg(*oe)]);
@@ -602,11 +671,12 @@ impl FpSolver {
     }
     /// Assert absolute value: result = |operand|
     pub fn assert_fp_abs(&mut self, result: TermId, operand: TermId) {
+        self.last_sat_model.clear();
         let fp_op = self.term_to_fp.get(&operand).cloned();
         let fp_res = self.term_to_fp.get(&result).cloned();
-        if let (Some(op), Some(res)) = (fp_op, fp_res) {
-            assert_eq!(op.format, res.format);
-            self.sat.add_clause([Lit::neg(res.sign)]);
+        if let Some((op, res)) = self.compatible_fp(fp_op, fp_res) {
+            let is_nan = self.encode_is_nan(&op);
+            self.sat.add_clause([Lit::pos(is_nan), Lit::neg(res.sign)]);
             for (re, oe) in res.exponent.iter().zip(op.exponent.iter()) {
                 self.sat.add_clause([Lit::neg(*re), Lit::pos(*oe)]);
                 self.sat.add_clause([Lit::pos(*re), Lit::neg(*oe)]);
@@ -772,11 +842,11 @@ impl FpSolver {
     /// following IEEE-754 total-order semantics (NaN comparisons are
     /// false; -0 and +0 compare equal).
     pub fn assert_fp_lt(&mut self, a: TermId, b: TermId) -> Var {
+        self.last_sat_model.clear();
         let fp_a = self.term_to_fp.get(&a).cloned();
         let fp_b = self.term_to_fp.get(&b).cloned();
         let result = self.sat.new_var();
-        if let (Some(va), Some(vb)) = (fp_a, fp_b) {
-            assert_eq!(va.format, vb.format);
+        if let Some((va, vb)) = self.compatible_fp(fp_a, fp_b) {
             let lt = self.encode_fp_lt(&va, &vb);
             self.encode_bit_eq(result, lt);
         }
@@ -789,11 +859,11 @@ impl FpSolver {
     /// SMT-LIB `fp.leq` semantics (NaN comparisons are false; -0 and +0
     /// compare equal in both directions).
     pub fn assert_fp_le(&mut self, a: TermId, b: TermId) -> Var {
+        self.last_sat_model.clear();
         let fp_a = self.term_to_fp.get(&a).cloned();
         let fp_b = self.term_to_fp.get(&b).cloned();
         let result = self.sat.new_var();
-        if let (Some(va), Some(vb)) = (fp_a, fp_b) {
-            assert_eq!(va.format, vb.format);
+        if let Some((va, vb)) = self.compatible_fp(fp_a, fp_b) {
             let lt_ba = self.encode_fp_lt(&vb, &va);
             let is_nan_a = self.encode_is_nan(&va);
             let is_nan_b = self.encode_is_nan(&vb);
@@ -808,38 +878,50 @@ impl FpSolver {
     }
     /// Convert between FP formats
     pub fn assert_fp_to_fp(&mut self, result: TermId, operand: TermId, target_format: FpFormat) {
+        self.last_sat_model.clear();
         self.new_fp(result, target_format);
-        let fp_op = self.term_to_fp.get(&operand).cloned();
-        let fp_res = self.term_to_fp.get(&result).cloned();
-        if let (Some(op), Some(res)) = (fp_op, fp_res) {
-            if op.format == res.format {
-                self.sat.add_clause([Lit::neg(res.sign), Lit::pos(op.sign)]);
-                self.sat.add_clause([Lit::pos(res.sign), Lit::neg(op.sign)]);
-                for (re, oe) in res.exponent.iter().zip(op.exponent.iter()) {
-                    self.sat.add_clause([Lit::neg(*re), Lit::pos(*oe)]);
-                    self.sat.add_clause([Lit::pos(*re), Lit::neg(*oe)]);
+        let Some(op) = self.term_to_fp.get(&operand).cloned() else {
+            self.has_unsupported_conversion = true;
+            return;
+        };
+        let Some(res) = self.term_to_fp.get(&result).cloned() else {
+            self.has_unsupported_conversion = true;
+            return;
+        };
+        if res.format != target_format {
+            self.has_unsupported_conversion = true;
+            return;
+        }
+        if op.format == res.format {
+            // Identity in the SMT FP domain, where all NaN encodings denote
+            // one value. Bitwise copying would spuriously distinguish payloads.
+            self.assert_fp_eq(result, operand);
+            return;
+        }
+        // Ground conversions use the exact engine (including subnormals and
+        // rounding). Never use a candidate SAT assignment as a constant.
+        if let Some(value) = self.constants.get(&operand).copied() {
+            let supported = |f: FpFormat| {
+                (2..=11).contains(&f.exponent_bits) && (2..=53).contains(&f.significand_bits)
+            };
+            if supported(value.format) && supported(target_format) {
+                if value.is_nan() {
+                    self.assert_is_nan(result);
+                    return;
                 }
-                for (rs, os) in res.significand.iter().zip(op.significand.iter()) {
-                    self.sat.add_clause([Lit::neg(*rs), Lit::pos(*os)]);
-                    self.sat.add_clause([Lit::pos(*rs), Lit::neg(*os)]);
-                }
-            } else {
-                let is_nan = self.encode_is_nan(&op);
-                let is_inf = self.encode_is_infinite(&op);
-                let is_zero = self.encode_is_zero(&op);
-                self.sat.add_clause([Lit::neg(res.sign), Lit::pos(op.sign)]);
-                self.sat.add_clause([Lit::pos(res.sign), Lit::neg(op.sign)]);
-                let res_is_nan = self.encode_is_nan(&res);
-                self.sat
-                    .add_clause([Lit::neg(is_nan), Lit::pos(res_is_nan)]);
-                let res_is_inf = self.encode_is_infinite(&res);
-                self.sat
-                    .add_clause([Lit::neg(is_inf), Lit::pos(res_is_inf)]);
-                let res_is_zero = self.encode_is_zero(&res);
-                self.sat
-                    .add_clause([Lit::neg(is_zero), Lit::pos(res_is_zero)]);
+                let mut engine = super::ieee754_full::Ieee754Engine::new();
+                engine.set_rounding_mode(self.rounding_mode);
+                let converted =
+                    super::ieee754_full::convert_format(&mut engine, &value, target_format);
+                self.assert_const(result, &converted);
+                return;
             }
         }
+        // Symbolic cross-format conversion needs normalization and rounded
+        // exponent/significand circuits. A few special-case implications do
+        // not encode that relation. Leave no unjustified partial axioms and
+        // decline SAT until the full relation is supported.
+        self.has_unsupported_conversion = true;
     }
     /// Convert FP to signed integer (with rounding mode).
     ///
@@ -849,28 +931,18 @@ impl FpSolver {
     /// encode. Rather than silently leaving the result bits unconstrained and
     /// letting the SAT model report a bogus `Sat`, we flag the solver so
     /// `check()` reports `Unknown` (never `Sat` ignoring the conversion).
-    pub fn assert_fp_to_sbv(&mut self, _result: TermId, operand: TermId, width: u32) {
-        let fp_op = self.term_to_fp.get(&operand).cloned();
-        if let Some(_op) = fp_op {
-            for _ in 0..width {
-                self.sat.new_var();
-            }
-            self.has_unsupported_conversion = true;
-        }
+    pub fn assert_fp_to_sbv(&mut self, _result: TermId, _operand: TermId, _width: u32) {
+        self.last_sat_model.clear();
+        self.has_unsupported_conversion = true;
     }
     /// Convert FP to unsigned integer.
     ///
     /// UNSUPPORTED (see [`Self::assert_fp_to_sbv`]): the result bits are not
     /// constrained by `operand`, so the solver is flagged and `check()`
     /// reports `Unknown` instead of a bogus `Sat`.
-    pub fn assert_fp_to_ubv(&mut self, _result: TermId, operand: TermId, width: u32) {
-        let fp_op = self.term_to_fp.get(&operand).cloned();
-        if let Some(_op) = fp_op {
-            for _ in 0..width {
-                self.sat.new_var();
-            }
-            self.has_unsupported_conversion = true;
-        }
+    pub fn assert_fp_to_ubv(&mut self, _result: TermId, _operand: TermId, _width: u32) {
+        self.last_sat_model.clear();
+        self.has_unsupported_conversion = true;
     }
     /// Convert signed integer to FP.
     ///
@@ -887,6 +959,7 @@ impl FpSolver {
         _width: u32,
         format: FpFormat,
     ) {
+        self.last_sat_model.clear();
         self.new_fp(result, format);
         let _ = operand;
         self.has_unsupported_conversion = true;
@@ -902,6 +975,7 @@ impl FpSolver {
         _width: u32,
         format: FpFormat,
     ) {
+        self.last_sat_model.clear();
         self.new_fp(result, format);
         let _ = operand;
         self.has_unsupported_conversion = true;
@@ -912,10 +986,9 @@ impl FpSolver {
     /// the arithmetic theory, which this module has no reference to. The
     /// conversion imposes no constraint here, so the solver is flagged and
     /// `check()` reports `Unknown` (never a bogus `Sat`).
-    pub fn assert_fp_to_real(&mut self, _result: TermId, operand: TermId) {
-        if self.term_to_fp.contains_key(&operand) {
-            self.has_unsupported_conversion = true;
-        }
+    pub fn assert_fp_to_real(&mut self, _result: TermId, _operand: TermId) {
+        self.last_sat_model.clear();
+        self.has_unsupported_conversion = true;
     }
     /// Convert real to FP (symbolic).
     ///
@@ -923,39 +996,39 @@ impl FpSolver {
     /// fresh, unconstrained FP variable, so the solver is flagged and
     /// `check()` reports `Unknown`.
     pub fn assert_real_to_fp(&mut self, result: TermId, _operand: TermId, format: FpFormat) {
+        self.last_sat_model.clear();
         self.new_fp(result, format);
         self.has_unsupported_conversion = true;
     }
     /// Get the floating-point value from the model
     ///
-    /// Prefers the `last_sat_model` snapshot captured at the end of the last
-    /// successful `Theory::check()`, falling back to the live SAT model
-    /// only when no snapshot exists yet (e.g. a direct unit test reading a
-    /// value before any `check()`).
+    /// Reads only the snapshot captured by a successful `Theory::check()`.
+    /// Returns `None` after mutation, an unresolved check, or when the narrow
+    /// value representation cannot hold the format.
     #[must_use]
     pub fn get_value(&self, term: TermId) -> Option<FpValue> {
         let fp = self.term_to_fp.get(&term)?;
-        let live = self.sat.model();
-        let snapshot = &self.last_sat_model;
-        let read = |var: Var| -> bool {
-            let idx = var.index();
-            if let Some(v) = snapshot.get(idx)
-                && v.is_defined()
-            {
-                return v.is_true();
+        if self.last_sat_model.is_empty() || fp.exponent.len() > 64 || fp.significand.len() > 64 {
+            return None;
+        }
+        let read = |var: Var| -> Option<bool> {
+            let value = self.last_sat_model.get(var.index())?;
+            if value.is_defined() {
+                Some(value.is_true())
+            } else {
+                None
             }
-            live.get(idx).is_some_and(|v| v.is_true())
         };
-        let sign = read(fp.sign);
+        let sign = read(fp.sign)?;
         let mut exponent = 0u64;
         for (i, &var) in fp.exponent.iter().enumerate() {
-            if read(var) {
+            if read(var)? {
                 exponent |= 1 << i;
             }
         }
         let mut significand = 0u64;
         for (i, &var) in fp.significand.iter().enumerate() {
-            if read(var) {
+            if read(var)? {
                 significand |= 1 << i;
             }
         }
@@ -986,14 +1059,19 @@ impl Theory for FpSolver {
         true
     }
     fn assert_true(&mut self, term: TermId) -> Result<TheoryResult> {
+        self.last_sat_model.clear();
+        self.has_unsupported_conversion = true;
         self.assertions.push((term, true));
         Ok(TheoryResult::Sat)
     }
     fn assert_false(&mut self, term: TermId) -> Result<TheoryResult> {
+        self.last_sat_model.clear();
+        self.has_unsupported_conversion = true;
         self.assertions.push((term, false));
         Ok(TheoryResult::Sat)
     }
     fn check(&mut self) -> Result<TheoryResult> {
+        self.last_sat_model.clear();
         let committed_trail = self.sat.trail_size();
         let learned_before = self.sat.learned_clause_count();
         // NOTE: unlike `BvSolver::check`, we do NOT retry on `Unsat` by
@@ -1011,7 +1089,6 @@ impl Theory for FpSolver {
         let solve_result = self.sat.solve();
         let result = match solve_result {
             SolverResult::Sat => {
-                self.last_sat_model = self.sat.model().to_vec();
                 // Honesty: a `Sat` from the embedded SAT solver cannot be
                 // trusted while an unsupported FP<->int/real conversion is
                 // asserted, because the conversion's result bits are
@@ -1019,6 +1096,7 @@ impl Theory for FpSolver {
                 if self.has_unsupported_conversion {
                     Ok(TheoryResult::Unknown)
                 } else {
+                    self.last_sat_model = self.sat.model().to_vec();
                     Ok(TheoryResult::Sat)
                 }
             }
@@ -1037,20 +1115,29 @@ impl Theory for FpSolver {
         result
     }
     fn push(&mut self) {
-        self.context_stack
-            .push((self.assertions.len(), self.has_unsupported_conversion));
+        self.last_sat_model.clear();
+        self.context_stack.push(FpScope {
+            assertions: self.assertions.len(),
+            unsupported: self.has_unsupported_conversion,
+            terms: self.term_to_fp.clone(),
+            constants: self.constants.clone(),
+        });
         self.sat.push();
     }
     fn pop(&mut self) {
-        if let Some((len, had_unsupported)) = self.context_stack.pop() {
-            self.assertions.truncate(len);
-            self.has_unsupported_conversion = had_unsupported;
+        self.last_sat_model.clear();
+        if let Some(scope) = self.context_stack.pop() {
+            self.assertions.truncate(scope.assertions);
+            self.has_unsupported_conversion = scope.unsupported;
+            self.term_to_fp = scope.terms;
+            self.constants = scope.constants;
             self.sat.pop();
         }
     }
     fn reset(&mut self) {
         self.sat.reset();
         self.term_to_fp.clear();
+        self.constants.clear();
         self.assertions.clear();
         self.context_stack.clear();
         self.has_unsupported_conversion = false;
@@ -1059,6 +1146,9 @@ impl Theory for FpSolver {
         self.last_sat_model.clear();
     }
     fn get_model(&self) -> Vec<(TermId, TermId)> {
+        if self.last_sat_model.is_empty() {
+            return Vec::new();
+        }
         let live = self.sat.model();
         let snapshot = &self.last_sat_model;
         let model = |idx: usize| -> Option<LBool> {

@@ -7,10 +7,7 @@
 
 #![allow(missing_docs)]
 
-use super::{
-    CardConstraint, CardConstraintKind, CardPropagator, MemberConstraint, MemberPropagator,
-    SetConflict, SetLiteral, SetProofStep, SetSort, SubsetConstraint, SubsetPropagator,
-};
+use super::{CardConstraint, CardConstraintKind, SetConflict, SetLiteral, SetProofStep, SetSort};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{
@@ -19,6 +16,9 @@ use crate::theory::{
 use nixie_core::ast::TermId;
 use nixie_core::error::Result;
 use smallvec::SmallVec;
+
+mod relations;
+use relations::SetRelation;
 
 /// Set variable identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -431,10 +431,13 @@ pub type SetResult<T> = core::result::Result<T, SetConflict>;
 struct SolverState {
     num_vars: usize,
     num_constraints: usize,
-    num_member_constraints: usize,
-    num_subset_constraints: usize,
     num_card_constraints: usize,
     num_pending_assertions: usize,
+    num_relations: usize,
+    var_names: FxHashMap<String, SetVarId>,
+    term_to_var: FxHashMap<TermId, SetVarId>,
+    var_to_term: FxHashMap<SetVarId, TermId>,
+    conflict: Option<SetConflict>,
 }
 
 /// Main set theory solver
@@ -442,26 +445,20 @@ pub struct SetSolver {
     /// Configuration
     #[allow(dead_code)]
     config: SetConfig,
+    /// Persistent membership relations, including definitions of auxiliaries.
+    relations: Vec<SetRelation>,
+    /// A concretely validated finite model, invalidated on mutation.
+    model: Option<Vec<FxHashSet<u32>>>,
     /// Set variables
     vars: Vec<SetVar>,
     /// Variable name to ID mapping
     var_names: FxHashMap<String, SetVarId>,
-    /// Membership constraints
-    member_constraints: Vec<MemberConstraint>,
-    /// Subset constraints
-    subset_constraints: Vec<SubsetConstraint>,
     /// Cardinality constraints
     card_constraints: Vec<CardConstraint>,
     /// General constraints
     constraints: Vec<SetConstraint>,
     /// Propagation queue
     propagation_queue: VecDeque<SetVarId>,
-    /// Membership propagator
-    member_prop: MemberPropagator,
-    /// Subset propagator
-    subset_prop: SubsetPropagator,
-    /// Cardinality propagator
-    card_prop: CardPropagator,
     /// Current decision level
     level: usize,
     /// Trail of assignments (for backtracking)
@@ -531,16 +528,13 @@ impl SetSolver {
     pub fn with_config(config: SetConfig) -> Self {
         Self {
             config,
+            relations: Vec::new(),
+            model: None,
             vars: Vec::new(),
             var_names: FxHashMap::default(),
-            member_constraints: Vec::new(),
-            subset_constraints: Vec::new(),
             card_constraints: Vec::new(),
             constraints: Vec::new(),
             propagation_queue: VecDeque::new(),
-            member_prop: MemberPropagator::new(),
-            subset_prop: SubsetPropagator::new(),
-            card_prop: CardPropagator::new(),
             level: 0,
             trail: Vec::new(),
             level_boundaries: Vec::new(),
@@ -556,6 +550,7 @@ impl SetSolver {
 
     /// Create a new set variable
     pub fn new_set_var(&mut self, name: &str, sort: SetSort) -> SetVarId {
+        self.model = None;
         let id = SetVarId(self.vars.len() as u32);
         let var = SetVar::new(id, name.to_string(), sort, self.level);
         self.vars.push(var);
@@ -571,6 +566,7 @@ impl SetSolver {
 
     /// Get a mutable variable by ID
     pub fn get_var_mut(&mut self, id: SetVarId) -> Option<&mut SetVar> {
+        self.model = None;
         self.vars.get_mut(id.0 as usize)
     }
 
@@ -583,26 +579,33 @@ impl SetSolver {
     pub fn add_constraint(&mut self, constraint: SetConstraint) -> SetResult<()> {
         self.stats.num_constraints += 1;
 
-        match &constraint {
-            SetConstraint::Member { element, set, sign } => {
-                self.add_member_constraint(*element, set, *sign)?;
+        self.model = None;
+        let applied: SetResult<()> = (|| {
+            match &constraint {
+                SetConstraint::Member { element, set, sign } => {
+                    self.add_member_constraint(*element, set, *sign)?;
+                }
+                SetConstraint::Subset { lhs, rhs, sign } => {
+                    self.add_subset_constraint(lhs, rhs, *sign)?;
+                }
+                SetConstraint::Equal { lhs, rhs } => {
+                    self.add_equal_constraint(lhs, rhs)?;
+                }
+                SetConstraint::Cardinality { set, op, bound } => {
+                    self.add_cardinality_constraint(set, *op, *bound)?;
+                }
+                SetConstraint::Disjoint { lhs, rhs } => {
+                    self.add_disjoint_constraint(lhs, rhs)?;
+                }
             }
-            SetConstraint::Subset { lhs, rhs, sign } => {
-                self.add_subset_constraint(lhs, rhs, *sign)?;
-            }
-            SetConstraint::Equal { lhs, rhs } => {
-                self.add_equal_constraint(lhs, rhs)?;
-            }
-            SetConstraint::Cardinality { set, op, bound } => {
-                self.add_cardinality_constraint(set, *op, *bound)?;
-            }
-            SetConstraint::Disjoint { lhs, rhs } => {
-                self.add_disjoint_constraint(lhs, rhs)?;
-            }
-        }
 
+            Ok(())
+        })();
+        if let Err(ref conflict) = applied {
+            self.conflict = Some(conflict.clone());
+        }
         self.constraints.push(constraint);
-        Ok(())
+        applied
     }
 
     /// Add a membership constraint: elem ∈ set or elem ∉ set
@@ -611,7 +614,10 @@ impl SetSolver {
 
         // Extract the set variable
         let set_var = match set {
-            SetExpr::Var(v) => *v,
+            SetExpr::Var(v) => {
+                self.require_var(*v)?;
+                *v
+            }
             _ => {
                 // For complex expressions, create an auxiliary variable
                 let aux_var =
@@ -620,6 +626,10 @@ impl SetSolver {
                 aux_var
             }
         };
+
+        if self.get_var(set_var).and_then(|v| v.contains(element)) == Some(sign) {
+            return Ok(());
+        }
 
         // Save snapshot
         if let Some(var) = self.get_var(set_var) {
@@ -671,6 +681,8 @@ impl SetSolver {
         let lhs_var = self.extract_var(lhs)?;
         let rhs_var = self.extract_var(rhs)?;
 
+        self.relations
+            .push(SetRelation::Subset(lhs_var, rhs_var, sign));
         if sign {
             // lhs ⊆ rhs: all elements in lhs must be in rhs
             self.propagate_subset(lhs_var, rhs_var)?;
@@ -701,6 +713,9 @@ impl SetSolver {
 
         let set_var = self.extract_var(set)?;
 
+        self.card_constraints
+            .push(CardConstraint::new(set_var, op, bound, self.level));
+
         // Save snapshot
         if let Some(var) = self.get_var(set_var) {
             self.trail.push(TrailEntry::VarAssign {
@@ -716,9 +731,13 @@ impl SetSolver {
                     var.tighten_lower_card(bound) && var.tighten_upper_card(bound)
                 }
                 CardConstraintKind::Le => var.tighten_upper_card(bound),
-                CardConstraintKind::Lt => var.tighten_upper_card(bound - 1),
+                CardConstraintKind::Lt => bound
+                    .checked_sub(1)
+                    .is_some_and(|b| var.tighten_upper_card(b)),
                 CardConstraintKind::Ge => var.tighten_lower_card(bound),
-                CardConstraintKind::Gt => var.tighten_lower_card(bound + 1),
+                CardConstraintKind::Gt => bound
+                    .checked_add(1)
+                    .is_none_or(|b| var.tighten_lower_card(b)),
             };
 
             if !success {
@@ -750,6 +769,8 @@ impl SetSolver {
     fn add_disjoint_constraint(&mut self, lhs: &SetExpr, rhs: &SetExpr) -> SetResult<()> {
         let lhs_var = self.extract_var(lhs)?;
         let rhs_var = self.extract_var(rhs)?;
+
+        self.relations.push(SetRelation::Disjoint(lhs_var, rhs_var));
 
         // Propagate: if x ∈ lhs, then x ∉ rhs - collect members first to avoid borrow checker issues
         let lhs_members: Vec<u32> = self
@@ -851,7 +872,10 @@ impl SetSolver {
             expr = &**formula;
         }
         match expr {
-            SetExpr::Var(v) => Ok(ExtractOpened::Leaf(*v)),
+            SetExpr::Var(v) => {
+                self.require_var(*v)?;
+                Ok(ExtractOpened::Leaf(*v))
+            }
             SetExpr::Empty => {
                 let var = self.new_set_var(&format!("empty_{}", self.vars.len()), SetSort::IntSet);
                 if let Some(v) = self.get_var_mut(var) {
@@ -927,115 +951,17 @@ impl SetSolver {
     /// variables are known.
     fn finish_extract(&mut self, frame: ExtractFrame<'_>) -> SetResult<SetVarId> {
         let done = frame.done;
-        match frame.build {
-            ExtractBuild::Alias => match done.into_iter().next_back() {
-                Some(v) => Ok(v),
-                // Unreachable: an `Alias` frame always carries one operand.
-                None => Err(SetConflict {
-                    literals: Vec::new(),
-                    reason: "internal: set comprehension body produced no variable".to_string(),
-                    proof_steps: Vec::new(),
-                }),
-            },
-            ExtractBuild::Union(aux) => {
-                // aux ⊇ operand, for every operand (forward propagation of
-                // membership). aux ⊆ lhs ∪ rhs is approximated by recording the
-                // operation (exact membership tracking happens in propagate()).
-                for operand in done {
-                    self.propagate_subset(operand, aux)?;
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
-            }
-            ExtractBuild::Intersection(aux) => {
-                // aux ⊆ operand, for every operand.
-                for &operand in &done {
-                    self.propagate_subset(aux, operand)?;
-                }
-                // Must-members present in *every* operand flow into aux.
-                let mut common: Option<FxHashSet<u32>> = None;
-                for &operand in &done {
-                    let members: FxHashSet<u32> = self
-                        .get_var(operand)
-                        .map(|v| v.must_members.iter().copied().collect())
-                        .unwrap_or_default();
-                    common = Some(match common {
-                        Some(acc) => acc.intersection(&members).copied().collect(),
-                        None => members,
-                    });
-                }
-                for elem in common.unwrap_or_default() {
-                    if let Some(v) = self.get_var_mut(aux) {
-                        v.add_must_member(elem);
-                    }
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
-            }
-            ExtractBuild::Difference(aux) => {
-                let mut operands = done.into_iter();
-                if let Some(lhs_var) = operands.next() {
-                    // aux ⊆ lhs
-                    self.propagate_subset(aux, lhs_var)?;
-                    let lhs_must: Vec<u32> = self
-                        .get_var(lhs_var)
-                        .map(|v| v.must_members.iter().copied().collect())
-                        .unwrap_or_default();
-                    for rhs_var in operands {
-                        // Every must-member of rhs must NOT be in aux.
-                        let rhs_must: Vec<u32> = self
-                            .get_var(rhs_var)
-                            .map(|v| v.must_members.iter().copied().collect())
-                            .unwrap_or_default();
-                        for elem in rhs_must {
-                            if let Some(v) = self.get_var_mut(aux) {
-                                v.add_must_not_member(elem);
-                            }
-                        }
-                        // Must-members of lhs definitely not in rhs are in aux.
-                        let rhs_not: FxHashSet<u32> = self
-                            .get_var(rhs_var)
-                            .map(|v| v.must_not_members.iter().copied().collect())
-                            .unwrap_or_default();
-                        for &elem in &lhs_must {
-                            if rhs_not.contains(&elem)
-                                && let Some(v) = self.get_var_mut(aux)
-                            {
-                                v.add_must_member(elem);
-                            }
-                        }
-                    }
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
-            }
-            ExtractBuild::Complement(aux) => {
-                for inner_var in done {
-                    // x ∈ inner ⟹ x ∉ aux
-                    let inner_must: Vec<u32> = self
-                        .get_var(inner_var)
-                        .map(|v| v.must_members.iter().copied().collect())
-                        .unwrap_or_default();
-                    for elem in inner_must {
-                        if let Some(v) = self.get_var_mut(aux) {
-                            v.add_must_not_member(elem);
-                        }
-                    }
-                    // x ∉ inner ⟹ x ∈ aux
-                    let inner_not: Vec<u32> = self
-                        .get_var(inner_var)
-                        .map(|v| v.must_not_members.iter().copied().collect())
-                        .unwrap_or_default();
-                    for elem in inner_not {
-                        if let Some(v) = self.get_var_mut(aux) {
-                            v.add_must_member(elem);
-                        }
-                    }
-                }
-                self.propagation_queue.push_back(aux);
-                Ok(aux)
-            }
-        }
+        let (aux, relation) = match (frame.build, done.as_slice()) {
+            (ExtractBuild::Alias, [a]) => return Ok(*a),
+            (ExtractBuild::Union(r), [a, b]) => (r, SetRelation::Union(r, *a, *b)),
+            (ExtractBuild::Intersection(r), [a, b]) => (r, SetRelation::Intersection(r, *a, *b)),
+            (ExtractBuild::Difference(r), [a, b]) => (r, SetRelation::Difference(r, *a, *b)),
+            (ExtractBuild::Complement(r), [a]) => (r, SetRelation::Complement(r, *a)),
+            _ => return Err(Self::relation_conflict("invalid set expression frame")),
+        };
+        self.relations.push(relation);
+        self.propagation_queue.push_back(aux);
+        Ok(aux)
     }
 
     /// Propagate subset constraint: lhs ⊆ rhs
@@ -1100,86 +1026,38 @@ impl SetSolver {
         Ok(())
     }
 
-    /// Run constraint propagation
+    /// Propagate every persistent relation to a fixed point.
     pub fn propagate(&mut self) -> SetResult<()> {
-        while let Some(var_id) = self.propagation_queue.pop_front() {
-            self.stats.num_propagations += 1;
-
-            // Propagate membership
-            self.member_prop.propagate(var_id, &mut self.vars)?;
-
-            // Propagate subset
-            self.subset_prop
-                .propagate(var_id, &mut self.vars, &self.subset_constraints)?;
-
-            // Propagate cardinality
-            self.card_prop
-                .propagate(var_id, &mut self.vars, &self.card_constraints)?;
-
-            // Check for conflicts
-            if let Some(var) = self.get_var(var_id) {
-                // Check cardinality conflict
-                let (lower, upper) = var.cardinality_bounds();
-                let var_name = var.name.clone();
-                let is_empty = var.is_definitely_empty();
-                let has_must_members = !var.must_members.is_empty();
-
-                if let Some(u) = upper
-                    && lower > u
-                {
-                    self.stats.num_conflicts += 1;
-                    return Err(SetConflict {
-                        literals: vec![],
-                        reason: format!(
-                            "Cardinality conflict: |{}| must be in [{}, {}] which is empty",
-                            var_name, lower, u
-                        ),
-                        proof_steps: vec![SetProofStep::CardConflict {
-                            set: var_id,
-                            lower,
-                            upper: u,
-                        }],
-                    });
-                }
-
-                // Check empty set conflict
-                if is_empty && has_must_members {
-                    self.stats.num_conflicts += 1;
-                    return Err(SetConflict {
-                        literals: vec![],
-                        reason: format!("Empty set conflict: {} cannot be empty", var_name),
-                        proof_steps: vec![SetProofStep::EmptyConflict { set: var_id }],
-                    });
-                }
-            }
-        }
-
-        Ok(())
+        self.propagate_relations()
     }
 
-    /// Check satisfiability
+    /// Check consistency and validate a concrete finite model. `Ok(false)` is
+    /// incomplete, not unsatisfiable; cardinalities alone never certify SAT.
     pub fn check(&mut self) -> SetResult<bool> {
-        // Run propagation
+        self.model = None;
+        if let Some(conflict) = &self.conflict {
+            return Err(conflict.clone());
+        }
         self.propagate()?;
-
-        // Check if all variables are determined
-        let all_determined = self
-            .vars
-            .iter()
-            .all(|v| v.cardinality_determined().is_some());
-
-        Ok(all_determined)
+        if !self.pending_assertions.is_empty() {
+            return Ok(false);
+        }
+        self.validate_finite_model()
     }
 
     /// Push a new decision level
     pub fn push(&mut self) {
+        self.model = None;
         let state = SolverState {
             num_vars: self.vars.len(),
             num_constraints: self.constraints.len(),
-            num_member_constraints: self.member_constraints.len(),
-            num_subset_constraints: self.subset_constraints.len(),
             num_card_constraints: self.card_constraints.len(),
             num_pending_assertions: self.pending_assertions.len(),
+            num_relations: self.relations.len(),
+            var_names: self.var_names.clone(),
+            term_to_var: self.term_to_var.clone(),
+            var_to_term: self.var_to_term.clone(),
+            conflict: self.conflict.clone(),
         };
         self.context_stack.push(state);
         self.level += 1;
@@ -1189,17 +1067,20 @@ impl SetSolver {
 
     /// Pop a decision level
     pub fn pop(&mut self) {
+        self.model = None;
         if let Some(state) = self.context_stack.pop() {
             self.stats.num_backtracks += 1;
             self.level = self.level.saturating_sub(1);
 
+            self.relations.truncate(state.num_relations);
+            self.var_names = state.var_names;
+            self.term_to_var = state.term_to_var;
+            self.var_to_term = state.var_to_term;
+            self.conflict = state.conflict;
+            self.derived_equalities.clear();
             // Restore state
             self.vars.truncate(state.num_vars);
             self.constraints.truncate(state.num_constraints);
-            self.member_constraints
-                .truncate(state.num_member_constraints);
-            self.subset_constraints
-                .truncate(state.num_subset_constraints);
             self.card_constraints.truncate(state.num_card_constraints);
             self.pending_assertions
                 .truncate(state.num_pending_assertions);
@@ -1233,10 +1114,10 @@ impl SetSolver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        self.model = None;
+        self.relations.clear();
         self.vars.clear();
         self.var_names.clear();
-        self.member_constraints.clear();
-        self.subset_constraints.clear();
         self.card_constraints.clear();
         self.constraints.clear();
         self.propagation_queue.clear();
@@ -1265,7 +1146,7 @@ impl SetSolver {
 
     /// Get model for a variable
     pub fn get_model(&self, var: SetVarId) -> Option<FxHashSet<u32>> {
-        self.get_var(var).map(|v| v.must_members.clone())
+        self.model.as_ref()?.get(var.0 as usize).cloned()
     }
 }
 
@@ -1292,14 +1173,16 @@ impl Theory for SetSolver {
     fn assert_true(&mut self, term: TermId) -> Result<TR> {
         // Record the assertion as positive polarity; it will be processed on the
         // next call to Theory::check() by the CDCL(T) loop.
+        self.model = None;
         self.pending_assertions.push((term, true));
-        Ok(TR::Sat)
+        Ok(TR::Unknown)
     }
 
     fn assert_false(&mut self, term: TermId) -> Result<TR> {
         // Record the assertion as negative polarity (i.e. the set term is false).
+        self.model = None;
         self.pending_assertions.push((term, false));
-        Ok(TR::Sat)
+        Ok(TR::Unknown)
     }
 
     fn check(&mut self) -> Result<TR> {
@@ -1308,7 +1191,8 @@ impl Theory for SetSolver {
             Ok(false) => Ok(TR::Unknown),
             Err(conflict) => {
                 self.conflict = Some(conflict.clone());
-                Ok(TR::Unsat(vec![]))
+                // Set literals cannot be fabricated into an empty TermId core.
+                Ok(TR::Unknown)
             }
         }
     }
@@ -1335,89 +1219,15 @@ impl Theory for SetSolver {
 
 impl TheoryCombination for SetSolver {
     fn notify_equality(&mut self, eq: EqualityNotification) -> bool {
-        // When another theory discovers lhs = rhs, merge their set-variable
-        // domains so that set-theory reasoning stays consistent.
-        let lhs_var = match self.term_to_var.get(&eq.lhs).copied() {
-            Some(v) => v,
-            None => return false,
-        };
-        let rhs_var = match self.term_to_var.get(&eq.rhs).copied() {
-            Some(v) => v,
-            None => return false,
-        };
-
-        if lhs_var == rhs_var {
-            return true; // already the same variable
-        }
-
-        // Collect both variable's current membership sets (avoid aliasing borrows)
-        let lhs_must: FxHashSet<u32> = self
-            .get_var(lhs_var)
-            .map(|v| v.must_members.clone())
-            .unwrap_or_default();
-        let lhs_not: FxHashSet<u32> = self
-            .get_var(lhs_var)
-            .map(|v| v.must_not_members.clone())
-            .unwrap_or_default();
-        let rhs_must: FxHashSet<u32> = self
-            .get_var(rhs_var)
-            .map(|v| v.must_members.clone())
-            .unwrap_or_default();
-        let rhs_not: FxHashSet<u32> = self
-            .get_var(rhs_var)
-            .map(|v| v.must_not_members.clone())
-            .unwrap_or_default();
-        let lhs_lower = self
-            .get_var(lhs_var)
-            .and_then(|v| v.card_bounds.0)
-            .unwrap_or(0);
-        let lhs_upper = self.get_var(lhs_var).and_then(|v| v.card_bounds.1);
-        let rhs_lower = self
-            .get_var(rhs_var)
-            .and_then(|v| v.card_bounds.0)
-            .unwrap_or(0);
-        let rhs_upper = self.get_var(rhs_var).and_then(|v| v.card_bounds.1);
-
-        // Conflict check: any element in one's must-members and the other's must-not-members
-        for elem in &lhs_must {
-            if rhs_not.contains(elem) {
-                return false;
-            }
-        }
-        for elem in &rhs_must {
-            if lhs_not.contains(elem) {
-                return false;
-            }
-        }
-
-        // Build merged sets
-        let merged_must: FxHashSet<u32> = lhs_must.union(&rhs_must).copied().collect();
-        let merged_not: FxHashSet<u32> = lhs_not.union(&rhs_not).copied().collect();
-        let merged_lower = lhs_lower.max(rhs_lower);
-        let merged_upper = match (lhs_upper, rhs_upper) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
-
-        // Conflict check: merged lower > merged upper
-        if merged_upper.is_some_and(|u| merged_lower > u) {
+        let (Some(&a), Some(&b)) = (self.term_to_var.get(&eq.lhs), self.term_to_var.get(&eq.rhs))
+        else {
             return false;
-        }
-
-        // Apply merged state to both variables
-        for var_id in [lhs_var, rhs_var] {
-            if let Some(v) = self.get_var_mut(var_id) {
-                v.must_members = merged_must.clone();
-                v.must_not_members = merged_not.clone();
-                v.card_bounds.0 = Some(merged_lower);
-                v.card_bounds.1 = merged_upper;
-            }
-            self.propagation_queue.push_back(var_id);
-        }
-
-        true
+        };
+        self.add_constraint(SetConstraint::Equal {
+            lhs: SetExpr::Var(a),
+            rhs: SetExpr::Var(b),
+        })
+        .is_ok()
     }
 
     fn get_shared_equalities(&self) -> Vec<EqualityNotification> {
