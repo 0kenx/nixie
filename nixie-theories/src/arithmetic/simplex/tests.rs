@@ -2561,7 +2561,7 @@ fn born_entering_row_matches_the_canonical_solved_form() {
     }
     assert!(
         checked > 1500,
-        "grid must exercise the mass: {checked} (skipped {_skipped})"
+        "grid must exercise the mass: {checked} (skipped {skipped})"
     );
     // `skipped` cases (degenerate rows) are expected to be a small
     // minority; pin that so the mass assertion cannot silently degrade
