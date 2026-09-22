@@ -604,6 +604,22 @@ pub(crate) struct Reduction {
 /// fragment they cover: every membership atom the formula can reach is defined
 /// in terms of its children, down to `set.empty`, a singleton, or an opaque
 /// set-sorted variable whose members are genuinely free.
+//
+// The set-pair budget as a named cap. A PlusCal-translated BMC unrolling
+// asserts one `$dom` set-equality per function variable per step, so a
+/// 6-step two-array query carries ~45 equality atoms and the old fixed 48
+/// tripped the honesty gate on exactly the shape the BMC pipeline produces
+/// (`Unknown` where a 4-step counterexample exists). 256 covers depth-10
+/// unrollings of the corpus multiprocess specs with the same headroom
+/// `MAX_ARRAY_WITNESS_PAIRS` gives the array theory; the cap itself stays
+/// (each pair costs a witness, `sets x pairs` axioms), overflow still
+/// degrades to `Unknown` rather than silently weakening the encoding.
+/// Env-overridable for the adversarial closure. Both `reduce` and
+/// `survey_for_model` must agree, which is why this is one function.
+fn max_set_pairs() -> usize {
+    crate::solver::caps::cap("set_pair_budget", 256)
+}
+
 pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     let mut s = survey(roots, manager);
     let mut axioms = Vec::new();
@@ -674,7 +690,6 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // `Unknown` rather than a silently weaker encoding. A control run with
     // these pairs switched off entirely was no faster on the corpus, so the
     // bound is insurance rather than a measured hot spot.
-    const MAX_PAIRS: usize = 48;
     let mut relations: Vec<(TermId, TermId)> = s
         .set_equalities
         .iter()
@@ -691,7 +706,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // The implicit opaque/constructor pairs, shared verbatim with the
     // model synthesizer ([`survey_for_model`]) so the two never diverge.
     let (implicit, mut pair_budget_exceeded) =
-        implicit_pairs(&s, relations.len(), MAX_PAIRS, manager);
+        implicit_pairs(&s, relations.len(), max_set_pairs(), manager);
     relations.extend(implicit.iter().copied());
     eq_pairs.extend(implicit);
     for &(a, b) in &relations {
@@ -1764,6 +1779,14 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // integer, and a model that picks one arbitrarily is not a model.
     let incomplete =
         pair_budget_exceeded || rel_incomplete || congruence_budget_exceeded || card.incomplete;
+    if std::env::var_os("NIXIE_SET_DEBUG").is_some() && incomplete {
+        eprintln!(
+            "[set] incomplete: pair_budget={pair_budget_exceeded} rel={rel_incomplete} congruence={congruence_budget_exceeded} card={} sets={} eqs={}",
+            card.incomplete,
+            s.sets.len(),
+            s.set_equalities.len()
+        );
+    }
 
     Reduction { axioms, incomplete }
 }
@@ -1822,6 +1845,11 @@ fn implicit_pairs(
                 }
                 if start_len + pairs.len() >= budget {
                     overflowed = true;
+                    crate::solver::caps::report_fired(
+                        "set_pair_budget",
+                        start_len + pairs.len() + 1,
+                        budget,
+                    );
                     break 'pairs;
                 }
                 // Canonical order (by term id): the survey's discovery
@@ -1867,11 +1895,10 @@ pub(crate) struct ModelSurvey {
 /// well as the user's own.
 pub(crate) fn survey_for_model(roots: &[TermId], manager: &TermManager) -> ModelSurvey {
     let s = survey(roots, manager);
-    const MAX_PAIRS: usize = 48;
     let (implicit, _overflowed) = implicit_pairs(
         &s,
         s.set_equalities.len() + s.subsets.len(),
-        MAX_PAIRS,
+        max_set_pairs(),
         manager,
     );
     let mut eq_pairs: Vec<(TermId, TermId)> =
