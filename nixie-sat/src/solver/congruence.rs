@@ -560,12 +560,17 @@ impl Solver {
 
 /// Whether the ternary×binary self-subsuming-resolution cascade runs inside
 /// ELS rounds (kissat `congruencebinaries`; study 2026-09-18-ssr-binaries).
+/// DEFAULT ON since the 2026-09-21 par-2 flip (the composed stack:
+/// par-2 0.642 on the standing corpus — WS 0.20x, frb 0.55x wall vs
+/// Carry's +1.4 s absolute; see
+/// `docs/studies/2026-09-21-gate-subsumption-class-units.md`); the
+/// `NIXIE_SSR_BIN=0` opt-out preserves the old default.
 #[cfg(test)]
 pub(super) fn ssr_binaries_enabled() -> bool {
     if let Some(v) = crate::test_knobs::ssr_binaries_override() {
         return v;
     }
-    std::env::var("NIXIE_SSR_BIN").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    !std::env::var("NIXIE_SSR_BIN").is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
 }
 #[cfg(not(test))]
 pub(super) fn ssr_binaries_enabled() -> bool {
@@ -574,7 +579,8 @@ pub(super) fn ssr_binaries_enabled() -> bool {
         use std::sync::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
-            std::env::var("NIXIE_SSR_BIN").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            !std::env::var("NIXIE_SSR_BIN")
+                .is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
         })
     }
     #[cfg(not(feature = "std"))]
@@ -655,20 +661,26 @@ impl Solver {
 
 /// Study arm: run one pre-search ELS round (SSR cascade + gate congruence +
 /// fold) before the conflict-scheduled elimination (kissat preprocess
-/// order).  Default off; armed by `NIXIE_ELS_PRESEARCH=1`.
+/// order).  DEFAULT ON since the 2026-09-21 par-2 flip (with the SSR
+/// cascade and gate subsumption — the composed stack; see
+/// `ssr_binaries_enabled`'s note); `NIXIE_ELS_PRESEARCH=0` opts out.
 #[cfg(test)]
 pub(super) fn els_presearch_arm_enabled() -> bool {
     if let Some(v) = crate::test_knobs::els_presearch_override() {
         return v;
     }
-    std::env::var("NIXIE_ELS_PRESEARCH").is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    !std::env::var("NIXIE_ELS_PRESEARCH").is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
 }
 #[cfg(not(test))]
 pub(super) fn els_presearch_arm_enabled() -> bool {
     #[cfg(feature = "std")]
     {
-        std::env::var("NIXIE_ELS_PRESEARCH")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            !std::env::var("NIXIE_ELS_PRESEARCH")
+                .is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        })
     }
     #[cfg(not(feature = "std"))]
     {

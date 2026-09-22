@@ -134,6 +134,9 @@ fn deterministic_theory_phase_ignores_randomization_and_rephasing() {
 
 #[test]
 fn test_lbd_computation() {
+    crate::test_knobs::set_ssr_binaries(Some(false));
+    crate::test_knobs::set_els_presearch(Some(false));
+    crate::test_knobs::set_gate_subsume(Some(false));
     // Test that clause deletion can handle a problem that generates learned clauses.
     // Lucky is disabled: it can refute small pigeonhole formulas (PHP(3,2))
     // without entering search, which would defeat the point of exercising the

@@ -261,6 +261,16 @@ fn test_external_branching_receives_conflict_calls() {
     // Solve PHP(3,2) – 3 pigeons, 2 holes – which is UNSAT and requires real CDCL
     // search with genuine conflict analysis (not resolvable by unit propagation alone).
     // Assert that on_conflict_var was invoked at least once.
+    // Restore the pre-2026-09-21 default trajectory: the composed stack
+    // (now default-on) answers PHP(3,2) in the pre-search fold, so no
+    // conflict analysis runs (the opt-out envs; process-per-test).
+    // SAFETY: nextest runs each test in its own process; no other thread
+    // reads these envs concurrently.
+    unsafe {
+        std::env::set_var("NIXIE_SSR_BIN", "0");
+        std::env::set_var("NIXIE_ELS_PRESEARCH", "0");
+        std::env::set_var("NIXIE_GATE_SUBSUME", "0");
+    }
     let conflict_hook_count = Arc::new(Mutex::new(0usize));
 
     let heuristic = Arc::new(Mutex::new(ConflictCountingHeuristic {

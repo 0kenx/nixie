@@ -218,3 +218,48 @@ geomean and kissat-parity end-to-end on the gate-dense anatomy
 (8,098 vs 8,399 tonight), or keep the stack opt-in.  Per
 BENCHMARKING's family band it stays refused; the map above is the
 complete evidence for whoever owns that call.
+
+## Addendum 4 — the par-2 flip: the composed stack is DEFAULT ON
+
+Decision rule (operator directive, 2026-09-21): judge the default
+on/off by **par-2** over the standing corpus — the competition
+aggregate, where unsolved costs 2×timeout — instead of the per-family
+conflict band.  Measured (12 cells × 3 seeds, interleaved arms, 150 s
+cap, wall):
+
+| cell | off-avg | on-avg | ratio |
+|---|---:|---:|---:|
+| WS_500_16 | 38.0 s | **7.5 s** | 0.20 |
+| frb35-17-5 | 40.5 s | 22.4 s | 0.55 |
+| b21 | 13.2 | 10.1 | 0.77 |
+| circuit | 10.6 | 8.4 | 0.80 |
+| GP_105 | 12.2 | 11.1 | 0.91 |
+| x9 | 0.97 | 0.89 | 0.92 |
+| s38584 / SCPC | — | — | 1.06 |
+| 6s163 | 0.58 | 0.64 | 1.11 |
+| 6s299b685_Iter22 | 2.97 | 4.52 | 1.52 |
+| **Carry_Bits_Fast** | **2.21** | **3.58** | **1.62** |
+| 6s299b685 (anatomy) | 3.94 | 6.11 | 1.55 |
+
+**par-2: 412.0 s (off) vs 264.6 s (on) — 0.642.**  Every run solved
+(no timeout penalties on either side); the difference is pure wall.
+The par-2 lens reframes the family-band refusal exactly: the worst
+losing family costs **+1.4 s absolute** on a 2-second cell, while the
+winners save 30 s (WS) and 18 s (frb) per run — the aggregate is not
+close.  (The anatomy's 1.55× wall despite 2× fewer conflicts is the
+fold's preprocessing cost on a 0-conflict-decided load cell — search
+never amortizes it there.)
+
+**Landed**: the three gates flipped default-on
+(`ssr_binaries_enabled`, `els_presearch_arm_enabled`,
+`gate_subsume_enabled`), each with the same-name `=0` opt-out; the
+four tests that assert on search-internal events (conflict hooks, LBD)
+pin the legacy trajectory via the knobs/envs.  `NIXIE_FOLD_BVE_SKIP`
+stays as recorded (its numerator reads zero — it can never fire as
+specced).
+
+*Corpus note*: the 2026-09-21 disk crisis wiped
+`smt-lib/non-incremental/QF_BV` (35 GB) from the shared tree; refilled
+per `smt-lib/PROVENANCE.md`'s Zenodo recipe (record 16740866) before
+the flip's guards ran — the three QF_BV known-unsound regressions
+(bench_679, ext_con_064, s3_clnt_1) pass under the flipped default.

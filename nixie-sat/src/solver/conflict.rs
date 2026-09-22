@@ -3127,8 +3127,19 @@ mod tests {
     // Integration test: conflict analysis passes LBD to the external hook
     // ========  ========
 
+    /// Restore the pre-2026-09-21 default trajectory for tests that
+    /// assert on search-internal events (conflict hooks, LBD): the
+    /// composed stack (now default-on) answers their small formulas in
+    /// the pre-search fold, so no conflict analysis ever runs.
+    fn legacy_search_only() {
+        crate::test_knobs::set_ssr_binaries(Some(false));
+        crate::test_knobs::set_els_presearch(Some(false));
+        crate::test_knobs::set_gate_subsume(Some(false));
+    }
+
     #[test]
     fn test_conflict_analysis_passes_lbd_to_hook() {
+        legacy_search_only();
         // Solve PHP(3,2) – the same UNSAT formula used in the external_branching tests.
         // A ConflictLbdRecordingHeuristic records all LBD values received via
         // on_conflict_var_with_lbd.  After solving, assert:
@@ -3203,6 +3214,7 @@ mod tests {
 
     #[test]
     fn test_lbd_matches_learned_clause_glue() {
+        legacy_search_only();
         // The LBD passed to the hook must be the glue score of the ACTUAL learned
         // (1-UIP) clause – i.e. the distinct decision-level count of `self.learnt` –
         // NOT the distinct-level count of the larger `vars_to_bump` union.

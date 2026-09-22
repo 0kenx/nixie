@@ -972,9 +972,11 @@ fn gate_subsume_enabled_from_env() -> bool {
     static FLAG: OnceLock<bool> = OnceLock::new();
     #[cfg(feature = "std")]
     {
+        // DEFAULT ON since the 2026-09-21 par-2 flip (the composed stack,
+        // with its volume floor; NIXIE_GATE_SUBSUME=0 opts out).
         *FLAG.get_or_init(|| {
-            std::env::var("NIXIE_GATE_SUBSUME")
-                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            !std::env::var("NIXIE_GATE_SUBSUME")
+                .is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
         })
     }
     #[cfg(not(feature = "std"))]
