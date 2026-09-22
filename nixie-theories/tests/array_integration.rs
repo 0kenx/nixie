@@ -478,11 +478,15 @@ fn test_array_theory_interface() {
     let t1 = term(1);
     let t2 = term(2);
 
-    let result = solver.assert_true(t1).unwrap();
-    assert!(matches!(result, TheoryResult::Sat));
-
-    let result = solver.assert_false(t2).unwrap();
-    assert!(matches!(result, TheoryResult::Sat));
+    // Without a TermManager these opaque atoms cannot be decoded.
+    assert!(matches!(
+        solver.assert_true(t1),
+        Err(nixie_core::error::NixieError::Unknown { .. })
+    ));
+    assert!(matches!(
+        solver.assert_false(t2),
+        Err(nixie_core::error::NixieError::Unknown { .. })
+    ));
 
     // Test can_handle
     assert!(solver.can_handle(term(42)));

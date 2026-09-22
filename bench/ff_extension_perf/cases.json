@@ -1,0 +1,79 @@
+[
+  {
+    "name": "square-f4",
+    "kind": "square",
+    "polynomial": 7,
+    "depth": 1
+  },
+  {
+    "name": "square-f8-a",
+    "kind": "square",
+    "polynomial": 11,
+    "depth": 1
+  },
+  {
+    "name": "square-f8-b",
+    "kind": "square",
+    "polynomial": 13,
+    "depth": 1
+  },
+  {
+    "name": "square-f16",
+    "kind": "square",
+    "polynomial": 19,
+    "depth": 1
+  },
+  {
+    "name": "square-f256",
+    "kind": "square",
+    "polynomial": 283,
+    "depth": 1
+  },
+  {
+    "name": "shared-f256",
+    "kind": "square",
+    "polynomial": 283,
+    "depth": 16
+  },
+  {
+    "name": "pair-f16",
+    "kind": "pair",
+    "polynomial": 19,
+    "depth": 1
+  },
+  {
+    "name": "pair-f256",
+    "kind": "pair",
+    "polynomial": 283,
+    "depth": 1
+  },
+  {
+    "name": "no-root-f256",
+    "kind": "unsat",
+    "polynomial": 283,
+    "depth": 1
+  },
+  {
+    "name": "budget-f256",
+    "kind": "budget",
+    "polynomial": 283,
+    "depth": 16
+  },
+  {
+    "name": "certified-f256",
+    "kind": "square",
+    "polynomial": 283,
+    "depth": 16,
+    "certified": true
+  },
+  {
+    "name": "control-prime",
+    "kind": "prime",
+    "prime": 257
+  },
+  {
+    "name": "control-wide",
+    "kind": "wide",
+    "polynomial": "340282366920938463463374607431768211591"
+  }
+]
