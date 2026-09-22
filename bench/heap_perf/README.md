@@ -112,3 +112,21 @@ heap-feature commit `97b2b968` passed: conflict and decision ratios both 1.000
 and twenty size-three cross-solver calibration checks passed. These calibration
 cases are excluded from the measured matrix. Calibration also established the
 required CVC5 constant-array option and perf's NUL-terminated FIFO acknowledgement.
+
+## Definition specialization comparison
+
+`compare_optimization.py` runs the fixed baseline / identity-substitution /
+specialized matrix specified in
+[the optimization preregistration](../../docs/studies/2026-09-22-heap-definition-optimization.md).
+Pass `--baseline` and `--driver` absolute binary paths, plus the same reference
+and store options as above. The measured `run.py worker` is unchanged; reference
+versions are recorded but reference performance cells are reused from the prior
+study. The candidate driver's `HEAP_PERF_UNFOLDED=1` selects the diagnostic
+identity control. `definitions COUNT TERMS` reports active definition assertions
+and post-check term count; the old `sizes` line remains pre-check and therefore
+excludes deferred definition construction. Compare complete-work counts.
+
+After completing that matrix, run `analyze_optimization.py RECORDS_DIRECTORY
+OUTPUT_DIRECTORY` to check its exact 660-cell coverage and write the full
+median/min/max table, structural counters, and paired cost ratios. Seed 101 is
+reported separately from seeds 0–9. Unknown results never enter paired costs.

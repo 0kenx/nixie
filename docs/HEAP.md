@@ -76,7 +76,7 @@ QF_LIA. Flatten each heaplet `Hi` into a list of `(location,value)` terms. Let:
   with equal location and value;
 * `pi` be the reified Boolean atom for `Hi`.
 
-Permanently assert `pi => Vi` and, for every unordered pair, both
+The defining constraints are `pi => Vi` and, for every unordered pair, both
 
 ```text
 pi => (pj <=> (Vj and Eij))
@@ -96,6 +96,17 @@ registered heaplet, so every `pi` is indeed false. Infinite integer locations
 provide these cells without restricting the pure valuation. Consequently the
 reduction preserves satisfiability under **arbitrary outer Boolean contexts**.
 The `M+1` case is a witness construction, not an assumption bounding input heaps.
+
+At check time the implementation extracts entailed heap-atom units from the
+original Boolean DAG (true conjunctions, false disjunctions, and negation).
+It substitutes these constants into the definitions before backend encoding.
+The original assertions remain active and imply equivalence of the original
+and specialized definitions. True disjunctions and false conjunctions do not
+force individual children. If every atom is forced false, every guarded
+definition is a tautology and no heap arithmetic is encoded. A false atom's
+validity/map comparison is still required when another atom may be true.
+`set_definition_simplification(false)` selects a semantics-equivalent diagnostic
+control that retains symbolic atoms while using the same deferred staging.
 
 The encoding costs O(n² k²) in the worst case for n heaplets of at most k cells.
 This first implementation targets small allocation/aliasing obligations; it
@@ -118,10 +129,13 @@ are iterative, with no recursion over input formulas. Callers may also use
 `evaluate` and `validate_model` on inspected or modified models. Foreign solver
 handles/models and missing assignments are errors.
 
-Reify all heaplets before the first `push` or `check`. Definitions are permanent
-for that solver. Assertions can then be added in nested scopes; the underlying
-solver retains its ordinary incremental tables and rollback journal. No solver
-is rebuilt at each check. `assert`, `push`, `pop`, and term construction invalidate
+Reify all heaplets before the first `push` or `check`. The spatial vocabulary
+is fixed for that solver. Specialized definitions live in a private backend
+scope above the active user assertions. They are removed before `assert`, user
+`push`, or successful user `pop`, and regenerated at the next check. Repeated
+checks without such mutations reuse them. Assertions can be added in nested
+scopes; the underlying solver retains its ordinary incremental tables and
+rollback journal. No solver is rebuilt at each check. `assert`, `push`, `pop`, and term construction invalidate
 the published model. Scope underflow and late reification are errors. Create a
 new solver to change the registered spatial vocabulary.
 

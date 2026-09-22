@@ -249,103 +249,109 @@ fn oracle_patterns() -> Vec<u32> {
 
 #[test]
 fn all_boolean_patterns_against_exhaustive_heaps() -> Result<(), HeapError> {
-    let mut s = HeapSolver::new();
-    let mut atoms = Vec::new();
-    for atom in ATOMS {
-        let mut heaplet = Heaplet::emp();
-        for &(l, v) in *atom {
-            let l = s.integer(l);
-            let v = s.integer(v);
-            heaplet = heaplet.star(Heaplet::points_to(&l, &v));
+    for simplify in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_definition_simplification(simplify)?;
+        let mut atoms = Vec::new();
+        for atom in ATOMS {
+            let mut heaplet = Heaplet::emp();
+            for &(l, v) in *atom {
+                let l = s.integer(l);
+                let v = s.integer(v);
+                heaplet = heaplet.star(Heaplet::points_to(&l, &v));
+            }
+            atoms.push(s.reify(heaplet)?);
         }
-        atoms.push(s.reify(heaplet)?);
-    }
-    let negated = atoms
-        .iter()
-        .map(|a| s.not(a))
-        .collect::<Result<Vec<_>, _>>()?;
-    let patterns = oracle_patterns();
-    for pattern in 0..(1 << atoms.len()) {
-        s.push();
-        for i in 0..atoms.len() {
-            s.assert(if pattern & (1 << i) != 0 {
-                &atoms[i]
+        let negated = atoms
+            .iter()
+            .map(|a| s.not(a))
+            .collect::<Result<Vec<_>, _>>()?;
+        let patterns = oracle_patterns();
+        for pattern in 0..(1 << atoms.len()) {
+            s.push();
+            for i in 0..atoms.len() {
+                s.assert(if pattern & (1 << i) != 0 {
+                    &atoms[i]
+                } else {
+                    &negated[i]
+                })?;
+            }
+            let expected = if patterns.contains(&pattern) {
+                SolverResult::Sat
             } else {
-                &negated[i]
-            })?;
+                SolverResult::Unsat
+            };
+            assert_eq!(
+                s.check(),
+                expected,
+                "pattern {pattern}: {:?}",
+                s.reason_unknown()
+            );
+            if expected == SolverResult::Sat {
+                s.validate_model(s.model().ok_or(HeapError("missing model"))?)?;
+            }
+            s.pop()?;
         }
-        let expected = if patterns.contains(&pattern) {
-            SolverResult::Sat
-        } else {
-            SolverResult::Unsat
-        };
-        assert_eq!(
-            s.check(),
-            expected,
-            "pattern {pattern}: {:?}",
-            s.reason_unknown()
-        );
-        if expected == SolverResult::Sat {
-            s.validate_model(s.model().ok_or(HeapError("missing model"))?)?;
-        }
-        s.pop()?;
     }
     Ok(())
 }
 
 #[test]
 fn symbolic_aliases_and_values_against_exhaustive_heaps() -> Result<(), HeapError> {
-    let mut s = HeapSolver::new();
-    let x = s.int_var("x");
-    let y = s.int_var("y");
-    let a = s.int_var("a");
-    let b = s.int_var("b");
-    let hx = Heaplet::points_to(&x, &a);
-    let hy = Heaplet::points_to(&y, &b);
-    let atoms = [
-        s.reify(Heaplet::emp())?,
-        s.reify(hx.clone())?,
-        s.reify(hy.clone())?,
-        s.reify(hx.star(hy))?,
-    ];
-    let negated = atoms
-        .iter()
-        .map(|a| s.not(a))
-        .collect::<Result<Vec<_>, _>>()?;
-    for xv in 0..=2 {
-        for yv in 0..=2 {
-            for av in 0..=1 {
-                for bv in 0..=1 {
-                    s.push();
-                    for (variable, value) in [(&x, xv), (&y, yv), (&a, av), (&b, bv)] {
-                        let value = s.integer(value);
-                        let pin = s.eq(variable, &value)?;
-                        s.assert(&pin)?;
-                    }
-                    let possible = symbolic_patterns(xv, yv, av, bv);
-                    for pattern in 0..16 {
+    for simplify in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_definition_simplification(simplify)?;
+        let x = s.int_var("x");
+        let y = s.int_var("y");
+        let a = s.int_var("a");
+        let b = s.int_var("b");
+        let hx = Heaplet::points_to(&x, &a);
+        let hy = Heaplet::points_to(&y, &b);
+        let atoms = [
+            s.reify(Heaplet::emp())?,
+            s.reify(hx.clone())?,
+            s.reify(hy.clone())?,
+            s.reify(hx.star(hy))?,
+        ];
+        let negated = atoms
+            .iter()
+            .map(|a| s.not(a))
+            .collect::<Result<Vec<_>, _>>()?;
+        for xv in 0..=2 {
+            for yv in 0..=2 {
+                for av in 0..=1 {
+                    for bv in 0..=1 {
                         s.push();
-                        for i in 0..4 {
-                            s.assert(if pattern & (1 << i) != 0 {
-                                &atoms[i]
-                            } else {
-                                &negated[i]
-                            })?;
+                        for (variable, value) in [(&x, xv), (&y, yv), (&a, av), (&b, bv)] {
+                            let value = s.integer(value);
+                            let pin = s.eq(variable, &value)?;
+                            s.assert(&pin)?;
                         }
-                        let expected = if possible.contains(&pattern) {
-                            SolverResult::Sat
-                        } else {
-                            SolverResult::Unsat
-                        };
-                        assert_eq!(
-                            s.check(),
-                            expected,
-                            "x={xv} y={yv} a={av} b={bv} pattern={pattern}: {:?}",
-                            s.reason_unknown()
-                        );
+                        let possible = symbolic_patterns(xv, yv, av, bv);
+                        for pattern in 0..16 {
+                            s.push();
+                            for i in 0..4 {
+                                s.assert(if pattern & (1 << i) != 0 {
+                                    &atoms[i]
+                                } else {
+                                    &negated[i]
+                                })?;
+                            }
+                            let expected = if possible.contains(&pattern) {
+                                SolverResult::Sat
+                            } else {
+                                SolverResult::Unsat
+                            };
+                            assert_eq!(
+                                s.check(),
+                                expected,
+                                "x={xv} y={yv} a={av} b={bv} pattern={pattern}: {:?}",
+                                s.reason_unknown()
+                            );
+                            s.pop()?;
+                        }
                         s.pop()?;
                     }
-                    s.pop()?;
                 }
             }
         }
@@ -366,6 +372,8 @@ fn original_formula_evaluation_and_drop_are_stack_safe() -> Result<(), Box<dyn s
                 formula = s.not(&formula)?;
             }
             assert!(s.evaluate(&formula, &model)?);
+            s.assert(&formula)?;
+            assert_eq!(s.check(), SolverResult::Sat);
             Ok(())
         })?
         .join()
@@ -541,5 +549,113 @@ fn pure_boolean_control_and_all_linear_operations() -> Result<(), HeapError> {
     let mut corrupted = model.clone();
     corrupted.booleans.insert("choose".into(), false);
     assert!(s.validate_model(&corrupted).is_err());
+    Ok(())
+}
+
+#[test]
+fn negative_heap_units_remove_definitions_and_preserve_witnesses() -> Result<(), HeapError> {
+    for n in [2, 8, 16, 64] {
+        let mut s = HeapSolver::new();
+        let value = s.integer(0);
+        let mut atoms = Vec::new();
+        for j in 0..n {
+            let mut heap = Heaplet::emp();
+            for k in 0..4 {
+                let loc = s.int_var(&format!("x{j}_{k}"));
+                heap = heap.star(Heaplet::points_to(&loc, &value));
+            }
+            atoms.push(s.reify(heap)?);
+        }
+        // A false disjunction forces all its children false.
+        let any = s.or(&atoms)?;
+        let none = s.not(&any)?;
+        s.assert(&none)?;
+        assert_eq!(s.check(), SolverResult::Sat, "{:?}", s.reason_unknown());
+        assert_eq!(s.statistics().definition_assertions, 0);
+        let model = s.model().ok_or(HeapError("missing model"))?;
+        assert_eq!(model.cells.len(), 5);
+        s.validate_model(model)?;
+        let terms = s.statistics().backend_terms;
+        assert_eq!(s.check(), SolverResult::Sat);
+        assert_eq!(s.statistics().backend_terms, terms);
+        assert_eq!(s.statistics().definition_assertions, 0);
+        s.push();
+        s.assert(&atoms[0])?;
+        assert_eq!(s.check(), SolverResult::Unsat);
+        s.pop()?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        assert_eq!(s.statistics().definition_assertions, 0);
+    }
+    Ok(())
+}
+
+#[test]
+fn specialized_definitions_follow_assertions_and_nested_scopes() -> Result<(), HeapError> {
+    for simplify in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_definition_simplification(simplify)?;
+        let x = s.int_var("x");
+        let y = s.int_var("y");
+        let value = s.integer(7);
+        let p = s.reify(Heaplet::points_to(&x, &value))?;
+        let q = s.reify(Heaplet::points_to(&y, &value))?;
+        let nq = s.not(&q)?;
+        let alias = s.eq(&x, &y)?;
+        s.assert(&p)?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        assert!(s.set_definition_simplification(false).is_err());
+        s.push();
+        s.assert(&nq)?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        s.push();
+        // The negative heap's map equality must still be constrained.
+        s.assert(&alias)?;
+        assert_eq!(s.check(), SolverResult::Unsat);
+        s.pop()?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        s.pop()?;
+        s.assert(&alias)?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        assert!(s.evaluate(&q, s.model().ok_or(HeapError("missing model"))?)?);
+        // Assertion after a check invalidates the private definitions as well.
+        s.assert(&nq)?;
+        assert_eq!(s.check(), SolverResult::Unsat);
+    }
+    Ok(())
+}
+
+#[test]
+fn boolean_unit_scan_does_not_choose_a_disjunct_or_negated_conjunct() -> Result<(), HeapError> {
+    for simplify in [false, true] {
+        for negative_conjunction in [false, true] {
+            let mut s = HeapSolver::new();
+            s.set_definition_simplification(simplify)?;
+            let one = s.integer(1);
+            let two = s.integer(2);
+            let a = s.reify(Heaplet::points_to(&one, &one))?;
+            let b = s.reify(Heaplet::points_to(&two, &two))?;
+            let either = if negative_conjunction {
+                let na = s.not(&a)?;
+                let nb = s.not(&b)?;
+                let neither = s.and(&[na, nb])?;
+                s.not(&neither)?
+            } else {
+                s.or(&[a.clone(), b.clone()])?
+            };
+            s.assert(&either)?;
+            assert_eq!(s.check(), SolverResult::Sat);
+            for chosen in [&a, &b] {
+                s.push();
+                s.assert(chosen)?;
+                assert_eq!(s.check(), SolverResult::Sat);
+                s.pop()?;
+            }
+            // Sharing one node at both polarities cannot hide a contradiction.
+            let na = s.not(&a)?;
+            let shared = s.and(&[a.clone(), a, na])?;
+            s.assert(&shared)?;
+            assert_eq!(s.check(), SolverResult::Unsat);
+        }
+    }
     Ok(())
 }

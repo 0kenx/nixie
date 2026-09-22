@@ -92,7 +92,6 @@ enum Node {
 struct Spatial {
     cells: Vec<(usize, usize)>,
     atom: TermId,
-    valid: TermId,
 }
 
 /// A concrete finite heap and total assignments to the declared variables.
@@ -121,6 +120,8 @@ pub struct HeapStatistics {
     pub original_nodes: usize,
     /// Interned terms in the backend term manager.
     pub backend_terms: usize,
+    /// Nontrivial heap definitions in the current private check scope.
+    pub definition_assertions: usize,
     /// Backend conflicts.
     pub conflicts: u64,
     /// Backend decisions.
@@ -145,6 +146,9 @@ pub struct HeapSolver {
     scopes: Vec<usize>,
     closed: bool,
     proof_requested: bool,
+    definition_scope_open: bool,
+    definition_assertions: usize,
+    simplify_definitions: bool,
     model: Option<HeapModel>,
     reason: Option<&'static str>,
 }
@@ -180,6 +184,9 @@ impl HeapSolver {
             scopes: Vec::new(),
             closed: false,
             proof_requested,
+            definition_scope_open: false,
+            definition_assertions: 0,
+            simplify_definitions: true,
             model: None,
             reason: None,
         }
@@ -315,9 +322,9 @@ impl HeapSolver {
         Ok(Formula(self.node(Node::Or(ids), term)))
     }
 
-    /// Reify a heaplet into a Boolean formula. Definitions are permanent and
-    /// must be installed before the first push/check. All handles are checked
-    /// before adding any definition, so errors leave solver constraints intact.
+    /// Reify a heaplet into a Boolean formula before the first push/check.
+    /// Definitions are installed at check time, specialized by entailed Boolean
+    /// units. All handles are checked before registering the heaplet.
     pub fn reify(&mut self, heaplet: Heaplet) -> Result<Formula, HeapError> {
         if self.closed {
             return Err(HeapError("reify heaplets before the first push or check"));
@@ -327,59 +334,181 @@ impl HeapSolver {
             .iter()
             .map(|(l, v)| Ok((self.index(&l.0)?, self.index(&v.0)?)))
             .collect::<Result<Vec<_>, HeapError>>()?;
-        let zero = self.tm.mk_int(0);
-        let mut valid = Vec::new();
-        for (i, &(l, _)) in cells.iter().enumerate() {
-            let nil = self.tm.mk_eq(self.terms[l], zero);
-            valid.push(self.tm.mk_not(nil));
-            for &(r, _) in &cells[..i] {
-                let alias = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                valid.push(self.tm.mk_not(alias));
-            }
-        }
-        let valid = self.tm.mk_and(valid);
         let atom = self.tm.mk_var(
             &format!("heap.atom.{}", self.spatial.len()),
             self.tm.sorts.bool_sort,
         );
-        let implication = self.tm.mk_implies(atom, valid);
-        self.backend.assert(implication, &mut self.tm);
-        for other in &self.spatial {
-            // Under validity, equal cardinality and membership of every cell
-            // is precisely equality of the two finite maps (no ordering).
-            let same = if cells.len() != other.cells.len() {
-                self.tm.false_id
-            } else {
-                let mut matches = Vec::new();
-                for &(l, v) in &cells {
-                    let mut choices = Vec::new();
-                    for &(r, w) in &other.cells {
-                        let address = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                        let value = self.tm.mk_eq(self.terms[v], self.terms[w]);
-                        choices.push(self.tm.mk_and([address, value]));
-                    }
-                    matches.push(self.tm.mk_or(choices));
-                }
-                self.tm.mk_and(matches)
-            };
-            let other_matches = self.tm.mk_and([other.valid, same]);
-            let equivalence = self.tm.mk_eq(other.atom, other_matches);
-            let forward = self.tm.mk_implies(atom, equivalence);
-            self.backend.assert(forward, &mut self.tm);
-            let this_matches = self.tm.mk_and([valid, same]);
-            let equivalence = self.tm.mk_eq(atom, this_matches);
-            let backward = self.tm.mk_implies(other.atom, equivalence);
-            self.backend.assert(backward, &mut self.tm);
-        }
         let index = self.spatial.len();
-        self.spatial.push(Spatial { cells, atom, valid });
+        self.spatial.push(Spatial { cells, atom });
         Ok(Formula(self.node(Node::Heap(index), atom)))
+    }
+
+    /// Enable exact Boolean specialization of heap definitions (the default).
+    /// Disabling it is a diagnostic control: definitions use symbolic heap atoms
+    /// with the same deferred registration and scope lifecycle. Semantics agree.
+    /// Set this before the first push/check.
+    pub fn set_definition_simplification(&mut self, enabled: bool) -> Result<(), HeapError> {
+        if self.closed {
+            return Err(HeapError(
+                "configure heap definitions before the first push or check",
+            ));
+        }
+        self.invalidate();
+        self.simplify_definitions = enabled;
+        Ok(())
+    }
+
+    // Extract only literal consequences justified by Boolean syntax. In
+    // particular Or(true) and And(false) do not force any particular child.
+    // The two-bit visited set bounds work on DAGs with shared subformulas.
+    fn forced_heap_atoms(&self) -> Result<Vec<Option<bool>>, HeapError> {
+        let mut forced = vec![None; self.spatial.len()];
+        let mut visited = vec![[false; 2]; self.nodes.len()];
+        let mut stack: Vec<_> = self.assertions.iter().map(|&i| (i, true)).collect();
+        while let Some((index, polarity)) = stack.pop() {
+            let seen = visited
+                .get_mut(index)
+                .ok_or(HeapError("invalid Boolean node"))?;
+            if seen[usize::from(polarity)] {
+                continue;
+            }
+            seen[usize::from(polarity)] = true;
+            match self
+                .nodes
+                .get(index)
+                .ok_or(HeapError("invalid Boolean node"))?
+            {
+                Node::Not(child) => stack.push((*child, !polarity)),
+                Node::And(children) if polarity => {
+                    stack.extend(children.iter().map(|&i| (i, true)));
+                }
+                Node::Or(children) if !polarity => {
+                    stack.extend(children.iter().map(|&i| (i, false)));
+                }
+                Node::Heap(i) => {
+                    let slot = forced.get_mut(*i).ok_or(HeapError("invalid heap atom"))?;
+                    if slot.is_some_and(|previous| previous != polarity) {
+                        // Original assertions are contradictory. Leave definitions
+                        // symbolic and let the backend establish the conflict.
+                        return Ok(vec![None; self.spatial.len()]);
+                    }
+                    *slot = Some(polarity);
+                }
+                Node::And(_)
+                | Node::Or(_)
+                | Node::Boolean(_)
+                | Node::BoolVar(_)
+                | Node::Eq(_, _)
+                | Node::Le(_, _) => {}
+                Node::Integer(_)
+                | Node::IntVar(_)
+                | Node::Add(_, _)
+                | Node::Sub(_, _)
+                | Node::Scale(_, _) => {
+                    return Err(HeapError("integer node in Boolean assertion"));
+                }
+            }
+        }
+        Ok(forced)
+    }
+
+    fn close_definition_scope(&mut self) {
+        if self.definition_scope_open {
+            self.backend.pop();
+            self.definition_scope_open = false;
+            self.definition_assertions = 0;
+        }
+    }
+
+    fn assert_definition(&mut self, term: TermId) {
+        if term != self.tm.true_id {
+            self.backend.assert(term, &mut self.tm);
+            self.definition_assertions += 1;
+        }
+    }
+
+    fn prepare_definitions(&mut self) -> Result<(), HeapError> {
+        if self.definition_scope_open {
+            return Ok(());
+        }
+        // Also scan units in the diagnostic control, isolating substitution
+        // from changes in staging and from the cost of discovering the units.
+        let forced = self.forced_heap_atoms()?;
+        let atoms: Vec<_> = self
+            .spatial
+            .iter()
+            .zip(forced)
+            .map(|(heap, value)| match (self.simplify_definitions, value) {
+                (true, Some(true)) => self.tm.true_id,
+                (true, Some(false)) => self.tm.false_id,
+                _ => heap.atom,
+            })
+            .collect();
+        self.backend.push();
+        self.definition_scope_open = true;
+        if atoms.iter().all(|&atom| atom == self.tm.false_id) {
+            // Every definition has a false antecedent. A finite heap larger
+            // than every registered heaplet supplies the concrete witness.
+            return Ok(());
+        }
+        let zero = self.tm.mk_int(0);
+        let mut validity = Vec::with_capacity(self.spatial.len());
+        for i in 0..self.spatial.len() {
+            let cells = &self.spatial[i].cells;
+            let mut valid = Vec::new();
+            for (j, &(l, _)) in cells.iter().enumerate() {
+                let nil = self.tm.mk_eq(self.terms[l], zero);
+                valid.push(self.tm.mk_not(nil));
+                for &(r, _) in &cells[..j] {
+                    let alias = self.tm.mk_eq(self.terms[l], self.terms[r]);
+                    valid.push(self.tm.mk_not(alias));
+                }
+            }
+            validity.push(self.tm.mk_and(valid));
+            let implication = self.tm.mk_implies(atoms[i], validity[i]);
+            self.assert_definition(implication);
+            for j in 0..i {
+                if atoms[i] == self.tm.false_id && atoms[j] == self.tm.false_id {
+                    continue;
+                }
+                let cells = &self.spatial[i].cells;
+                let other = &self.spatial[j].cells;
+                // Under validity, equal cardinality and cell membership give
+                // equality of finite maps. A false atom's validity is still
+                // needed when the other atom may be true.
+                let same = if cells.len() != other.len() {
+                    self.tm.false_id
+                } else {
+                    let mut matches = Vec::new();
+                    for &(l, v) in cells {
+                        let mut choices = Vec::new();
+                        for &(r, w) in other {
+                            let address = self.tm.mk_eq(self.terms[l], self.terms[r]);
+                            let value = self.tm.mk_eq(self.terms[v], self.terms[w]);
+                            choices.push(self.tm.mk_and([address, value]));
+                        }
+                        matches.push(self.tm.mk_or(choices));
+                    }
+                    self.tm.mk_and(matches)
+                };
+                let other_matches = self.tm.mk_and([validity[j], same]);
+                let equivalence = self.tm.mk_eq(atoms[j], other_matches);
+                let forward = self.tm.mk_implies(atoms[i], equivalence);
+                self.assert_definition(forward);
+                let this_matches = self.tm.mk_and([validity[i], same]);
+                let equivalence = self.tm.mk_eq(atoms[i], this_matches);
+                let backward = self.tm.mk_implies(atoms[j], equivalence);
+                self.assert_definition(backward);
+            }
+        }
+        Ok(())
     }
 
     /// Assert a Boolean formula about the single current heap.
     pub fn assert(&mut self, formula: &Formula) -> Result<(), HeapError> {
         let index = self.index(&formula.0)?;
         self.invalidate();
+        self.close_definition_scope();
         self.backend.assert(self.terms[index], &mut self.tm);
         self.assertions.push(index);
         Ok(())
@@ -389,6 +518,7 @@ impl HeapSolver {
     pub fn push(&mut self) {
         self.invalidate();
         self.closed = true;
+        self.close_definition_scope();
         self.scopes.push(self.assertions.len());
         self.backend.push();
     }
@@ -400,6 +530,7 @@ impl HeapSolver {
             .scopes
             .pop()
             .ok_or(HeapError("heap assertion scope underflow"))?;
+        self.close_definition_scope();
         self.assertions.truncate(size);
         self.backend.pop();
         Ok(())
@@ -412,6 +543,10 @@ impl HeapSolver {
         self.closed = true;
         if self.proof_requested {
             self.reason = Some("heap reduction has no checked proof translation");
+            return SolverResult::Unknown;
+        }
+        if let Err(error) = self.prepare_definitions() {
+            self.reason = Some(error.0);
             return SolverResult::Unknown;
         }
         let result = self.backend.check(&mut self.tm);
@@ -460,6 +595,7 @@ impl HeapSolver {
             heaplets: self.spatial.len(),
             original_nodes: self.nodes.len(),
             backend_terms: self.tm.len(),
+            definition_assertions: self.definition_assertions,
             conflicts: backend.conflicts,
             decisions: backend.decisions,
             propagations: backend.propagations,

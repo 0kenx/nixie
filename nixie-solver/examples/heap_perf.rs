@@ -80,6 +80,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         ..SolverConfig::default()
     });
     solver.set_random_seed(seed);
+    match std::env::var("HEAP_PERF_UNFOLDED") {
+        Ok(value) if value == "1" => solver.set_definition_simplification(false)?,
+        Ok(value) if value == "0" => {}
+        Err(std::env::VarError::NotPresent) => {}
+        _ => return Err("HEAP_PERF_UNFOLDED must be 0 or 1".into()),
+    }
     let vars: Vec<_> = (0..count)
         .map(|i| solver.int_var(&format!("x{i}")))
         .collect();
@@ -146,6 +152,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     counter.command("validate", "disable")?;
     let stats = solver.statistics();
+
     println!(
         "{}",
         match verdict {
@@ -153,6 +160,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             SolverResult::Unsat => "unsat",
             SolverResult::Unknown => "unknown",
         }
+    );
+    println!(
+        "definitions {} {}",
+        stats.definition_assertions, stats.backend_terms
     );
     if let Some(reason) = solver.reason_unknown() {
         println!("reason {reason}");
