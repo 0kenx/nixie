@@ -1,4 +1,4 @@
-# Heap anchor reduction: preregistration
+# Heap anchor reduction: controlled result
 
 Start from `6925082367c2d34390616dd7b6efa4ed5f1f87a3`, including the intervening
 checked-integral arithmetic fast path. Do not attribute those upstream changes
@@ -118,3 +118,141 @@ case where Z3 returns Unknown. The general performance landing gate passed:
 conflicts and decisions geomeans both **1.000**, all verdicts preserved, nine
 nontrivial and three trivial cases. Heap measurements follow separately; this
 general gate does not exercise the new heap reduction.
+
+
+## Result
+
+**Keep the reduction.** Candidate `40851e3e97890a7b59900b7f3db26ded09710b52`
+completed **352/352** cells, baseline **334/352**, and retained-pair control
+**333/352**. There were no wrong answers or lost solves. Every completed SAT
+answer passed the independent finite-map checker; UNSAT answers matched the
+authenticated corpus oracles. All 1,056 cells were attempted exactly once.
+
+On the new families' 113 shared decisive pairs, reduced/control instruction cost
+is **0.4675** (geometric mean): **53.3% less complete work**. The preregistered 5%
+bar is exceeded. The corresponding baseline ratio is 0.1805 over 114 pairs, but
+that number also includes the effect of introducing anchor definitions; it is
+not evidence attributable solely to removing their redundant pairs.
+
+The gain survives the fresh seed. On new-family seeds 0–9, reduced/control is
+0.4637 over 103 pairs; on held-out seed 102 it is **0.5093** over ten pairs.
+Baseline ratios are 0.1838 and 0.1520, respectively. These are paired geometric
+means, excluding all Unknowns, rather than ratios of aggregate medians.
+
+The original twenty cases remain neutral: all arms solve 220/220; paired cost is
+0.9993 against baseline and 1.0001 against control. The largest original-case
+paired increase is below 0.51% against baseline and 0.37% against control. The previous
+study's allocation-16 seed-6 regression case is neutral here (1.00009 against the
+current baseline, 1.00006 against control); this does not revise that earlier
+study's comparison against an older implementation.
+
+The following table gives completed-run medians in **millions of user
+instructions**, including Python checking. Parentheses give solves out of 11;
+missing/capped runs do not contribute partial costs. The adjacent
+[CSV](2026-09-22-heap-anchor-reduction.csv) contains every arm's min/median/max,
+solve counts, peak RSS and term/definition/comparison diagnostics.
+
+| Case | Baseline | Retained-pair control | Reduced |
+|---|---:|---:|---:|
+| allocate-2 | 206.20 (11/11) | 206.22 (11/11) | 206.22 (11/11) |
+| allocate-4 | 209.32 (11/11) | 209.33 (11/11) | 209.34 (11/11) |
+| allocate-8 | 239.00 (11/11) | 239.01 (11/11) | 238.95 (11/11) |
+| allocate-16 | 356.61 (11/11) | 356.73 (11/11) | 356.62 (11/11) |
+| alias-2 | 205.12 (11/11) | 205.06 (11/11) | 205.13 (11/11) |
+| alias-4 | 205.80 (11/11) | 205.81 (11/11) | 205.81 (11/11) |
+| alias-8 | 208.00 (11/11) | 208.02 (11/11) | 208.02 (11/11) |
+| alias-16 | 214.84 (11/11) | 214.79 (11/11) | 214.87 (11/11) |
+| values-2 | 205.02 (11/11) | 204.94 (11/11) | 205.00 (11/11) |
+| values-4 | 205.71 (11/11) | 205.49 (11/11) | 205.53 (11/11) |
+| values-8 | 207.69 (11/11) | 206.99 (11/11) | 207.08 (11/11) |
+| values-16 | 214.09 (11/11) | 211.77 (11/11) | 211.72 (11/11) |
+| permutation-2 | 205.30 (11/11) | 205.33 (11/11) | 205.29 (11/11) |
+| permutation-4 | 206.21 (11/11) | 206.22 (11/11) | 206.29 (11/11) |
+| permutation-8 | 209.03 (11/11) | 209.11 (11/11) | 209.11 (11/11) |
+| permutation-16 | 218.44 (11/11) | 218.44 (11/11) | 218.43 (11/11) |
+| negative-2 | 205.05 (11/11) | 205.17 (11/11) | 205.07 (11/11) |
+| negative-4 | 205.66 (11/11) | 205.72 (11/11) | 205.68 (11/11) |
+| negative-8 | 206.84 (11/11) | 206.83 (11/11) | 206.91 (11/11) |
+| negative-16 | 209.15 (11/11) | 209.22 (11/11) | 209.17 (11/11) |
+| views-8 | 539.50 (11/11) | 528.91 (11/11) | 309.07 (11/11) |
+| views-16 | 9493.59 (11/11) | 10627.88 (11/11) | 675.97 (11/11) |
+| views-32 | 136271.52 (4/11) | 142014.61 (3/11) | 5148.97 (11/11) |
+| views-64 | — (0/11) | — (0/11) | 22515.01 (11/11) |
+| view_conflict-8 | 225.68 (11/11) | 222.22 (11/11) | 212.64 (11/11) |
+| view_conflict-16 | 286.64 (11/11) | 279.03 (11/11) | 221.27 (11/11) |
+| view_conflict-32 | 528.72 (11/11) | 513.05 (11/11) | 238.77 (11/11) |
+| view_conflict-64 | 1496.44 (11/11) | 1463.56 (11/11) | 273.56 (11/11) |
+| unasserted_views-8 | 546.70 (11/11) | 221.14 (11/11) | 218.18 (11/11) |
+| unasserted_views-16 | 1690.53 (11/11) | 244.58 (11/11) | 229.65 (11/11) |
+| unasserted_views-32 | 6440.44 (11/11) | 320.32 (11/11) | 255.45 (11/11) |
+| unasserted_views-64 | 27424.37 (11/11) | 588.12 (11/11) | 310.72 (11/11) |
+
+Millions of user instructions; median among completed runs. Partial Unknown costs excluded.
+
+| Subset | Comparator | Shared pairs | Reduced / comparator cost |
+|---|---|---:|---:|
+| seeds-0-9 | baseline | 303 | 0.5620 |
+| seeds-0-9 | redundant | 303 | 0.7701 |
+| held-out-102 | baseline | 31 | 0.5123 |
+| held-out-102 | redundant | 30 | 0.7987 |
+| new-families | baseline | 114 | 0.1805 |
+| new-families | redundant | 113 | 0.4675 |
+| original-families | baseline | 220 | 0.9993 |
+| original-families | redundant | 220 | 1.0001 |
+
+
+## Distribution and mechanism
+
+For `views-16`, baseline instruction counts range from 5.283 to 9.998 billion;
+control ranges from 5.033 to 11.201 billion; reduced ranges from 0.632 to 0.793
+billion. Its reduced/control median ratio is 0.0636 (15.7× less work), but the
+seed-paired aggregate above is the primary comparison. At 32 views, baseline
+solves 4/11 and control 3/11 while reduced solves 11/11. At 64 views neither
+comparator finishes; reduced solves 11/11 using 13.314–22.768 billion
+instructions. No cost speedup is assigned to those censored comparator runs.
+
+The structural counters confirm the intended change. At 16 equivalent views,
+comparisons fall from 120 to 15, definitions from 226 to 16, and post-check terms
+from 4,576 to 1,321 versus control. At 64 partially asserted views, comparisons
+fall from 2,016 to 63, definitions from 3,970 to 64 and terms from 38,490 to 3,336.
+That case costs a median 588 million instructions for control and 311 million
+for reduced. Its 27.4-billion-instruction baseline cost shows why a control is
+needed: most of the raw baseline gain comes from introducing the anchor, with
+an additional measured gain from removing redundant comparisons.
+
+These cases pin locations with exact bounds and use four cells per heaplet.
+The experiment does not establish gains for arbitrary location constraints,
+large individual heaplets, or Boolean formulas lacking a positive unit. The
+latter retain the original general encoding. No inductive predicates, fractions,
+magic wand, proof exports or broader entailment support have been introduced.
+
+## Missing measurements and immutable continuation
+
+Four capped `views-32` cells produced empty perf/stdout/stderr files, stopping
+the strict runner before it could store the result: baseline seed 3, control
+seeds 2, 4 and 8. The frozen runner can reach its counter-reading call with empty
+stdout only through its outer-timeout branch; otherwise JSON decoding fails
+first. Each was therefore retained as **Unknown, unverified, unmeasured**. The
+missing elapsed time is null. Zero is only the `unmeasured_region` schema sentinel,
+never an instruction measurement. None contributes to a paired cost ratio.
+
+`bench/heap_perf/resume_anchor.py` records this narrowly checked failure and
+continues only untouched cells. It rejects other traces, nonempty evidence,
+ambiguous interruptions and existing results. The executed supervisor is
+archived with its hashes; the committed helper additionally rejects Python
+`-O`, which was not used in this run. All completed records and raw files remain
+unchanged. There are exactly 1,056 command files, result files and benchstore
+records. The 37 total Unknowns are 18 baseline and 19 control; the four missing
+captures are included in those counts, not additional failures. The final
+Python suite, including recovery and reporting checks, passes **17 tests**.
+
+## Provenance
+
+Immutable records, inputs, exact commands, outputs, PMU coverage, binary hashes,
+load samples and controller/recovery logs are under
+`precompile/40851e3e/benchmark/`; the analyzer's output is in `analysis/` and full
+landing-gate evidence is in `verification/`. Baseline driver:
+`precompile/69250823/heap_perf`; candidate: `precompile/40851e3e/heap_perf`.
+All runs used Rust 1.96.0, Python 3.13.14, perf 7.1.8, installed Z3 4.16.0 and
+CVC5 1.3.4. These versions and hashes are also recorded per cell. Wall-clock
+observations and externally capped partial counts are not improvement metrics.

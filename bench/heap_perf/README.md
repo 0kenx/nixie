@@ -146,3 +146,11 @@ independent checker. No old measurements are rerun.
 1,056-cell matrix and paired raw results, and writes cost distributions,
 comparison/definition counts, and shared-solve ratios. All ratios exclude
 Unknown costs and report the fresh held-out seed 102 separately.
+
+The completed anchor study reports 53.3% less work than its retained-pair control
+on new shared decisive pairs, with neutral original-suite cost; see the study
+for held-out results, distributions and capped cases. `resume_anchor.py` handles
+only the documented empty-counter timeout interruption, retaining it as an
+unmeasured Unknown and continuing untouched cells. It never reruns a cell or
+infers a missing instruction count. Its exact executed version and recovery
+evidence are archived beside the original records.

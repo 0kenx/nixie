@@ -236,3 +236,10 @@ measures a scoped exact-unit simplification against both current main and an
 identity-substitution control. It removes the measured all-negative scaling
 failure at sizes 8 and 16; the report includes seed-sensitive allocation
 regressions and the unchanged general-fragment limits.
+
+The [positive-anchor follow-up](studies/2026-09-22-heap-anchor-reduction.md)
+measures linear comparison construction when a positive exact heap is entailed.
+The new many-view cases use 53.3% fewer instructions than a control retaining
+redundant pairs on shared completed runs; the original suite remains neutral.
+It reports all seed distributions, resource-capped Unknowns and missing counter
+captures separately. This optimization does not broaden the supported fragment.
