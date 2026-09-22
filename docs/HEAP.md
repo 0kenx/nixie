@@ -220,3 +220,9 @@ the exact-heap LIA reduction, not inductive predicates or native SL performance.
 The [measured performance study](studies/2026-09-22-exact-heap-performance.md)
 records both successful workloads and the all-negative scaling limit, with ten
 seeds, complete-work instruction counters, and CVC5/Z3 comparisons.
+
+The [definition-specialization follow-up](studies/2026-09-22-heap-definition-optimization.md)
+measures a scoped exact-unit simplification against both current main and an
+identity-substitution control. It removes the measured all-negative scaling
+failure at sizes 8 and 16; the report includes seed-sensitive allocation
+regressions and the unchanged general-fragment limits.

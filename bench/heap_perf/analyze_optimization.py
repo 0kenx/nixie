@@ -12,6 +12,22 @@ import compare_optimization as experiment
 import run
 
 
+def driver_counters(record, directory):
+    # Benchstore intentionally excludes stdout/stderr from secondary metrics.
+    # Recover diagnostics from the immutable raw result, checking its pairing.
+    name = (f"{record['instance']['name']}-{record['config']['id']}-"
+            f"{record['seed']}-{record['record_id']}.result.json")
+    raw = directory.parents[1] / experiment.SUITE / name
+    result = json.loads(raw.read_text())
+    assert result['instructions'] == record['metrics']['primary']['value']
+    assert result['payload']['answer'] == record['verdict']['answer']
+    assert result['payload']['verified'] == record['verdict']['verified_model_or_proof']
+    match = re.search(r'^definitions (\d+) (\d+)$', result['payload']['stdout'], re.M)
+    if record['config']['id'] != 'baseline-total':
+        assert match, 'candidate driver diagnostics missing'
+    return (int(match[1]), int(match[2])) if match else None
+
+
 def analyze(directory, output):
     records = [run.benchstore.validate(json.loads(p.read_text())) for p in directory.glob('*.json')]
     cells = {(r['instance']['name'], r['config']['id'], r['seed']): r for r in records}
@@ -36,9 +52,9 @@ def analyze(directory, output):
                     and r['config']['id'] == row['arm'] and r['verdict']['answer'] != 'unknown']
         definitions, post_terms = [], []
         for r in selected:
-            match = re.search(r'^definitions (\d+) (\d+)$', r['metrics']['secondary']['stdout'], re.M)
-            if match:
-                definitions.append(int(match[1])); post_terms.append(int(match[2]))
+            counters = driver_counters(r, directory)
+            if counters:
+                definitions.append(counters[0]); post_terms.append(counters[1])
         row['definition_assertions'] = statistics.median(definitions) if definitions else None
         row['postcheck_terms'] = statistics.median(post_terms) if post_terms else None
     with (output/'summary.csv').open('w') as out:

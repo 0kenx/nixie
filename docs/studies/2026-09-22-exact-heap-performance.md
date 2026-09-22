@@ -211,3 +211,9 @@ Seven Python harness checks and twenty size-three calibration checks passed.
 The calibration cases are not part of the measured matrix. Calibration fixed
 the CVC5 constant-array option and established perf's five-byte FIFO acknowledgement
 before preregistration; it did not tune any solver or select any measured seed.
+
+
+Follow-up: [exact definition specialization](2026-09-22-heap-definition-optimization.md)
+removes the all-negative size-8/16 failure in a preregistered three-arm,
+eleven-seed comparison against a newer baseline. The measurements above remain
+the historical results of `32e2b695`; they have not been replaced or rerun.
