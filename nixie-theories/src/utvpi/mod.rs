@@ -25,7 +25,9 @@
 //! - -x ≤ c → edge (x⁺ → x⁻, 2c)
 //!
 //! Satisfiability is checked via Bellman-Ford on the doubled graph.
-//! UNSAT iff the graph contains a negative cycle.
+//! Real consistency uses exact infinitesimal graph weights. Integer checking
+//! additionally checks tight-edge parity and constructs an integral witness.
+//! Every candidate model is validated against the original constraints.
 //!
 //! # Logics Supported
 //!

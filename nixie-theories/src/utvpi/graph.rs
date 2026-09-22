@@ -3,10 +3,12 @@
 //! Represents UTVPI constraints using a doubled graph where each variable
 //! x is represented by two nodes: x⁺ (positive) and x⁻ (negative).
 
+use crate::arithmetic::BigDeltaRational;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use nixie_core::ast::TermId;
-use num_rational::Rational64;
+use num_rational::{BigRational, Rational64};
+use num_traits::{One, Zero};
 
 /// Node in the doubled graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,12 +128,24 @@ impl UtConstraint {
         Self::new(x, Sign::Negative, 0, Sign::Zero, bound, origin)
     }
 
-    /// Get effective bound (for strict constraints, subtract 1 for integers)
-    pub fn effective_bound(&self, is_integer: bool) -> Rational64 {
-        if self.strict && is_integer {
-            self.bound - Rational64::from_integer(1)
+    /// Exact graph weight, including real strictness and integer rounding.
+    pub fn effective_bound(&self, is_integer: bool) -> BigDeltaRational {
+        let bound = BigRational::new((*self.bound.numer()).into(), (*self.bound.denom()).into());
+        if is_integer {
+            BigDeltaRational::real_only(if self.strict {
+                bound.ceil() - BigRational::one()
+            } else {
+                bound.floor()
+            })
         } else {
-            self.bound
+            BigDeltaRational {
+                real: bound,
+                delta: if self.strict {
+                    -BigRational::one()
+                } else {
+                    BigRational::zero()
+                },
+            }
         }
     }
 
@@ -149,7 +163,7 @@ pub struct UtEdge {
     /// Target node
     pub to: DoubledNode,
     /// Edge weight
-    pub weight: Rational64,
+    pub weight: BigDeltaRational,
     /// Constraint index for explanation
     pub constraint_idx: usize,
 }
@@ -159,7 +173,7 @@ impl UtEdge {
     pub fn new(
         from: DoubledNode,
         to: DoubledNode,
-        weight: Rational64,
+        weight: BigDeltaRational,
         constraint_idx: usize,
     ) -> Self {
         Self {
@@ -193,6 +207,14 @@ pub struct DoubledGraph {
 }
 
 impl DoubledGraph {
+    /// Active constraints, with stable identities across scopes.
+    pub fn active_constraints(&self) -> impl Iterator<Item = (usize, &UtConstraint)> {
+        self.active_by_level
+            .iter()
+            .flatten()
+            .map(|&i| (i, &self.constraints[i]))
+    }
+
     /// Create a new doubled graph
     pub fn new(is_integer: bool) -> Self {
         let mut edges = HashMap::new();
@@ -227,25 +249,17 @@ impl DoubledGraph {
         self.edges.entry(pos).or_default();
         self.edges.entry(neg).or_default();
 
-        // Add edges from source to both nodes with weight 0
-        self.edges
-            .get_mut(&DoubledNode::SOURCE)
-            .expect("Source should exist")
-            .push(UtEdge::new(
+        // Synthetic edges have no user constraint identity. In particular,
+        // popping constraint zero must not disconnect the virtual source.
+        let source_edges = self.edges.entry(DoubledNode::SOURCE).or_default();
+        for node in [pos, neg] {
+            source_edges.push(UtEdge::new(
                 DoubledNode::SOURCE,
-                pos,
-                Rational64::from_integer(0),
-                0,
+                node,
+                BigDeltaRational::zero(),
+                usize::MAX,
             ));
-        self.edges
-            .get_mut(&DoubledNode::SOURCE)
-            .expect("Source should exist")
-            .push(UtEdge::new(
-                DoubledNode::SOURCE,
-                neg,
-                Rational64::from_integer(0),
-                0,
-            ));
+        }
 
         var
     }
@@ -261,7 +275,8 @@ impl DoubledGraph {
     }
 
     /// Add a UTVPI constraint
-    pub fn add_constraint(&mut self, constraint: UtConstraint) -> usize {
+    pub fn add_constraint(&mut self, mut constraint: UtConstraint) -> usize {
+        constraint.level = self.current_level;
         let idx = self.constraints.len();
         let weight = constraint.effective_bound(self.is_integer);
 
@@ -272,13 +287,13 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::positive(constraint.y),
                     DoubledNode::positive(constraint.x),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
                 self.add_edge(
                     DoubledNode::negative(constraint.x),
                     DoubledNode::negative(constraint.y),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
             }
@@ -287,13 +302,13 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::positive(constraint.x),
                     DoubledNode::positive(constraint.y),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
                 self.add_edge(
                     DoubledNode::negative(constraint.y),
                     DoubledNode::negative(constraint.x),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
             }
@@ -302,13 +317,13 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::negative(constraint.y),
                     DoubledNode::positive(constraint.x),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
                 self.add_edge(
                     DoubledNode::negative(constraint.x),
                     DoubledNode::positive(constraint.y),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
             }
@@ -317,13 +332,13 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::positive(constraint.y),
                     DoubledNode::negative(constraint.x),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
                 self.add_edge(
                     DoubledNode::positive(constraint.x),
                     DoubledNode::negative(constraint.y),
-                    weight,
+                    weight.clone(),
                     idx,
                 );
             }
@@ -332,7 +347,10 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::negative(constraint.x),
                     DoubledNode::positive(constraint.x),
-                    weight * Rational64::from_integer(2),
+                    BigDeltaRational {
+                        real: &weight.real * BigRational::from_integer(2.into()),
+                        delta: &weight.delta * BigRational::from_integer(2.into()),
+                    },
                     idx,
                 );
             }
@@ -341,7 +359,10 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::positive(constraint.x),
                     DoubledNode::negative(constraint.x),
-                    weight * Rational64::from_integer(2),
+                    BigDeltaRational {
+                        real: &weight.real * BigRational::from_integer(2.into()),
+                        delta: &weight.delta * BigRational::from_integer(2.into()),
+                    },
                     idx,
                 );
             }
@@ -350,7 +371,10 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::negative(constraint.y),
                     DoubledNode::positive(constraint.y),
-                    weight * Rational64::from_integer(2),
+                    BigDeltaRational {
+                        real: &weight.real * BigRational::from_integer(2.into()),
+                        delta: &weight.delta * BigRational::from_integer(2.into()),
+                    },
                     idx,
                 );
             }
@@ -359,13 +383,17 @@ impl DoubledGraph {
                 self.add_edge(
                     DoubledNode::positive(constraint.y),
                     DoubledNode::negative(constraint.y),
-                    weight * Rational64::from_integer(2),
+                    BigDeltaRational {
+                        real: &weight.real * BigRational::from_integer(2.into()),
+                        delta: &weight.delta * BigRational::from_integer(2.into()),
+                    },
                     idx,
                 );
             }
             // Both zero - degenerate case (0 ≤ c)
             (Sign::Zero, Sign::Zero) => {
-                // No edges needed, just check if c >= 0
+                // A self-loop represents the constant inequality exactly.
+                self.add_edge(DoubledNode::SOURCE, DoubledNode::SOURCE, weight, idx);
             }
         }
 
@@ -380,7 +408,13 @@ impl DoubledGraph {
     }
 
     /// Add an edge to the graph
-    fn add_edge(&mut self, from: DoubledNode, to: DoubledNode, weight: Rational64, idx: usize) {
+    fn add_edge(
+        &mut self,
+        from: DoubledNode,
+        to: DoubledNode,
+        weight: BigDeltaRational,
+        idx: usize,
+    ) {
         self.edges
             .entry(from)
             .or_default()
@@ -585,7 +619,10 @@ mod tests {
         // Check edge: (x⁻ → x⁺, 14) (doubled for unary)
         let edges_from_x_neg: Vec<_> = graph.get_edges(DoubledNode::negative(x)).collect();
         assert!(!edges_from_x_neg.is_empty());
-        assert_eq!(edges_from_x_neg[0].weight, Rational64::from_integer(14));
+        assert_eq!(
+            edges_from_x_neg[0].weight,
+            BigDeltaRational::real_only(BigRational::from_integer(14.into()))
+        );
     }
 
     #[test]

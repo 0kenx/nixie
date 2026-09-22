@@ -14,7 +14,7 @@ pub(crate) mod simplex;
 mod simplex_opt;
 mod solver;
 
-pub use delta::DeltaRational;
+pub use delta::{BigDeltaRational, DeltaRational};
 pub use gaussian::{GaussianElimination, LinearEquation};
 pub use lia::{HermiteNormalForm, LiaSolver, PseudoBooleanSolver};
 pub use optimize::{
