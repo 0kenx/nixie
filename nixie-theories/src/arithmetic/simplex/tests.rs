@@ -2688,3 +2688,97 @@ fn rederivation_preserves_wide_point_at_wide_bound() {
         "the wide point at the wide bound survives the re-derivation"
     );
 }
+
+// The evaluation fast paths must preserve both exact values and the old
+// checked-trait failure boundary: a changed None can alter a search trajectory.
+#[test]
+fn checked_integer_evaluation_matches_traits_and_big_rationals() {
+    let mut values: Vec<i64> = (-32..=32).collect();
+    values.extend([i64::MIN, i64::MIN + 1, i64::MAX - 1, i64::MAX, 1 << 32]);
+    for &a in &values {
+        for &b in &values {
+            let ar = Rational64::from_integer(a);
+            let br = Rational64::from_integer(b);
+            let product = checked_eval_mul(&ar, &br);
+            let sum = checked_eval_add(&ar, &br);
+            assert_eq!(product, num_traits::CheckedMul::checked_mul(&ar, &br));
+            assert_eq!(sum, num_traits::CheckedAdd::checked_add(&ar, &br));
+            assert_eq!(product, narrow_big_r64(&(big_r64(&ar) * big_r64(&br))));
+            assert_eq!(sum, narrow_big_r64(&(big_r64(&ar) + big_r64(&br))));
+            for result in [product, sum].into_iter().flatten() {
+                assert_eq!(*result.denom(), 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn fractional_evaluation_preserves_checked_failure_boundary() {
+    let mut values = Vec::new();
+    for n in [-i64::MAX, -17, -1, 0, 1, 17, i64::MAX] {
+        for d in [1, 2, 3, 17, i64::MAX] {
+            values.push(Rational64::new(n, d));
+        }
+    }
+    for a in &values {
+        for b in &values {
+            assert_eq!(
+                checked_eval_mul(a, b),
+                num_traits::CheckedMul::checked_mul(a, b)
+            );
+            assert_eq!(
+                checked_eval_add(a, b),
+                num_traits::CheckedAdd::checked_add(a, b)
+            );
+            if let Some(p) = checked_eval_mul(a, b) {
+                assert_eq!(big_r64(&p), big_r64(a) * big_r64(b));
+            }
+            if let Some(s) = checked_eval_add(a, b) {
+                assert_eq!(big_r64(&s), big_r64(a) + big_r64(b));
+            }
+        }
+    }
+    // The reduced sum fits, but the legacy trait rejects its intermediate.
+    // Keep the rejection so the existing exact row retry stays responsible.
+    let a = Rational64::new(i64::MAX, 2);
+    assert_eq!(
+        narrow_big_r64(&(big_r64(&a) + big_r64(&a))),
+        Some(Rational64::from_integer(i64::MAX))
+    );
+    assert_eq!(checked_eval_add(&a, &a), None);
+}
+
+#[test]
+fn delta_evaluation_keeps_overflow_and_partial_accumulation_contract() {
+    let values = [
+        DeltaRational::from(0),
+        DeltaRational::from(i64::MIN),
+        DeltaRational::from(i64::MAX),
+        DeltaRational {
+            real: Rational64::from_integer(1),
+            delta: Rational64::from_integer(i64::MAX),
+        },
+        DeltaRational {
+            real: Rational64::new(1, 3),
+            delta: Rational64::new(-1, 2),
+        },
+    ];
+    for initial in values {
+        for value in values {
+            for c in [-2, -1, 0, 1, 2] {
+                let coef = Rational64::from_integer(c);
+                let mut expected = initial;
+                let legacy = (|| -> Option<()> {
+                    let pr = num_traits::CheckedMul::checked_mul(&value.real, &coef)?;
+                    let pd = num_traits::CheckedMul::checked_mul(&value.delta, &coef)?;
+                    expected.real = num_traits::CheckedAdd::checked_add(&expected.real, &pr)?;
+                    expected.delta = num_traits::CheckedAdd::checked_add(&expected.delta, &pd)?;
+                    Some(())
+                })();
+                let mut actual = initial;
+                assert_eq!(Simplex::delta_acc(&mut actual, &value, &coef), legacy);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}

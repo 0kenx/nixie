@@ -59,3 +59,14 @@ ten requested Nixie seeds are repeated measurements of the current default
 child search, not ten independently seeded native search trajectories. Z3
 receives all ten seed options. No tuning or reseeding fix is part of this
 benchmark. This limitation must remain in the result interpretation.
+
+For optimization comparisons, pass `compare_optimization.py --candidate`
+an immutable copy of the built executable. A concurrent `cargo build` may
+replace `target/release/nixie`; package-only and workspace builds can also
+produce different binaries through feature unification. Freeze the binary
+before running any comparisons or landing gates, record its hash, and use
+the same build selection as the baseline. Give distinct binary hashes
+separate result directories and retain invalidated diagnostic runs.
+
+See the [integer evaluation study](../../docs/studies/2026-09-22-native-sequences-integer-evaluation.md)
+for the measured fast path, overflow-contract tests, and binary-isolation correction.

@@ -454,6 +454,28 @@ fn checked_mul_add_r64(x: Rational64, f: Rational64, y: Rational64) -> Option<Ra
     checked_add_r64(x, prod)
 }
 
+/// Checked evaluation operations with the *same overflow boundary* as the
+/// num-rational traits. Integer operands need no gcd or normalization:
+/// `(n, 1)` is already canonical, including zero and `i64::MIN`.
+/// Fractional operands keep the original implementation. The wider-intermediate
+/// helpers below have a different failure contract and cannot replace these
+/// without changing when callers retry exact evaluation or decline a bound.
+#[inline]
+fn checked_eval_mul(a: &Rational64, b: &Rational64) -> Option<Rational64> {
+    if a.denom() == &1 && b.denom() == &1 {
+        return Some(Rational64::new_raw(a.numer().checked_mul(*b.numer())?, 1));
+    }
+    num_traits::CheckedMul::checked_mul(a, b)
+}
+
+#[inline]
+fn checked_eval_add(a: &Rational64, b: &Rational64) -> Option<Rational64> {
+    if a.denom() == &1 && b.denom() == &1 {
+        return Some(Rational64::new_raw(a.numer().checked_add(*b.numer())?, 1));
+    }
+    num_traits::CheckedAdd::checked_add(a, b)
+}
+
 /// Build a fully-reduced `Rational64` from an `i128` numerator/denominator
 /// pair, returning `None` if the reduced value does not fit back into
 /// `i64`. All of the checked-rational helpers below route through this so
@@ -5542,51 +5564,47 @@ impl Simplex {
                     break;
                 }
                 let a = &self.assignment[v_idx];
-                let prod = (
-                    num_traits::CheckedMul::checked_mul(&a.real, c),
-                    num_traits::CheckedMul::checked_mul(&a.delta, c),
-                );
+                let prod = (checked_eval_mul(&a.real, c), checked_eval_mul(&a.delta, c));
                 match prod {
-                    (Some(pr), Some(pd)) => match (
-                        num_traits::CheckedAdd::checked_add(&real, &pr),
-                        num_traits::CheckedAdd::checked_add(&delta, &pd),
-                    ) {
-                        (Some(r2), Some(d2)) => {
-                            real = r2;
-                            delta = d2;
-                        }
-                        _ => {
-                            // The i64 pipeline overflowed MID-SUM.  That
-                            // does not mean the ROW's value is out of
-                            // range: denominators cancel, and an
-                            // intermediate can leave `i64` while the final
-                            // fits.  Recompute THIS row exactly
-                            // (`BigRational`, cold path) and narrow the
-                            // final; only a final that still does not fit
-                            // declines the derivation.
-                            match self.update_row_exact(&expr, num_vars) {
-                                Some(val) => {
-                                    self.assignment[var_idx] = val;
-                                    continue 'rows;
-                                }
-                                None => {
-                                    // The row's exact VALUE does not fit —
-                                    // MIGRATE the row to the wide store
-                                    // (item 28's capture, applied at
-                                    // re-derivation): its meaning survives
-                                    // exactly, the basic's value is
-                                    // re-derived exactly each pass, and the
-                                    // convergence classification owns the
-                                    // verdict. Declining here (the old
-                                    // behavior) made any trajectory that
-                                    // visits such a point `unknown` — the
-                                    // chain-under-narrow-dir2 deflection.
-                                    wide_migrations.push(var);
-                                    continue 'rows;
+                    (Some(pr), Some(pd)) => {
+                        match (checked_eval_add(&real, &pr), checked_eval_add(&delta, &pd)) {
+                            (Some(r2), Some(d2)) => {
+                                real = r2;
+                                delta = d2;
+                            }
+                            _ => {
+                                // The i64 pipeline overflowed MID-SUM.  That
+                                // does not mean the ROW's value is out of
+                                // range: denominators cancel, and an
+                                // intermediate can leave `i64` while the final
+                                // fits.  Recompute THIS row exactly
+                                // (`BigRational`, cold path) and narrow the
+                                // final; only a final that still does not fit
+                                // declines the derivation.
+                                match self.update_row_exact(&expr, num_vars) {
+                                    Some(val) => {
+                                        self.assignment[var_idx] = val;
+                                        continue 'rows;
+                                    }
+                                    None => {
+                                        // The row's exact VALUE does not fit —
+                                        // MIGRATE the row to the wide store
+                                        // (item 28's capture, applied at
+                                        // re-derivation): its meaning survives
+                                        // exactly, the basic's value is
+                                        // re-derived exactly each pass, and the
+                                        // convergence classification owns the
+                                        // verdict. Declining here (the old
+                                        // behavior) made any trajectory that
+                                        // visits such a point `unknown` — the
+                                        // chain-under-narrow-dir2 deflection.
+                                        wide_migrations.push(var);
+                                        continue 'rows;
+                                    }
                                 }
                             }
                         }
-                    },
+                    }
                     _ => match self.update_row_exact(&expr, num_vars) {
                         Some(val) => {
                             self.assignment[var_idx] = val;
@@ -6536,10 +6554,10 @@ impl Simplex {
     /// consequence the row does not entail — the same class the
     /// `update_assignment` fix closes on the assignment side).
     fn delta_acc(sum: &mut DeltaRational, value: &DeltaRational, coef: &Rational64) -> Option<()> {
-        let pr = num_traits::CheckedMul::checked_mul(&value.real, coef)?;
-        let pd = num_traits::CheckedMul::checked_mul(&value.delta, coef)?;
-        sum.real = num_traits::CheckedAdd::checked_add(&sum.real, &pr)?;
-        sum.delta = num_traits::CheckedAdd::checked_add(&sum.delta, &pd)?;
+        let pr = checked_eval_mul(&value.real, coef)?;
+        let pd = checked_eval_mul(&value.delta, coef)?;
+        sum.real = checked_eval_add(&sum.real, &pr)?;
+        sum.delta = checked_eval_add(&sum.delta, &pd)?;
         Some(())
     }
 
