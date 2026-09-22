@@ -125,6 +125,29 @@ impl HeapSolver {
         Ok(())
     }
 
+    pub(super) fn selected_heap(&self) -> Result<Option<usize>, HeapError> {
+        let backend = self
+            .backend
+            .model()
+            .ok_or(HeapError("missing backend model"))?;
+        let mut selected = None;
+        for (index, spatial) in self.spatial.iter().enumerate() {
+            match backend.get(spatial.atom) {
+                None => {} // Candidate false completion, independently checked below.
+                Some(value) => match self.tm.get(value).map(|t| &t.kind) {
+                    Some(TermKind::True) => {
+                        if selected.is_none() {
+                            selected = Some(index);
+                        }
+                    }
+                    Some(TermKind::False) => {}
+                    _ => return Err(HeapError("non-concrete heap atom in backend model")),
+                },
+            }
+        }
+        Ok(selected)
+    }
+
     pub(super) fn extract_model(&self) -> Result<HeapModel, HeapError> {
         let backend = self
             .backend
@@ -179,16 +202,10 @@ impl HeapSolver {
             }
         }
         let values = self.values(&model)?;
-        for spatial in &self.spatial {
-            if backend
-                .get(spatial.atom)
-                .and_then(|id| self.tm.get(id))
-                .is_some_and(|t| matches!(t.kind, TermKind::True))
-            {
-                model.cells = concrete(spatial, &values)?
-                    .ok_or(HeapError("backend selected an invalid heaplet"))?;
-                return Ok(model);
-            }
+        if let Some(index) = self.selected_heap()? {
+            model.cells = concrete(&self.spatial[index], &values)?
+                .ok_or(HeapError("backend selected an invalid heaplet"))?;
+            return Ok(model);
         }
         // Every exact heaplet false: cardinality alone distinguishes this
         // witness from ALL registered heaplets, independently of aliases or

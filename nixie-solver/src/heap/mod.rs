@@ -13,6 +13,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod model;
+mod preprocess;
+mod templates;
 
 /// An invalid operation, foreign handle, or unverifiable model.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +112,41 @@ pub struct HeapModel {
     pub booleans: BTreeMap<String, bool>,
 }
 
+/// Independently selectable exact heap optimizations and diagnostic controls.
+/// Configure before the first push/check. All combinations have the same semantics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeapOptimizations {
+    /// Derive other heaplets' validity from coverage of a valid anchor.
+    pub anchor_coverage: bool,
+    /// Substitute equalities and exact bounds entailed by active assertions.
+    pub equality_propagation: bool,
+    /// Reuse immutable encoding expressions across assertion scopes.
+    pub cache_templates: bool,
+    /// Refine abstract Boolean candidates with guarded heap definitions on demand.
+    pub lazy_boolean: bool,
+}
+
+impl HeapOptimizations {
+    /// Diagnostic control retaining eager and redundant definitions.
+    pub const NONE: Self = Self {
+        anchor_coverage: false,
+        equality_propagation: false,
+        cache_templates: false,
+        lazy_boolean: false,
+    };
+}
+
+impl Default for HeapOptimizations {
+    fn default() -> Self {
+        Self {
+            anchor_coverage: true,
+            equality_propagation: true,
+            cache_templates: true,
+            lazy_boolean: true,
+        }
+    }
+}
+
 /// Read-only heap encoding sizes and backend search counters.
 /// These counts do not measure total encoding or validation work.
 #[derive(Clone, Copy, Debug)]
@@ -122,8 +159,16 @@ pub struct HeapStatistics {
     pub backend_terms: usize,
     /// Nontrivial heap definitions in the current private check scope.
     pub definition_assertions: usize,
-    /// Finite-map comparisons constructed in the current private scope.
+    /// Finite-map comparison requests in the current private scope.
     pub heap_comparisons: usize,
+    /// Immutable encoding expressions actually built, over the solver lifetime.
+    pub template_builds: usize,
+    /// Successful template lookups, including diagnostic recomputation controls.
+    pub template_hits: usize,
+    /// Integer terms rewritten by current active equalities (before control selection).
+    pub integer_rewrites: usize,
+    /// Guarded rows added by lazy refinement in the current private scope.
+    pub refinement_rounds: usize,
     /// Backend conflicts.
     pub conflicts: u64,
     /// Backend decisions.
@@ -153,6 +198,12 @@ pub struct HeapSolver {
     simplify_definitions: bool,
     retain_anchor_redundancy: bool,
     heap_comparisons: usize,
+    optimizations: HeapOptimizations,
+    templates: templates::Templates,
+    definition_terms: Vec<TermId>,
+    integer_rewrites: usize,
+    lazy_rows: Option<Vec<bool>>,
+    refinement_rounds: usize,
     model: Option<HeapModel>,
     reason: Option<&'static str>,
 }
@@ -193,6 +244,12 @@ impl HeapSolver {
             simplify_definitions: true,
             retain_anchor_redundancy: false,
             heap_comparisons: 0,
+            optimizations: HeapOptimizations::default(),
+            templates: templates::Templates::default(),
+            definition_terms: Vec::new(),
+            integer_rewrites: 0,
+            lazy_rows: None,
+            refinement_rounds: 0,
             model: None,
             reason: None,
         }
@@ -379,11 +436,23 @@ impl HeapSolver {
         Ok(())
     }
 
+    /// Select exact optimizations or their diagnostic controls before push/check.
+    pub fn set_optimizations(&mut self, options: HeapOptimizations) -> Result<(), HeapError> {
+        if self.closed {
+            return Err(HeapError(
+                "configure heap definitions before the first push or check",
+            ));
+        }
+        self.invalidate();
+        self.optimizations = options;
+        Ok(())
+    }
+
     // Extract only literal consequences justified by Boolean syntax. In
     // particular Or(true) and And(false) do not force any particular child.
     // The two-bit visited set bounds work on DAGs with shared subformulas.
-    fn forced_heap_atoms(&self) -> Result<Vec<Option<bool>>, HeapError> {
-        let mut forced = vec![None; self.spatial.len()];
+    fn forced_literals(&self) -> Result<Vec<(usize, bool)>, HeapError> {
+        let mut literals = Vec::new();
         let mut visited = vec![[false; 2]; self.nodes.len()];
         let mut stack: Vec<_> = self.assertions.iter().map(|&i| (i, true)).collect();
         while let Some((index, polarity)) = stack.pop() {
@@ -406,21 +475,10 @@ impl HeapSolver {
                 Node::Or(children) if !polarity => {
                     stack.extend(children.iter().map(|&i| (i, false)));
                 }
-                Node::Heap(i) => {
-                    let slot = forced.get_mut(*i).ok_or(HeapError("invalid heap atom"))?;
-                    if slot.is_some_and(|previous| previous != polarity) {
-                        // Original assertions are contradictory. Leave definitions
-                        // symbolic and let the backend establish the conflict.
-                        return Ok(vec![None; self.spatial.len()]);
-                    }
-                    *slot = Some(polarity);
+                Node::Heap(_) | Node::Eq(_, _) | Node::Le(_, _) => {
+                    literals.push((index, polarity));
                 }
-                Node::And(_)
-                | Node::Or(_)
-                | Node::Boolean(_)
-                | Node::BoolVar(_)
-                | Node::Eq(_, _)
-                | Node::Le(_, _) => {}
+                Node::And(_) | Node::Or(_) | Node::Boolean(_) | Node::BoolVar(_) => {}
                 Node::Integer(_)
                 | Node::IntVar(_)
                 | Node::Add(_, _)
@@ -430,7 +488,21 @@ impl HeapSolver {
                 }
             }
         }
-        Ok(forced)
+        Ok(literals)
+    }
+
+    fn forced_heap_atoms(&self, literals: &[(usize, bool)]) -> Vec<Option<bool>> {
+        let mut forced = vec![None; self.spatial.len()];
+        for &(index, polarity) in literals {
+            if let Node::Heap(i) = self.nodes[index] {
+                if forced[i].is_some_and(|previous| previous != polarity) {
+                    // Let the original contradictory assertions reach the backend.
+                    return vec![None; self.spatial.len()];
+                }
+                forced[i] = Some(polarity);
+            }
+        }
+        forced
     }
 
     fn close_definition_scope(&mut self) {
@@ -439,6 +511,10 @@ impl HeapSolver {
             self.definition_scope_open = false;
             self.definition_assertions = 0;
             self.heap_comparisons = 0;
+            self.definition_terms.clear();
+            self.integer_rewrites = 0;
+            self.lazy_rows = None;
+            self.refinement_rounds = 0;
         }
     }
 
@@ -447,43 +523,6 @@ impl HeapSolver {
             self.backend.assert(term, &mut self.tm);
             self.definition_assertions += 1;
         }
-    }
-
-    fn heap_validity(&mut self, index: usize) -> TermId {
-        let zero = self.tm.mk_int(0);
-        let cells = &self.spatial[index].cells;
-        let mut valid = Vec::new();
-        for (j, &(l, _)) in cells.iter().enumerate() {
-            let nil = self.tm.mk_eq(self.terms[l], zero);
-            valid.push(self.tm.mk_not(nil));
-            for &(r, _) in &cells[..j] {
-                let alias = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                valid.push(self.tm.mk_not(alias));
-            }
-        }
-        self.tm.mk_and(valid)
-    }
-
-    // With both validity conditions, equal cardinality and membership of
-    // every cell is equality of finite maps. This is not equality of lists.
-    fn same_heap(&mut self, i: usize, j: usize) -> TermId {
-        self.heap_comparisons += 1;
-        let cells = &self.spatial[i].cells;
-        let other = &self.spatial[j].cells;
-        if cells.len() != other.len() {
-            return self.tm.false_id;
-        }
-        let mut matches = Vec::new();
-        for &(l, v) in cells {
-            let mut choices = Vec::new();
-            for &(r, w) in other {
-                let address = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                let value = self.tm.mk_eq(self.terms[v], self.terms[w]);
-                choices.push(self.tm.mk_and([address, value]));
-            }
-            matches.push(self.tm.mk_or(choices));
-        }
-        self.tm.mk_and(matches)
     }
 
     fn assert_heap_pair(&mut self, i: usize, j: usize, atoms: &[TermId], validity: &[TermId]) {
@@ -510,10 +549,20 @@ impl HeapSolver {
                 validity.push(anchor_valid);
                 continue;
             }
-            let valid = self.heap_validity(i);
-            validity.push(valid);
-            let same = self.same_heap(i, anchor);
-            let matches = self.tm.mk_and([valid, same]);
+            let same = self.same_heap(anchor, i);
+            let matches = if self.optimizations.anchor_coverage {
+                // Va and equal-sized coverage FROM the distinct anchor cells
+                // force every other cell to participate exactly once. Thus Vi
+                // follows; coverage in the opposite direction would not suffice.
+                if self.retain_anchor_redundancy {
+                    validity.push(self.heap_validity(i));
+                }
+                same
+            } else {
+                let valid = self.heap_validity(i);
+                validity.push(valid);
+                self.tm.mk_and([valid, same])
+            };
             let equivalence = self.tm.mk_eq(atom, matches);
             self.assert_definition(equivalence);
         }
@@ -541,7 +590,8 @@ impl HeapSolver {
         }
         // Also scan units in the diagnostic control, isolating substitution
         // from changes in staging and from the cost of discovering the units.
-        let forced = self.forced_heap_atoms()?;
+        let literals = self.forced_literals()?;
+        let forced = self.forced_heap_atoms(&literals);
         let atoms: Vec<_> = self
             .spatial
             .iter()
@@ -559,10 +609,38 @@ impl HeapSolver {
             // than every registered heaplet supplies the concrete witness.
             return Ok(());
         }
+        // Discover substitutions in both treatment and identity controls. Keep
+        // original assertions intact; only the private definitions are rewritten.
+        let rewritten = self.propagated_terms(&literals)?;
+        self.integer_rewrites = rewritten
+            .iter()
+            .zip(&self.terms)
+            .filter(|(a, b)| a != b)
+            .count();
+        self.definition_terms = if self.optimizations.equality_propagation {
+            rewritten
+        } else {
+            self.terms.clone()
+        };
         // A syntactically entailed positive heap fixes the entire current
         // finite map. Never choose an arbitrary disjunct or a model guess.
         if let Some(anchor) = atoms.iter().position(|&atom| atom == self.tm.true_id) {
             self.define_from_anchor(anchor, &atoms);
+            return Ok(());
+        }
+        if self.optimizations.lazy_boolean {
+            self.lazy_rows = Some(vec![false; self.spatial.len()]);
+            return Ok(());
+        }
+        if self.optimizations.anchor_coverage {
+            // Eager control: install exactly the guarded rows that lazy
+            // refinement can select, with the same directional coverage.
+            self.lazy_rows = Some(vec![false; self.spatial.len()]);
+            for index in 0..self.spatial.len() {
+                self.refine_heap_row(index)?;
+            }
+            self.lazy_rows = None;
+            self.refinement_rounds = 0;
             return Ok(());
         }
         // No forced positive heap: retain the general Boolean-context encoding
@@ -575,6 +653,45 @@ impl HeapSolver {
             for j in 0..i {
                 self.assert_heap_pair(i, j, &atoms, &validity);
             }
+        }
+        Ok(())
+    }
+
+    // A model-chosen heap is never an unconditional anchor. These implications
+    // are valid for every concrete heap, irrespective of the current candidate.
+    fn refine_heap_row(&mut self, source: usize) -> Result<(), HeapError> {
+        let rows = self
+            .lazy_rows
+            .as_mut()
+            .ok_or(HeapError("missing lazy definition scope"))?;
+        let row = rows
+            .get_mut(source)
+            .ok_or(HeapError("invalid refinement heaplet"))?;
+        if *row {
+            return Err(HeapError(
+                "heap candidate violates an already installed definition",
+            ));
+        }
+        *row = true;
+        self.refinement_rounds += 1;
+        let guard = self.spatial[source].atom;
+        let valid = self.heap_validity(source);
+        let implication = self.tm.mk_implies(guard, valid);
+        self.assert_definition(implication);
+        for index in 0..self.spatial.len() {
+            if index == source {
+                continue;
+            }
+            let matches = if self.optimizations.anchor_coverage {
+                self.same_heap(source, index)
+            } else {
+                let valid = self.heap_validity(index);
+                let coverage = self.same_heap(source, index);
+                self.tm.mk_and([valid, coverage])
+            };
+            let equivalence = self.tm.mk_eq(self.spatial[index].atom, matches);
+            let implication = self.tm.mk_implies(guard, equivalence);
+            self.assert_definition(implication);
         }
         Ok(())
     }
@@ -624,24 +741,67 @@ impl HeapSolver {
             self.reason = Some(error.0);
             return SolverResult::Unknown;
         }
-        let result = self.backend.check(&mut self.tm);
-        if result != SolverResult::Sat {
-            if result == SolverResult::Unknown {
-                self.reason = Some("underlying QF_LIA solver returned Unknown");
+        let timeout = self.backend.config().timeout_ms;
+        let started = (timeout != 0).then(nixie_time::Instant::now);
+        loop {
+            // This is only a user resource deadline, never a refinement policy.
+            // Conflict/decision statistics and their limits already accumulate
+            // across backend calls; do not reset them between refinements.
+            if let Some(started) = started {
+                let elapsed = started.elapsed().as_millis();
+                if elapsed >= u128::from(timeout) {
+                    self.reason = Some("heap refinement timeout");
+                    return SolverResult::Unknown;
+                }
+                let remaining = u64::try_from(u128::from(timeout) - elapsed).unwrap_or(timeout);
+                self.backend
+                    .set_timeout(std::time::Duration::from_millis(remaining));
             }
-            return result;
-        }
-        match self.extract_model().and_then(|model| {
-            self.validate_model(&model)?;
-            Ok(model)
-        }) {
-            Ok(model) => {
-                self.model = Some(model);
-                SolverResult::Sat
+            let result = self.backend.check(&mut self.tm);
+            if started.is_some() {
+                self.backend
+                    .set_timeout(std::time::Duration::from_millis(timeout));
             }
-            Err(error) => {
-                self.reason = Some(error.0);
-                SolverResult::Unknown
+            if result != SolverResult::Sat {
+                if result == SolverResult::Unknown {
+                    self.reason = Some("underlying QF_LIA solver returned Unknown");
+                }
+                return result;
+            }
+            let candidate = self.extract_model().and_then(|model| {
+                self.validate_model(&model)?;
+                Ok(model)
+            });
+            match candidate {
+                Ok(model) => {
+                    self.model = Some(model);
+                    return SolverResult::Sat;
+                }
+                Err(error) => {
+                    if self.lazy_rows.is_none() {
+                        self.reason = Some(error.0);
+                        return SolverResult::Unknown;
+                    }
+                    // At most one new guarded row per registered heaplet. Once
+                    // a row is installed, a repeat failure is an honest Unknown,
+                    // not an invented conflict or an unbounded retry loop.
+                    match self.selected_heap() {
+                        Ok(Some(index)) => {
+                            if let Err(refinement) = self.refine_heap_row(index) {
+                                self.reason = Some(refinement.0);
+                                return SolverResult::Unknown;
+                            }
+                        }
+                        Ok(None) => {
+                            self.reason = Some(error.0);
+                            return SolverResult::Unknown;
+                        }
+                        Err(error) => {
+                            self.reason = Some(error.0);
+                            return SolverResult::Unknown;
+                        }
+                    }
+                }
             }
         }
     }
@@ -672,6 +832,10 @@ impl HeapSolver {
             backend_terms: self.tm.len(),
             definition_assertions: self.definition_assertions,
             heap_comparisons: self.heap_comparisons,
+            template_builds: self.templates.builds,
+            template_hits: self.templates.hits,
+            integer_rewrites: self.integer_rewrites,
+            refinement_rounds: self.refinement_rounds,
             conflicts: backend.conflicts,
             decisions: backend.decisions,
             propagations: backend.propagations,

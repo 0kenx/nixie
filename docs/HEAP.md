@@ -109,18 +109,48 @@ validity/map comparison is still required when another atom may be true.
 control that retains symbolic atoms while using the same deferred staging.
 
 If an original assertion entails a positive heaplet `Ha`, the reduction uses
-it as an anchor: assert `Va` and, for each other heaplet, `pi <=> (Vi and Eia)`.
-These equations determine every atom on the same concrete map; equality of maps
-entails all remaining pair constraints. Empty anchors, invalid other heaplets,
-and Boolean contexts for unforced atoms follow the same rule. A disjunct or
-model guess never supplies an anchor. Anchors belong to the private definition
-scope and are discarded with it. `set_anchor_redundancy(true)` is a diagnostic
-control retaining the implied comparisons between the other heaplets. Disabling
-definition specialization also disables anchors.
+it as an anchor: assert `Va` and, for each other heaplet, `pi <=> Eai`.
+Coverage runs **from the valid anchor to the destination**. Its distinct source
+locations require distinct matches; equal lengths exhaust the destination list,
+so `Vi` follows. Reversing this direction would be unsound for duplicate targets.
+The equations determine every atom on the same concrete map and entail the
+remaining pair constraints. Empty anchors and invalid other heaplets follow the
+same rule. A disjunct or model guess never supplies an unconditional anchor.
+`set_anchor_redundancy(true)` retains implied nonanchor comparisons for diagnosis.
+Disabling definition specialization also disables unconditional anchors.
 
-With an anchor, construction costs O(n k²). Without one, the encoding costs O(n² k²) in the worst case for n heaplets of at most k cells.
-This first implementation targets small allocation/aliasing obligations; it
-makes no performance claim for large heaps. There is no new search heuristic.
+Before encoding, active entailed integer equalities and opposing exact literal
+bounds can substitute operands in heap definitions. Nonexact intervals and
+arbitrary disjuncts supply no substitutions. Equality classes, exact BigInt
+constants and iterative arithmetic rebuilding preserve the original assertions;
+contradictory discoveries fall back to original operands for backend reasoning.
+This is a bounded preprocessing pass, not a new arithmetic decision procedure.
+
+Immutable validity and directional-coverage expressions are cached by their
+complete ordered current operand TermIds, including stored values. TermManager
+IDs survive backend scopes. Only expression syntax survives a pop: private
+assertions, rewritten operand maps and refinement rows are discarded and rebuilt
+under the current original assertions. No cached truth or equality assumption
+can leak from a popped scope.
+
+Without an entailed positive anchor, the solver first checks an abstract Boolean
+candidate against the original input. A failed candidate with selected `pi`
+installs the guarded row `pi => Vi` and `pi => (pj <=> Eij)` for all other j.
+These constraints hold for every concrete heap; the model guess is never asserted
+unconditionally. Each iteration adds a previously absent row or returns Unknown.
+At most n rows are added. Independent validation still precedes every Sat.
+
+`HeapOptimizations` and `set_optimizations` expose the four options before the
+first push/check; all are enabled by default. Diagnostic controls retain redundant
+validity, use identity substitutions after the same discovery pass, recompute
+cached expressions, or install the same guarded row family eagerly. `NONE` is
+a diagnostic eager encoding, not a byte-identical historical implementation.
+
+With an anchor, construction costs O(n k²). Lazy Boolean construction costs
+O(r n k²) for r installed rows, at worst O(n² k²), excluding backend solving.
+Templates avoid rebuilding identical expressions but still require key creation,
+lookup and scope assertions. This API targets small allocation/aliasing
+obligations; none of these optimizations extends its logical fragment.
 
 ## Models, scope state, and proofs
 
@@ -151,7 +181,8 @@ new solver to change the registered spatial vocabulary.
 
 `Sat` is released only after the concrete model passes the independent checker.
 Backend resource limits, incomplete backend model extraction, or failed original
-formula validation yield `Unknown`, with `reason_unknown()` explaining the
+formula validation (including no progress after an installed lazy row) yield
+`Unknown`, with `reason_unknown()` explaining the
 boundary. Integer constants and checker arithmetic never truncate; backend
 arithmetic limitations remain honest `Unknown` boundaries.
 
@@ -243,3 +274,7 @@ The new many-view cases use 53.3% fewer instructions than a control retaining
 redundant pairs on shared completed runs; the original suite remains neutral.
 It reports all seed distributions, resource-capped Unknowns and missing counter
 captures separately. This optimization does not broaden the supported fragment.
+
+The [four-optimization study](studies/2026-09-22-heap-four-optimizations.md)
+records directional coverage, entailed integer rewrites, immutable templates and
+guarded Boolean refinement, with matched controls and incremental snapshots.
