@@ -355,8 +355,6 @@ fn exhausting_all_candidate_starts_forces_absence_without_a_mandatory_part() {
 // domains, shared starts, both presence signs, and an unrelated variable.
 #[test]
 fn cumulative_borrowed_trials_match_physical_domain_substitution() {
-    let tm = TermManager::new();
-    let cp = CpModel::new(&tm);
     let wide = BigInt::from(1) << 140;
     let values = [BigInt::from(2), BigInt::from(0), wide];
     for shared_start in [false, true] {
@@ -388,6 +386,7 @@ fn cumulative_borrowed_trials_match_physical_domain_substitution() {
                         vec![2.into(), 0.into()],
                         vec![7.into()],
                     ];
+                    let context = feasibility::Feasibility::new(&domains);
                     for state in 0..9 {
                         let choices = [None, Some(false), Some(true)];
                         let presences = [choices[state % 3], choices[state / 3]];
@@ -396,15 +395,17 @@ fn cumulative_borrowed_trials_match_physical_domain_substitution() {
                                 let mut substituted = domains.clone();
                                 substituted[var] = vec![value.clone()];
                                 assert_eq!(
-                                    cp.feasible_at(
-                                        &constraint,
-                                        &domains,
-                                        &presences,
-                                        CpVar(var),
-                                        value
-                                    ),
-                                    cp.feasible(&constraint, &substituted, &presences),
+                                    context.feasible_at(&constraint, &presences, CpVar(var), value),
+                                    feasibility::Feasibility::new(&substituted)
+                                        .feasible(&constraint, &presences),
                                     "shared={shared_start}, parameters={parameters}, capacity={capacity}, mask={mask}, state={state}, var={var}"
+                                );
+                                // A trial must not poison the immutable snapshot's
+                                // cached bounds, even after an empty-domain trial.
+                                assert_eq!(
+                                    context.feasible(&constraint, &presences),
+                                    feasibility::Feasibility::new(&domains)
+                                        .feasible(&constraint, &presences),
                                 );
                             }
                         }
