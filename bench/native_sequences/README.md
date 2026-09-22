@@ -70,3 +70,8 @@ separate result directories and retain invalidated diagnostic runs.
 
 See the [integer evaluation study](../../docs/studies/2026-09-22-native-sequences-integer-evaluation.md)
 for the measured fast path, overflow-contract tests, and binary-isolation correction.
+
+Further row-scan and list-copy experiments were **neutral at the
+preregistered history-family threshold** and were not enabled. See the
+[retained patches, distributions and verdict](../../docs/studies/2026-09-22-native-sequences-row-selection.md)
+before retrying those changes.

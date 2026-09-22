@@ -1,0 +1,46 @@
+--- a/nixie-theories/src/arithmetic/simplex/mod.rs
++++ b/nixie-theories/src/arithmetic/simplex/mod.rs
+@@ -937,6 +937,15 @@
+ }
+
+ impl TableRow {
++    /// Stored term count in either representation, without copying variables
++    /// or materializing coefficients.
++    fn term_count(&self) -> usize {
++        match self {
++            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.len(),
++            TableRow::Int(row) => row.terms.len(),
++        }
++    }
++
+     /// The row's canonical form (materializing `Int` on the fly, no
+     /// memoization — for callers that already hold `&self`).
+     fn lin_owned(&self) -> LinExpr {
+@@ -5860,14 +5869,19 @@
+         // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
+         let pinned_dir2 = !self.wide_rows.is_empty()
+             && std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0");
+-        let narrow_keys: Vec<VarId> = self
+-            .tableau
+-            .iter()
+-            .filter(|(v, e)| {
+-                e.term_vars().len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
+-            })
+-            .map(|(v, _)| *v)
+-            .collect();
++        // With neither gate active, no row is eligible. Avoid scanning the
++        // tableau in this common case; active gates retain the same row order.
++        let narrow_keys: Vec<VarId> = if ndir2_all || pinned_dir2 {
++            self.tableau
++                .iter()
++                .filter(|(v, e)| {
++                    e.term_count() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
++                })
++                .map(|(v, _)| *v)
++                .collect()
++        } else {
++            Vec::new()
++        };
+         let narrow_rows: Vec<(VarId, LinExpr)> = narrow_keys
+             .into_iter()
+             .filter_map(|v| self.row_lin(v).map(|arc| (v, arc.as_ref().clone())))

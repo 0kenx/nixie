@@ -1,0 +1,1097 @@
+[
+  {
+    "experiment": 1,
+    "identity": {
+      "binary_sha256": "f9e236771503f2a215698a5c73f68e41608f05254d1732e566f99e5fd37315a9",
+      "host": "workstation",
+      "baseline_manifest_sha256": "412ee194b95263cd6c083c6e50ee36fe100f923d2545168132f786c2ca5adb53",
+      "event": "cpu_core/instructions/u",
+      "cpu": 6,
+      "cap_s": 6
+    },
+    "cases": [
+      {
+        "case": "append-128",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0036810510602237,
+        "baseline_min": 3009593,
+        "baseline_median": 3047627.5,
+        "baseline_max": 3049350,
+        "candidate_min": 3046479,
+        "candidate_median": 3047795.5,
+        "candidate_max": 3050469
+      },
+      {
+        "case": "append-32",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0055121649884278,
+        "baseline_min": 2744826,
+        "baseline_median": 2781143.0,
+        "baseline_max": 2785784,
+        "candidate_min": 2781791,
+        "candidate_median": 2783843.0,
+        "candidate_max": 2785836
+      },
+      {
+        "case": "append-512",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0031716247919895,
+        "baseline_min": 4123136,
+        "baseline_median": 4162748.5,
+        "baseline_max": 4164051,
+        "candidate_min": 4156584,
+        "candidate_median": 4162003.5,
+        "candidate_max": 4165377
+      },
+      {
+        "case": "append-8",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0026362169204974,
+        "baseline_min": 2669281,
+        "baseline_median": 2707306.0,
+        "baseline_max": 2709630,
+        "candidate_min": 2705458,
+        "candidate_median": 2707195.5,
+        "candidate_max": 2708546
+      },
+      {
+        "case": "concat-disequality",
+        "family": "boundary",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.998597955684252,
+        "baseline_min": 3164302,
+        "baseline_median": 3168486.0,
+        "baseline_max": 3174674,
+        "candidate_min": 3161569,
+        "candidate_median": 3162937.5,
+        "candidate_max": 3170020
+      },
+      {
+        "case": "empty",
+        "family": "boundary",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9985232486234092,
+        "baseline_min": 2497129,
+        "baseline_median": 2498925.5,
+        "baseline_max": 2539952,
+        "candidate_min": 2496986,
+        "candidate_median": 2498943.0,
+        "candidate_max": 2538055
+      },
+      {
+        "case": "history-128",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9816402913707742,
+        "baseline_min": 85626027,
+        "baseline_median": 85630815.0,
+        "baseline_max": 85643601,
+        "candidate_min": 84053054,
+        "candidate_median": 84057018.5,
+        "candidate_max": 84078633
+      },
+      {
+        "case": "history-32",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9950042480640886,
+        "baseline_min": 13138432,
+        "baseline_median": 13143477.5,
+        "baseline_max": 13150145,
+        "candidate_min": 13075540,
+        "candidate_median": 13077599.0,
+        "candidate_max": 13081912
+      },
+      {
+        "case": "history-512",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9505372831057576,
+        "baseline_min": 8099984073,
+        "baseline_median": 8100094588.0,
+        "baseline_max": 8100308676,
+        "candidate_min": 7699355455,
+        "candidate_median": 7699417030.5,
+        "candidate_max": 7699660728
+      },
+      {
+        "case": "history-8",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9968803221656786,
+        "baseline_min": 5183860,
+        "baseline_median": 5190347.0,
+        "baseline_max": 5192557,
+        "candidate_min": 5170906,
+        "candidate_median": 5173487.0,
+        "candidate_max": 5177533
+      },
+      {
+        "case": "nested-congruence",
+        "family": "nested",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9927495205077786,
+        "baseline_min": 2756408,
+        "baseline_median": 2779375.0,
+        "baseline_max": 2798985,
+        "candidate_min": 2756803,
+        "candidate_median": 2757908.5,
+        "candidate_max": 2759924
+      },
+      {
+        "case": "split-128",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0062789919420045,
+        "baseline_min": 3077087,
+        "baseline_median": 3094676.0,
+        "baseline_max": 3120007,
+        "candidate_min": 3110836,
+        "candidate_median": 3116288.0,
+        "candidate_max": 3119736
+      },
+      {
+        "case": "split-32",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0098502618097633,
+        "baseline_min": 2690101,
+        "baseline_median": 2691502.5,
+        "baseline_max": 2731568,
+        "candidate_min": 2727567,
+        "candidate_median": 2729474.5,
+        "candidate_max": 2732414
+      },
+      {
+        "case": "split-512",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9997442891565783,
+        "baseline_min": 4665130,
+        "baseline_median": 4665871.0,
+        "baseline_max": 4667478,
+        "candidate_min": 4661613,
+        "candidate_median": 4664962.5,
+        "candidate_max": 4667341
+      },
+      {
+        "case": "split-8",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9969142747573638,
+        "baseline_min": 2623603,
+        "baseline_median": 2625149.0,
+        "baseline_max": 2626088,
+        "candidate_min": 2584550,
+        "candidate_median": 2624392.0,
+        "candidate_max": 2627624
+      },
+      {
+        "case": "symbolic-append",
+        "family": "unsupported",
+        "expected": "unsat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-read",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-word-equation",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "tail-128",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0022869589486008,
+        "baseline_min": 3014377,
+        "baseline_median": 3052872.0,
+        "baseline_max": 3054253,
+        "candidate_min": 3051043,
+        "candidate_median": 3052329.5,
+        "candidate_max": 3053844
+      },
+      {
+        "case": "tail-32",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0024472200773433,
+        "baseline_min": 2740941,
+        "baseline_median": 2781276.5,
+        "baseline_max": 2782952,
+        "candidate_min": 2742003,
+        "candidate_median": 2780838.0,
+        "candidate_max": 2783241
+      },
+      {
+        "case": "tail-512",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9999463324037272,
+        "baseline_min": 4178101,
+        "baseline_median": 4179057.0,
+        "baseline_max": 4181779,
+        "candidate_min": 4176555,
+        "candidate_median": 4179309.5,
+        "candidate_max": 4180690
+      },
+      {
+        "case": "tail-8",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0031755482594105,
+        "baseline_min": 2667438,
+        "baseline_median": 2705153.5,
+        "baseline_max": 2706412,
+        "candidate_min": 2704270,
+        "candidate_median": 2706390.0,
+        "candidate_max": 2708251
+      }
+    ]
+  },
+  {
+    "experiment": 2,
+    "identity": {
+      "binary_sha256": "29b40c13c6b36fca7e65e3f1bcdedcac5d2e6fa05f1f3f2abe8c6cb1af4fd5d2",
+      "host": "workstation",
+      "baseline_manifest_sha256": "412ee194b95263cd6c083c6e50ee36fe100f923d2545168132f786c2ca5adb53",
+      "event": "cpu_core/instructions/u",
+      "cpu": 6,
+      "cap_s": 6
+    },
+    "cases": [
+      {
+        "case": "append-128",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9973328144403955,
+        "baseline_min": 3009593,
+        "baseline_median": 3047627.5,
+        "baseline_max": 3049350,
+        "candidate_min": 3008051,
+        "candidate_median": 3028542.5,
+        "candidate_max": 3049972
+      },
+      {
+        "case": "append-32",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.003731738292241,
+        "baseline_min": 2744826,
+        "baseline_median": 2781143.0,
+        "baseline_max": 2785784,
+        "candidate_min": 2777435,
+        "candidate_median": 2778280.5,
+        "candidate_max": 2783021
+      },
+      {
+        "case": "append-512",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0022684599759368,
+        "baseline_min": 4123136,
+        "baseline_median": 4162748.5,
+        "baseline_max": 4164051,
+        "candidate_min": 4156171,
+        "candidate_median": 4157160.5,
+        "candidate_max": 4159614
+      },
+      {
+        "case": "append-8",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9979962383244475,
+        "baseline_min": 2669281,
+        "baseline_median": 2707306.0,
+        "baseline_max": 2709630,
+        "candidate_min": 2665734,
+        "candidate_median": 2705682.0,
+        "candidate_max": 2708340
+      },
+      {
+        "case": "concat-disequality",
+        "family": "boundary",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9984433912556915,
+        "baseline_min": 3164302,
+        "baseline_median": 3168486.0,
+        "baseline_max": 3174674,
+        "candidate_min": 3161929,
+        "candidate_median": 3164074.0,
+        "candidate_max": 3165260
+      },
+      {
+        "case": "empty",
+        "family": "boundary",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9954987713107731,
+        "baseline_min": 2497129,
+        "baseline_median": 2498925.5,
+        "baseline_max": 2539952,
+        "candidate_min": 2497061,
+        "candidate_median": 2498503.5,
+        "candidate_max": 2500164
+      },
+      {
+        "case": "history-128",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9811875152759678,
+        "baseline_min": 85626027,
+        "baseline_median": 85630815.0,
+        "baseline_max": 85643601,
+        "candidate_min": 84016414,
+        "candidate_median": 84018940.5,
+        "candidate_max": 84038036
+      },
+      {
+        "case": "history-32",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9937764494273641,
+        "baseline_min": 13138432,
+        "baseline_median": 13143477.5,
+        "baseline_max": 13150145,
+        "candidate_min": 13057942,
+        "candidate_median": 13061925.0,
+        "candidate_max": 13065467
+      },
+      {
+        "case": "history-512",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.950889571020652,
+        "baseline_min": 8099984073,
+        "baseline_median": 8100094588.0,
+        "baseline_max": 8100308676,
+        "candidate_min": 7702138236,
+        "candidate_median": 7702201408.5,
+        "candidate_max": 7703062308
+      },
+      {
+        "case": "history-8",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9955359470420239,
+        "baseline_min": 5183860,
+        "baseline_median": 5190347.0,
+        "baseline_max": 5192557,
+        "candidate_min": 5164378,
+        "candidate_median": 5165967.0,
+        "candidate_max": 5172565
+      },
+      {
+        "case": "nested-congruence",
+        "family": "nested",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9944303736411106,
+        "baseline_min": 2756408,
+        "baseline_median": 2779375.0,
+        "baseline_max": 2798985,
+        "candidate_min": 2757019,
+        "candidate_median": 2759186.5,
+        "candidate_max": 2798583
+      },
+      {
+        "case": "split-128",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0043924084086462,
+        "baseline_min": 3077087,
+        "baseline_median": 3094676.0,
+        "baseline_max": 3120007,
+        "candidate_min": 3077587,
+        "candidate_median": 3112798.5,
+        "candidate_max": 3117819
+      },
+      {
+        "case": "split-32",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9954227543605195,
+        "baseline_min": 2690101,
+        "baseline_median": 2691502.5,
+        "baseline_max": 2731568,
+        "candidate_min": 2688951,
+        "candidate_median": 2690264.5,
+        "candidate_max": 2693087
+      },
+      {
+        "case": "split-512",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9986858960031577,
+        "baseline_min": 4665130,
+        "baseline_median": 4665871.0,
+        "baseline_max": 4667478,
+        "candidate_min": 4658520,
+        "candidate_median": 4659718.0,
+        "candidate_max": 4661931
+      },
+      {
+        "case": "split-8",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9846593929174093,
+        "baseline_min": 2623603,
+        "baseline_median": 2625149.0,
+        "baseline_max": 2626088,
+        "candidate_min": 2583503,
+        "candidate_median": 2584794.5,
+        "candidate_max": 2587217
+      },
+      {
+        "case": "symbolic-append",
+        "family": "unsupported",
+        "expected": "unsat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-read",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-word-equation",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "tail-128",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9972781193531693,
+        "baseline_min": 3014377,
+        "baseline_median": 3052872.0,
+        "baseline_max": 3054253,
+        "candidate_min": 3011531,
+        "candidate_median": 3052397.0,
+        "candidate_max": 3053273
+      },
+      {
+        "case": "tail-32",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9911153444000753,
+        "baseline_min": 2740941,
+        "baseline_median": 2781276.5,
+        "baseline_max": 2782952,
+        "candidate_min": 2740284,
+        "candidate_median": 2741792.0,
+        "candidate_max": 2781525
+      },
+      {
+        "case": "tail-512",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9903527660356926,
+        "baseline_min": 4178101,
+        "baseline_median": 4179057.0,
+        "baseline_max": 4181779,
+        "candidate_min": 4137621,
+        "candidate_median": 4139400.5,
+        "candidate_max": 4140521
+      },
+      {
+        "case": "tail-8",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.988166843436597,
+        "baseline_min": 2667438,
+        "baseline_median": 2705153.5,
+        "baseline_max": 2706412,
+        "candidate_min": 2664894,
+        "candidate_median": 2665873.5,
+        "candidate_max": 2667460
+      }
+    ]
+  },
+  {
+    "experiment": 3,
+    "identity": {
+      "binary_sha256": "eae12c4393e5480b6db06b141e404dc7562604b6e282159adb10e77e6b5b3d58",
+      "host": "workstation",
+      "baseline_manifest_sha256": "412ee194b95263cd6c083c6e50ee36fe100f923d2545168132f786c2ca5adb53",
+      "event": "cpu_core/instructions/u",
+      "cpu": 6,
+      "cap_s": 6
+    },
+    "cases": [
+      {
+        "case": "append-128",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0038939959314988,
+        "baseline_min": 3009593,
+        "baseline_median": 3047627.5,
+        "baseline_max": 3049350,
+        "candidate_min": 3046980,
+        "candidate_median": 3048614.0,
+        "candidate_max": 3051015
+      },
+      {
+        "case": "append-32",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.004531071295253,
+        "baseline_min": 2744826,
+        "baseline_median": 2781143.0,
+        "baseline_max": 2785784,
+        "candidate_min": 2776824,
+        "candidate_median": 2781277.5,
+        "candidate_max": 2785887
+      },
+      {
+        "case": "append-512",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0032143078659521,
+        "baseline_min": 4123136,
+        "baseline_median": 4162748.5,
+        "baseline_max": 4164051,
+        "candidate_min": 4156833,
+        "candidate_median": 4161865.0,
+        "candidate_max": 4163207
+      },
+      {
+        "case": "append-8",
+        "family": "append",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9995633450112741,
+        "baseline_min": 2669281,
+        "baseline_median": 2707306.0,
+        "baseline_max": 2709630,
+        "candidate_min": 2667276,
+        "candidate_median": 2706221.5,
+        "candidate_max": 2708440
+      },
+      {
+        "case": "concat-disequality",
+        "family": "boundary",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.000076794402415,
+        "baseline_min": 3164302,
+        "baseline_median": 3168486.0,
+        "baseline_max": 3174674,
+        "candidate_min": 3167120,
+        "candidate_median": 3168973.5,
+        "candidate_max": 3171026
+      },
+      {
+        "case": "empty",
+        "family": "boundary",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0112072597302149,
+        "baseline_min": 2497129,
+        "baseline_median": 2498925.5,
+        "baseline_max": 2539952,
+        "candidate_min": 2536653,
+        "candidate_median": 2538193.0,
+        "candidate_max": 2539285
+      },
+      {
+        "case": "history-128",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9714674080550133,
+        "baseline_min": 85626027,
+        "baseline_median": 85630815.0,
+        "baseline_max": 85643601,
+        "candidate_min": 83181905,
+        "candidate_median": 83188606.5,
+        "candidate_max": 83203490
+      },
+      {
+        "case": "history-32",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.993954700744194,
+        "baseline_min": 13138432,
+        "baseline_median": 13143477.5,
+        "baseline_max": 13150145,
+        "candidate_min": 13057576,
+        "candidate_median": 13063694.5,
+        "candidate_max": 13068715
+      },
+      {
+        "case": "history-512",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9156176372112769,
+        "baseline_min": 8099984073,
+        "baseline_median": 8100094588.0,
+        "baseline_max": 8100308676,
+        "candidate_min": 7416505975,
+        "candidate_median": 7416577680.0,
+        "candidate_max": 7416759387
+      },
+      {
+        "case": "history-8",
+        "family": "history",
+        "expected": "sat",
+        "verdicts": {
+          "sat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9955168514656128,
+        "baseline_min": 5183860,
+        "baseline_median": 5190347.0,
+        "baseline_max": 5192557,
+        "candidate_min": 5161380,
+        "candidate_median": 5165363.5,
+        "candidate_max": 5172302
+      },
+      {
+        "case": "nested-congruence",
+        "family": "nested",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0070219034288244,
+        "baseline_min": 2756408,
+        "baseline_median": 2779375.0,
+        "baseline_max": 2798985,
+        "candidate_min": 2796512,
+        "candidate_median": 2797942.0,
+        "candidate_max": 2799177
+      },
+      {
+        "case": "split-128",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0040858106259338,
+        "baseline_min": 3077087,
+        "baseline_median": 3094676.0,
+        "baseline_max": 3120007,
+        "candidate_min": 3079158,
+        "candidate_median": 3116496.0,
+        "candidate_max": 3118770
+      },
+      {
+        "case": "split-32",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.009895110599658,
+        "baseline_min": 2690101,
+        "baseline_median": 2691502.5,
+        "baseline_max": 2731568,
+        "candidate_min": 2727725,
+        "candidate_median": 2729069.0,
+        "candidate_max": 2734194
+      },
+      {
+        "case": "split-512",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9998738002186307,
+        "baseline_min": 4665130,
+        "baseline_median": 4665871.0,
+        "baseline_max": 4667478,
+        "candidate_min": 4664246,
+        "candidate_median": 4665065.0,
+        "candidate_max": 4669227
+      },
+      {
+        "case": "split-8",
+        "family": "split",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9984325100879907,
+        "baseline_min": 2623603,
+        "baseline_median": 2625149.0,
+        "baseline_max": 2626088,
+        "candidate_min": 2586355,
+        "candidate_median": 2624775.5,
+        "candidate_max": 2626828
+      },
+      {
+        "case": "symbolic-append",
+        "family": "unsupported",
+        "expected": "unsat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-read",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "symbolic-word-equation",
+        "family": "unsupported",
+        "expected": "sat",
+        "verdicts": {
+          "unknown": 10
+        },
+        "pairs": 0,
+        "ratio": null,
+        "baseline_min": null,
+        "baseline_median": null,
+        "baseline_max": null,
+        "candidate_min": null,
+        "candidate_median": null,
+        "candidate_max": null
+      },
+      {
+        "case": "tail-128",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.002374263282473,
+        "baseline_min": 3014377,
+        "baseline_median": 3052872.0,
+        "baseline_max": 3054253,
+        "candidate_min": 3051460,
+        "candidate_median": 3052544.0,
+        "candidate_max": 3054450
+      },
+      {
+        "case": "tail-32",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0039782732451126,
+        "baseline_min": 2740941,
+        "baseline_median": 2781276.5,
+        "baseline_max": 2782952,
+        "candidate_min": 2779682,
+        "candidate_median": 2781101.5,
+        "candidate_max": 2782977
+      },
+      {
+        "case": "tail-512",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 0.9999679411531651,
+        "baseline_min": 4178101,
+        "baseline_median": 4179057.0,
+        "baseline_max": 4181779,
+        "candidate_min": 4177545,
+        "candidate_median": 4179584.0,
+        "candidate_max": 4180692
+      },
+      {
+        "case": "tail-8",
+        "family": "tail",
+        "expected": "unsat",
+        "verdicts": {
+          "unsat": 10
+        },
+        "pairs": 10,
+        "ratio": 1.0016648385821527,
+        "baseline_min": 2667438,
+        "baseline_median": 2705153.5,
+        "baseline_max": 2706412,
+        "candidate_min": 2667873,
+        "candidate_median": 2705946.0,
+        "candidate_max": 2707855
+      }
+    ]
+  }
+]

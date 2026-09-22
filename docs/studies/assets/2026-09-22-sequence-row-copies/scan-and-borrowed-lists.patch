@@ -1,0 +1,102 @@
+diff --git a/nixie-theories/src/arithmetic/simplex/mod.rs b/nixie-theories/src/arithmetic/simplex/mod.rs
+index 123ba48c..7a7d94f5 100644
+--- a/nixie-theories/src/arithmetic/simplex/mod.rs
++++ b/nixie-theories/src/arithmetic/simplex/mod.rs
+@@ -937,6 +937,15 @@ enum TableRow {
+ }
+
+ impl TableRow {
++    /// Stored term count in either representation, without copying variables
++    /// or materializing coefficients.
++    fn term_count(&self) -> usize {
++        match self {
++            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.len(),
++            TableRow::Int(row) => row.terms.len(),
++        }
++    }
++
+     /// The row's canonical form (materializing `Int` on the fly, no
+     /// memoization — for callers that already hold `&self`).
+     fn lin_owned(&self) -> LinExpr {
+@@ -1823,14 +1832,12 @@ impl Simplex {
+             self.assignment_current = false;
+             return;
+         };
+-        // Deep-copy the column list: updating assignments mutates nothing in
+-        // `columns`, but the borrow checker needs the split.
+-        let dependents: SmallVec<[VarId; 4]> = self
+-            .columns
+-            .get(&var)
+-            .map(|c| (**c).clone())
+-            .unwrap_or_default();
+-        for b in dependents {
++        // Updates below materialize rows and change assignments, never the
++        // column list. Borrow its shared storage instead of copying the IDs.
++        let Some(dependents) = self.columns.get(&var).cloned() else {
++            return;
++        };
++        for &b in dependents.iter() {
+             let bi = b as usize;
+             if bi >= self.assignment.len() {
+                 continue;
+@@ -5860,14 +5867,19 @@ impl Simplex {
+         // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
+         let pinned_dir2 = !self.wide_rows.is_empty()
+             && std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0");
+-        let narrow_keys: Vec<VarId> = self
+-            .tableau
+-            .iter()
+-            .filter(|(v, e)| {
+-                e.term_vars().len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
+-            })
+-            .map(|(v, _)| *v)
+-            .collect();
++        // With neither gate active, no row is eligible. Avoid scanning the
++        // tableau in this common case; active gates retain the same row order.
++        let narrow_keys: Vec<VarId> = if ndir2_all || pinned_dir2 {
++            self.tableau
++                .iter()
++                .filter(|(v, e)| {
++                    e.term_count() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
++                })
++                .map(|(v, _)| *v)
++                .collect()
++        } else {
++            Vec::new()
++        };
+         let narrow_rows: Vec<(VarId, LinExpr)> = narrow_keys
+             .into_iter()
+             .filter_map(|v| self.row_lin(v).map(|arc| (v, arc.as_ref().clone())))
+@@ -6010,9 +6022,11 @@ impl Simplex {
+             }
+             self.derive_stamp.insert((*basic_var, 2), stamp);
+         }
+-        let props = self.propagated.clone();
+         let mut applied = 0usize;
+-        for prop in &props {
++        // The bound setters do not mutate this list. Keep the pending bounds
++        // available to callers, cloning only values actually passed to setters.
++        for prop_idx in 0..self.propagated.len() {
++            let prop = &self.propagated[prop_idx];
+             let idx = prop.var as usize;
+             if idx >= self.lower.len() {
+                 continue;
+diff --git a/nixie-theories/src/arithmetic/simplex/tests.rs b/nixie-theories/src/arithmetic/simplex/tests.rs
+index 5c9856ec..c1e27bef 100644
+--- a/nixie-theories/src/arithmetic/simplex/tests.rs
++++ b/nixie-theories/src/arithmetic/simplex/tests.rs
+@@ -825,6 +825,14 @@ mod tests_2 {
+         simplex.set_lower(y, Rational64::from_integer(4), 2);
+
+         simplex.propagate_bounds();
++        // Applying the bounds must retain the pending result for callers,
++        // including auxiliary antecedents after the setter deduplicates its
++        // own reason list.
++        assert!(simplex.get_propagated().iter().any(|bound| {
++            [1, 5, 2]
++                .iter()
++                .all(|reason| bound.reasons.contains(reason))
++        }));
+
+         let conflict = simplex
+             .check()

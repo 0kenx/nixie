@@ -1,0 +1,128 @@
+diff --git a/nixie-theories/src/arithmetic/simplex/mod.rs b/nixie-theories/src/arithmetic/simplex/mod.rs
+index 123ba48c..520f5583 100644
+--- a/nixie-theories/src/arithmetic/simplex/mod.rs
++++ b/nixie-theories/src/arithmetic/simplex/mod.rs
+@@ -937,6 +937,15 @@ enum TableRow {
+ }
+
+ impl TableRow {
++    /// Stored term count in either representation, without copying variables
++    /// or materializing coefficients.
++    fn term_count(&self) -> usize {
++        match self {
++            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.len(),
++            TableRow::Int(row) => row.terms.len(),
++        }
++    }
++
+     /// The row's canonical form (materializing `Int` on the fly, no
+     /// memoization — for callers that already hold `&self`).
+     fn lin_owned(&self) -> LinExpr {
+@@ -2452,10 +2461,9 @@ impl Simplex {
+             return;
+         };
+         self.ensure_var(idx);
+-        match &self.lower[idx] {
++        match self.lower[idx].take() {
+             None => self.trail.push(BoundUndo::LowerWasNone(var)),
+             Some(old) => {
+-                let old = old.clone();
+                 self.trail.push(BoundUndo::LowerWasSome(var, old));
+             }
+         }
+@@ -2501,10 +2509,9 @@ impl Simplex {
+             return;
+         };
+         self.ensure_var(idx);
+-        match &self.upper[idx] {
++        match self.upper[idx].take() {
+             None => self.trail.push(BoundUndo::UpperWasNone(var)),
+             Some(old) => {
+-                let old = old.clone();
+                 self.trail.push(BoundUndo::UpperWasSome(var, old));
+             }
+         }
+@@ -5860,14 +5867,19 @@ impl Simplex {
+         // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
+         let pinned_dir2 = !self.wide_rows.is_empty()
+             && std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0");
+-        let narrow_keys: Vec<VarId> = self
+-            .tableau
+-            .iter()
+-            .filter(|(v, e)| {
+-                e.term_vars().len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
+-            })
+-            .map(|(v, _)| *v)
+-            .collect();
++        // With neither gate active, no row is eligible. Avoid scanning the
++        // tableau in this common case; active gates retain the same row order.
++        let narrow_keys: Vec<VarId> = if ndir2_all || pinned_dir2 {
++            self.tableau
++                .iter()
++                .filter(|(v, e)| {
++                    e.term_count() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
++                })
++                .map(|(v, _)| *v)
++                .collect()
++        } else {
++            Vec::new()
++        };
+         let narrow_rows: Vec<(VarId, LinExpr)> = narrow_keys
+             .into_iter()
+             .filter_map(|v| self.row_lin(v).map(|arc| (v, arc.as_ref().clone())))
+diff --git a/nixie-theories/src/arithmetic/simplex/tests.rs b/nixie-theories/src/arithmetic/simplex/tests.rs
+index 5c9856ec..3dcdfed6 100644
+--- a/nixie-theories/src/arithmetic/simplex/tests.rs
++++ b/nixie-theories/src/arithmetic/simplex/tests.rs
+@@ -7,6 +7,51 @@ use num_rational::Rational64;
+
+ use super::*;
+
++#[test]
++fn bound_trail_restores_exact_values_and_all_reasons_across_nested_scopes() {
++    use num_bigint::BigInt;
++    use num_rational::BigRational;
++
++    for wide in [false, true] {
++        let mut s = Simplex::new();
++        let x = s.new_var();
++        let idx = x as usize;
++        let base = if wide {
++            BigInt::from(1) << 100
++        } else {
++            BigInt::from(0)
++        };
++        let value = |offset: i64, delta: i64| BigDeltaRational {
++            real: BigRational::from_integer(&base + offset),
++            delta: BigRational::new(BigInt::from(delta), BigInt::from(3)),
++        };
++        s.push();
++        s.set_lower_exact(x, value(0, 0), (1..=7).collect());
++        s.set_upper_exact(x, value(10, 0), (8..=14).collect());
++        let original = (s.lower[idx].clone(), s.upper[idx].clone());
++        s.push();
++        s.set_lower_exact(x, value(1, 1), smallvec::smallvec![15, 16, 15]);
++        s.set_upper_exact(x, value(9, -1), smallvec::smallvec![17, 18, 17]);
++        let outer = (s.lower[idx].clone(), s.upper[idx].clone());
++        let trail_len = s.trail.len();
++        // A bound without antecedents must not consume the live bound.
++        s.set_lower_exact(x, value(2, 0), SmallVec::new());
++        s.set_upper_exact(x, value(8, 0), SmallVec::new());
++        assert_eq!(s.trail.len(), trail_len);
++        assert_eq!((s.lower[idx].clone(), s.upper[idx].clone()), outer);
++        s.push();
++        s.set_lower_exact(x, value(11, 0), (19..=25).collect());
++        assert!(s.pending_crossing.is_some());
++        s.pop();
++        assert!(s.pending_crossing.is_none());
++        assert_eq!((s.lower[idx].clone(), s.upper[idx].clone()), outer);
++        s.pop();
++        assert_eq!((s.lower[idx].clone(), s.upper[idx].clone()), original);
++        s.pop();
++        assert!(s.lower[idx].is_none() && s.upper[idx].is_none());
++    }
++}
++
+ #[cfg(test)]
+ mod tests_2 {
+     use super::*;
