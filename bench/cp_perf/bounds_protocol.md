@@ -49,3 +49,25 @@ baseline per-cell distributions and solved-at-cap. Go bar: callback geomean
 component-gain/neutral-system corollary. Confirm on fresh seeds. Do not claim
 whole-solver speed or compare callbacks directly with Z3. Record negative
 results; finish all AGENTS.md gates, land main and clean up.
+
+## Pre-registered second stage: model replay evaluation reuse
+
+The selection results for bounds alone are callback ratio 0.8309 and ordinary
+end-to-end ratio 0.9670 (neutral). The larger sparse-case profile attributes
+most samples to model evaluation. Inspection shows the independent model gate
+re-evaluates watched atoms in statement checks and repeated consequences.
+Before measuring a second candidate, freeze merged bounds-only c6e4d9c3 as an
+ablation control. Reuse only Boolean results concretely evaluated in the current
+model-validation invocation; never use SAT phases or callback fixations as a
+source of truth. Retain every statement and certificate check, vocabulary guard,
+callback event and consequence order. No persistent cache or evaluator rewrite.
+False and undetermined results must still fail closed. Check changed models,
+negated/formula watches, false reasons and unregistered certificates explicitly.
+
+Use the same reference/diagnostic grids and unchanged driver/harness. Compare
+second-stage candidate against c6e4d9c3 for isolation and df564313 for the full
+change (disclose intervening unrelated theory fixes). Reserve seeds 10..19 for
+final confirmation; select no policy or threshold from these data. Require
+identical Nixie transcripts and >5% ordinary/certified instruction reduction
+without a >5% family regression. Run the ignored model-certification canary in
+addition to all normal gates because this stage touches model validation.
