@@ -25,7 +25,9 @@ run_one() {  # $1=solver $2=file -> "verdict<TAB>instructions"
     out=$(perf stat -x, -e instructions:u -- timeout -s KILL "$CAP"s "$1" "$2" 2>&1)
     verdict=$(printf '%s\n' "$out" | grep -xE 'sat|unsat|unknown' | tail -1)
     [ -n "$verdict" ] || verdict="timeout/error"
-    instr=$(printf '%s\n' "$out" | awk -F, '$3=="instructions:u" {print $1}' | head -1)
+    # Hybrid CPUs emit one line per cluster (cpu_atom/..., cpu_core/...);
+    # sum every instructions count.
+    instr=$(printf '%s\n' "$out" | awk -F, '$3 ~ /instructions/ {gsub(/,/,"",$1); sum += $1} END {if (sum > 0) print sum}')
     [ -n "$instr" ] || instr="NA"
     printf '%s\t%s\n' "$verdict" "$instr"
 }

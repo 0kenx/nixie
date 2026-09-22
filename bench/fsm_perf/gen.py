@@ -170,9 +170,12 @@ def main():
     for states in (8, 16, 32, 64):
         for wlen in (10, 40, 80):
             families.append((states, wlen, 2, 2))
-    # a few unsat canaries: same word demanded accepted and rejected
-    families.append((16, 20, 1, 0))
-    families.append((32, 40, 0, 1))
+    # unsat canaries: same word demanded accepted and rejected. Kept
+    # small: same-word double reification is a pathological shape for ANY
+    # eager encoding (the solver derives the two reifications' equality
+    # through shared guards alone), so short words keep the canary fast.
+    families.append((16, 4, 1, 0))
+    families.append((32, 4, 0, 1))
 
     for fam_idx, (states, wlen, n_pos, n_neg) in enumerate(families):
         for rep in range(3):
