@@ -295,11 +295,22 @@ fn decode_at(
             // case for the array theory, so a fresh one evaluates to itself
             // and every point would look unconstrained.
             let mut graph = BTreeMap::new();
+            let dbg = std::env::var_os("NIXIE_TRACE_DEBUG").is_some();
             for (idx_v, at) in selects_of(term, dom, model, tm, depth)? {
                 if !points.contains(&idx_v) {
+                    if dbg {
+                        eprintln!("[trace] array point {idx_v:?} outside domain, skipped");
+                    }
                     continue;
                 }
                 let value = decode_at(at, range, None, model, tm, depth + 1)?;
+                if dbg {
+                    let raw = model.eval(at, tm);
+                    eprintln!(
+                        "[trace] array[{idx_v:?}] select#{:?} -> {value:?} (model.eval: {raw:?})",
+                        at.0
+                    );
+                }
                 graph.insert(idx_v, value);
             }
             for p in points {

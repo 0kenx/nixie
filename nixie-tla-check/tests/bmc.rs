@@ -713,6 +713,22 @@ fn pcal_check(algorithm_src: &str, inv: &str, depth: u32) -> Outcome {
     check(&translated.text, "Init", "Next", inv, depth)
 }
 
+/// The outcome *and* the independent replay verdict behind it.
+fn pcal_check_verified(
+    algorithm_src: &str,
+    inv: &str,
+    depth: u32,
+) -> (Outcome, Option<nixie_tla_check::bmc::Verification>) {
+    let translated = nixie_tla_syntax::pcal::translate_file(algorithm_src).expect("translates");
+    let parsed = nixie_tla_syntax::parse_file(&translated.text).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare(&spec, module, "Init", "Next", inv, &[], &mut tm).expect("prepares");
+    let out = bmc.check(depth, &mut tm).expect("checks");
+    (out, bmc.verification().cloned())
+}
+
 #[test]
 fn a_pluscal_spec_checks_through_the_whole_pipeline() {
     // Every process increments `done` exactly once: after both processes
@@ -726,15 +742,30 @@ fn a_pluscal_spec_checks_through_the_whole_pipeline() {
 
 #[test]
 fn a_two_array_pluscal_spec_never_answers_a_false_clean() {
-    // With two function-valued variables updated in the same step, the
-    // satisfying assignment needs set atoms the native set encoding cannot
-    // yet certify, so the honest verdict is `Unknown` — pinned here so that
-    // a regression back to the fabricated-lemma `NoViolationWithin`
-    // (the false clean this shape once produced) fails loudly instead of
-    // silently passing.
+    // Two eras of this shape, both pinned by the one invariant that matters:
+    // NEVER `NoViolationWithin` — that was the fabricated-lemma false clean
+    // the conditional-alias bug produced here.
+    //
+    // * Before the alias fix: false `NoViolationWithin`.
+    // * After it, before the set-pair budget: honest `Unknown` (the `$dom`
+    //   equality atoms tripped the set honesty gate at depth 4).
+    // * Now: a 4-step `Violation` whose decoded trace the independent
+    //   replay REJECTS — the model leaves never-read array points
+    //   unconstrained (`x` is written at `self` but nothing reads `x[1]`),
+    //   the per-point decoder completes those don't-cares independently of
+    //   the taken branch, and the completed trace satisfies no branch. That
+    //   is the §4 spurious-violation asymmetry with a concrete face, and
+    //   the replay catching it is the system working: the verdict is a
+    //   *candidate*, surfaced with `NotReplayed`, never trusted.
+    let (out, verdict) = pcal_check_verified(RING_TWO_ARRAYS, "Underdone", 10);
+    assert!(
+        !matches!(out, Outcome::NoViolationWithin(_)),
+        "a false clean is the one outcome this shape must never produce"
+    );
+    assert_eq!(out, Outcome::Violation { step: 4 });
     assert!(matches!(
-        pcal_check(RING_TWO_ARRAYS, "Underdone", 10),
-        Outcome::Unknown(_)
+        verdict,
+        Some(nixie_tla_check::bmc::Verification::NotReplayed(_))
     ));
 }
 
