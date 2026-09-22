@@ -17,6 +17,7 @@ pub struct CpStatement {
     pub(super) constraints: Vec<Constraint>,
     pub(super) assertions: Vec<TermId>,
     pub(super) bindings: Vec<(CpVar, TermId)>,
+    pub(super) presences: Vec<Presence>,
     pub(super) true_term: TermId,
     pub(super) false_term: TermId,
 }
@@ -73,6 +74,38 @@ impl CpStatement {
                 expected.push(tm.mk_eq(atom, equality));
             }
         }
+        let mut conditions = HashSet::new();
+        for presence in &self.presences {
+            if !conditions.insert(presence.atom)
+                || !tm
+                    .get(presence.atom)
+                    .is_some_and(|t| t.sort == tm.sorts.bool_sort)
+                || tm.mk_not(presence.atom) != presence.negation
+            {
+                return Err(CpError("invalid original CP presence meaning"));
+            }
+        }
+        for constraint in &self.constraints {
+            if constraint
+                .variables()
+                .iter()
+                .any(|v| v.0 >= self.domains.len())
+            {
+                return Err(CpError("invalid original CP variable"));
+            }
+            if let Constraint::Cumulative(tasks, _) = constraint {
+                for scheduled in tasks {
+                    if scheduled.task.duration < BigInt::zero()
+                        || scheduled.task.demand < BigInt::zero()
+                        || scheduled
+                            .presence
+                            .is_some_and(|(i, _)| i >= self.presences.len())
+                    {
+                        return Err(CpError("invalid original CP task"));
+                    }
+                }
+            }
+        }
         // Variable and binding declarations may be interleaved by the caller.
         // Check the multiset, including duplicates, rather than buffer order.
         expected.sort_unstable();
@@ -89,6 +122,13 @@ impl CpStatement {
         self.domains
             .iter()
             .flat_map(|domain| domain.atoms.iter().copied())
+    }
+
+    /// Boolean inputs required for replay and proof reconstruction, including
+    /// optional-task presence conditions as well as finite-domain indicators.
+    pub fn boolean_terms(&self) -> impl Iterator<Item = TermId> + '_ {
+        self.indicators()
+            .chain(self.presences.iter().map(|p| p.atom))
     }
 
     /// Domain and integer-binding assertions installed with this declaration.
@@ -140,13 +180,57 @@ impl CpStatement {
             }
             remaining.push(choices);
         }
+        // Conditions may be formulas or aliases of domain indicators. Treat
+        // their Boolean values independently here: this enlarges the support
+        // set and can only reject additional lemmas, never certify a bad one.
+        // Repeated/complemented uses of one condition share the same digit.
+        let mut presence_choices = Vec::new();
+        for presence in &self.presences {
+            let mut choices = Vec::new();
+            for truth in [false, true] {
+                let mut possible = !(presence.atom == self.true_term && !truth
+                    || presence.atom == self.false_term && truth);
+                for (&term, required) in premises
+                    .iter()
+                    .map(|t| (t, true))
+                    .chain(core::iter::once((&conclusion, false)))
+                {
+                    spend(budget)?;
+                    if (term == presence.atom && truth != required)
+                        || (term == presence.negation && truth == required)
+                    {
+                        possible = false;
+                    }
+                }
+                if possible {
+                    choices.push(truth);
+                }
+            }
+            if choices.is_empty() {
+                return Ok(());
+            }
+            presence_choices.push(choices);
+        }
         // Unsatisfiability of any one original global under the restricted
         // domains suffices. Aliased positions share one enumeration digit.
         for constraint in &self.constraints {
             let mut vars = constraint.variables();
             vars.sort_unstable();
             vars.dedup();
-            let mut digits = vec![0; vars.len()];
+            let mut conditions = match constraint {
+                Constraint::Cumulative(tasks, _) => tasks
+                    .iter()
+                    .filter_map(|t| t.presence.map(|(i, _)| i))
+                    .collect::<Vec<_>>(),
+                Constraint::AllDifferent(_)
+                | Constraint::Table(_)
+                | Constraint::Regular(..)
+                | Constraint::Circuit(_) => Vec::new(),
+            };
+            conditions.sort_unstable();
+            conditions.dedup();
+            let mut digits = vec![0; vars.len() + conditions.len()];
+            let mut presence_values = vec![false; self.presences.len()];
             let mut selected = vec![0; self.domains.len()];
             let mut has_support = false;
             loop {
@@ -154,14 +238,22 @@ impl CpStatement {
                 for (k, var) in vars.iter().enumerate() {
                     selected[var.0] = remaining[var.0][digits[k]];
                 }
-                if self.satisfied(constraint, &selected, budget)? {
+                for (k, &index) in conditions.iter().enumerate() {
+                    presence_values[index] = presence_choices[index][digits[vars.len() + k]];
+                }
+                if self.satisfied(constraint, &selected, &presence_values, budget)? {
                     has_support = true;
                     break;
                 }
                 let mut carry = true;
-                for (k, var) in vars.iter().enumerate() {
+                for (k, size) in vars
+                    .iter()
+                    .map(|v| remaining[v.0].len())
+                    .chain(conditions.iter().map(|&i| presence_choices[i].len()))
+                    .enumerate()
+                {
                     digits[k] += 1;
-                    if digits[k] < remaining[var.0].len() {
+                    if digits[k] < size {
                         carry = false;
                         break;
                     }
@@ -198,8 +290,20 @@ impl CpStatement {
             }
             selected.push(fixed.ok_or(CpError("empty CP domain model"))?);
         }
+        let mut presence_values = Vec::new();
+        for presence in &self.presences {
+            spend(budget)?;
+            let truth = if presence.atom == self.true_term {
+                true
+            } else if presence.atom == self.false_term {
+                false
+            } else {
+                value(presence.atom).ok_or(CpError("incomplete CP presence model"))?
+            };
+            presence_values.push(truth);
+        }
         for constraint in &self.constraints {
-            if !self.satisfied(constraint, &selected, budget)? {
+            if !self.satisfied(constraint, &selected, &presence_values, budget)? {
                 return Err(CpError("model violates an original CP global"));
             }
         }
@@ -212,6 +316,7 @@ impl CpStatement {
         &self,
         constraint: &Constraint,
         selected: &[usize],
+        presences: &[bool],
         budget: &mut u64,
     ) -> Result<bool, CpError> {
         spend(budget)?;
@@ -282,14 +387,30 @@ impl CpStatement {
                 // A nonnegative piecewise-constant load can increase only at
                 // a task start. Evaluate those points with half-open intervals
                 // directly, independently of the producer's event sweep.
+                let present = |task: &ScheduledTask| -> Result<bool, CpError> {
+                    match task.presence {
+                        None => Ok(true),
+                        Some((i, sign)) => presences
+                            .get(i)
+                            .map(|&p| p == sign)
+                            .ok_or(CpError("missing CP presence valuation")),
+                    }
+                };
                 for task in tasks {
-                    let time = value(task.start);
+                    spend(budget)?;
+                    if !present(task)? {
+                        continue;
+                    }
+                    let time = value(task.task.start);
                     let mut load = BigInt::zero();
                     for other in tasks {
                         spend(budget)?;
-                        let start = value(other.start);
-                        if start <= time && *time < start + &other.duration {
-                            load += &other.demand;
+                        if !present(other)? {
+                            continue;
+                        }
+                        let start = value(other.task.start);
+                        if start <= time && *time < start + &other.task.duration {
+                            load += &other.task.demand;
                         }
                     }
                     if load > *capacity {

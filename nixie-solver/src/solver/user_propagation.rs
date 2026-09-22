@@ -303,6 +303,21 @@ impl Solver {
                 _ => return false,
             }
         }
+        let mut cp_budget = 10_000_000;
+        for statement in &self.user_state.cp_originals {
+            if statement
+                .check_model(
+                    |atom| match self.eval_in_model_outcome(atom, model, tm, 0) {
+                        model_eval::EvalOutcome::Value(EvalVal::Bool(b)) => Some(b),
+                        _ => None,
+                    },
+                    &mut cp_budget,
+                )
+                .is_err()
+            {
+                return false;
+            }
+        }
         // Independent statement-level validation: every retained graph's
         // reified atoms must equal the explicit closure/cycle oracle over
         // the model's edge values (a different algorithm from both the

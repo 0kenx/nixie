@@ -43,7 +43,7 @@ incorrect table arities, and negative task durations/demands are rejected.
 | `table` | Tuple belongs to an allowed relation | Exact tuple supports, including repeated variables |
 | `regular` | Word has an accepting automaton path | Layered reachability and forced-symbol support tests |
 | `circuit` | Successors form one Hamiltonian cycle over every node | Matching, range/self-edge filtering, forced proper-subtour elimination |
-| `cumulative` | Mandatory tasks never exceed constant capacity | Mandatory-part timetable overload and candidate-start filtering |
+| `cumulative` / `cumulative_optional` | Present tasks never exceed constant capacity | Present-task timetable overload, candidate-start filtering, and optional-presence trials |
 
 `regular` permits nondeterminism but no epsilon transitions. When a variable
 occurs repeatedly, reachability relaxes the correlation for partial domains;
@@ -59,7 +59,57 @@ cycles are forbidden.
 `[start, start + duration)`. Coincident end/start events are combined before
 checking resource usage. Zero-duration tasks consume no resource. Negative
 capacity is infeasible even with no tasks. Durations, demands and capacity are
-constants; optional tasks and variable durations/demands are not exposed.
+constants. `cumulative(Vec<Task>, capacity)` retains its mandatory-task API.
+`cumulative_optional(Vec<OptionalTask>, capacity, &mut tm)` accepts each task's
+`presence: TermId`, `start: CpVar`, `duration: BigInt`, and `demand: BigInt`.
+Presence can be a Boolean variable, its negation, a Boolean formula, or a
+constant; `true` mixes mandatory tasks into the same resource constraint.
+Invalid presence sorts and negative durations/demands are rejected atomically.
+
+An absent task consumes nothing and contributes no scheduling restriction to
+its start. The start remains an ordinary declared finite-domain variable:
+exactly-one semantics and any other constraints or integer bindings still apply.
+An empty start domain is therefore infeasible even for an absent task. A
+zero-demand task, like a zero-duration task, consumes nothing. Negative capacity
+remains infeasible when all tasks are absent.
+
+Only known-present tasks contribute mandatory parts to the timetable. Candidate
+start exclusions are explained using that presence knowledge. Unknown tasks do
+not prune their starts. To test a condition, the propagator assigns it a trial
+truth value, changes every shared/complemented occurrence together, and checks
+both the timetable and individual candidate-start support. An impossible trial
+implies the opposite condition. The trial is discharged into the conclusion;
+it is never added as an assumed premise. This can force absence even when no
+start is fixed and the optional task has no mandatory part. Every reduction
+uses the original callback assignments, not another unreported reduction.
+
+The [resource-allocation example](../nixie-solver/examples/optional_resource_allocation.rs)
+models an eight-GPU cluster: a mandatory service occupies four GPUs throughout
+an evening window, and two optional two-hour batches each require four GPUs.
+Ordinary Boolean assertions decide admission. When both batches are accepted,
+they must occupy nonoverlapping windows; cancelling one removes its resource
+usage without restricting its start. Run it with:
+
+```sh
+cargo run -p nixie-solver --example optional_resource_allocation
+```
+
+The API pattern is:
+
+```rust,ignore
+cp.cumulative_optional(vec![OptionalTask {
+    presence: accept_training, // ordinary Boolean condition
+    start: training_start,     // existing CpVar
+    duration: 2.into(),
+    demand: 4.into(),
+}], 8.into(), &mut tm)?;
+```
+
+Variable durations/demands (and variable capacity) are separate future work:
+they require new declarations, conditional arithmetic, propagation rules, and
+independent proof/model semantics. Stronger cumulative filtering—energetic
+reasoning, edge finding, and broader joint-support reasoning—is also separately
+scoped and is **not implemented**. No performance improvement is claimed.
 
 An empty domain is infeasible. A zero-arity table containing the empty tuple is
 true; an empty relation is false, including at arity zero. Repeated variables in
@@ -245,7 +295,7 @@ closed, including when installed alongside a CP model.
 The chain is:
 
 1. Retain immutable original CP declarations separately from the proof,
-   including typed integer bindings. Validate the generated domain/link
+   including typed integer bindings and signed optional-task presence conditions. Validate the generated domain/link
    assertions against those declarations. The main solver's generated CP
    assertion entries are excluded from the original application-assertion inputs;
    the proof reconstructs their meaning from the validated declarations.
@@ -254,7 +304,13 @@ The chain is:
    checker enumerates assignments of an original global and rejects a lemma if
    any compatible assignment falsifies it. Aliased positions share one value.
    The checker does not call the propagator, matching, partial-domain filtering,
-   or solver search. All five globals are covered, including empty/aliased
+   or solver search. Optional scheduling leaves enumerate each distinct presence
+   condition along with the relevant finite-domain values; shared/complemented
+   occurrences share one Boolean digit. Formula/domain correlations may be
+   relaxed, enlarging the support set and conservatively rejecting some valid
+   lemmas. The canonical Boolean encoding preserves the actual formulas and
+   aliases. Presence conditions are included in replay/model-blocking inputs
+   even when application assertions never mention them. All five globals are covered, including empty/aliased
    inputs, nondeterministic automata, exact large integers, and half-open tasks.
 3. Reconstruct a canonical Boolean encoding of the original active assertions,
    domain/link assertions, and checked implication clauses. Additional EUF or
@@ -264,19 +320,27 @@ The chain is:
    of the empty clause. The search engine's verdict alone is never enough.
 
 A certified `Sat` additionally requires independent exact evaluation of every
-original global and exactly-one domain, and the existing assertion/model gate.
+original global, presence valuation, and exactly-one domain, and the existing
+assertion/model gate. Ordinary CP `Sat` results also pass the independent
+statement evaluator before callback replay; missing presence values fail closed.
+Optional scheduling uses the existing `CpLemma` records and version-2 envelope,
+with no new trusted axiom or proof bypass. Removing a needed presence premise
+invalidates a lemma and its complete proof.
+
+The [optional-scheduling study](studies/2026-09-22-cp-optional-scheduling.md)
+records the reference rules, audited layers, exhaustive oracles, and landing gates.
 
 ```rust,ignore
 let mut solver = Solver::with_config(SolverConfig::default().certified());
 solver.register_cp(cp, &mut tm)?;
 // Add the application's assertions, then retain the original proof inputs.
-let (originals, assertions) = solver.cp_proof_inputs();
+let (originals, graphs, assertions) = solver.cp_proof_inputs();
 if solver.check(&mut tm) == SolverResult::Unsat {
     let proof = solver.get_cp_proof().ok_or("missing CP proof")?;
     let text = proof.to_text();
     let imported = nixie_solver::CpProof::from_text(&text)?;
-    imported.check(&originals, &assertions, &mut tm, 10_000_000)?;
-    let dimacs = imported.dimacs(&originals, &assertions, &mut tm, 10_000_000)?;
+    imported.check(&originals, &graphs, &assertions, &mut tm, 10_000_000)?;
+    let dimacs = imported.dimacs(&originals, &graphs, &assertions, &mut tm, 10_000_000)?;
     // `dimacs` and `imported.lrat` can also be given to an external LRAT checker.
 }
 ```

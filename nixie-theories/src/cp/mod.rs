@@ -34,6 +34,33 @@ pub struct Task {
     pub demand: BigInt,
 }
 
+/// An optional, non-preemptive task. When `presence` is false, scheduling
+/// imposes no restriction on its start and consumes no resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptionalTask {
+    /// Boolean condition, from the model's term manager (formulas are allowed).
+    pub presence: TermId,
+    /// Existing finite-domain start variable; its domain still applies if absent.
+    pub start: CpVar,
+    /// Nonnegative constant duration.
+    pub duration: BigInt,
+    /// Nonnegative constant resource demand.
+    pub demand: BigInt,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Presence {
+    atom: TermId,
+    negation: TermId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScheduledTask {
+    task: Task,
+    // Index into the model's canonical presence conditions, and required truth.
+    presence: Option<(usize, bool)>,
+}
+
 /// An automaton transition `(source, symbol, destination)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Transition {
@@ -69,14 +96,14 @@ enum Constraint {
     Table(TableStatement),
     Regular(Vec<CpVar>, usize, Vec<usize>, Vec<Transition>),
     Circuit(Vec<CpVar>),
-    Cumulative(Vec<Task>, BigInt),
+    Cumulative(Vec<ScheduledTask>, BigInt),
 }
 impl Constraint {
     fn variables(&self) -> Vec<CpVar> {
         match self {
             Self::AllDifferent(v) | Self::Regular(v, ..) | Self::Circuit(v) => v.clone(),
             Self::Table(statement) => statement.variables().to_vec(),
-            Self::Cumulative(tasks, _) => tasks.iter().map(|t| t.start).collect(),
+            Self::Cumulative(tasks, _) => tasks.iter().map(|t| t.task.start).collect(),
         }
     }
 }
@@ -90,6 +117,7 @@ pub struct CpModel {
     constraints: Vec<Constraint>,
     assertions: Vec<TermId>,
     bindings: Vec<(CpVar, TermId)>,
+    presences: Vec<Presence>,
     true_term: TermId,
     false_term: TermId,
 }
@@ -102,6 +130,7 @@ impl CpModel {
             constraints: Vec::new(),
             assertions: Vec::new(),
             bindings: Vec::new(),
+            presences: Vec::new(),
             true_term: tm.mk_bool(true),
             false_term: tm.mk_bool(false),
         }
@@ -269,8 +298,69 @@ impl CpModel {
         {
             return Err(CpError("negative duration or demand"));
         }
+        self.constraints.push(Constraint::Cumulative(
+            tasks
+                .into_iter()
+                .map(|task| ScheduledTask {
+                    task,
+                    presence: None,
+                })
+                .collect(),
+            capacity,
+        ));
+        Ok(())
+    }
+
+    /// Require cumulative capacity for the tasks whose Boolean conditions hold.
+    /// Constants and arbitrary Boolean formulas are accepted; use `true` to mix
+    /// mandatory tasks into the same resource. Construction is atomic on error.
+    pub fn cumulative_optional(
+        &mut self,
+        tasks: Vec<OptionalTask>,
+        capacity: BigInt,
+        tm: &mut TermManager,
+    ) -> Result<(), CpError> {
+        self.validate(&tasks.iter().map(|t| t.start).collect::<Vec<_>>())?;
+        for task in &tasks {
+            if task.duration < BigInt::zero() || task.demand < BigInt::zero() {
+                return Err(CpError("negative duration or demand"));
+            }
+            if !tm
+                .get(task.presence)
+                .is_some_and(|t| t.sort == tm.sorts.bool_sort)
+            {
+                return Err(CpError("task presence must be a Boolean term"));
+            }
+        }
+        let mut scheduled = Vec::new();
+        for task in tasks {
+            let (atom, positive) = match tm.get(task.presence).map(|t| &t.kind) {
+                Some(nixie_core::ast::TermKind::Not(inner)) => (*inner, false),
+                Some(_) => (task.presence, true),
+                None => return Err(CpError("missing task presence term")),
+            };
+            let index = match self.presences.iter().position(|p| p.atom == atom) {
+                Some(index) => index,
+                None => {
+                    let index = self.presences.len();
+                    self.presences.push(Presence {
+                        atom,
+                        negation: tm.mk_not(atom),
+                    });
+                    index
+                }
+            };
+            scheduled.push(ScheduledTask {
+                task: Task {
+                    start: task.start,
+                    duration: task.duration,
+                    demand: task.demand,
+                },
+                presence: Some((index, positive)),
+            });
+        }
         self.constraints
-            .push(Constraint::Cumulative(tasks, capacity));
+            .push(Constraint::Cumulative(scheduled, capacity));
         Ok(())
     }
 
@@ -281,6 +371,7 @@ impl CpModel {
             constraints: self.constraints.clone(),
             assertions: self.assertions.clone(),
             bindings: self.bindings.clone(),
+            presences: self.presences.clone(),
             true_term: self.true_term,
             false_term: self.false_term,
         }
@@ -294,6 +385,7 @@ impl CpModel {
             .domains
             .iter()
             .flat_map(|d| d.atoms.iter().copied())
+            .chain(self.presences.iter().map(|p| p.atom))
             .collect();
         (assertions, watches, Box::new(self))
     }
@@ -335,7 +427,30 @@ impl CpModel {
     }
 
     fn run(&self, ctx: &mut PropagatorContext) -> PropagatorResult {
-        let (domains, reasons, valid) = self.domains(ctx);
+        let (domains, mut reasons, valid) = self.domains(ctx);
+        let mut presences = Vec::new();
+        for presence in &self.presences {
+            let fixed = if presence.atom == self.true_term {
+                Some(self.true_term)
+            } else if presence.atom == self.false_term {
+                Some(self.false_term)
+            } else {
+                ctx.get_fixed_value(presence.atom)
+            };
+            let value = match fixed {
+                Some(v) if v == self.true_term => {
+                    reasons.push(presence.atom);
+                    Some(true)
+                }
+                Some(v) if v == self.false_term => {
+                    reasons.push(presence.negation);
+                    Some(false)
+                }
+                Some(_) => return PropagatorResult::Unknown,
+                None => None,
+            };
+            presences.push(value);
+        }
         if !valid {
             // Unknown fixed values cannot justify a conflict. Boolean-only
             // registration guarantees the normal path uses true/false terms.
@@ -359,7 +474,7 @@ impl CpModel {
             return PropagatorResult::Unsat(reasons);
         }
         for constraint in &self.constraints {
-            match self.feasible(constraint, &domains) {
+            match self.feasible(constraint, &domains, &presences) {
                 Some(true) => {}
                 Some(false) => {
                     let Some(consequence) =
@@ -389,7 +504,7 @@ impl CpModel {
                     .iter()
                     .filter(|c| c.variables().contains(&CpVar(i)))
                 {
-                    match self.feasible(constraint, &candidate) {
+                    match self.feasible(constraint, &candidate, &presences) {
                         Some(true) => {}
                         Some(false) => {
                             excluded = true;
@@ -409,7 +524,39 @@ impl CpModel {
                 }
             }
         }
-        if domains.iter().all(|d| d.len() == 1) {
+        // Test each unknown condition in both polarities. All tasks sharing
+        // it change together. Only the original callback state is a premise;
+        // the trial assignment is discharged into the opposite conclusion.
+        for (index, presence) in self.presences.iter().enumerate() {
+            if presences[index].is_some() {
+                continue;
+            }
+            for truth in [false, true] {
+                let mut candidate = presences.clone();
+                candidate[index] = Some(truth);
+                for constraint in &self.constraints {
+                    match self.presence_feasible(constraint, &domains, &candidate) {
+                        Some(true) => {}
+                        Some(false) => {
+                            let conclusion = if truth {
+                                presence.negation
+                            } else {
+                                presence.atom
+                            };
+                            let Some(consequence) =
+                                self.explain(Some(constraint), conclusion, &reasons)
+                            else {
+                                return PropagatorResult::Unknown;
+                            };
+                            ctx.propagate(consequence);
+                            break;
+                        }
+                        None => return PropagatorResult::Unknown,
+                    }
+                }
+            }
+        }
+        if domains.iter().all(|d| d.len() == 1) && presences.iter().all(Option::is_some) {
             PropagatorResult::Sat
         } else {
             PropagatorResult::Unknown
@@ -458,3 +605,6 @@ impl UserPropagator for CpModel {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod optional_tests;

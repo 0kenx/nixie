@@ -1,12 +1,50 @@
 use super::*;
 
 impl CpModel {
+    // Discharge a trial presence after testing every start of each present
+    // task against the timetable. No supported start for any one task proves
+    // the trial impossible, even when that task has an empty mandatory part.
+    pub(super) fn presence_feasible(
+        &self,
+        constraint: &Constraint,
+        domains: &[Vec<BigInt>],
+        presences: &[Option<bool>],
+    ) -> Option<bool> {
+        if !self.feasible(constraint, domains, presences)? {
+            return Some(false);
+        }
+        if let Constraint::Cumulative(tasks, _) = constraint {
+            for scheduled in tasks {
+                if let Some((index, positive)) = scheduled.presence
+                    && *presences.get(index)? != Some(positive)
+                {
+                    continue;
+                }
+                let var = scheduled.task.start;
+                let mut supported = false;
+                for start in &domains[var.0] {
+                    let mut candidate = domains.to_vec();
+                    candidate[var.0] = vec![start.clone()];
+                    if self.feasible(constraint, &candidate, presences)? {
+                        supported = true;
+                        break;
+                    }
+                }
+                if !supported {
+                    return Some(false);
+                }
+            }
+        }
+        Some(true)
+    }
+
     // Necessary conditions on partial domains; exact predicates on singletons.
     // Testing a candidate singleton yields an explained value deletion.
     pub(super) fn feasible(
         &self,
         constraint: &Constraint,
         domains: &[Vec<BigInt>],
+        presences: &[Option<bool>],
     ) -> Option<bool> {
         Some(match constraint {
             Constraint::AllDifferent(vars) => matching(vars, domains)?,
@@ -74,9 +112,18 @@ impl CpModel {
                     return Some(false);
                 }
                 let mut events: BTreeMap<BigInt, BigInt> = BTreeMap::new();
-                for task in tasks {
+                for scheduled in tasks {
+                    if let Some((index, positive)) = scheduled.presence
+                        && *presences.get(index)? != Some(positive)
+                    {
+                        continue;
+                    }
+                    let task = &scheduled.task;
                     if task.duration.is_zero() || task.demand.is_zero() {
                         continue;
+                    }
+                    if task.demand > *capacity {
+                        return Some(false);
                     }
                     let domain = &domains[task.start.0];
                     let (Some(earliest), Some(latest)) = (domain.iter().min(), domain.iter().max())

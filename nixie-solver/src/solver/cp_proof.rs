@@ -184,6 +184,13 @@ impl CpProof {
         for original in originals {
             checker.assert_all(original.assertions(), manager)?;
         }
+        // Presence formulas need a canonical Boolean definition even when
+        // no application assertion mentions them (model-blocker replay).
+        for original in originals {
+            for term in original.boolean_terms() {
+                checker.encode(term, manager)?;
+            }
+        }
         for lemma in &self.lemmas {
             let original = originals
                 .get(lemma.declaration)
@@ -427,7 +434,7 @@ impl Solver {
             let mut cp_block = None;
             for (declaration, original) in self.user_state.cp_originals.iter().enumerate() {
                 let mut premises = Vec::new();
-                for atom in original.indicators() {
+                for atom in original.boolean_terms() {
                     let lit = checker.child(atom)?;
                     let value = search.model_value(lit.var());
                     let positive = if value.is_true() {
