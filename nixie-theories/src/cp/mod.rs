@@ -90,6 +90,15 @@ struct Domain {
     negations: Vec<TermId>,
 }
 
+// One callback's immutable assignment snapshot. Witness indexes refer only
+// to this snapshot's ordered reasons, never to a later callback or scope.
+struct DomainSnapshot {
+    values: Vec<Vec<BigInt>>,
+    reasons: Vec<TermId>,
+    fixed_premises: Vec<Option<usize>>,
+    valid: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Constraint {
     AllDifferent(Vec<CpVar>),
@@ -400,18 +409,21 @@ impl CpModel {
         (assertions, watches, Box::new(self))
     }
 
-    fn domains(&self, ctx: &PropagatorContext) -> (Vec<Vec<BigInt>>, Vec<TermId>, bool) {
+    fn domains(&self, ctx: &PropagatorContext) -> DomainSnapshot {
         let mut reasons = Vec::new();
+        let mut fixed_premises = Vec::with_capacity(self.domains.len());
         let mut valid = true;
         let domains = self
             .domains
             .iter()
             .map(|d| {
                 let mut fixed = None;
+                let mut fixed_premise = None;
                 let mut remaining = Vec::new();
                 for (i, &atom) in d.atoms.iter().enumerate() {
                     match ctx.get_fixed_value(atom) {
                         Some(v) if v == self.true_term => {
+                            fixed_premise = Some(reasons.len());
                             reasons.push(atom);
                             if fixed.is_some() {
                                 valid = false;
@@ -426,6 +438,7 @@ impl CpModel {
                         None => remaining.push(d.values[i].clone()),
                     }
                 }
+                fixed_premises.push(fixed_premise);
                 if let Some(value) = fixed {
                     vec![value]
                 } else {
@@ -433,11 +446,21 @@ impl CpModel {
                 }
             })
             .collect();
-        (domains, reasons, valid)
+        DomainSnapshot {
+            values: domains,
+            reasons,
+            fixed_premises,
+            valid,
+        }
     }
 
     fn run(&self, ctx: &mut PropagatorContext) -> PropagatorResult {
-        let (domains, mut reasons, valid) = self.domains(ctx);
+        let DomainSnapshot {
+            values: domains,
+            mut reasons,
+            fixed_premises,
+            valid,
+        } = self.domains(ctx);
         let mut presences = Vec::new();
         for presence in &self.presences {
             let fixed = if presence.atom == self.true_term {
@@ -544,9 +567,27 @@ impl CpModel {
                     }
                 }
                 if excluded {
-                    let Some(consequence) =
-                        self.explain(witness_constraint, d.negations[j], &reasons)
-                    else {
+                    let consequence = if let Some(constraint) = witness_constraint {
+                        self.explain(Some(constraint), d.negations[j], &reasons)
+                    } else {
+                        // In a valid snapshot an unknown indicator can leave
+                        // its domain only because another indicator is true.
+                        // Indicators are unique across domains. Use the known
+                        // domain and premise instead of searching them again;
+                        // the independent rule checker still checks every hint.
+                        fixed_premises[i].and_then(|fixed| {
+                            let statement = domain_proof::DomainStatement {
+                                domain: d.clone(),
+                                false_term: self.false_term,
+                            };
+                            let certificate =
+                                statement.explain_fixed(d.negations[j], &reasons, fixed)?;
+                            let mut consequence = Consequence::new(d.negations[j], reasons.clone());
+                            consequence.domain_certificate = Some(certificate);
+                            Some(consequence)
+                        })
+                    };
+                    let Some(consequence) = consequence else {
                         return PropagatorResult::Unknown;
                     };
                     ctx.propagate(consequence);

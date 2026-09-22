@@ -3,6 +3,133 @@
 use super::*;
 use crate::user_propagator::UserPropagatorManager;
 
+#[test]
+fn indexed_domain_exclusions_match_search_for_every_partial_assignment() {
+    let mut tm = TermManager::new();
+    let mut cp = CpModel::new(&tm);
+    let mut rows = Vec::new();
+    for (i, width) in [2, 3, 1].into_iter().enumerate() {
+        let entries: Vec<_> = (0..width)
+            .map(|j| {
+                let atom = tm.mk_var(&format!("d{i}_{j}"), tm.sorts.bool_sort);
+                ((BigInt::from(1) << 140) + BigInt::from(j), atom)
+            })
+            .collect();
+        rows.push(entries.iter().map(|(_, a)| *a).collect::<Vec<_>>());
+        cp.variable(entries, &mut tm).unwrap();
+    }
+    // A presence alias repeats a domain premise at the end of the reason
+    // list. The witness must still select the first, domain-order occurrence.
+    cp.cumulative_optional(
+        vec![OptionalTask {
+            presence: rows[0][0],
+            start: CpVar(1),
+            duration: 0.into(),
+            demand: 1.into(),
+        }],
+        0.into(),
+        &mut tm,
+    )
+    .unwrap();
+    let originals = cp.domain_statements();
+    let atoms: Vec<_> = rows.iter().flatten().copied().collect();
+    let malformed = tm.mk_int(7);
+    // Unknown, false, true, malformed for all six indicators: 4^6 states.
+    for state in 0..4096usize {
+        let mut fixed = FxHashMap::default();
+        for (i, &atom) in atoms.iter().enumerate() {
+            match state / 4usize.pow(i as u32) % 4 {
+                0 => {}
+                1 => {
+                    fixed.insert(atom, tm.mk_false());
+                }
+                2 => {
+                    fixed.insert(atom, tm.mk_true());
+                }
+                3 => {
+                    fixed.insert(atom, malformed);
+                }
+                _ => unreachable!(),
+            }
+        }
+        let mut queue = VecDeque::new();
+        let mut journal = Vec::new();
+        let equalities = FxHashSet::default();
+        let mut ctx = PropagatorContext::new(&mut queue, &mut journal, &fixed, &equalities);
+        let result = cp.run(&mut ctx);
+        if fixed.values().any(|&v| v == malformed) {
+            assert_eq!(result, PropagatorResult::Unknown);
+            assert!(queue.is_empty());
+            continue;
+        }
+        let inconsistent = rows.iter().any(|row| {
+            row.iter()
+                .filter(|a| fixed.get(a) == Some(&tm.mk_true()))
+                .count()
+                > 1
+                || row.iter().all(|a| fixed.get(a) == Some(&tm.mk_false()))
+        });
+        assert_eq!(matches!(result, PropagatorResult::Unsat(_)), inconsistent);
+        if !inconsistent {
+            let expected: Vec<_> = rows
+                .iter()
+                .flat_map(|row| {
+                    let has_true = row.iter().any(|a| fixed.get(a) == Some(&tm.mk_true()));
+                    row.iter()
+                        .filter(|a| has_true && !fixed.contains_key(a))
+                        .map(|&a| tm.mk_not(a))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(queue.iter().map(|c| c.term).collect::<Vec<_>>(), expected);
+        }
+        for consequence in queue {
+            let old = cp
+                .explain(None, consequence.term, &consequence.justification)
+                .unwrap();
+            let old = old.domain_certificate.unwrap();
+            let new = consequence.domain_certificate.unwrap();
+            assert_eq!(new.statement(), old.statement());
+            assert_eq!(new.rule, old.rule);
+            let original = originals.iter().find(|o| new.is_for(o)).unwrap();
+            new.check(original, consequence.term, &consequence.justification)
+                .unwrap();
+            cp.statement()
+                .check_lemma(consequence.term, &consequence.justification, &mut 100_000)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn indexed_domain_exclusion_rejects_bad_premise_hints() {
+    let mut tm = TermManager::new();
+    let mut cp = CpModel::new(&tm);
+    let a = tm.mk_var("a", tm.sorts.bool_sort);
+    let b = tm.mk_var("b", tm.sorts.bool_sort);
+    let foreign = tm.mk_var("foreign", tm.sorts.bool_sort);
+    cp.variable(vec![(0.into(), a), (1.into(), b)], &mut tm)
+        .unwrap();
+    let statement = &cp.domain_statements()[0];
+    let premises = [foreign, tm.mk_not(a), a, b, a];
+    let conclusion = tm.mk_not(b);
+    for index in [0, 1, 3, premises.len(), usize::MAX] {
+        assert!(
+            statement
+                .explain_fixed(conclusion, &premises, index)
+                .is_none()
+        );
+    }
+    assert!(statement.explain_fixed(conclusion, &premises, 2).is_some());
+    assert!(statement.explain_fixed(conclusion, &premises, 4).is_some());
+    assert!(
+        statement
+            .explain_fixed(tm.mk_false(), &premises, 2)
+            .is_none()
+    );
+    assert!(statement.explain_fixed(foreign, &premises, 2).is_none());
+}
+
 // Independent exhaustive oracle: check every emitted explanation against
 // every concrete assignment compatible with its antecedents, not just the
 // solver's selected model. Covers 5 * 7^3 partial domain states.
