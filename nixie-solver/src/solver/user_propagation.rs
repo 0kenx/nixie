@@ -89,12 +89,21 @@ impl UserState {
                 .graph_certificate
                 .as_ref()
                 .is_none_or(|certificate| {
-                    self.graph_statements.iter().any(|original| {
+                    let ok = self.graph_statements.iter().any(|original| {
                         certificate.is_for(original)
                             && certificate
                                 .check(original, consequence.term, &consequence.justification)
                                 .is_ok()
-                    })
+                    });
+                    if !ok && std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                        eprintln!(
+                            "CERT FAIL rule={:?} term={:?} premises={:?}",
+                            certificate.rule(),
+                            consequence.term,
+                            consequence.justification
+                        );
+                    }
+                    ok
                 })
     }
 }
