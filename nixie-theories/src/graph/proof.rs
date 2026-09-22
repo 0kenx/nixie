@@ -65,14 +65,15 @@ pub enum GraphRule {
     /// `closed`: `from ∈ closed`, `to ∉ closed`, and every edge whose
     /// tail is in `closed` while its head is not has its negation among
     /// the premises — so no premise-true edge leaves the set, and
-    /// nothing reachable from `from` escapes it.
+    /// nothing reachable from `from` escapes it. The set is shared (the
+    /// emitting memo materializes it once per closure lifetime).
     Cut {
         /// Separated source vertex.
         from: u32,
         /// Separated target vertex.
         to: u32,
         /// The closed vertex set (unsorted; membership only).
-        closed: Vec<u32>,
+        closed: Arc<[u32]>,
     },
     /// `¬acyclic` witnessed by an explicit directed cycle of edge
     /// indices, every walked edge's presence atom a premise.
@@ -99,7 +100,7 @@ pub enum GraphRule {
         /// The vertex the cycle must pass through.
         v: u32,
         /// The ≥1-step forward closure (unsorted; membership only).
-        closed: Vec<u32>,
+        closed: Arc<[u32]>,
     },
 }
 
@@ -220,8 +221,17 @@ impl GraphCertificate {
                 if *from != want_from || *to != want_to {
                     return Err(GraphProofError("cut witness endpoints mismatch"));
                 }
-                let set: FxHashSet<u32> = closed.iter().copied().collect();
-                if !set.contains(from) || set.contains(to) {
+                // Membership through one flat bitset (V/64 words) instead
+                // of a hash set: this check runs per emitted consequence,
+                // and the per-edge membership tests over product-scale
+                // statements dominated certificate checking. (A by-tail
+                // index visiting only the closed set's leaving edges was
+                // measured slower here: the separating sets of FSM
+                // product graphs are typically the *larger* side, and the
+                // row indirection loses the linear scan's locality.)
+                let vertices = self.statement.vertices_count();
+                let bits = bitset_of(vertices, closed.iter().copied(), false)?;
+                if !bit_get(&bits, *from) || bit_get(&bits, *to) {
                     return Err(GraphProofError(
                         "cut witness set does not separate the pair",
                     ));
@@ -229,8 +239,8 @@ impl GraphCertificate {
                 for &(from_e, to_e, _, negation) in edges {
                     // A crossing edge has its tail in the set and its head
                     // outside; every crossing edge must be premise-refuted.
-                    if set.contains(&from_e)
-                        && !set.contains(&to_e)
+                    if bit_get(&bits, from_e)
+                        && !bit_get(&bits, to_e)
                         && !premise_set.contains(&negation)
                     {
                         return Err(GraphProofError(
@@ -269,15 +279,17 @@ impl GraphCertificate {
                         "no-cycle witness must conclude a self-pair negation",
                     ));
                 }
-                let set: FxHashSet<u32> = closed.iter().copied().collect();
-                if set.contains(v) || closed.len() != set.len() {
-                    return Err(GraphProofError(
-                        "no-cycle witness set contains the vertex (or repeats)",
-                    ));
+                let vertices = self.statement.vertices_count();
+                let mut bits = bitset_of(vertices, closed.iter().copied(), true)?;
+                if bit_get(&bits, *v) {
+                    return Err(GraphProofError("no-cycle witness set contains the vertex"));
                 }
+                // Add `v` itself to the region whose leaving edges must be
+                // premise-refuted.
+                bits[(*v as usize) / 64] |= 1u64 << (*v % 64);
                 for &(from_e, to_e, _, negation) in edges {
-                    if (set.contains(&from_e) || from_e == *v)
-                        && !set.contains(&to_e)
+                    if bit_get(&bits, from_e)
+                        && !bit_get(&bits, to_e)
                         && !premise_set.contains(&negation)
                     {
                         return Err(GraphProofError(
@@ -328,6 +340,38 @@ impl GraphCertificate {
             }
         }
     }
+}
+
+/// One flat membership bitset over `vertices` bits, filled from `members`.
+/// `reject_repeats` carries the no-repeat rule some witnesses demand;
+/// a member naming an unknown vertex is malformed and rejected (the
+/// emitters never build such sets, so this only tightens against
+/// corrupted witnesses).
+fn bitset_of(
+    vertices: usize,
+    members: impl Iterator<Item = u32>,
+    reject_repeats: bool,
+) -> Result<Vec<u64>, GraphProofError> {
+    let mut bits = vec![0u64; vertices.div_ceil(64)];
+    for v in members {
+        let idx = usize::try_from(v).unwrap_or(usize::MAX);
+        if idx >= vertices {
+            return Err(GraphProofError("witness set names an unknown vertex"));
+        }
+        let mask = 1u64 << (v % 64);
+        if reject_repeats && bits[idx / 64] & mask != 0 {
+            return Err(GraphProofError("witness set repeats a vertex"));
+        }
+        bits[idx / 64] |= mask;
+    }
+    Ok(bits)
+}
+
+/// Membership test against a [`bitset_of`] bitset.
+fn bit_get(bits: &[u64], v: u32) -> bool {
+    let idx = v as usize;
+    bits.get(idx / 64)
+        .is_some_and(|word| word >> (idx % 64) & 1 == 1)
 }
 
 /// How a premise participates in a graph lemma.
@@ -1001,7 +1045,7 @@ mod tests {
             GraphRule::Cut {
                 from: 0,
                 to: 2,
-                closed: vec![0, 1],
+                closed: vec![0, 1].into(),
             },
         );
         let not_reach02 = tm.mk_not(reach[0]);
@@ -1025,7 +1069,7 @@ mod tests {
             GraphRule::Cut {
                 from: 0,
                 to: 2,
-                closed: vec![0, 1, 2],
+                closed: vec![0, 1, 2].into(),
             },
         );
         assert!(

@@ -521,6 +521,16 @@ pub enum TraceKind {
     CycleMemoDrops,
     /// Backward closures (re)built from scratch.
     ClosureRebuilds,
+    /// Consequences emitted with a `Path` witness.
+    EmitPath,
+    /// Consequences emitted with a `Cut` witness.
+    EmitCut,
+    /// Consequences emitted with a `Cycle` witness.
+    EmitCycle,
+    /// Consequences emitted with a `TopoOrder` witness.
+    EmitTopo,
+    /// Consequences emitted with a `NoCycleThrough` witness.
+    EmitNoCycle,
     /// Sentinel: the number of counter kinds.
     KindCount,
 }
@@ -557,6 +567,10 @@ struct Backward {
     target: usize,
     seen: Vec<bool>,
     witness: Vec<Option<u32>>,
+    /// Lazily materialized complement of `seen` (the cut witness), shared
+    /// by every `Cut` rule this memo emits while it survives — building it
+    /// per emission cost an O(vertices) scan per consequence.
+    closed: Option<Arc<[u32]>>,
 }
 
 /// The ≥1-step forward closure of `source` over non-false edges: every
@@ -677,7 +691,44 @@ fn backward_seen(
         target: search.source,
         seen: search.visited,
         witness: search.parent_edge,
+        closed: None,
     }
+}
+
+/// Memoized forced-view BFS by source vertex, filling the slot lazily and
+/// registering it in the live list (see [`ViewCache::forced_live`]).
+fn memo_forced<'a>(
+    forced_searches: &'a mut [Option<Bfs>],
+    forced_live: &mut Vec<u32>,
+    forced_rows: &[Vec<(u32, u32)>],
+    vertices: usize,
+    source: VertexId,
+) -> Option<&'a mut Bfs> {
+    let slot = forced_searches.get_mut(source.0 as usize)?;
+    if slot.is_none() {
+        *slot = Some(bfs_rows(forced_rows, vertices, source));
+        forced_live.push(source.0);
+    }
+    slot.as_mut()
+}
+
+/// Memoized possible-view backward closure by target vertex, filling the
+/// slot lazily and registering it in the live list (see
+/// [`ViewCache::backward_live`]).
+fn memo_backward<'a>(
+    backward_searches: &'a mut [Option<Backward>],
+    backward_live: &mut Vec<u32>,
+    possible_in: &Csr,
+    vertices: usize,
+    target: VertexId,
+    values: &[EdgeValue],
+) -> Option<&'a mut Backward> {
+    let slot = backward_searches.get_mut(target.0 as usize)?;
+    if slot.is_none() {
+        *slot = Some(backward_seen(possible_in, vertices, target, values));
+        backward_live.push(target.0);
+    }
+    slot.as_mut()
 }
 
 impl Backward {
@@ -772,11 +823,21 @@ impl Backward {
     /// set of vertices that cannot reach the target through non-refuted
     /// edges. It contains the source, excludes the target, and every
     /// premise-refuted crossing edge is exactly an edge of the cut.
-    fn closed_set(&self, vertices: usize) -> Vec<u32> {
-        (0..vertices)
+    /// Materialized once per memo lifetime and shared (the emission rate
+    /// of cut rules over one closure made per-emission O(vertices)
+    /// collection measurable).
+    fn closed_set(&mut self, vertices: usize) -> Arc<[u32]> {
+        if let Some(closed) = &self.closed {
+            return Arc::clone(closed);
+        }
+        let closed: Arc<[u32]> = (0..vertices)
             .filter(|v| !self.seen[*v])
             .map(|v| v as u32)
-            .collect()
+            .collect();
+        if self.closed.is_none() {
+            self.closed = Some(Arc::clone(&closed));
+        }
+        closed
     }
 
     /// Signed reasons that the source cannot reach the target through
@@ -793,13 +854,20 @@ impl Backward {
     /// emitted edge is currently false, so its negation is a true literal.
     /// An empty cut means the refutation is unconditional over the whole
     /// fixed edge universe.
+    ///
+    /// Edge-index order is load-bearing: the emitted sequence feeds the
+    /// learned clause, so a faster reordering would perturb the search
+    /// trajectory. (Iterating a per-epoch false-edge list sorted back to
+    /// index order per emission was measured slower than this scan — the
+    /// sort costs more than the non-false edges it skips.)
     fn cut_negations(&self, spec: &GraphSpec, values: &[EdgeValue]) -> Vec<TermId> {
         let mut reasons = Vec::new();
-        for (i, edge) in spec.edges.iter().enumerate() {
-            if self.sees(edge.to)
-                && values[i] == EdgeValue::False
-                && !reasons.contains(&edge.negation)
-            {
+        for (i, value) in values.iter().enumerate() {
+            if *value != EdgeValue::False {
+                continue;
+            }
+            let edge = &spec.edges[i];
+            if self.sees(edge.to) && !reasons.contains(&edge.negation) {
                 reasons.push(edge.negation);
             }
         }
@@ -818,22 +886,25 @@ impl ViewCache {
             values: vec![EdgeValue::Unknown; edges],
             forced_rows: vec![Vec::new(); vertices],
             forced_searches: (0..vertices).map(|_| None).collect(),
+            forced_live: Vec::new(),
             forced_cycle: None,
             possible_dirty: true,
             possible_out: Csr::default(),
             possible_in: Csr::default(),
             backward_searches: (0..vertices).map(|_| None).collect(),
+            backward_live: Vec::new(),
             possible_cycle: None,
             pending: Vec::new(),
         }
     }
 
     /// Full invalidation (backtrack/reset): the next run re-reads the
-    /// manager from scratch.
+    /// manager from scratch. The all-edges CSRs are value-independent and
+    /// stay built (see `possible_dirty`); every memoized derived structure
+    /// is dropped at the re-read through the live lists.
     fn invalidate(&mut self) {
         trace_bump(TraceKind::Invalidations);
         self.forced_valid = false;
-        self.possible_dirty = true;
         self.pending.clear();
     }
 
@@ -877,28 +948,47 @@ impl ViewCache {
             // the next query. A memoized possible cycle dies only if it
             // uses this edge; a memoized cycle *absence* is stable under
             // shrinking.
-            for memo in self.backward_searches.iter_mut() {
-                if let Some(backward) = memo
-                    && backward.sees(e.to)
-                    && backward.witness[e.from.0 as usize] == Some(edge)
-                {
-                    // Try the localized repair first: in a dense graph the
-                    // tail almost always has another surviving edge into
-                    // the closure, and a grounded re-attachment keeps the
-                    // memo exactly valid without any recompute. Only a
-                    // genuine shrink drops it.
-                    if !backward.repair_witness(
-                        spec,
-                        &self.possible_out,
-                        &self.values,
-                        e.from.0 as usize,
-                        edge,
-                    ) {
-                        trace_bump(TraceKind::WitnessDrops);
-                        *memo = None;
+            //
+            // Only *live* memos are visited (see `backward_live`): the
+            // slot array spans every vertex, and scanning all of them per
+            // false event was O(vertices) per event — the dominant cost
+            // of FSM-scale product graphs.
+            let mut live = core::mem::take(&mut self.backward_live);
+            let mut kept = 0;
+            for read in 0..live.len() {
+                let target = live[read];
+                let drop = match self.backward_searches[target as usize].as_mut() {
+                    Some(backward)
+                        if {
+                            backward.sees(e.to) && backward.witness[e.from.0 as usize] == Some(edge)
+                        } =>
+                    {
+                        // Try the localized repair first: in a dense
+                        // graph the tail almost always has another
+                        // surviving edge into the closure, and a
+                        // grounded re-attachment keeps the memo
+                        // exactly valid without any recompute. Only a
+                        // genuine shrink drops it.
+                        !backward.repair_witness(
+                            spec,
+                            &self.possible_out,
+                            &self.values,
+                            e.from.0 as usize,
+                            edge,
+                        )
                     }
+                    _ => false,
+                };
+                if drop {
+                    trace_bump(TraceKind::WitnessDrops);
+                    self.backward_searches[target as usize] = None;
+                } else {
+                    live[kept] = target;
+                    kept += 1;
                 }
             }
+            live.truncate(kept);
+            self.backward_live = live;
             if let Some(Some(cycle)) = &self.possible_cycle
                 && cycle.contains(&edge)
             {
@@ -912,11 +1002,16 @@ impl ViewCache {
     /// forced-view BFS tree whose reachable set gains vertices. Merged
     /// trees remain genuine trees of the current forced graph: every
     /// parent edge is real, so extracted paths stay valid justifications.
+    /// Only *live* trees are visited (see `forced_live`): iterating the
+    /// whole slot array was O(vertices) per true event.
     fn merge_new_edge(&mut self, spec: &GraphSpec, from: VertexId, to: VertexId, idx: u32) {
         let u = from.0 as usize;
         let v = to.0 as usize;
-        for search in self.forced_searches.iter_mut() {
-            let Some(tree) = search else { continue };
+        for i in 0..self.forced_live.len() {
+            let source = self.forced_live[i] as usize;
+            let Some(tree) = self.forced_searches[source].as_mut() else {
+                continue;
+            };
             if tree.visited[u] && !tree.visited[v] {
                 // Discover everything newly reachable through the edge.
                 tree.visited[v] = true;
@@ -959,18 +1054,24 @@ struct ViewCache {
     forced_rows: Vec<Vec<(u32, u32)>>,
     /// Forced-view BFS by source vertex (maintained by merges).
     forced_searches: Vec<Option<Bfs>>,
+    /// Sources whose `forced_searches` slot is `Some` — event handling
+    /// visits memos through this list, never by scanning the slot array
+    /// (an empty slot is the common case at FSM product scale, where the
+    /// array spans every (state, position) vertex).
+    forced_live: Vec<u32>,
     /// `find_cycle` over the forced view (`Some(None)` = computed, acyclic).
     /// Any true-edge addition invalidates it.
     forced_cycle: Option<Option<Vec<u32>>>,
-    /// **Epoch-static possible view.** `possible_dirty` marks the epoch
-    /// unbuilt (construction or a backtrack); the first needing run builds
-    /// the all-edges CSRs once (see [`Csr::rebuild_all`]) and clears the
-    /// possible-side memos. False-edge events never rebuild anything:
-    /// queries run as skip-false traversals over the static CSR, and each
-    /// memo is dropped precisely when a disabled edge can affect it (see
-    /// [`ViewCache::apply_edge_event`]), so every answer a query returns
-    /// is **exact** for the current fixation state — the contract the
-    /// exhaustive oracles pin (eager conflict detection and determined
+    /// **Epoch-static possible view.** `possible_dirty` marks the CSRs
+    /// as not yet built; the first needing run builds the all-edges CSRs
+    /// **once ever** — their contents are value-independent (every edge
+    /// of the declaration), so a backtrack epoch has nothing to rebuild —
+    /// and clears the possible-side memos. False-edge events never rebuild
+    /// anything: queries run as skip-false traversals over the static CSR,
+    /// and each memo is dropped precisely when a disabled edge can affect
+    /// it (see [`ViewCache::apply_edge_event`]), so every answer a query
+    /// returns is **exact** for the current fixation state — the contract
+    /// the exhaustive oracles pin (eager conflict detection and determined
     /// propagation, not just eventual detection). The all-fixed gate at
     /// the end of [`GraphModel::run_graph`] re-verifies the `Sat`
     /// certificate as defense in depth.
@@ -984,6 +1085,9 @@ struct ViewCache {
     /// only when it matches a member's witness (O(1) check); untouched
     /// memos stay exactly valid.
     backward_searches: Vec<Option<Backward>>,
+    /// Targets whose `backward_searches` slot is `Some` — the event-time
+    /// witness check visits exactly these (see `forced_live`).
+    backward_live: Vec<u32>,
     /// `find_cycle` over the possible view; recomputed exactly after a
     /// disabled edge on the memoized cycle. A memoized cycle *absence*
     /// is stable under shrinking and never needs recomputation within
@@ -1078,6 +1182,13 @@ fn certified_consequence(
     term: TermId,
     reasons: Vec<TermId>,
 ) -> Consequence {
+    trace_bump(match &rule {
+        GraphRule::Path { .. } => TraceKind::EmitPath,
+        GraphRule::Cut { .. } => TraceKind::EmitCut,
+        GraphRule::Cycle { .. } => TraceKind::EmitCycle,
+        GraphRule::TopoOrder { .. } => TraceKind::EmitTopo,
+        GraphRule::NoCycleThrough { .. } => TraceKind::EmitNoCycle,
+    });
     let mut consequence = Consequence::new(term, reasons);
     consequence.graph_certificate = statement
         .as_ref()
@@ -1202,10 +1313,13 @@ impl GraphModel {
         // derived state falls back to the full re-size.
         if g.0 < self.caches.len() {
             let cache = &mut self.caches[g.0];
+            // O(1) pristine test through the live lists (an O(vertices)
+            // slot sweep here made vertex addition quadratic — the
+            // dominant registration cost of large product graphs).
             let pristine = !cache.forced_valid
                 && cache.pending.is_empty()
-                && cache.forced_searches.iter().all(|s| s.is_none())
-                && cache.backward_searches.iter().all(|s| s.is_none())
+                && cache.forced_live.is_empty()
+                && cache.backward_live.is_empty()
                 && cache.forced_cycle.is_none()
                 && cache.possible_cycle.is_none();
             if pristine {
@@ -1541,14 +1655,24 @@ impl GraphModel {
             let cache = &mut self.caches[g];
             if !cache.forced_valid {
                 // Full re-read path (first run, or after a backtrack).
+                // Memoized trees and closures of the previous epoch are
+                // dropped through the live lists — O(live memos), not a
+                // sweep of the per-vertex slot arrays.
+                for &s in &cache.forced_live {
+                    cache.forced_searches[s as usize] = None;
+                }
+                cache.forced_live.clear();
+                cache.forced_cycle = None;
+                for &t in &cache.backward_live {
+                    cache.backward_searches[t as usize] = None;
+                }
+                cache.backward_live.clear();
+                cache.possible_cycle = None;
                 cache.values.clear();
                 cache.values.resize(edge_count, EdgeValue::Unknown);
                 for row in cache.forced_rows.iter_mut() {
                     row.clear();
                 }
-                cache.forced_searches.clear();
-                cache.forced_searches.extend((0..vertices).map(|_| None));
-                cache.forced_cycle = None;
                 for (i, edge) in spec.edges.iter().enumerate() {
                     match ctx.get_fixed_value(edge.atom) {
                         None => {
@@ -1567,9 +1691,6 @@ impl GraphModel {
                 trace_bump(TraceKind::FullRereads);
                 cache.pending.clear();
                 cache.forced_valid = true;
-                // The epoch starts: possible-side memos from a previous
-                // epoch no longer describe this edge universe's view.
-                cache.possible_dirty = true;
             } else {
                 // Apply queued edge events (recorded by on_fixed).
                 let pending = core::mem::take(&mut cache.pending);
@@ -1583,13 +1704,10 @@ impl GraphModel {
         // are read-only below; the memos fill in lazily.
         let cache = &mut self.caches[g];
         if cache.possible_dirty {
-            // Epoch start: rebuild the all-edges CSRs once and reset the
-            // possible-side memos.
+            // First need ever: build the all-edges CSRs. Their contents
+            // are value-independent, so later epochs never rebuild them.
             cache.possible_out.rebuild_all(spec, false);
             cache.possible_in.rebuild_all(spec, true);
-            cache.backward_searches.clear();
-            cache.backward_searches.extend((0..vertices).map(|_| None));
-            cache.possible_cycle = None;
             cache.possible_dirty = false;
         }
         let values: &Vec<EdgeValue> = &cache.values;
@@ -1597,7 +1715,9 @@ impl GraphModel {
         let possible_out: &Csr = &cache.possible_out;
         let possible_in: &Csr = &cache.possible_in;
         let forced_searches = &mut cache.forced_searches;
+        let forced_live = &mut cache.forced_live;
         let backward_searches = &mut cache.backward_searches;
+        let backward_live = &mut cache.backward_live;
         let forced_cycle = &mut cache.forced_cycle;
         let possible_cycle = &mut cache.possible_cycle;
 
@@ -1715,9 +1835,13 @@ impl GraphModel {
             }
             match fixed {
                 Some(false) => {
-                    let search = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| bfs_rows(forced_rows, vertices, reach.from))
-                    });
+                    let search = memo_forced(
+                        forced_searches,
+                        forced_live,
+                        forced_rows,
+                        vertices,
+                        reach.from,
+                    );
                     let (search_reaches, path, witness) = match search {
                         Some(s) => (
                             s.reaches_forced(spec, values, reach.to),
@@ -1743,11 +1867,14 @@ impl GraphModel {
                     }
                 }
                 Some(true) => {
-                    let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| {
-                            backward_seen(possible_in, vertices, reach.to, values)
-                        })
-                    });
+                    let backward = memo_backward(
+                        backward_searches,
+                        backward_live,
+                        possible_in,
+                        vertices,
+                        reach.to,
+                        values,
+                    );
                     let Some(backward) = backward else {
                         continue;
                     };
@@ -1758,7 +1885,7 @@ impl GraphModel {
                             (
                                 GraphRule::NoCycleThrough {
                                     v: reach.from.0,
-                                    closed: t_set,
+                                    closed: t_set.into(),
                                 },
                                 reasons,
                             )
@@ -1778,9 +1905,13 @@ impl GraphModel {
                     }
                 }
                 None => {
-                    let forced = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| bfs_rows(forced_rows, vertices, reach.from))
-                    });
+                    let forced = memo_forced(
+                        forced_searches,
+                        forced_live,
+                        forced_rows,
+                        vertices,
+                        reach.from,
+                    );
                     let mut forced_reaches = false;
                     let mut forced_path = None;
                     let mut forced_witness = None;
@@ -1804,11 +1935,14 @@ impl GraphModel {
                         }
                         continue;
                     }
-                    let backward = backward_searches.get_mut(reach.to.0 as usize).map(|slot| {
-                        slot.get_or_insert_with(|| {
-                            backward_seen(possible_in, vertices, reach.to, values)
-                        })
-                    });
+                    let backward = memo_backward(
+                        backward_searches,
+                        backward_live,
+                        possible_in,
+                        vertices,
+                        reach.to,
+                        values,
+                    );
                     let Some(backward) = backward else {
                         continue;
                     };
@@ -1819,7 +1953,7 @@ impl GraphModel {
                             (
                                 GraphRule::NoCycleThrough {
                                     v: reach.from.0,
-                                    closed: t_set,
+                                    closed: t_set.into(),
                                 },
                                 reasons,
                             )
@@ -1858,9 +1992,13 @@ impl GraphModel {
                 }
                 // Exact: does the forced (== possible) view actually
                 // witness the demanded reachability?
-                let tree = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
-                    slot.get_or_insert_with(|| bfs_rows(forced_rows, vertices, reach.from))
-                });
+                let tree = memo_forced(
+                    forced_searches,
+                    forced_live,
+                    forced_rows,
+                    vertices,
+                    reach.from,
+                );
                 let reaches = tree.is_some_and(|t| t.reaches_forced(spec, values, reach.to));
                 if reaches {
                     continue;
@@ -1868,7 +2006,7 @@ impl GraphModel {
                 // Refuted: the exact backward closure over the all-fixed
                 // possible view (skip-false == true edges here) supplies
                 // the cut.
-                let backward = backward_seen(possible_in, vertices, reach.to, values);
+                let mut backward = backward_seen(possible_in, vertices, reach.to, values);
                 debug_assert!(!backward.possible_reaches(spec, values, reach.from));
                 let (rule, mut conflict) = if reach.from == reach.to {
                     let t_set = forward_ge1_set(possible_out, vertices, reach.from, values);
@@ -1876,7 +2014,7 @@ impl GraphModel {
                     (
                         GraphRule::NoCycleThrough {
                             v: reach.from.0,
-                            closed: t_set,
+                            closed: t_set.into(),
                         },
                         reasons,
                     )
