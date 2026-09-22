@@ -20,9 +20,15 @@ command -v perf >/dev/null || { echo "perf missing" >&2; exit 2; }
 echo "nixie: $($NIXIE --version 2>/dev/null | head -1 || echo '(no --version)')"
 echo "z3:    $($Z3 --version)"
 
+# Pin both solvers to one core: this is a hybrid CPU (P+E clusters) and
+# unpinned runs migrate between clusters, where the per-cluster PMU
+# scaling inflates instruction counts by load-dependent factors (measured
+# 6x swings on identical binaries). Pinned A/A repeats agree to 1e-6.
+PIN="${PIN:-taskset -c 4}"
+
 run_one() {  # $1=solver $2=file -> "verdict<TAB>instructions"
     local out instr verdict
-    out=$(perf stat -x, -e instructions:u -- timeout -s KILL "$CAP"s "$1" "$2" 2>&1)
+    out=$(perf stat -x, -e cpu_core/instructions/u -- $PIN timeout -s KILL "$CAP"s "$1" "$2" 2>&1)
     verdict=$(printf '%s\n' "$out" | grep -xE 'sat|unsat|unknown' | tail -1)
     [ -n "$verdict" ] || verdict="timeout/error"
     # Hybrid CPUs emit one line per cluster (cpu_atom/..., cpu_core/...);

@@ -96,7 +96,7 @@ pub mod proof;
 use crate::prelude::*;
 use crate::user_propagator::{Consequence, PropagatorContext, PropagatorResult, UserPropagator};
 use nixie_core::ast::{TermId, TermManager};
-pub use proof::{GraphCertificate, GraphProofError, GraphStatement};
+pub use proof::{GraphCertificate, GraphProofError, GraphRule, GraphStatement};
 
 /// Invalid graph construction (rejected before installing any constraint).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -407,6 +407,47 @@ impl Bfs {
             .any(|(i, e)| e.to == target && self.visits(e.from) && values[i] == EdgeValue::True)
     }
 
+    /// Edge indices of the witnessed `source ->+ target` walk in the
+    /// **forced** view (the certificate counterpart of [`Self::path_atoms`];
+    /// indices, not atoms, so no deduplication — a walk repeats an edge
+    /// only under a shared guard, which is exactly what it witnessed).
+    fn path_witness_edges(
+        &self,
+        spec: &GraphSpec,
+        values: &[EdgeValue],
+        target: VertexId,
+    ) -> Option<Vec<u32>> {
+        let source = VertexId(self.source as u32);
+        let mut walked = Vec::new();
+        if target == source {
+            for (i, edge) in spec.edges.iter().enumerate() {
+                if edge.to == target && self.visits(edge.from) && values[i] == EdgeValue::True {
+                    walked.push(i as u32);
+                    let mut x = edge.from;
+                    while x != source {
+                        let e = self.parent_edge[x.0 as usize]?; // parent walk
+                        walked.push(e);
+                        x = spec.edges[e as usize].from;
+                    }
+                    // Collected as [closing, parents target->source]; the
+                    // certified walk starts at `source`, follows the
+                    // parents forward, then closes with edge `i`.
+                    walked.reverse();
+                    return Some(walked);
+                }
+            }
+            return None;
+        }
+        let mut x = target;
+        while x != source {
+            let e = self.parent_edge[x.0 as usize]?;
+            walked.push(e);
+            x = spec.edges[e as usize].from;
+        }
+        walked.reverse(); // collected target->source; certify source->target
+        Some(walked)
+    }
+
     /// Edge atoms of the witnessed path `source ->+ target` in the **forced**
     /// view (every emitted edge is currently true), deduplicated in path
     /// order — a shared guard naming several path edges appears once (a
@@ -512,6 +553,110 @@ struct Backward {
     witness: Vec<Option<u32>>,
 }
 
+/// The ≥1-step forward closure of `source` over non-false edges: every
+/// vertex reachable through at least one non-refuted edge. `None` entries
+/// of `values` are treated as present (the possible view).
+fn forward_ge1_set(
+    possible_out: &Csr,
+    vertices: usize,
+    source: VertexId,
+    values: &[EdgeValue],
+) -> Vec<u32> {
+    let mut seen = vec![false; vertices];
+    let mut queue = Vec::new();
+    for k in possible_out.row(source.0 as usize) {
+        let edge = possible_out.edges[k];
+        if values[edge as usize] == EdgeValue::False {
+            continue;
+        }
+        let to = possible_out.neighbours[k];
+        if !seen[to as usize] {
+            seen[to as usize] = true;
+            queue.push(to);
+        }
+    }
+    let mut head = 0;
+    while let Some(&v) = queue.get(head) {
+        head += 1;
+        for k in possible_out.row(v as usize) {
+            let edge = possible_out.edges[k];
+            if values[edge as usize] == EdgeValue::False {
+                continue;
+            }
+            let to = possible_out.neighbours[k];
+            if !seen[to as usize] {
+                seen[to as usize] = true;
+                queue.push(to);
+            }
+        }
+    }
+    (0..vertices)
+        .filter(|v| seen[*v])
+        .map(|v| v as u32)
+        .collect()
+}
+
+/// T-form self-pair reasons: every **false** edge whose tail lies in
+/// `t_set ∪ {v}` (the edges that could leave the no-cycle region),
+/// deduplicated. Together with the `NoCycleThrough { v, closed: t_set }`
+/// witness these form the valid lemma `premises ⇒ ¬reach(v, v)` (a cycle
+/// through `v` would have to leave `closed ∪ {v}`, and every premise-
+/// compatible such edge is false).
+/// A topological order of the subgraph of non-false edges (Kahn's
+/// algorithm; `None` when that subgraph is cyclic — the caller then does
+/// not have an acyclicity witness).
+fn nonfalse_topo_order(
+    spec: &GraphSpec,
+    values: &[EdgeValue],
+    vertices: usize,
+) -> Option<Vec<u32>> {
+    let mut indegree = vec![0usize; vertices];
+    let mut outgoing: Vec<Vec<u32>> = vec![Vec::new(); vertices];
+    for (i, edge) in spec.edges.iter().enumerate() {
+        if values[i] != EdgeValue::False {
+            outgoing[edge.from.0 as usize].push(edge.to.0);
+            indegree[edge.to.0 as usize] += 1;
+        }
+    }
+    let mut queue: Vec<u32> = (0..vertices)
+        .filter(|&v| indegree[v] == 0)
+        .map(|v| v as u32)
+        .collect();
+    let mut order = Vec::with_capacity(vertices);
+    let mut head = 0;
+    while let Some(&v) = queue.get(head) {
+        head += 1;
+        order.push(v);
+        for &w in &outgoing[v as usize] {
+            indegree[w as usize] -= 1;
+            if indegree[w as usize] == 0 {
+                queue.push(w);
+            }
+        }
+    }
+    (order.len() == vertices).then_some(order)
+}
+
+fn ge1_leaving_negations(
+    spec: &GraphSpec,
+    values: &[EdgeValue],
+    t_set: &[u32],
+    v: u32,
+) -> Vec<TermId> {
+    let in_region = |x: u32| x == v || t_set.contains(&x);
+    let mut seen = FxHashSet::default();
+    let mut reasons = Vec::new();
+    for (i, edge) in spec.edges.iter().enumerate() {
+        if in_region(edge.from.0) && values[i] == EdgeValue::False {
+            let negation = edge.negation;
+            if seen.insert(negation) {
+                reasons.push(negation);
+            }
+        }
+    }
+    reasons
+}
+
 fn backward_seen(
     possible_in: &Csr,
     vertices: usize,
@@ -615,6 +760,17 @@ impl Backward {
                 .any(|(i, e)| e.from == u && self.sees(e.to) && in_view(values[i], false));
         }
         self.sees(u)
+    }
+
+    /// The **cut witness**: the complement of the backward closure — the
+    /// set of vertices that cannot reach the target through non-refuted
+    /// edges. It contains the source, excludes the target, and every
+    /// premise-refuted crossing edge is exactly an edge of the cut.
+    fn closed_set(&self, vertices: usize) -> Vec<u32> {
+        (0..vertices)
+            .filter(|v| !self.seen[*v])
+            .map(|v| v as u32)
+            .collect()
     }
 
     /// Signed reasons that the source cannot reach the target through
@@ -906,17 +1062,20 @@ fn find_cycle_filter(
 }
 
 /// A consequence over one graph's literals, carrying that graph's
-/// certificate (statement identity) for independent lemma checking. The
-/// statement Arc is cloned before any mutable cache borrow.
+/// certificate — statement identity plus the structural witness the
+/// emitter's own search produced (a path walk, the closed set of a cut,
+/// a cycle, or the all-refuted form). Checking is linear in the witness.
+/// The statement Arc is cloned before any mutable cache borrow.
 fn certified_consequence(
     statement: &Option<Arc<GraphStatement>>,
+    rule: GraphRule,
     term: TermId,
     reasons: Vec<TermId>,
 ) -> Consequence {
     let mut consequence = Consequence::new(term, reasons);
     consequence.graph_certificate = statement
         .as_ref()
-        .map(|statement| GraphCertificate::new((**statement).clone()));
+        .map(|statement| GraphCertificate::new((**statement).clone(), rule));
     consequence
 }
 
@@ -953,6 +1112,10 @@ pub struct GraphModel {
     /// keeps one meaning (all its edges live and die together), so a fixation
     /// event fans out to every edge it names.
     edge_index: FxHashMap<TermId, Vec<(u32, u32)>>,
+    /// The witness of the most recent `Unsat` returned per graph (read by
+    /// `run` immediately after when wrapping the conflict as a queued
+    /// consequence; overwritten on every conflicting run).
+    conflict_rules: Vec<Option<GraphRule>>,
     /// Every term used as an edge atom (across graphs), for uniqueness.
     edge_terms: FxHashSet<TermId>,
     /// Terms created by this model (reach/acyclicity atoms), which edge
@@ -986,6 +1149,7 @@ impl GraphModel {
             proof_statements: Vec::new(),
             caches: Vec::new(),
             edge_index: FxHashMap::default(),
+            conflict_rules: Vec::new(),
             edge_terms: FxHashSet::default(),
             system_terms: FxHashSet::default(),
             reach_atom_fixed: Vec::new(),
@@ -1290,6 +1454,7 @@ impl GraphModel {
             self.ensure_statement(GraphHandle(g));
         }
         let watches = self.watches();
+        self.conflict_rules = self.graphs.iter().map(|_| None).collect();
         for (g, spec) in self.graphs.iter().enumerate() {
             for (i, edge) in spec.edges.iter().enumerate() {
                 self.edge_index
@@ -1320,9 +1485,18 @@ impl GraphModel {
             match self.run_graph(g, ctx) {
                 PropagatorResult::Unsat(reasons) => {
                     // The queued consequence carries the same signed reasons
-                    // so search-time conflicts become ordinary clauses.
+                    // so search-time conflicts become ordinary clauses. The
+                    // conflict's witness was stashed by the returning site;
+                    // a missing one is a broken invariant — fail closed.
+                    let Some(rule) = self.conflict_rules.get(g).cloned().flatten() else {
+                        if std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                            eprintln!("RUN FALLBACK graph {g}");
+                        }
+                        return PropagatorResult::Unknown;
+                    };
                     ctx.propagate(certified_consequence(
                         &statement,
+                        rule,
                         self.false_term,
                         reasons.clone(),
                     ));
@@ -1456,10 +1630,20 @@ impl GraphModel {
                     Some(true) => {
                         let mut conflict = reasons;
                         conflict.push(atom);
+                        self.conflict_rules[g] = Some(GraphRule::Cycle {
+                            edges: cycle.clone(),
+                        });
                         return PropagatorResult::Unsat(conflict);
                     }
                     None => {
-                        ctx.propagate(certified_consequence(&statement, negation, reasons));
+                        ctx.propagate(certified_consequence(
+                            &statement,
+                            GraphRule::Cycle {
+                                edges: cycle.clone(),
+                            },
+                            negation,
+                            reasons,
+                        ));
                     }
                     Some(false) => {}
                 }
@@ -1481,12 +1665,24 @@ impl GraphModel {
                         .collect();
                     match fixed {
                         Some(false) => {
+                            let Some(order) = nonfalse_topo_order(spec, values, vertices) else {
+                                return PropagatorResult::Unknown;
+                            };
                             let mut conflict = reasons;
                             conflict.push(negation);
+                            self.conflict_rules[g] = Some(GraphRule::TopoOrder { order });
                             return PropagatorResult::Unsat(conflict);
                         }
                         None => {
-                            ctx.propagate(certified_consequence(&statement, atom, reasons));
+                            let Some(order) = nonfalse_topo_order(spec, values, vertices) else {
+                                return PropagatorResult::Unknown;
+                            };
+                            ctx.propagate(certified_consequence(
+                                &statement,
+                                GraphRule::TopoOrder { order },
+                                atom,
+                                reasons,
+                            ));
                         }
                         Some(true) => {}
                     }
@@ -1516,18 +1712,27 @@ impl GraphModel {
                     let search = forced_searches.get_mut(reach.from.0 as usize).map(|slot| {
                         slot.get_or_insert_with(|| bfs_rows(forced_rows, vertices, reach.from))
                     });
-                    let (search_reaches, path) = match search {
+                    let (search_reaches, path, witness) = match search {
                         Some(s) => (
                             s.reaches_forced(spec, values, reach.to),
                             s.path_atoms(spec, values, reach.to),
+                            s.path_witness_edges(spec, values, reach.to),
                         ),
-                        None => (false, None),
+                        None => (false, None, None),
                     };
                     if search_reaches {
-                        let Some(mut conflict) = path else {
+                        let (Some(mut conflict), Some(edges)) = (path, witness) else {
+                            if std::env::var("NIXIE_GRAPH_CERT_DEBUG").is_ok() {
+                                eprintln!("PATH CONFLICT FALLBACK");
+                            }
                             return PropagatorResult::Unknown;
                         };
                         conflict.push(reach.negation);
+                        self.conflict_rules[g] = Some(GraphRule::Path {
+                            from: reach.from.0,
+                            to: reach.to.0,
+                            edges,
+                        });
                         return PropagatorResult::Unsat(conflict);
                     }
                 }
@@ -1541,8 +1746,28 @@ impl GraphModel {
                         continue;
                     };
                     if !backward.possible_reaches(spec, values, reach.from) {
-                        let mut conflict = backward.cut_negations(spec, values);
+                        let (rule, mut conflict) = if reach.from == reach.to {
+                            let t_set = forward_ge1_set(possible_out, vertices, reach.from, values);
+                            let reasons = ge1_leaving_negations(spec, values, &t_set, reach.from.0);
+                            (
+                                GraphRule::NoCycleThrough {
+                                    v: reach.from.0,
+                                    closed: t_set,
+                                },
+                                reasons,
+                            )
+                        } else {
+                            (
+                                GraphRule::Cut {
+                                    from: reach.from.0,
+                                    to: reach.to.0,
+                                    closed: backward.closed_set(vertices),
+                                },
+                                backward.cut_negations(spec, values),
+                            )
+                        };
                         conflict.push(reach.atom);
+                        self.conflict_rules[g] = Some(rule);
                         return PropagatorResult::Unsat(conflict);
                     }
                 }
@@ -1552,13 +1777,24 @@ impl GraphModel {
                     });
                     let mut forced_reaches = false;
                     let mut forced_path = None;
+                    let mut forced_witness = None;
                     if let Some(f) = forced {
                         forced_reaches = f.reaches_forced(spec, values, reach.to);
                         forced_path = f.path_atoms(spec, values, reach.to);
+                        forced_witness = f.path_witness_edges(spec, values, reach.to);
                     }
                     if forced_reaches {
-                        if let Some(reasons) = forced_path {
-                            ctx.propagate(certified_consequence(&statement, reach.atom, reasons));
+                        if let (Some(reasons), Some(edges)) = (forced_path, forced_witness) {
+                            ctx.propagate(certified_consequence(
+                                &statement,
+                                GraphRule::Path {
+                                    from: reach.from.0,
+                                    to: reach.to.0,
+                                    edges,
+                                },
+                                reach.atom,
+                                reasons,
+                            ));
                         }
                         continue;
                     }
@@ -1571,8 +1807,32 @@ impl GraphModel {
                         continue;
                     };
                     if !backward.possible_reaches(spec, values, reach.from) {
-                        let reasons = backward.cut_negations(spec, values);
-                        ctx.propagate(certified_consequence(&statement, reach.negation, reasons));
+                        let (rule, reasons) = if reach.from == reach.to {
+                            let t_set = forward_ge1_set(possible_out, vertices, reach.from, values);
+                            let reasons = ge1_leaving_negations(spec, values, &t_set, reach.from.0);
+                            (
+                                GraphRule::NoCycleThrough {
+                                    v: reach.from.0,
+                                    closed: t_set,
+                                },
+                                reasons,
+                            )
+                        } else {
+                            (
+                                GraphRule::Cut {
+                                    from: reach.from.0,
+                                    to: reach.to.0,
+                                    closed: backward.closed_set(vertices),
+                                },
+                                backward.cut_negations(spec, values),
+                            )
+                        };
+                        ctx.propagate(certified_consequence(
+                            &statement,
+                            rule,
+                            reach.negation,
+                            reasons,
+                        ));
                     }
                 }
             }
@@ -1604,8 +1864,28 @@ impl GraphModel {
                 // the cut.
                 let backward = backward_seen(possible_in, vertices, reach.to, values);
                 debug_assert!(!backward.possible_reaches(spec, values, reach.from));
-                let mut conflict = backward.cut_negations(spec, values);
+                let (rule, mut conflict) = if reach.from == reach.to {
+                    let t_set = forward_ge1_set(possible_out, vertices, reach.from, values);
+                    let reasons = ge1_leaving_negations(spec, values, &t_set, reach.from.0);
+                    (
+                        GraphRule::NoCycleThrough {
+                            v: reach.from.0,
+                            closed: t_set,
+                        },
+                        reasons,
+                    )
+                } else {
+                    (
+                        GraphRule::Cut {
+                            from: reach.from.0,
+                            to: reach.to.0,
+                            closed: backward.closed_set(vertices),
+                        },
+                        backward.cut_negations(spec, values),
+                    )
+                };
                 conflict.push(reach.atom);
+                self.conflict_rules[g] = Some(rule);
                 return PropagatorResult::Unsat(conflict);
             }
             if let Some((atom, negation)) = spec.acyclic
@@ -1634,6 +1914,10 @@ impl GraphModel {
                         .filter(|lit| seen.insert(*lit))
                         .collect();
                     conflict.push(negation);
+                    let Some(order) = nonfalse_topo_order(spec, values, vertices) else {
+                        return PropagatorResult::Unknown;
+                    };
+                    self.conflict_rules[g] = Some(GraphRule::TopoOrder { order });
                     return PropagatorResult::Unsat(conflict);
                 }
             }

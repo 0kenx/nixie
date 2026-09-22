@@ -39,24 +39,96 @@ impl core::fmt::Display for GraphProofError {
 impl core::error::Error for GraphProofError {}
 
 /// Untrusted witness for `premises => conclusion` relative to one original
-/// graph declaration. The witness carries only the statement identity;
-/// checking recomputes everything from the immutable declaration.
+/// graph declaration. The witness names the statement and carries an
+/// explicit justification structure the checker verifies directly —
+/// **no search, no closure recomputation** (the certificate path runs per
+/// emitted consequence inside the CDCL loop, so it must be linear in the
+/// witness; the recompute-based [`GraphStatement::check_lemma`] remains
+/// the cold-boundary checker for recorded proof lemmas, where no witness
+/// is available).
+#[derive(Debug, Clone)]
+pub enum GraphRule {
+    /// `reach(from, to)` witnessed by an explicit edge-index walk: the
+    /// first edge leaves `from`, each edge's head is the next one's tail,
+    /// the last head is `to`, and every walked edge's presence atom is a
+    /// premise. A closed walk (last head == from == to) witnesses the
+    /// self-pair cycle reading.
+    Path {
+        /// Walk source vertex.
+        from: u32,
+        /// Walk target vertex.
+        to: u32,
+        /// Edge indices, in walk order.
+        edges: Vec<u32>,
+    },
+    /// `¬reach(from, to)` witnessed by a successor-closed vertex set
+    /// `closed`: `from ∈ closed`, `to ∉ closed`, and every edge whose
+    /// tail is in `closed` while its head is not has its negation among
+    /// the premises — so no premise-true edge leaves the set, and
+    /// nothing reachable from `from` escapes it.
+    Cut {
+        /// Separated source vertex.
+        from: u32,
+        /// Separated target vertex.
+        to: u32,
+        /// The closed vertex set (unsorted; membership only).
+        closed: Vec<u32>,
+    },
+    /// `¬acyclic` witnessed by an explicit directed cycle of edge
+    /// indices, every walked edge's presence atom a premise.
+    Cycle {
+        /// Edge indices, in cycle order.
+        edges: Vec<u32>,
+    },
+    /// `acyclic` witnessed by a topological order of the vertices: a
+    /// permutation where every non-refuted edge ascends. Checking is
+    /// O(vertices + edges) with O(1) work per edge — no search, no
+    /// closure. (The all-edges-refuted form is the degenerate order.)
+    TopoOrder {
+        /// A permutation of all vertex indices.
+        order: Vec<u32>,
+    },
+    /// `¬reach(v, v)` (the self-pair cycle reading) witnessed by the
+    /// ≥1-step forward closure `closed` of `v` over non-refuted edges:
+    /// `v ∉ closed`, and every non-refuted edge whose tail is in
+    /// `closed ∪ {v}` has its head in `closed`. By induction `closed`
+    /// contains every vertex reachable from `v` in ≥1 steps, so `v ∉
+    /// closed` means no cycle through `v`. (A separating set cannot
+    /// witness the self-pair — `v` would have to be on both sides.)
+    NoCycleThrough {
+        /// The vertex the cycle must pass through.
+        v: u32,
+        /// The ≥1-step forward closure (unsorted; membership only).
+        closed: Vec<u32>,
+    },
+}
+
+/// A consequence's graph witness: the statement it refers to plus the
+/// rule structure. Constructed by the propagator at emission (from data
+/// its search already produced) and verified in linear time.
 #[derive(Debug, Clone)]
 pub struct GraphCertificate {
     statement: GraphStatement,
+    rule: GraphRule,
 }
 
 impl GraphCertificate {
     /// Construct an untrusted witness; call `check` before accepting it.
     #[must_use]
-    pub fn new(statement: GraphStatement) -> Self {
-        Self { statement }
+    pub fn new(statement: GraphStatement, rule: GraphRule) -> Self {
+        Self { statement, rule }
     }
 
     /// Referenced statement, which a consumer must authenticate independently.
     #[must_use]
     pub fn statement(&self) -> &GraphStatement {
         &self.statement
+    }
+
+    /// The witness structure (for introspection and tests).
+    #[must_use]
+    pub fn rule(&self) -> &GraphRule {
+        &self.rule
     }
 
     /// Exact identity of a registered graph, preserved across clones.
@@ -77,7 +149,184 @@ impl GraphCertificate {
         if !self.statement.is_same(original) {
             return Err(GraphProofError("certificate references a different graph"));
         }
-        original.check_lemma(conclusion, premises)
+        // A conflict (`false` concluded) recurses through its graph
+        // literal: the premises include the offending literal, whose
+        // opposite the rest must imply. Edge literals never collide with
+        // graph literals, so the premise sets below are unaffected by the
+        // substitution.
+        let (conclusion, premises) = if conclusion == self.statement.false_term {
+            let mut literal = None;
+            let rest: Vec<TermId> = premises
+                .iter()
+                .copied()
+                .filter(|&p| {
+                    if self.statement.is_graph_literal(p) && literal.is_none() {
+                        literal = Some(p);
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .collect();
+            let opposite = literal
+                .and_then(|l| self.statement.negation_of(l))
+                .ok_or(GraphProofError("conflict premise cites no graph literal"))?;
+            (opposite, rest)
+        } else {
+            (conclusion, premises.to_vec())
+        };
+        // One premise-membership set; edges are classified individually
+        // (a term may be one edge's atom AND another's negation when a
+        // model uses `g` and `¬g` as guards, so a global atom/negation
+        // partition would misfile it).
+        let premise_set: FxHashSet<TermId> = premises.iter().copied().collect();
+        let edges = self.statement.edges();
+        let in_range = |i: u32| -> Result<usize, GraphProofError> {
+            usize::try_from(i)
+                .ok()
+                .filter(|&i| i < edges.len())
+                .ok_or(GraphProofError("witness cites an unknown edge"))
+        };
+        match &self.rule {
+            GraphRule::Path {
+                from,
+                to,
+                edges: walked,
+            } => {
+                let (want_from, want_to, _) = self.statement.reach_pair_of(conclusion)?;
+                if *from != want_from || *to != want_to || walked.is_empty() {
+                    return Err(GraphProofError("path witness endpoints mismatch"));
+                }
+                let mut at = *from;
+                for &i in walked {
+                    let e = edges[in_range(i)?];
+                    if e.0 != at {
+                        return Err(GraphProofError("path witness walk is broken"));
+                    }
+                    if !premise_set.contains(&e.2) {
+                        return Err(GraphProofError(
+                            "path witness edge is not a positive premise",
+                        ));
+                    }
+                    at = e.1;
+                }
+                if at != *to {
+                    return Err(GraphProofError("path witness does not arrive"));
+                }
+                Ok(())
+            }
+            GraphRule::Cut { from, to, closed } => {
+                let (want_from, want_to, _) = self.statement.reach_pair_of_negation(conclusion)?;
+                if *from != want_from || *to != want_to {
+                    return Err(GraphProofError("cut witness endpoints mismatch"));
+                }
+                let set: FxHashSet<u32> = closed.iter().copied().collect();
+                if !set.contains(from) || set.contains(to) {
+                    return Err(GraphProofError(
+                        "cut witness set does not separate the pair",
+                    ));
+                }
+                for &(from_e, to_e, _, negation) in edges {
+                    // A crossing edge has its tail in the set and its head
+                    // outside; every crossing edge must be premise-refuted.
+                    if set.contains(&from_e)
+                        && !set.contains(&to_e)
+                        && !premise_set.contains(&negation)
+                    {
+                        return Err(GraphProofError(
+                            "cut witness set is crossed by an unrefuted edge",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            GraphRule::Cycle { edges: walked } => {
+                let (atom, negation) = self.statement.acyclic_pair_of(conclusion)?;
+                let _ = atom;
+                if conclusion != negation || walked.is_empty() {
+                    return Err(GraphProofError(
+                        "cycle witness must conclude the acyclicity negation",
+                    ));
+                }
+                let start = edges[in_range(walked[0])?].0;
+                let mut at = start;
+                for &i in walked {
+                    let e = edges[in_range(i)?];
+                    if e.0 != at || !premise_set.contains(&e.2) {
+                        return Err(GraphProofError("cycle witness is broken"));
+                    }
+                    at = e.1;
+                }
+                if at != start {
+                    return Err(GraphProofError("cycle witness does not close"));
+                }
+                Ok(())
+            }
+            GraphRule::NoCycleThrough { v, closed } => {
+                let (want_v, want_v2, _) = self.statement.reach_pair_of_negation(conclusion)?;
+                if *v != want_v || want_v != want_v2 {
+                    return Err(GraphProofError(
+                        "no-cycle witness must conclude a self-pair negation",
+                    ));
+                }
+                let set: FxHashSet<u32> = closed.iter().copied().collect();
+                if set.contains(v) || closed.len() != set.len() {
+                    return Err(GraphProofError(
+                        "no-cycle witness set contains the vertex (or repeats)",
+                    ));
+                }
+                for &(from_e, to_e, _, negation) in edges {
+                    if (set.contains(&from_e) || from_e == *v)
+                        && !set.contains(&to_e)
+                        && !premise_set.contains(&negation)
+                    {
+                        return Err(GraphProofError(
+                            "no-cycle witness is left by an unrefuted edge",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            GraphRule::TopoOrder { order } => {
+                let (atom, _) = self.statement.acyclic_pair_of(conclusion)?;
+                if conclusion != atom {
+                    return Err(GraphProofError(
+                        "topological witness must conclude acyclicity",
+                    ));
+                }
+                let vertices = self.statement.vertices_count();
+                if order.len() != vertices || {
+                    let mut seen = vec![false; vertices];
+                    let mut ok = true;
+                    for &v in order {
+                        if v as usize >= vertices || seen[v as usize] {
+                            ok = false;
+                            break;
+                        }
+                        seen[v as usize] = true;
+                    }
+                    !ok
+                } {
+                    return Err(GraphProofError(
+                        "topological witness is not a vertex permutation",
+                    ));
+                }
+                let mut rank = vec![0u32; vertices];
+                for (r, &v) in order.iter().enumerate() {
+                    rank[v as usize] = r as u32;
+                }
+                for &(from_e, to_e, _, negation) in edges {
+                    if !premise_set.contains(&negation)
+                        && rank[from_e as usize] >= rank[to_e as usize]
+                    {
+                        return Err(GraphProofError(
+                            "a non-refuted edge descends the topological order",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 }
 
@@ -136,6 +385,40 @@ impl GraphStatement {
     #[must_use]
     pub fn reach_atoms(&self) -> &[(u32, u32, TermId, TermId)] {
         &self.reach
+    }
+
+    /// The `(from, to)` pair of the reach atom `conclusion`, if it is one.
+    fn reach_pair_of(&self, conclusion: TermId) -> Result<(u32, u32, TermId), GraphProofError> {
+        self.reach
+            .iter()
+            .find(|&&(_, _, atom, _)| atom == conclusion)
+            .map(|&(f, t, atom, _)| (f, t, atom))
+            .ok_or(GraphProofError("conclusion is not a reach atom"))
+    }
+
+    /// The `(from, to)` pair whose **negation** is `conclusion`.
+    fn reach_pair_of_negation(
+        &self,
+        conclusion: TermId,
+    ) -> Result<(u32, u32, TermId), GraphProofError> {
+        self.reach
+            .iter()
+            .find(|&&(_, _, _, negation)| negation == conclusion)
+            .map(|&(f, t, _, negation)| (f, t, negation))
+            .ok_or(GraphProofError("conclusion is not a reach negation"))
+    }
+
+    /// The acyclicity `(atom, negation)` pair, if declared.
+    fn acyclic_pair_of(&self, conclusion: TermId) -> Result<(TermId, TermId), GraphProofError> {
+        self.acyclic
+            .ok_or(GraphProofError("no acyclicity atom declared"))
+            .and_then(|pair| {
+                if pair.0 == conclusion || pair.1 == conclusion {
+                    Ok(pair)
+                } else {
+                    Err(GraphProofError("conclusion is not the acyclicity literal"))
+                }
+            })
     }
 
     /// The declaration's acyclicity atom, if any.
@@ -364,6 +647,17 @@ impl GraphStatement {
         Err(GraphProofError(
             "conclusion is not a graph literal of this statement",
         ))
+    }
+
+    /// Is `term` a reach or acyclicity literal of this statement?
+    #[must_use]
+    fn is_graph_literal(&self, term: TermId) -> bool {
+        self.reach
+            .iter()
+            .any(|&(_, _, atom, negation)| atom == term || negation == term)
+            || self
+                .acyclic
+                .is_some_and(|(atom, negation)| atom == term || negation == term)
     }
 
     /// The statement's negation term for a graph literal, if it is one.
@@ -628,13 +922,197 @@ mod tests {
         assert!(statement.check_lemma(foreign, &[]).is_err());
         assert!(statement.check_lemma(tm.mk_bool(true), &edges).is_err());
         // Identity: a rebuilt-but-different statement cannot authenticate.
-        let certificate = GraphCertificate::new(statement.clone());
+        // The rule is irrelevant for the identity check; carry a valid one.
+        let certificate = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::TopoOrder {
+                order: vec![0, 1, 2],
+            },
+        );
         let mut tm2 = TermManager::new();
         let (other, other_edges, _, _) = triangle(&mut tm2);
         let _ = other_edges;
         assert!(!certificate.is_for(&other));
         assert!(certificate.check(&other, foreign, &[]).is_err());
         assert!(certificate.is_for(&statement));
+    }
+
+    /// Witness-level checks: valid paths/cuts/cycles verify; broken walks,
+    /// non-separating or crossed cut sets, wrong endpoints and missing
+    /// premises are rejected. (The recompute-based `check_lemma` tests
+    /// above remain the semantic oracle; these pin the hot-path checker.)
+    #[test]
+    fn witness_rules_check_exactly() {
+        let mut tm = TermManager::new();
+        let (statement, edges, reach, acyclic) = triangle(&mut tm);
+        // Edge indices: e01=0, e12=1, e20=2, e02=3.
+        // Valid path 0->2 via the chord.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 0,
+                to: 2,
+                edges: vec![3],
+            },
+        );
+        assert!(cert.check(&statement, reach[0], &[edges[3]]).is_ok());
+        // Same walk, missing premise.
+        assert!(cert.check(&statement, reach[0], &[]).is_err());
+        // Broken walk (edge does not start at 0).
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 0,
+                to: 2,
+                edges: vec![1],
+            },
+        );
+        assert!(cert.check(&statement, reach[0], &[edges[1]]).is_err());
+        // Wrong endpoint pair.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 1,
+                to: 2,
+                edges: vec![1],
+            },
+        );
+        assert!(cert.check(&statement, reach[0], &[edges[1]]).is_err());
+        // Valid self-pair cycle witness 0->1->2->0.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 0,
+                to: 0,
+                edges: vec![0, 1, 2],
+            },
+        );
+        assert!(
+            cert.check(&statement, reach[1], &[edges[0], edges[1], edges[2]])
+                .is_ok()
+        );
+
+        // Cut: S = {1,2} separates 1 from 0 when e12(1) and e20(2) are
+        // refuted... use the complement form: ¬reach(0,2) with closed={1}
+        // requires every crossing edge refuted: crossings are e01 (0->1)
+        // and e12 (1->2).
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Cut {
+                from: 0,
+                to: 2,
+                closed: vec![0, 1],
+            },
+        );
+        let not_reach02 = tm.mk_not(reach[0]);
+        // e12 and e02 refuted: nothing leaves {0,1} toward 2.
+        assert!(
+            cert.check(
+                &statement,
+                not_reach02,
+                &[tm.mk_not(edges[1]), tm.mk_not(edges[3])],
+            )
+            .is_ok()
+        );
+        // Unrefuted chord crosses the set.
+        assert!(
+            cert.check(&statement, not_reach02, &[tm.mk_not(edges[1])])
+                .is_err()
+        );
+        // A set containing the target does not separate.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Cut {
+                from: 0,
+                to: 2,
+                closed: vec![0, 1, 2],
+            },
+        );
+        assert!(
+            cert.check(
+                &statement,
+                not_reach02,
+                &[tm.mk_not(edges[1]), tm.mk_not(edges[3])],
+            )
+            .is_err()
+        );
+
+        // Cycle witness for ¬acyclic: the directed triangle.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Cycle {
+                edges: vec![0, 1, 2],
+            },
+        );
+        let not_acy = tm.mk_not(acyclic);
+        assert!(
+            cert.check(&statement, not_acy, &[edges[0], edges[1], edges[2]])
+                .is_ok()
+        );
+        assert!(
+            cert.check(&statement, not_acy, &[edges[0], edges[1]])
+                .is_err()
+        );
+        // TopoOrder for acyclic: order 0,1,2 with every non-refuted edge
+        // ascending; refuting the cycle edges e20 (2->0) and e12 (1->2)
+        // leaves e01 (0->1) and e02 (0->2), both ascending 0<1, 0<2.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::TopoOrder {
+                order: vec![0, 1, 2],
+            },
+        );
+        assert!(
+            cert.check(
+                &statement,
+                acyclic,
+                &[tm.mk_not(edges[1]), tm.mk_not(edges[2])],
+            )
+            .is_ok()
+        );
+        // Without refuting e20 (2->0): it descends the order -> reject.
+        assert!(
+            cert.check(&statement, acyclic, &[tm.mk_not(edges[1])])
+                .is_err()
+        );
+        // A non-permutation witness is rejected.
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::TopoOrder { order: vec![0, 1] },
+        );
+        assert!(
+            cert.check(
+                &statement,
+                acyclic,
+                &[tm.mk_not(edges[1]), tm.mk_not(edges[2])]
+            )
+            .is_err()
+        );
+
+        // Conflict recursion: premises contain the offending literal.
+        let false_term = tm.mk_bool(false);
+        let cert = GraphCertificate::new(
+            statement.clone(),
+            GraphRule::Path {
+                from: 0,
+                to: 2,
+                edges: vec![0, 1],
+            },
+        );
+        // Guards force reach(0,2) while the premises claim ¬reach(0,2).
+        assert!(
+            cert.check(
+                &statement,
+                false_term,
+                &[edges[0], edges[1], tm.mk_not(reach[0])],
+            )
+            .is_ok()
+        );
+        // Without a graph literal among the premises: rejected.
+        assert!(
+            cert.check(&statement, false_term, &[edges[0], edges[1]])
+                .is_err()
+        );
     }
 
     #[test]
