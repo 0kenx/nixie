@@ -229,6 +229,12 @@ pub struct Context {
     /// Whether the FSM model built from `fsm_decls` is currently
     /// registered with the solver.
     fsm_registered: bool,
+    /// Declaration count already covered by registrations. Later
+    /// `fsm.accepts` commands (declarations that arrived after the first
+    /// registration fired) register an *additional* propagator at the
+    /// next solving/asserting point; mutating an already-registered
+    /// automaton declaration instead errors loudly.
+    fsm_decls_done: usize,
 }
 
 /// Map an `FsmError` to a command error.
@@ -272,6 +278,7 @@ impl Context {
             fsm_names: crate::prelude::HashMap::new(),
             fsm_result_names: crate::prelude::HashSet::new(),
             fsm_registered: false,
+            fsm_decls_done: 0,
             #[cfg(feature = "std")]
             proof_log_path: None,
         }
@@ -537,7 +544,23 @@ impl Context {
     /// automaton references, malformed declarations, registration at a
     /// non-zero scope) are command errors, never silent drops.
     pub fn ensure_fsm_registered(&mut self) -> Result<()> {
-        if self.fsm_registered || self.fsm_decls.is_empty() {
+        if self.fsm_decls.is_empty() {
+            return Ok(());
+        }
+        if self.fsm_registered && self.fsm_decls.len() > self.fsm_decls_done {
+            // Declarations arrived since the last registration. New
+            // acceptance queries are incrementally registrable; any
+            // *mutation* of an already-registered automaton is a loud
+            // error (its product graphs are live and cannot be retro-
+            // fitted).
+            for decl in &self.fsm_decls[self.fsm_decls_done..] {
+                if !matches!(decl, FsmDecl::Accepts { .. }) {
+                    return Err(nixie_core::error::NixieError::Unsupported(
+                        "fsm declarations are frozen once solving begins: automata must be fully declared before the first check".to_string(),
+                    ));
+                }
+            }
+        } else if self.fsm_registered {
             return Ok(());
         }
         use nixie_theories::fsm::{AutomatonHandle, FsmModel, Label};
@@ -551,8 +574,16 @@ impl Context {
                 })
                 .map(|v| v as u64)
         };
-        for decl in self.fsm_decls.clone() {
+        for (decl_index, decl) in self.fsm_decls.clone().into_iter().enumerate() {
+            // Already-registered declarations replay only to rebuild the
+            // automaton context for the new epoch's queries.
+            let already = decl_index < self.fsm_decls_done;
             let r: Result<()> = (|| {
+                if already && !matches!(decl, FsmDecl::Accepts { .. }) {
+                    // Structural declarations always replay (they define
+                    // the context); only their Accepts side effects are
+                    // skipped below.
+                }
                 match decl {
                     FsmDecl::Declare {
                         name,
@@ -622,6 +653,9 @@ impl Context {
                             .map_err(fsm_error)?;
                     }
                     FsmDecl::Accepts { name, word, result } => {
+                        if already {
+                            return Ok(());
+                        }
                         let &a = handles.get(&name).ok_or_else(|| {
                             nixie_core::error::NixieError::Unsupported(format!(
                                 "fsm.accepts: unknown automaton '{name}'"
@@ -644,6 +678,7 @@ impl Context {
         self.solver
             .register_fsm(model, &mut self.terms)
             .map_err(fsm_error)?;
+        self.fsm_decls_done = self.fsm_decls.len();
         self.fsm_registered = true;
         Ok(())
     }
@@ -949,6 +984,7 @@ impl Context {
         self.fsm_names.clear();
         self.fsm_result_names.clear();
         self.fsm_registered = false;
+        self.fsm_decls_done = 0;
         self.invalidate_last_check();
     }
 
@@ -975,6 +1011,7 @@ impl Context {
         // The fresh solver has no propagator registrations; the retained
         // FSM declarations re-register lazily at the next solving command.
         self.fsm_registered = false;
+        self.fsm_decls_done = 0;
         self.assertions.clear();
         self.assertion_stack.clear();
         // Keep declared_consts, const_stack, const_name_to_index,

@@ -133,6 +133,19 @@ lazily at the first solving/asserting/pushing command — always at assertion
 scope zero, matching the propagator lifecycle — and re-registers
 automatically after `reset-assertions` (declarations survive, per SMT-LIB);
 `reset` clears them.
+`reset` clears them.
+
+**Late acceptance queries register incrementally.** A `fsm.accepts`
+arriving after registration has already fired (e.g. interleaved with
+asserts — a natural authoring order) registers an *additional*
+propagator for the new query at the next command; earlier queries stay
+bound by the first registration. Mutating a registered automaton
+(`fsm.transition`/`fsm.initial`/`fsm.accepting` after solving began) is a
+loud command error: its product graphs are live and cannot be
+retrofitted — never a silent drop. (The original registration guard
+silently dropped late queries, leaving their constants unconstrained —
+a false-sat found by the `bench/fsm_perf` verdict-agreement canary and
+pinned by `nixie-solver/tests/fsm_script_lifecycle.rs`.)
 
 ## Scope, lifecycle, and limits
 
