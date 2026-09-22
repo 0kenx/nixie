@@ -135,7 +135,7 @@ impl Solver {
                 // parent edge.
                 TermKind::Add(args)
                 | TermKind::Mul(args)
-                | TermKind::And(args)
+                | TermKind::Sequence(_, args) | TermKind::And(args)
                 | TermKind::Or(args) => {
                     if !self.claim_tracked_compound(current) {
                         continue;

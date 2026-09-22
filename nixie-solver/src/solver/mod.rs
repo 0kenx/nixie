@@ -1,4 +1,5 @@
 //! Main CDCL(T) SMT Solver module
+mod sequence;
 
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
@@ -1470,6 +1471,11 @@ impl Solver {
     /// Check satisfiability of the asserted goal set.
     pub fn check(&mut self, manager: &mut TermManager) -> SolverResult {
         self.user_state.closed = true;
+        if manager.sorts.has_sequences()
+            && let Some(result) = self.check_sequences(manager)
+        {
+            return result;
+        }
         // Env-gated term sidecar for the CNF dump: NIXIE_DUMP_TERMS=<path>
         // writes term -> bits/atom-var mappings (see the NIXIE_DUMP_CNF
         // hook in nixie-sat; docs/handovers/2026-09-09-bv-false-sat.md).
@@ -4884,6 +4890,9 @@ impl Solver {
     /// Check satisfiability (pure SAT, no theory integration)
     /// Useful for benchmarking or when theories are not needed
     pub fn check_sat_only(&mut self, manager: &mut TermManager) -> SolverResult {
+        if sequence::contains(&self.certificate_assertions, manager) {
+            return self.check(manager);
+        }
         if self.user_state.active() {
             return self.check(manager);
         }

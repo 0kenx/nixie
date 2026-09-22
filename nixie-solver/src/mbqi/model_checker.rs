@@ -1665,6 +1665,7 @@ fn collect_nested_binder_names(
 /// `Let`/`Match` are declined by the callers and push nothing.
 pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
     match kind {
+        TermKind::Sequence(_, args) => out.extend(args.iter().copied()),
         TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => out.push(*body),
         TermKind::Let { .. } | TermKind::Match { .. } => {}
         TermKind::Not(a) => out.push(*a),
@@ -2842,6 +2843,7 @@ fn rebuild_with(
         |i: usize| -> Result<(TermId, TermId), &'static str> { Ok((one(i)?, one(i + 1)?)) };
     let nary = |n: usize| -> Result<ChildList, &'static str> { (0..n).map(one).collect() };
     Ok(match kind {
+        TermKind::Sequence(_, _) => return Err("native sequences in quantifiers are unsupported"),
         TermKind::True
         | TermKind::False
         | TermKind::IntConst(_)

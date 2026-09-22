@@ -11,6 +11,8 @@ This crate integrates the SAT solver with theory solvers to provide complete SMT
 - **CDCL(T)** - SAT solver with theory propagation
 - **Context** - High-level API for SMT-LIB2 interaction
 - **Model Generation** - Extract satisfying assignments
+- **Native Generic Sequences** - `Seq T` with exact finite-shape reduction and
+  independently validated models. See [supported operations and limits](../docs/NATIVE_SEQUENCES.md).
 - **Exact Heap Separation** - `heap::HeapSolver` supports Boolean combinations
   of integer heaplets, with concrete heap models and independent validation.
   See [`docs/HEAP.md`](../docs/HEAP.md) for the precise fragment and proof limits.

@@ -40,7 +40,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "fp.isPositive" | "fp.abs" | "fp.neg" | "fp.to_real" | "str.len" | "str.is_digit"
             | "str.to_code" | "str.from_code" | "str.to_int" | "str.to.int" | "int.to_str"
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
-            | "re.opt" | "re.comp" | "ff.neg"
+            | "re.opt" | "re.comp" | "ff.neg" | "seq.unit" | "seq.len"
             | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
             | "set.is_singleton" | "set.singleton"
             // Relations (CVC5's `rel.*` surface): transpose takes a
@@ -56,7 +56,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // variadic plans below instead, so `(bvadd a b c)` parses as the
             // standard's left fold `bvadd(bvadd(a, b), c)` — exactly Z3's
             // behaviour, including the `(bvadd x)` arity-1 identity.)
-            "mod" | "select" | "bvult"
+            "seq.nth" | "mod" | "select" | "bvult"
             | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvcomp"
             | "fp.rem"
             | "fp.eq" | "fp.lt" | "fp.gt" | "fp.leq" | "fp.geq" | "fp.min" | "fp.max"
@@ -79,11 +79,11 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "bag" => Plan::Fixed(2),
 
             // ======== three operands ========
-            "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
+            "seq.extract" | "seq.update" | "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
             | "str.replace_all" | "str.replace_re" | "str.replace_re_all" => Plan::Fixed(3),
 
             // ======== operands until the closing paren ========
-            "and" | "or" | "=>" | "xor" | "=" | "distinct" | "+" | "-" | "*" | "div" | "/"
+            "seq.++" | "and" | "or" | "=>" | "xor" | "=" | "distinct" | "+" | "-" | "*" | "div" | "/"
             | "<" | "<=" | ">" | ">=" | "str.++" | "str.<" | "str.<=" | "re.++" | "re.union"
             | "re.inter"
             // `:left-associative` bit-vector operators (SMT-LIB 2.6
@@ -661,6 +661,9 @@ impl Parser<'_> {
 
     /// Build a `Plan::Fixed(1)` built-in from its single operand.
     pub(super) fn build_unary(&mut self, op: &str, x: TermId) -> Result<TermId> {
+        if let Some(op) = crate::ast::sequence::SeqOp::from_name(op) {
+            return self.manager.mk_sequence(op, &[x]);
+        }
         let term = match op {
             "not" => self.manager.mk_not(x),
             // ff.neg t normalizes to (ff.mul #f(p-1) t) at construction.
@@ -872,6 +875,9 @@ impl Parser<'_> {
 
     /// Build a `Plan::Fixed(2)` built-in from its two operands.
     pub(super) fn build_binary(&mut self, op: &str, x: TermId, y: TermId) -> Result<TermId> {
+        if let Some(op) = crate::ast::sequence::SeqOp::from_name(op) {
+            return self.manager.mk_sequence(op, &[x, y]);
+        }
         // SMT-LIB sort check: every binary bit-vector operator except
         // `concat` requires both operands to share one `(_ BitVec w)` sort.
         // Z3 rejects a mixed-width or non-bit-vector application at parse
@@ -1055,6 +1061,9 @@ impl Parser<'_> {
         y: TermId,
         z: TermId,
     ) -> Result<TermId> {
+        if let Some(op) = crate::ast::sequence::SeqOp::from_name(op) {
+            return self.manager.mk_sequence(op, &[x, y, z]);
+        }
         let term = match op {
             // SMT-LIB sort check: the condition must be `Bool` and the two
             // branches must share one sort (Z3: "Sort mismatch at argument
@@ -1184,6 +1193,9 @@ impl Parser<'_> {
     /// `(str.++ x1 … x100000)` of syntactic depth 2 would build a
     /// 100 000-deep term while `MAX_PARSE_DEPTH` reported it as depth 2.
     pub(super) fn build_variadic(&mut self, op: &str, args: &[TermId]) -> Result<TermId> {
+        if let Some(op) = crate::ast::sequence::SeqOp::from_name(op) {
+            return self.manager.mk_sequence(op, args);
+        }
         let term = match op {
             // `:left-associative` bit-vector operators (SMT-LIB 2.6):
             // `(op a)` is the identity and `(op a b c)` folds pairwise as

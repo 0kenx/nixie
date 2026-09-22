@@ -606,6 +606,7 @@ impl Value {
                 SortKind::RoundingMode => break Value::RoundingMode(RoundingMode::RNE),
                 // The empty set is the canonical default, and unlike an
                 // opaque sort it needs no witness to be minted.
+                SortKind::Seq(_) => return None, // Generic Value sequences are not represented by this legacy API.
                 SortKind::Set(_) => break Value::Set(Vec::new()),
                 // The empty bag, likewise.
                 SortKind::Bag(_) => break Value::Bag(Vec::new()),

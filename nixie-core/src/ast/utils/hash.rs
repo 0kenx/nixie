@@ -119,6 +119,13 @@ fn hash_visit(
     core::mem::discriminant(&term.kind).hash(hasher);
 
     match &term.kind {
+        TermKind::Sequence(op, args) => {
+            op.hash(hasher);
+            args.len().hash(hasher);
+            for &arg in args.iter().rev() {
+                stack.push(HashTask::Visit(arg));
+            }
+        }
         TermKind::True | TermKind::False => {}
         TermKind::IntConst(n) => n.hash(hasher),
         TermKind::RealConst(r) => {

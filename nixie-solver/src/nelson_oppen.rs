@@ -90,6 +90,8 @@ pub enum TermTheory {
     /// it has no purification rule for binders; [`NelsonOppenCombiner::purify_term`]
     /// reports an error rather than returning a term it has not purified.
     Binder,
+    /// Native sequences, handled by the finite-shape reduction before this combiner.
+    Sequence,
 }
 
 impl TermTheory {
@@ -106,6 +108,7 @@ impl TermTheory {
             Self::Datatype => 6,
             Self::Uf => 7,
             Self::Binder => 8,
+            Self::Sequence => 11,
             Self::Set => 9,
             Self::FiniteField => 10,
         })
@@ -206,6 +209,7 @@ impl NelsonOppenCombiner {
     #[must_use]
     pub fn theory_of(kind: &TermKind) -> TermTheory {
         match kind {
+            TermKind::Sequence(_, _) => TermTheory::Sequence,
             // Nullary symbols and the Boolean / equality skeleton.
             TermKind::True
             | TermKind::False
@@ -451,9 +455,12 @@ impl NelsonOppenCombiner {
                 .get(sub)
                 .ok_or_else(|| format!("subterm {sub:?} not found"))?
                 .kind;
-            if Self::theory_of(kind) == TermTheory::Binder {
+            if matches!(
+                Self::theory_of(kind),
+                TermTheory::Binder | TermTheory::Sequence
+            ) {
                 return Err(format!(
-                    "cannot purify {term_id:?}: subterm {sub:?} is a binding form, \
+                    "cannot purify {term_id:?}: subterm {sub:?} requires sequence reduction or is a binding form, \
                      which the quantifier-free Nelson-Oppen procedure does not handle"
                 ));
             }

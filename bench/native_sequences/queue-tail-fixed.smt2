@@ -1,0 +1,6 @@
+(set-logic ALL)
+(set-info :status unsat)
+(declare-const q (Seq Int))
+(assert (= (seq.len q) 2))
+(assert (distinct (seq.nth (seq.extract q 1 1) 0) (seq.nth q 1)))
+(check-sat)

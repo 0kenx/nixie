@@ -128,6 +128,8 @@ pub enum SortKind {
     /// and gives the per-field derived data a home computed once. See
     /// `sort::field` for the design.
     FiniteField(FieldId),
+    /// Native finite sequences over the given element sort.
+    Seq(SortId),
 }
 
 /// A sort in the SMT-LIB2 sense
@@ -301,6 +303,7 @@ pub struct DataTypeDef {
 #[derive(Debug)]
 pub struct SortManager {
     sorts: Vec<Sort>,
+    has_sequences: bool,
     cache: FxHashMap<SortKind, SortId>,
     next_id: AtomicU32,
     /// Pre-allocated common sorts
@@ -350,6 +353,7 @@ impl SortManager {
     pub fn new() -> Self {
         let mut manager = Self {
             sorts: Vec::with_capacity(64),
+            has_sequences: false,
             cache: FxHashMap::default(),
             next_id: AtomicU32::new(0),
             bool_sort: SortId(0),
@@ -388,8 +392,14 @@ impl SortManager {
         self.cache.get(kind).copied()
     }
 
-    /// Intern a sort kind, returning its unique ID
+    /// Whether any native sequence sort has been interned.
+    pub fn has_sequences(&self) -> bool {
+        self.has_sequences
+    }
+
+    /// Intern a sort kind, returning its unique ID.
     pub fn intern(&mut self, kind: SortKind) -> SortId {
+        self.has_sequences |= matches!(kind, SortKind::Seq(_));
         if let Some(&id) = self.cache.get(&kind) {
             return id;
         }
@@ -415,7 +425,12 @@ impl SortManager {
         self.intern(SortKind::BitVec(width))
     }
 
-    /// Create a finite-set sort over `element`.
+    /// Create a native finite-sequence sort over `element`.
+    pub fn seq(&mut self, element: SortId) -> SortId {
+        self.intern(SortKind::Seq(element))
+    }
+
+    /// Intern a finite-set sort.
     pub fn set(&mut self, element: SortId) -> SortId {
         self.intern(SortKind::Set(element))
     }
@@ -732,10 +747,11 @@ impl SortManager {
 
     /// Immediate sub-sorts of a sort, in the order they appear
     ///
-    /// Only `Array` and `Parametric` have structure to descend into; every
-    /// other kind is a leaf.
+    /// Arrays, sequences, sets, bags and parametric applications have
+    /// structural children; the remaining kinds are leaves.
     fn sub_sorts(&self, sort_id: SortId) -> smallvec::SmallVec<[SortId; 2]> {
         match self.get(sort_id).map(|s| &s.kind) {
+            Some(SortKind::Seq(e) | SortKind::Set(e) | SortKind::Bag(e)) => smallvec::smallvec![*e],
             Some(SortKind::Array { domain, range }) => smallvec::smallvec![*domain, *range],
             Some(SortKind::Parametric { args, .. }) => args.iter().copied().collect(),
             _ => smallvec::SmallVec::new(),
@@ -805,6 +821,10 @@ impl SortManager {
                 | SortKind::FiniteField(_)
                 // A parameter not in `subst` stays free.
                 | SortKind::Parameter(_) => id,
+                SortKind::Seq(elem) => {
+                    let new_elem = replacements.get(&elem).copied().unwrap_or(elem);
+                    self.seq(new_elem)
+                }
                 SortKind::Set(elem) => {
                     let new_elem = replacements.get(&elem).copied().unwrap_or(elem);
                     if new_elem == elem { id } else { self.set(new_elem) }
@@ -856,6 +876,7 @@ impl SortManager {
             SortKind::BitVec(w) => Some(format!("BitVec({})", w)),
             SortKind::FloatingPoint { eb, sb } => Some(format!("FloatingPoint({}, {})", eb, sb)),
             SortKind::RoundingMode => Some("RoundingMode".to_string()),
+            SortKind::Seq(_) => Some("Seq".to_string()),
             SortKind::Set(_) => Some("Set".to_string()),
             SortKind::Bag(_) => Some("Bag".to_string()),
             SortKind::FiniteField(id) => self

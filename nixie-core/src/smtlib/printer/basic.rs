@@ -355,6 +355,13 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, ")");
             }
             // SMT-LIB finite-set syntax, matching CVC5's spelling.
+            TermKind::Sequence(_, _) => {
+                let _ = write!(
+                    w,
+                    "{}",
+                    crate::ast::sequence::print_sequence(term_id, self.manager)
+                );
+            }
             TermKind::SetEmpty(sort) => {
                 let _ = write!(w, "(as set.empty ");
                 self.write_sort(w, *sort);
@@ -1291,6 +1298,11 @@ impl<'a> Printer<'a> {
                         .map(|f| f.modulus().to_string())
                         .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
                     let _ = write!(w, "(_ FiniteField {modulus})");
+                }
+                SortKind::Seq(elem) => {
+                    let _ = write!(w, "(Seq ");
+                    stack.push(Step::Text(")"));
+                    stack.push(Step::Sort(*elem));
                 }
                 SortKind::Set(elem) => {
                     let _ = write!(w, "(Set ");

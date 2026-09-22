@@ -659,6 +659,13 @@ impl Model {
     /// while `=>`, `=`, `-` and the n-ary arithmetic operators evaluate all
     /// of their operands.
     pub fn eval(&self, term: TermId, manager: &mut TermManager) -> TermId {
+        if super::sequence::contains(&[term], manager) {
+            return super::sequence::evaluate(self, term, manager).unwrap_or(term);
+        }
+        self.eval_scalar(term, manager)
+    }
+
+    pub(super) fn eval_scalar(&self, term: TermId, manager: &mut TermManager) -> TermId {
         let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
         let mut frames: Vec<EvalFrame> = Vec::new();
         let mut current = term;

@@ -274,7 +274,8 @@ fn combine_complexity(
         Some(TermKind::BvExtract { arg, .. }) => 2 + get(*arg),
 
         Some(
-            TermKind::And(args)
+            TermKind::Sequence(_, args)
+            | TermKind::And(args)
             | TermKind::Or(args)
             | TermKind::Add(args)
             | TermKind::Mul(args)

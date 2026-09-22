@@ -27,6 +27,7 @@ use smallvec::SmallVec;
 /// name, extraction bounds, rounding mode, format widths).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum OpKey {
+    Sequence(super::sequence::SeqOp),
     /// Operator fully determined by its `TermKind` discriminant.
     Plain(Discriminant<TermKind>),
     /// Uninterpreted function application `f(...)`.
@@ -80,6 +81,7 @@ enum OpKey {
 /// a compile error rather than a silently dropped congruence.
 fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>)> {
     let op = match kind {
+        TermKind::Sequence(op, _) => OpKey::Sequence(*op),
         // Nullary: nothing to be congruent about.
         TermKind::True
         | TermKind::False

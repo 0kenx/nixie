@@ -166,6 +166,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Guarded FSMs** | MonoSAT-style NFA acceptance of constant words with symbolic transition guards, lowered to graph reachability (`docs/FSM.md`) |
 | **CP Globals** | Finite-domain all-different/table/regular/circuit/cumulative; explained user-propagator integration (`docs/CP.md`) |
 | **Exact Heaplets** | Dedicated Rust API for Boolean combinations of `emp`, integer points-to, and separating conjunction; QF_LIA reduction and independently validated concrete heaps (`docs/HEAP.md`) |
+| **Generic sequences** | Native `Seq T`, exact finite-shape reduction and independent model validation; [fragment and interoperability](NATIVE_SEQUENCES.md) |
 | **Theory Combination** | Nelson-Oppen, model-based, delayed, polite combination |
 
 ### nixie-nlsat (Non-linear Arithmetic)

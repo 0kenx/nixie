@@ -120,6 +120,7 @@ impl ValueFactory {
                 }
                 SortKind::String => break Value::String(self.config.default_string.clone()),
                 // The empty set, which exists for every element sort.
+                SortKind::Seq(_) => return None, // Generic Value sequences are not represented by this legacy API.
                 SortKind::Set(_) => break Value::Set(Vec::new()),
                 // The empty bag, which exists for every element sort.
                 SortKind::Bag(_) => break Value::Bag(Vec::new()),

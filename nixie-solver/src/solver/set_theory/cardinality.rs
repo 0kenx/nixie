@@ -132,6 +132,7 @@ fn universe_of(sort: SortId, manager: &TermManager) -> Universe {
         return Universe::Unknown;
     };
     match &data.kind {
+        nixie_core::SortKind::Seq(_) => Universe::Infinite,
         nixie_core::SortKind::Bool => Universe::Finite(BigInt::from(2)),
         nixie_core::SortKind::BitVec(w) => {
             // 2^w exactly: an 8 KiB number at the parser's width cap.

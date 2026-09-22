@@ -1242,6 +1242,17 @@ impl Solver {
         // Certified mode must not trust rewrites, purification, or auxiliary
         // definitions when checking a candidate result.
         let certificate_term = term;
+        if super::sequence::contains(&[term], manager) {
+            let index = self.assertions.len();
+            self.assertions.push(term);
+            self.certificate_assertions.push(term);
+            self.trail.push(TrailOp::AssertionAdded { index });
+            self.invalidate_fp_cache();
+            self.invalidate_results();
+            self.record_assertion_identity(term, None, index);
+            return;
+        }
+
         // Let-expansion FIRST.  The parser materialises every `(let ...)` as a
         // `TermKind::Let` node wrapping its body, so a staged-`let` script
         // (industrial translated benchmarks: a thousand-plus sequential
@@ -2109,7 +2120,7 @@ impl Solver {
     /// iterations is bounded by the `let`-nesting depth, which is itself
     /// bounded by `ENCODE_DEPTH_LIMIT` (the depth guard in `assert` already
     /// diverted deeper assertions), so the loop always terminates.
-    fn expand_lets(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
+    pub(super) fn expand_lets(&mut self, term: TermId, manager: &mut TermManager) -> TermId {
         let mut current = term;
         loop {
             // Find the first `Let` node reachable from `current` (DFS,
@@ -2177,6 +2188,11 @@ impl Solver {
         self.trail.push(TrailOp::AssertionAdded { index });
         self.invalidate_fp_cache();
         self.invalidate_results();
+
+        if super::sequence::contains(&[term], manager) {
+            self.record_assertion_identity(term, Some(name.to_string()), index);
+            return;
+        }
 
         // Check if this is a boolean constant first
         if let Some(t) = manager.get(term) {
@@ -3598,6 +3614,11 @@ impl Solver {
         };
 
         match &t.kind {
+            TermKind::Sequence(_, _) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
             // A membership or subset atom is an opaque Boolean *to the SAT
             // layer*, but it is not unconstrained: `set_theory::reduce` has
             // already conjoined its defining axioms onto the assertion, so the

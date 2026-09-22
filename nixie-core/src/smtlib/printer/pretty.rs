@@ -295,6 +295,13 @@ impl<'a> PrettyPrinter<'a> {
                 }
             }
             // SMT-LIB finite-set syntax, matching CVC5's spelling.
+            TermKind::Sequence(_, _) => {
+                let _ = write!(
+                    w,
+                    "{}",
+                    crate::ast::sequence::print_sequence(term_id, self.manager)
+                );
+            }
             TermKind::SetEmpty(sort) => {
                 let _ = write!(w, "(as set.empty ");
                 self.write_sort(w, *sort);

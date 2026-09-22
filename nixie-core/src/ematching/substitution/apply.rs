@@ -552,6 +552,10 @@ fn rebuild(
     let sub = |t: TermId| scope.resolved(t);
 
     match kind {
+        TermKind::Sequence(op, args) => {
+            let args = args.into_iter().map(sub).collect();
+            manager.intern_term(TermKind::Sequence(op, args), sort)
+        }
         TermKind::True
         | TermKind::False
         | TermKind::IntConst(_)

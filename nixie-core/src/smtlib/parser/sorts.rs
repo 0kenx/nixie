@@ -328,6 +328,7 @@ impl<'a> Parser<'a> {
                         return true;
                     }
                 }
+                SortKind::Seq(elem) => work.push(*elem),
                 SortKind::Set(elem) => work.push(*elem),
                 SortKind::Bag(elem) => work.push(*elem),
                 SortKind::Array { domain, range } => {
@@ -578,6 +579,15 @@ impl<'a> Parser<'a> {
                             }
                             // `(Set X)` — the SMT-LIB finite-sets theory's
                             // sort constructor (CVC5 `mkSetSort`).
+                            "Seq" => {
+                                let element = self.parse_sort()?;
+                                self.expect_rparen()?;
+                                self.reject_unsupported_rounding_mode_position(
+                                    element,
+                                    "a sequence element sort",
+                                )?;
+                                Ok(self.manager.sorts.seq(element))
+                            }
                             "Set" => {
                                 let element = self.parse_sort()?;
                                 self.expect_rparen()?;
@@ -736,6 +746,11 @@ impl<'a> Parser<'a> {
                                 .map(|f| f.modulus().to_string())
                                 .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
                             out.push_str(&format!("(_ FiniteField {modulus})"));
+                        }
+                        SortKind::Seq(elem) => {
+                            out.push_str("(Seq ");
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Sort(*elem));
                         }
                         SortKind::Set(elem) => {
                             out.push_str("(Set ");

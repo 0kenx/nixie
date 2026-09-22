@@ -192,7 +192,7 @@ impl Solver {
                 }
 
                 // Core Boolean / equality / arithmetic connectives.
-                TermKind::And(args) | TermKind::Or(args) => {
+                TermKind::Sequence(_, args) | TermKind::And(args) | TermKind::Or(args) => {
                     for &a in args.iter().rev() {
                         stack.push(a);
                     }

@@ -844,6 +844,17 @@ impl Parser<'_> {
                         }
                     });
                 }
+                if name == "seq.empty" {
+                    if !args.is_empty() {
+                        return Err(NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: "seq.empty takes no arguments".into(),
+                        });
+                    }
+                    return self
+                        .manager
+                        .mk_sequence(crate::ast::sequence::SeqOp::Empty(sort), &[]);
+                }
                 // `(as set.empty (Set X))` and `(as set.universe (Set X))`:
                 // the nullary finite-set constants, whose sort can only be
                 // written as a qualification. Z3 also accepts the bare
@@ -1493,6 +1504,12 @@ impl Parser<'_> {
                             position: self.lexer.position(),
                             message: e.to_string(),
                         })?;
+                return Ok(Opened::Value(term));
+            }
+            if name == "seq.empty" {
+                let term = self
+                    .manager
+                    .mk_sequence(crate::ast::sequence::SeqOp::Empty(sort), &[])?;
                 return Ok(Opened::Value(term));
             }
             // The nullary finite-set constants, in their standalone spelling:

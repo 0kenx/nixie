@@ -551,6 +551,15 @@ impl EqualityPropagator {
         }
 
         match kind {
+            TermKind::Sequence(op, _) => {
+                use nixie_core::ast::sequence::SeqOp;
+                let params = match op {
+                    SeqOp::Empty(s) => (0, s.raw()), SeqOp::Unit => (1,0),
+                    SeqOp::Concat => (2,0), SeqOp::Len => (3,0), SeqOp::Nth => (4,0),
+                    SeqOp::Extract => (5,0), SeqOp::Update => (6,0),
+                };
+                CongruenceShape::Operator(OperatorIdentity { discriminant: core::mem::discriminant(kind), symbol: None, rounding: None, params })
+            },
             // ---- Nullary symbols: no children, all identity in the payload.
             TermKind::True
             | TermKind::False

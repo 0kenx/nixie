@@ -155,7 +155,8 @@ impl<'a> BitBlastTactic<'a> {
                     stack.push(*bag);
                 }
                 TermKind::BvExtract { arg, .. } => stack.push(*arg),
-                TermKind::And(args)
+                TermKind::Sequence(_, args)
+                | TermKind::And(args)
                 | TermKind::Or(args)
                 | TermKind::Add(args)
                 | TermKind::Mul(args)

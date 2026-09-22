@@ -178,6 +178,7 @@ enum SortNameFrame {
         sort: SortId,
     },
     /// The element sort of a bag is being rendered; wrap it as `(Bag …)`.
+    SeqAfter { sort: SortId },
     BagAfter {
         /// The bag sort this frame will finish.
         sort: SortId,
@@ -567,6 +568,7 @@ impl Context {
                 // future sort kind with children cannot silently skip the
                 // pre-pass (and lose its memoization).
                 match &node.kind {
+                    SortKind::Seq(elem) => scan.push(*elem),
                     SortKind::Set(elem) => scan.push(*elem),
                     SortKind::Bag(elem) => scan.push(*elem),
                     SortKind::Array { domain, range } => {
@@ -605,6 +607,11 @@ impl Context {
                 let leaf = match &s.kind {
                     SortKind::Set(elem) => {
                         pending.push(SortNameFrame::SetAfter { sort: current });
+                        current = *elem;
+                        continue;
+                    }
+                    SortKind::Seq(elem) => {
+                        pending.push(SortNameFrame::SeqAfter { sort: current });
                         current = *elem;
                         continue;
                     }
@@ -713,6 +720,12 @@ impl Context {
                     }
                     Some(SortNameFrame::SetAfter { sort }) => {
                         text = format!("(Set {text})");
+                        if shared.contains(&sort) {
+                            memo.insert(sort, text.clone());
+                        }
+                    }
+                    Some(SortNameFrame::SeqAfter { sort }) => {
+                        text = format!("(Seq {text})");
                         if shared.contains(&sort) {
                             memo.insert(sort, text.clone());
                         }
@@ -908,6 +921,9 @@ impl Context {
                     SortKind::Set(_) => break "(as set.empty (Set ?))".to_string(),
                     // The empty bag is ground and exists at every element
                     // sort, likewise.
+                    SortKind::Seq(_) => {
+                        break format!("(as seq.empty {})", self.format_sort_name(task.0));
+                    }
                     SortKind::Bag(_) => break "(as bag.empty (Bag ?))".to_string(),
                     // The empty string is the canonical ground `String`
                     // value; the old `?` fallback was not valid SMT-LIB

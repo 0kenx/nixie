@@ -15,6 +15,9 @@ use crate::sort::{SortId, SortKind, SortManager};
 /// to determine what sort the term should have.
 pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
     match &term.kind {
+        TermKind::Sequence(op, args) => {
+            crate::ast::sequence::infer_sequence_sort(manager, *op, args)
+        }
         // Constants have known sorts
         TermKind::True | TermKind::False => Ok(manager.sorts.bool_sort),
         TermKind::IntConst(_) => Ok(manager.sorts.int_sort),
@@ -478,6 +481,11 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                             .map(|f| f.modulus().to_string())
                             .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
                         out.push_str(&format!("(_ FiniteField {modulus})"));
+                    }
+                    SortKind::Seq(elem) => {
+                        out.push_str("(Seq ");
+                        stack.push(FormatWork::Literal(")"));
+                        stack.push(FormatWork::Sort(*elem));
                     }
                     SortKind::Set(elem) => {
                         // "(Set " <element> ")"

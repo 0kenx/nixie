@@ -593,6 +593,7 @@ impl StaticFeatures {
             return;
         };
         match s.kind {
+            SortKind::Seq(_) => {}
             SortKind::Bool => {}
             SortKind::Int => {
                 self.has_arith = true;
@@ -703,6 +704,7 @@ fn sort_class(manager: &TermManager, sort: SortId) -> SortClass {
         return SortClass::Other;
     };
     match s.kind {
+        SortKind::Seq(_) => SortClass::Other,
         SortKind::Bool => SortClass::Bool,
         SortKind::Int | SortKind::Real => SortClass::Arith,
         SortKind::BitVec(_) => SortClass::Bv,

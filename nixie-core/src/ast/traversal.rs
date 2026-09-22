@@ -92,6 +92,7 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
     let mut children = SmallVec::new();
 
     match kind {
+        TermKind::Sequence(_, args) => children.extend_from_slice(args),
         // Nullary
         TermKind::True
         | TermKind::False

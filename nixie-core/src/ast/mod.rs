@@ -23,6 +23,7 @@ pub mod pool;
 pub mod proof;
 pub mod proof_transform;
 pub mod rewriting;
+pub mod sequence;
 #[cfg(feature = "std")]
 pub mod simd;
 mod term;

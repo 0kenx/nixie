@@ -52,6 +52,17 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
             (Some(lt), Some(rt)) if lt.sort != rt.sort => return false,
             (Some(lt), Some(rt)) => {
                 match &lt.kind {
+                    TermKind::Sequence(op, a) => {
+                        let TermKind::Sequence(other, b) = &rt.kind else {
+                            return false;
+                        };
+                        if op != other || a.len() != b.len() {
+                            return false;
+                        }
+                        for (&x, &y) in a.iter().zip(b) {
+                            stack.push((x, y));
+                        }
+                    }
                     TermKind::True => {
                         if !matches!(rt.kind, TermKind::True) {
                             return false;

@@ -40,6 +40,8 @@ enum SortPending {
     ElemOf,
     /// The element expression of a `(Bag elem)` is being resolved.
     BagElemOf,
+    /// Native sequence element.
+    SeqElemOf,
 }
 
 /// The classification of a single sort-expression string: either a sort
@@ -61,6 +63,8 @@ enum SortExprStep {
         /// The element sub-expression.
         elem_expr: String,
     },
+    /// A native sequence sort whose element remains to be resolved.
+    Seq { elem_expr: String },
     /// A `(Bag elem)` compound; its one child remains to be resolved.
     Bag {
         /// The element sub-expression.
@@ -166,6 +170,10 @@ impl Context {
                         pending.push(SortPending::ElemOf);
                         current = elem_expr;
                     }
+                    SortExprStep::Seq { elem_expr } => {
+                        pending.push(SortPending::SeqElemOf);
+                        current = elem_expr;
+                    }
                     SortExprStep::Bag { elem_expr } => {
                         pending.push(SortPending::BagElemOf);
                         current = elem_expr;
@@ -189,6 +197,9 @@ impl Context {
                     }
                     Some(SortPending::ElemOf) => {
                         resolved = self.terms.sorts.set(resolved);
+                    }
+                    Some(SortPending::SeqElemOf) => {
+                        resolved = self.terms.sorts.seq(resolved);
                     }
                     Some(SortPending::BagElemOf) => {
                         resolved = self.terms.sorts.bag(resolved);
@@ -266,6 +277,9 @@ impl Context {
                 // `(Set elem)`, the finite-sets theory's sort constructor.
                 [head, elem] if head.as_str() == "Set" => Ok(SortExprStep::Set {
                     elem_expr: std::mem::take(elem),
+                }),
+                [head, elem] if head.as_str() == "Seq" => Ok(SortExprStep::Seq {
+                    elem_expr: elem.clone(),
                 }),
                 [head, elem] if head.as_str() == "Bag" => Ok(SortExprStep::Bag {
                     elem_expr: std::mem::take(elem),
@@ -401,7 +415,9 @@ mod tests {
             "(_ BitVec 8 8)",          // BitVec arity 2
             "(_ FloatingPoint 8)",     // FP arity 1
             "(_ FloatingPoint a b)",   // non-numeric widths
-            "(Seq Int)",               // unknown compound head
+            "(SeqBogus Int)",          // unknown compound head
+            "(Seq)",                   // missing element sort
+            "(Seq Int Int)",           // too many element sorts
             "()",                      // empty compound
             "(Array Int (Array Int))", // malformed nested inside well-formed
         ] {

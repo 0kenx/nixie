@@ -1684,6 +1684,11 @@ impl TermManager {
                                 .map(|d| d.modulus().to_string())
                                 .unwrap_or_else(|| format!("{}", id.raw()))
                         )),
+                        SortKind::Seq(e) => {
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Emit(*e));
+                            out.push_str("Seq(");
+                        }
                         SortKind::Set(e) => {
                             stack.push(Step::Text(")"));
                             stack.push(Step::Emit(*e));

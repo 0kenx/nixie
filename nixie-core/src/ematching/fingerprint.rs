@@ -152,6 +152,10 @@ impl FingerprintCache {
 
         // Hash based on term structure
         match &term.kind {
+            TermKind::Sequence(op, args) => {
+                op.hash(&mut hasher);
+                args.hash(&mut hasher);
+            }
             TermKind::Var(name) => {
                 name.hash(&mut hasher);
             }

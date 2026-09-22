@@ -1,0 +1,7 @@
+(set-logic ALL)
+(set-info :status unsat)
+(declare-const h (Seq Int))
+(declare-const x Int)
+(assert (= (seq.len h) 2))
+(assert (distinct (seq.len (seq.++ h (seq.unit x))) (+ (seq.len h) 1)))
+(check-sat)

@@ -2716,6 +2716,11 @@ pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Op
                 break None;
             };
             match kind {
+                SortKind::Seq(_) => {
+                    break manager
+                        .mk_sequence(nixie_core::ast::sequence::SeqOp::Empty(current), &[])
+                        .ok();
+                }
                 SortKind::String => break Some(manager.mk_string_lit("")),
                 SortKind::BitVec(width) => {
                     break Some(manager.mk_bitvec(num_bigint::BigInt::from(0), width));

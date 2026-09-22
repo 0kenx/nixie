@@ -523,7 +523,7 @@ fn unknown_theory_operators_are_rejected_per_namespace() {
     for application in [
         "(str.frobnicate s)",
         "(re.frobnicate s)",
-        "(seq.nth s 0)",
+        "(seq.frobnicate s 0)",
         "(char.frobnicate s)",
         "(fp.frobnicate s)",
         "(int.frobnicate s)",

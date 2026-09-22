@@ -680,6 +680,8 @@ pub enum TermKind {
         /// The domain bag.
         bag: TermId,
     },
+    /// Native generic sequence operator (including the typed empty value).
+    Sequence(super::sequence::SeqOp, SmallVec<[TermId; 4]>),
 }
 
 /// A case in a match expression.

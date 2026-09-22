@@ -730,7 +730,8 @@ impl TermManager {
     /// factored out so other passes can remap a node's children without
     /// a full substitution call (whose per-call map clone is quadratic
     /// when invoked per node: `share_for_printing`'s binding loop).
-    pub(crate) fn rebuild_children_with(
+    /// The caller must preserve child sorts and binder scope.
+    pub fn rebuild_children_with(
         &mut self,
         kind: TermKind,
         sort: SortId,
@@ -738,6 +739,10 @@ impl TermManager {
     ) -> TermId {
         let sub = |t| sub(t);
         match kind {
+            TermKind::Sequence(op, args) => {
+                let args = args.into_iter().map(sub).collect();
+                self.intern(TermKind::Sequence(op, args), sort)
+            }
             TermKind::True
             | TermKind::False
             | TermKind::IntConst(_)
@@ -751,9 +756,7 @@ impl TermManager {
             | TermKind::FpMinusInfinity { .. }
             | TermKind::FpPlusZero { .. }
             | TermKind::FpMinusZero { .. }
-            | TermKind::FpNaN { .. } => {
-                unreachable!("leaves are resolved directly in Expand, never scheduled as Combine")
-            }
+            | TermKind::FpNaN { .. } => self.intern(kind, sort),
 
             // ======== Finite fields ========
             // Fallible builders behind a total helper: normal form when the

@@ -244,7 +244,10 @@ impl Solver {
                     stack.push(*b);
                 }
                 TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
-                TermKind::And(args) | TermKind::Or(args) | TermKind::Distinct(args) => {
+                TermKind::Sequence(_, args)
+                | TermKind::And(args)
+                | TermKind::Or(args)
+                | TermKind::Distinct(args) => {
                     for &a in args {
                         stack.push(a);
                     }
@@ -499,6 +502,11 @@ impl Solver {
         };
         let mut push = |t: TermId| stack.push((t, child_depth));
         match &node.kind {
+            TermKind::Sequence(_, args) => {
+                for &a in args {
+                    push(a);
+                }
+            }
             TermKind::Not(a)
             | TermKind::Neg(a)
             | TermKind::SetSingleton(a)
