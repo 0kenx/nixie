@@ -99,6 +99,16 @@ enum Constraint {
     Cumulative(Vec<ScheduledTask>, BigInt),
 }
 impl Constraint {
+    fn contains_variable(&self, var: CpVar) -> bool {
+        match self {
+            Self::AllDifferent(vars) | Self::Regular(vars, ..) | Self::Circuit(vars) => {
+                vars.contains(&var)
+            }
+            Self::Table(statement) => statement.variables().contains(&var),
+            Self::Cumulative(tasks, _) => tasks.iter().any(|task| task.task.start == var),
+        }
+    }
+
     fn variables(&self) -> Vec<CpVar> {
         match self {
             Self::AllDifferent(v) | Self::Regular(v, ..) | Self::Circuit(v) => v.clone(),
@@ -495,16 +505,37 @@ impl CpModel {
                 if ctx.get_fixed_value(atom).is_some() {
                     continue;
                 }
-                let mut candidate = domains.clone();
-                candidate[i] = vec![d.values[j].clone()];
                 let mut excluded = !domains[i].contains(&d.values[j]);
                 let mut witness_constraint = None;
+                let mut materialized = None;
                 for constraint in self
                     .constraints
                     .iter()
-                    .filter(|c| c.variables().contains(&CpVar(i)))
+                    .filter(|c| c.contains_variable(CpVar(i)))
                 {
-                    match self.feasible(constraint, &candidate, &presences) {
+                    let feasible = match constraint {
+                        Constraint::Cumulative(..) => self.feasible_at(
+                            constraint,
+                            &domains,
+                            &presences,
+                            CpVar(i),
+                            &d.values[j],
+                        ),
+                        Constraint::AllDifferent(_)
+                        | Constraint::Table(_)
+                        | Constraint::Regular(..)
+                        | Constraint::Circuit(_) => {
+                            // Preserve one copy per value (not per global) for
+                            // non-scheduling constraints sharing this variable.
+                            let candidate = materialized.get_or_insert_with(|| {
+                                let mut candidate = domains.clone();
+                                candidate[i] = vec![d.values[j].clone()];
+                                candidate
+                            });
+                            self.feasible(constraint, candidate, &presences)
+                        }
+                    };
+                    match feasible {
                         Some(true) => {}
                         Some(false) => {
                             excluded = true;

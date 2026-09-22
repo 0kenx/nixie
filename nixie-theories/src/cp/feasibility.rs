@@ -1,6 +1,32 @@
 use super::*;
 
 impl CpModel {
+    // Borrow the singleton override for cumulative trials. Every occurrence of
+    // this start variable sees the same value, including tasks with different
+    // presence conditions. Other globals retain their existing implementation.
+    pub(super) fn feasible_at(
+        &self,
+        constraint: &Constraint,
+        domains: &[Vec<BigInt>],
+        presences: &[Option<bool>],
+        var: CpVar,
+        value: &BigInt,
+    ) -> Option<bool> {
+        match constraint {
+            Constraint::Cumulative(tasks, capacity) => {
+                cumulative_feasible(tasks, capacity, domains, presences, Some((var, value)))
+            }
+            Constraint::AllDifferent(_)
+            | Constraint::Table(_)
+            | Constraint::Regular(..)
+            | Constraint::Circuit(_) => {
+                let mut candidate = domains.to_vec();
+                *candidate.get_mut(var.0)? = vec![value.clone()];
+                self.feasible(constraint, &candidate, presences)
+            }
+        }
+    }
+
     // Discharge a trial presence after testing every start of each present
     // task against the timetable. No supported start for any one task proves
     // the trial impossible, even when that task has an empty mandatory part.
@@ -23,9 +49,7 @@ impl CpModel {
                 let var = scheduled.task.start;
                 let mut supported = false;
                 for start in &domains[var.0] {
-                    let mut candidate = domains.to_vec();
-                    candidate[var.0] = vec![start.clone()];
-                    if self.feasible(constraint, &candidate, presences)? {
+                    if self.feasible_at(constraint, domains, presences, var, start)? {
                         supported = true;
                         break;
                     }
@@ -108,46 +132,60 @@ impl CpModel {
                 true
             }
             Constraint::Cumulative(tasks, capacity) => {
-                if *capacity < BigInt::zero() {
-                    return Some(false);
-                }
-                let mut events: BTreeMap<BigInt, BigInt> = BTreeMap::new();
-                for scheduled in tasks {
-                    if let Some((index, positive)) = scheduled.presence
-                        && *presences.get(index)? != Some(positive)
-                    {
-                        continue;
-                    }
-                    let task = &scheduled.task;
-                    if task.duration.is_zero() || task.demand.is_zero() {
-                        continue;
-                    }
-                    if task.demand > *capacity {
-                        return Some(false);
-                    }
-                    let domain = &domains[task.start.0];
-                    let (Some(earliest), Some(latest)) = (domain.iter().min(), domain.iter().max())
-                    else {
-                        return Some(false);
-                    };
-                    let end = earliest + &task.duration;
-                    // Mandatory part [latest start, earliest end).
-                    if *latest < end {
-                        *events.entry(latest.clone()).or_default() += &task.demand;
-                        *events.entry(end).or_default() -= &task.demand;
-                    }
-                }
-                let mut load = BigInt::zero();
-                for delta in events.values() {
-                    load += delta;
-                    if load > *capacity {
-                        return Some(false);
-                    }
-                }
-                true
+                cumulative_feasible(tasks, capacity, domains, presences, None)?
             }
         })
     }
+}
+
+// Exact half-open mandatory-part sweep. A borrowed trial is an overlay, not a
+// domain mutation: no candidate state or reduction can leak into another test.
+fn cumulative_feasible(
+    tasks: &[ScheduledTask],
+    capacity: &BigInt,
+    domains: &[Vec<BigInt>],
+    presences: &[Option<bool>],
+    trial: Option<(CpVar, &BigInt)>,
+) -> Option<bool> {
+    if *capacity < BigInt::zero() {
+        return Some(false);
+    }
+    let mut events: BTreeMap<BigInt, BigInt> = BTreeMap::new();
+    for scheduled in tasks {
+        if let Some((index, positive)) = scheduled.presence
+            && *presences.get(index)? != Some(positive)
+        {
+            continue;
+        }
+        let task = &scheduled.task;
+        if task.duration.is_zero() || task.demand.is_zero() {
+            continue;
+        }
+        if task.demand > *capacity {
+            return Some(false);
+        }
+        let domain = match trial {
+            Some((var, value)) if var == task.start => core::slice::from_ref(value),
+            _ => domains.get(task.start.0)?.as_slice(),
+        };
+        let (Some(earliest), Some(latest)) = (domain.iter().min(), domain.iter().max()) else {
+            return Some(false);
+        };
+        let end = earliest + &task.duration;
+        // Mandatory part [latest start, earliest end).
+        if *latest < end {
+            *events.entry(latest.clone()).or_default() += &task.demand;
+            *events.entry(end).or_default() -= &task.demand;
+        }
+    }
+    let mut load = BigInt::zero();
+    for delta in events.values() {
+        load += delta;
+        if load > *capacity {
+            return Some(false);
+        }
+    }
+    Some(true)
 }
 
 // Bipartite maximum matching by iterative augmenting paths. Forcing each

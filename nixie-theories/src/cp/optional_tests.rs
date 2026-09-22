@@ -349,3 +349,68 @@ fn exhausting_all_candidate_starts_forces_absence_without_a_mandatory_part() {
             .any(|c| c.term == tm.mk_not(a) || c.term == tm.mk_not(b))
     );
 }
+
+// The borrowed trial must replace a VARIABLE, not just one task occurrence.
+// Compare with physical substitution across unsorted, holey, empty and wide
+// domains, shared starts, both presence signs, and an unrelated variable.
+#[test]
+fn cumulative_borrowed_trials_match_physical_domain_substitution() {
+    let tm = TermManager::new();
+    let cp = CpModel::new(&tm);
+    let wide = BigInt::from(1) << 140;
+    let values = [BigInt::from(2), BigInt::from(0), wide];
+    for shared_start in [false, true] {
+        for parameters in 0..81 {
+            let durations = [parameters % 3, parameters / 3 % 3];
+            let demands = [parameters / 9 % 3, parameters / 27 % 3];
+            for capacity in -1..=3 {
+                let constraint = Constraint::Cumulative(
+                    (0..2)
+                        .map(|i| ScheduledTask {
+                            task: Task {
+                                start: CpVar(if shared_start { 0 } else { i }),
+                                duration: durations[i].into(),
+                                demand: demands[i].into(),
+                            },
+                            presence: Some((i, i == 0)),
+                        })
+                        .collect(),
+                    capacity.into(),
+                );
+                for mask in 0..8 {
+                    let domains = vec![
+                        values
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| mask & (1 << i) != 0)
+                            .map(|(_, value)| value.clone())
+                            .collect(),
+                        vec![2.into(), 0.into()],
+                        vec![7.into()],
+                    ];
+                    for state in 0..9 {
+                        let choices = [None, Some(false), Some(true)];
+                        let presences = [choices[state % 3], choices[state / 3]];
+                        for var in 0..3 {
+                            for value in &values {
+                                let mut substituted = domains.clone();
+                                substituted[var] = vec![value.clone()];
+                                assert_eq!(
+                                    cp.feasible_at(
+                                        &constraint,
+                                        &domains,
+                                        &presences,
+                                        CpVar(var),
+                                        value
+                                    ),
+                                    cp.feasible(&constraint, &substituted, &presences),
+                                    "shared={shared_start}, parameters={parameters}, capacity={capacity}, mask={mask}, state={state}, var={var}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
