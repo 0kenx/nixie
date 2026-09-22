@@ -48,3 +48,46 @@ external Cargo manifest, lockfile, build directory, release settings and CPU.
 The external package allows compiling the driver against clean baseline
 sources before this new example exists there; retain its manifest and lock
 with the binary. Final example source is the identical measured driver.
+
+## Reproducing and inspecting the stored experiment
+
+The checked-in client is `nixie-solver/examples/cp_scheduling_perf.rs`:
+
+```sh
+cargo run --release -p nixie-solver --example cp_scheduling_perf -- callback present 32 16 0 2
+```
+
+That workspace release profile differs from the external measurement build;
+use the cached external manifest and lockfile when comparing with this study.
+For new experiments, hold the profile constant between arms and include the
+profile change in `run.py`'s config flags. The driver uses the public API only.
+An external Cargo package can point `nixie-core`, `nixie-theories` and
+`nixie-solver` at a clean source checkout, depend on `num-bigint = "0.4"`, and
+use `[profile.release] debug = 1`; copy the driver into its `src/main.rs` and
+the retained lockfile into that package. Build both revisions with the same
+package path, lockfile, compiler and `CARGO_INCREMENTAL=0`; cache each binary
+before changing the source revision. The stored manifests record exact paths.
+
+The runner requires an explicit immutable source revision and corresponding
+binary. It records the driver hash in config identity; callers must supply
+the driver actually compiled into that binary. Example (substitute real SHAs):
+
+```sh
+python3 bench/cp_perf/run.py precompile/BASE/cp-scheduling-bench \
+  --sha BASE --role baseline --source . --root precompile \
+  --driver nixie-solver/examples/cp_scheduling_perf.rs
+python3 bench/cp_perf/run.py precompile/CAND/cp-scheduling-bench \
+  --sha CAND --role treatment --source . --root precompile \
+  --driver nixie-solver/examples/cp_scheduling_perf.rs
+python3 bench/cp_perf/report.py precompile BASE CAND
+```
+
+`run.py` consults the canonical benchstore index before every cell and records
+through `benchstore.py`; it refuses to rerun failed/unrecorded raw attempts.
+Fresh-seed replay adds `--first-seed 10` to both runner and report commands.
+Reports reject incomplete pairs, differing host/config identity, differing
+verdicts, and differing full-output hashes. Raw output and counter stderr are
+retained next to the canonical JSON records. No callback `unknown` is counted
+as a successful SAT solve. The solver cases exercise admission and cancellation
+with ample capacity; these small cases measure integration overhead, not hard
+resource-packing search or scalable proof enumeration.
