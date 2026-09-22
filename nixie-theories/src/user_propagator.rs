@@ -67,8 +67,9 @@ pub struct Consequence {
     pub domain_certificate: Option<crate::cp::domain_proof::DomainCertificate>,
     /// Optional graph path/cut/cycle witness. Consumers must authenticate
     /// its original statement and check the exact implication before use;
-    /// checking recomputes explicit closures over the immutable
-    /// declaration (the propagator stays untrusted).
+    /// checking is linear in the witness structure (path walk, closed set,
+    /// cycle, topological order), with no closure recomputation on the hot
+    /// path (the propagator stays untrusted).
     pub graph_certificate: Option<crate::graph::proof::GraphCertificate>,
 }
 

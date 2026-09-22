@@ -56,10 +56,16 @@
 //!   clauses. Theory atoms are lazy: they propagate only once determined,
 //!   and `final_check` enforces the full biconditional on complete
 //!   assignments.
-//! - The propagator is **stateless**: every event re-derives the graph views
-//!   from the current fixed values, so search `push`/`pop` needs no trail.
-//!   The cost is a full graph recomputation per watched-atom event — fine
-//!   for the documented scale (tens of vertices, hundreds of edges).
+//! - The propagator is **incremental**: fixations arrive as O(1) events
+//!   (`on_fixed`), the forced view (true edges) grows rows and merges
+//!   memoized BFS trees, and the possible view is *epoch-static* — the
+//!   all-edges CSRs are built once per backtrack epoch and traversed
+//!   skipping currently-false edges, with backward-closure and cycle memos
+//!   kept exactly valid by witness-checked dirty-marking and localized
+//!   repair (`ViewCache`; the scheme is documented in `docs/GRAPH.md`).
+//!   A backtrack ends the epoch: the next run re-reads the fixations from
+//!   the manager, so no deletion handling is ever wrong — the re-read is
+//!   the cost of a pop.
 //!
 //! # Proof and certification boundary
 //!
