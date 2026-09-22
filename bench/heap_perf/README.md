@@ -154,3 +154,21 @@ only the documented empty-counter timeout interruption, retaining it as an
 unmeasured Unknown and continuing untouched cells. It never reruns a cell or
 infers a missing instruction count. Its exact executed version and recovery
 evidence are archived beside the original records.
+
+
+## Four-optimization experiment
+
+`next_cases.py`, `next_worker.py`, and `next_experiment.py` extend the client
+language with symbolic values, offsets, pure aliases, Boolean DAGs and explicit
+push/pop/check snapshots. Every snapshot is independently checked. The shared
+Rust interpreter can link either the historical library (`legacy_client.rs`)
+or the new library (`heap_perf_next` example); build both as standalone clients
+with identical release profiles as recorded in the study.
+
+The fixed six-arm matrix, targets, controls, seeds, resource caps and once-only
+recovery rules are [preregistered here](../../docs/studies/2026-09-22-heap-four-optimizations.md).
+Run `python3 -m unittest discover -s bench/heap_perf -p 'test_*.py'` for harness
+checks. From a clean committed checkout, run `python3 bench/heap_perf/next_experiment.py
+--baseline /absolute/cached/old/heap_perf_next --driver /absolute/cached/new/heap_perf_next
+--cvc5 /absolute/cvc5 --z3 /absolute/z3 --store /absolute/precompile`.
+Raw benchmark outputs stay in the result store, not Git.

@@ -1,7 +1,28 @@
-use nixie_solver::heap::{HeapError, HeapSolver, Heaplet};
+use nixie_solver::heap::{HeapError, HeapOptimizations, HeapSolver, Heaplet};
 use nixie_solver::{SolverConfig, SolverResult};
 use num_bigint::BigInt;
 use std::collections::BTreeMap;
+
+fn optimization_modes() -> Vec<HeapOptimizations> {
+    (0..16)
+        .map(|bits| HeapOptimizations {
+            anchor_coverage: bits & 1 != 0,
+            equality_propagation: bits & 2 != 0,
+            cache_templates: bits & 4 != 0,
+            lazy_boolean: bits & 8 != 0,
+        })
+        .collect()
+}
+
+fn encoding_modes() -> Vec<(bool, bool, HeapOptimizations)> {
+    let mut modes: Vec<_> = optimization_modes()
+        .into_iter()
+        .map(|o| (true, false, o))
+        .collect();
+    modes.push((false, false, HeapOptimizations::default()));
+    modes.push((true, true, HeapOptimizations::default()));
+    modes
+}
 
 #[test]
 fn allocation_aliasing_and_scopes() -> Result<(), HeapError> {
@@ -249,8 +270,9 @@ fn oracle_patterns() -> Vec<u32> {
 
 #[test]
 fn all_boolean_patterns_against_exhaustive_heaps() -> Result<(), HeapError> {
-    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
+    for (simplify, redundancy, options) in encoding_modes() {
         let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
         s.set_definition_simplification(simplify)?;
         s.set_anchor_redundancy(redundancy)?;
         let mut atoms = Vec::new();
@@ -299,8 +321,9 @@ fn all_boolean_patterns_against_exhaustive_heaps() -> Result<(), HeapError> {
 
 #[test]
 fn symbolic_aliases_and_values_against_exhaustive_heaps() -> Result<(), HeapError> {
-    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
+    for (simplify, redundancy, options) in encoding_modes() {
         let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
         s.set_definition_simplification(simplify)?;
         s.set_anchor_redundancy(redundancy)?;
         let x = s.int_var("x");
@@ -745,6 +768,313 @@ fn anchor_comparisons_grow_linearly_and_preserve_all_views() -> Result<(), HeapE
         let not_first = s.not(&atoms[0])?;
         s.assert(&not_first)?;
         assert_eq!(s.check(), SolverResult::Unsat);
+    }
+    Ok(())
+}
+
+#[test]
+fn anchor_coverage_must_cover_distinct_source_cells() -> Result<(), HeapError> {
+    for options in optimization_modes() {
+        let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
+        let one = s.integer(1);
+        let two = s.integer(2);
+        let seven = s.integer(7);
+        let first = Heaplet::points_to(&one, &seven);
+        let anchor = s.reify(first.clone().star(Heaplet::points_to(&two, &seven)))?;
+        let duplicate = s.reify(first.clone().star(first))?;
+        let nil = s.integer(0);
+        let invalid = s.reify(Heaplet::points_to(&nil, &seven))?;
+        let empty = s.reify(Heaplet::emp())?;
+        s.assert(&anchor)?;
+        for other in [&duplicate, &invalid, &empty] {
+            s.push();
+            s.assert(other)?;
+            assert_eq!(s.check(), SolverResult::Unsat, "{options:?}");
+            s.pop()?;
+            s.push();
+            let not_other = s.not(other)?;
+            s.assert(&not_other)?;
+            assert_eq!(s.check(), SolverResult::Sat, "{options:?}");
+            s.pop()?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_aliases_bounds_and_cached_values_follow_scopes() -> Result<(), HeapError> {
+    for options in optimization_modes() {
+        let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
+        let x = s.int_var("x");
+        let alias = s.int_var("alias");
+        let x_again = s.int_var("x");
+        let y = s.int_var("y");
+        let value = s.int_var("value");
+        let one = s.integer(1);
+        let seven = s.integer(7);
+        let p = s.reify(Heaplet::points_to(&x, &seven))?;
+        let q = s.reify(Heaplet::points_to(&y, &value))?;
+        let same_name = s.eq(&x_again, &alias)?;
+        s.assert(&same_name)?;
+        s.assert(&p)?;
+        s.assert(&q)?;
+        // Equality discovery must use a conjunction's entailed children too.
+        let lower = s.le(&one, &alias)?;
+        let upper = s.le(&alias, &one)?;
+        let exact = s.and(&[lower, upper])?;
+        s.assert(&exact)?;
+        for (address, data, expected) in [
+            (1, 7, SolverResult::Sat),
+            (2, 7, SolverResult::Unsat),
+            (1, 8, SolverResult::Unsat),
+            (1, 7, SolverResult::Sat),
+        ] {
+            s.push();
+            let address = s.integer(address);
+            let data = s.integer(data);
+            let pin_address = s.eq(&y, &address)?;
+            let pin_value = s.eq(&value, &data)?;
+            s.assert(&pin_address)?;
+            s.assert(&pin_value)?;
+            assert_eq!(s.check(), expected, "{options:?}: {:?}", s.reason_unknown());
+            if expected == SolverResult::Sat {
+                let model = s.model().ok_or(HeapError("missing heap model"))?;
+                assert_eq!(model.integers["x"], BigInt::from(1));
+                s.validate_model(model)?;
+            }
+            s.pop()?;
+            assert!(s.model().is_none());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn equality_discovery_does_not_choose_disjuncts_or_interval_endpoints() -> Result<(), HeapError> {
+    for options in optimization_modes() {
+        for negate_conjunction in [false, true] {
+            let mut s = HeapSolver::new();
+            s.set_optimizations(options)?;
+            let x = s.int_var("x");
+            let one = s.integer(1);
+            let two = s.integer(2);
+            let h = s.reify(Heaplet::points_to(&x, &one).star(Heaplet::points_to(&one, &one)))?;
+            let left = s.eq(&x, &one)?;
+            let right = s.eq(&x, &two)?;
+            let either = if negate_conjunction {
+                let not_left = s.not(&left)?;
+                let not_right = s.not(&right)?;
+                let neither = s.and(&[not_left, not_right])?;
+                s.not(&neither)?
+            } else {
+                s.or(&[left, right])?
+            };
+            let lower = s.le(&one, &x)?;
+            let upper = s.le(&x, &two)?;
+            s.assert(&lower)?;
+            s.assert(&upper)?;
+            s.assert(&either)?;
+            s.assert(&h)?;
+            assert_eq!(s.check(), SolverResult::Sat, "{options:?}");
+            assert_eq!(
+                s.model().ok_or(HeapError("missing model"))?.integers["x"],
+                BigInt::from(2)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn substitution_rebuilds_arithmetic_and_handles_cyclic_equations() -> Result<(), HeapError> {
+    for options in optimization_modes() {
+        let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
+        let x = s.int_var("x");
+        let one = s.integer(1);
+        let next = s.add(&x, &one)?;
+        let y = s.int_var("y");
+        let data = s.sub(&next, &x)?;
+        let twice = s.scale(2, &data)?;
+        let h = s.reify(Heaplet::points_to(&y, &twice))?;
+        let alias = s.eq(&y, &next)?;
+        let pin = s.eq(&x, &one)?;
+        s.assert(&alias)?;
+        s.assert(&pin)?;
+        s.assert(&h)?;
+        assert_eq!(
+            s.check(),
+            SolverResult::Sat,
+            "{options:?}: {:?}",
+            s.reason_unknown()
+        );
+        let model = s.model().ok_or(HeapError("missing model"))?;
+        assert_eq!(model.cells.get(&BigInt::from(2)), Some(&BigInt::from(2)));
+        s.push();
+        let cycle = s.eq(&x, &y)?;
+        s.assert(&cycle)?;
+        assert_eq!(s.check(), SolverResult::Unsat);
+        s.pop()?;
+        assert_eq!(s.check(), SolverResult::Sat);
+    }
+    Ok(())
+}
+
+#[test]
+fn templates_reuse_expressions_but_never_scoped_assertions() -> Result<(), HeapError> {
+    for cache in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_optimizations(HeapOptimizations {
+            cache_templates: cache,
+            equality_propagation: false,
+            ..HeapOptimizations::default()
+        })?;
+        let x = s.int_var("x");
+        let y = s.int_var("y");
+        let one = s.integer(1);
+        let p = s.reify(Heaplet::points_to(&x, &one))?;
+        let q = s.reify(Heaplet::points_to(&y, &one))?;
+        let alias = s.eq(&x, &y)?;
+        let not_q = s.not(&q)?;
+        s.assert(&p)?;
+        assert_eq!(s.check(), SolverResult::Sat);
+        let built = s.statistics().template_builds;
+        for _ in 0..4 {
+            s.push();
+            s.assert(&alias)?;
+            s.assert(&not_q)?;
+            assert_eq!(s.check(), SolverResult::Unsat);
+            s.pop()?;
+            assert_eq!(s.check(), SolverResult::Sat);
+        }
+        assert!(s.statistics().template_hits > 0);
+        if cache {
+            assert_eq!(s.statistics().template_builds, built);
+        } else {
+            assert!(s.statistics().template_builds > built);
+        }
+        assert!(s.set_optimizations(HeapOptimizations::NONE).is_err());
+    }
+    Ok(())
+}
+
+#[test]
+fn lazy_refinement_rejects_invalid_choices_and_retracts_guarded_rows() -> Result<(), HeapError> {
+    for options in optimization_modes() {
+        let mut s = HeapSolver::new();
+        s.set_optimizations(options)?;
+        let zero = s.integer(0);
+        let one = s.integer(1);
+        let two = s.integer(2);
+        let invalid = s.reify(Heaplet::points_to(&zero, &one))?;
+        let duplicate =
+            s.reify(Heaplet::points_to(&one, &one).star(Heaplet::points_to(&one, &one)))?;
+        let p = s.reify(Heaplet::points_to(&one, &one))?;
+        let q = s.reify(Heaplet::points_to(&two, &one))?;
+        let impossible = s.or(&[invalid.clone(), duplicate])?;
+        s.push();
+        s.assert(&impossible)?;
+        assert_eq!(
+            s.check(),
+            SolverResult::Unsat,
+            "{options:?}: {:?}",
+            s.reason_unknown()
+        );
+        if options.lazy_boolean {
+            assert!(s.statistics().refinement_rounds > 0);
+            assert!(s.statistics().refinement_rounds <= 2);
+        }
+        let rounds = s.statistics().refinement_rounds;
+        assert_eq!(s.check(), SolverResult::Unsat);
+        assert_eq!(s.statistics().refinement_rounds, rounds);
+        s.pop()?;
+        assert_eq!(s.statistics().refinement_rounds, 0);
+        let choose_p = s.or(&[invalid.clone(), p.clone()])?;
+        let choose_q = s.or(&[invalid, q.clone()])?;
+        s.push();
+        s.assert(&choose_p)?;
+        s.assert(&choose_q)?;
+        assert_eq!(s.check(), SolverResult::Unsat, "{options:?}");
+        s.pop()?;
+        for chosen in [&p, &q] {
+            s.push();
+            let alternative = s.or(&[p.clone(), q.clone()])?;
+            s.assert(&alternative)?;
+            s.assert(chosen)?;
+            assert_eq!(s.check(), SolverResult::Sat, "{options:?}");
+            s.validate_model(s.model().ok_or(HeapError("missing model"))?)?;
+            s.pop()?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn arbitrary_two_clause_boolean_contexts_match_exhaustive_heaps() -> Result<(), HeapError> {
+    for lazy in [false, true] {
+        for coverage in [false, true] {
+            let mut s = HeapSolver::new();
+            s.set_optimizations(HeapOptimizations {
+                lazy_boolean: lazy,
+                anchor_coverage: coverage,
+                ..HeapOptimizations::default()
+            })?;
+            let mut literals = Vec::new();
+            for atom in &ATOMS[..4] {
+                let mut heaplet = Heaplet::emp();
+                for &(location, value) in *atom {
+                    let location = s.integer(location);
+                    let value = s.integer(value);
+                    heaplet = heaplet.star(Heaplet::points_to(&location, &value));
+                }
+                let positive = s.reify(heaplet)?;
+                let negative = s.not(&positive)?;
+                literals.push(positive);
+                literals.push(negative);
+            }
+            let mut clauses = Vec::new();
+            for left in 0..8 {
+                for right in left..8 {
+                    let clause = if left % 2 == 0 {
+                        s.or(&[literals[left].clone(), literals[right].clone()])?
+                    } else {
+                        let a = s.not(&literals[left])?;
+                        let b = s.not(&literals[right])?;
+                        let neither = s.and(&[a, b])?;
+                        s.not(&neither)?
+                    };
+                    clauses.push((left, right, clause));
+                }
+            }
+            let patterns = oracle_patterns();
+            for (a, b, first) in &clauses {
+                for (c, d, second) in &clauses {
+                    let satisfiable = patterns.iter().any(|&pattern| {
+                        let holds = |literal: usize| {
+                            (pattern & (1 << (literal / 2)) != 0) == (literal.is_multiple_of(2))
+                        };
+                        (holds(*a) || holds(*b)) && (holds(*c) || holds(*d))
+                    });
+                    s.push();
+                    s.assert(first)?;
+                    s.assert(second)?;
+                    let expected = if satisfiable {
+                        SolverResult::Sat
+                    } else {
+                        SolverResult::Unsat
+                    };
+                    assert_eq!(
+                        s.check(),
+                        expected,
+                        "clauses {a},{b};{c},{d}, lazy={lazy}, coverage={coverage}: {:?}",
+                        s.reason_unknown()
+                    );
+                    s.pop()?;
+                }
+            }
+        }
     }
     Ok(())
 }
