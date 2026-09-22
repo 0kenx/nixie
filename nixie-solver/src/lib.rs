@@ -149,3 +149,7 @@ pub mod debug;
 
 // Read-only structural invariant checks over the solver's own bookkeeping.
 pub mod invariants;
+
+/// Exact heaplets with Boolean combinations and integer data.
+#[cfg(feature = "std")]
+pub mod heap;
