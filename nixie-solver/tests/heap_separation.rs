@@ -17,6 +17,11 @@ fn allocation_aliasing_and_scopes() -> Result<(), HeapError> {
     assert_eq!(model.cells.len(), 2);
     assert_ne!(model.integers["x"], model.integers["y"]);
     s.validate_model(&model)?;
+    assert_eq!(s.statistics().heaplets, 1);
+    assert!(s.statistics().backend_terms > 0);
+    s.set_random_seed(17);
+    assert!(s.model().is_none());
+    assert_eq!(s.check(), SolverResult::Sat);
     let mut aliased = model.clone();
     aliased
         .integers

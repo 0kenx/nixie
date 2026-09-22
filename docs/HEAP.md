@@ -193,3 +193,12 @@ The reference test treats any `unknown`, error, missing output, or wrong verdict
 as a failure. CVC5 1.3.4 rejects incremental separation logic, so it checks each
 flattened active scope in a fresh process. Nixie's scope restoration is tested
 directly against the exhaustive model oracle.
+
+Performance measurements use the [exact-heap benchmark suite](../bench/heap_perf/README.md):
+allocation, aliasing, stored-value disagreement, permutation and negated heaplets,
+with CVC5 native SL and CVC5/Z3 UF+array references. `HeapSolver::statistics()`
+exposes encoding sizes and backend search counters; these are diagnostics, not a
+complete-work metric. `set_random_seed` selects a reproducible backend seed and
+invalidates a previous model. The suite measures retired instructions through
+encoding, solving and independent model validation. These measurements concern
+the exact-heap LIA reduction, not inductive predicates or native SL performance.

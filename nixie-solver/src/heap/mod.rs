@@ -111,6 +111,24 @@ pub struct HeapModel {
     pub booleans: BTreeMap<String, bool>,
 }
 
+/// Read-only heap encoding sizes and backend search counters.
+/// These counts do not measure total encoding or validation work.
+#[derive(Clone, Copy, Debug)]
+pub struct HeapStatistics {
+    /// Number of registered heaplets.
+    pub heaplets: usize,
+    /// Nodes in the original input arena.
+    pub original_nodes: usize,
+    /// Interned terms in the backend term manager.
+    pub backend_terms: usize,
+    /// Backend conflicts.
+    pub conflicts: u64,
+    /// Backend decisions.
+    pub decisions: u64,
+    /// Backend propagations.
+    pub propagations: u64,
+}
+
 /// Incremental solving of Boolean combinations of exact heaplets and LIA.
 ///
 /// Reify all heaplets at base scope, before the first check or push. Afterwards
@@ -426,5 +444,25 @@ impl HeapSolver {
     /// Why the most recent check declined to give a verdict, if it did.
     pub fn reason_unknown(&self) -> Option<&'static str> {
         self.reason
+    }
+
+    /// Set the backend's reproducible search seed and invalidate the model.
+    /// Zero restores the ordinary default seed; heap semantics are unchanged.
+    pub fn set_random_seed(&mut self, seed: u64) {
+        self.invalidate();
+        self.backend.set_random_seed(seed);
+    }
+
+    /// Inspect encoding sizes and the backend's accumulated search counters.
+    pub fn statistics(&self) -> HeapStatistics {
+        let backend = self.backend.get_statistics();
+        HeapStatistics {
+            heaplets: self.spatial.len(),
+            original_nodes: self.nodes.len(),
+            backend_terms: self.tm.len(),
+            conflicts: backend.conflicts,
+            decisions: backend.decisions,
+            propagations: backend.propagations,
+        }
     }
 }
