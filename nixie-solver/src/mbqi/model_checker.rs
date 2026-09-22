@@ -1783,6 +1783,12 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
             out.push(*n);
         }
         TermKind::Neg(a)
+        | TermKind::Exp(a)
+        | TermKind::Log(a)
+        | TermKind::Sin(a)
+        | TermKind::Cos(a)
+        | TermKind::Atan(a)
+        | TermKind::Sqrt(a)
         | TermKind::StrLen(a)
         | TermKind::StrToInt(a)
         | TermKind::IntToStr(a)
@@ -2924,6 +2930,15 @@ fn rebuild_with(
             manager.mk_eq(a, b)
         }
         TermKind::Neg(_) => manager.mk_neg(one(0)?),
+        // Transcendentals rebuild structurally; the model checker cannot
+        // fold them (their values are irrational in general) and declines
+        // the fold arm below.
+        TermKind::Exp(_) => manager.mk_exp(one(0)?),
+        TermKind::Log(_) => manager.mk_log(one(0)?),
+        TermKind::Sin(_) => manager.mk_sin(one(0)?),
+        TermKind::Cos(_) => manager.mk_cos(one(0)?),
+        TermKind::Atan(_) => manager.mk_atan(one(0)?),
+        TermKind::Sqrt(_) => manager.mk_sqrt(one(0)?),
         TermKind::Add(args) => manager.mk_add(nary(args.len())?),
         TermKind::Sub(..) => {
             let (a, b) = two_at(0)?;

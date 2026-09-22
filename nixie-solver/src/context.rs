@@ -1157,6 +1157,17 @@ impl Context {
                 config.simplify = value == "true";
                 self.solver.set_config(config);
             }
+            "delta" => {
+                // The transcendental theory's delta (dReal-compatible).
+                if let Ok(d) = value.trim().parse::<f64>()
+                    && d.is_finite()
+                    && d >= 0.0
+                {
+                    let mut config = self.solver.config().clone();
+                    config.trans_delta_nanos = (d.clamp(0.0, 1.0e6) * 1e9).round() as i64;
+                    self.solver.set_config(config);
+                }
+            }
             "random-seed" | "random_seed" => {
                 // Thread the seed into the SAT engine's phase-randomization PRNG.
                 // Only enforce a well-formed non-negative integer; a malformed
@@ -1808,7 +1819,15 @@ impl Context {
                         return Err(nixie_core::error::NixieError::Unsupported(err));
                     }
                     output.push(match result {
-                        SolverResult::Sat => "sat".to_string(),
+                        SolverResult::Sat => {
+                            // A delta-ICP witness is reported as dReal
+                            // does: `delta-sat`, never a plain `sat`.
+                            if self.solver.last_answer_was_delta_sat() {
+                                "delta-sat".to_string()
+                            } else {
+                                "sat".to_string()
+                            }
+                        }
                         SolverResult::Unsat => "unsat".to_string(),
                         SolverResult::Unknown => "unknown".to_string(),
                     });
@@ -1885,7 +1904,15 @@ impl Context {
                     self.resolve_define_fun_aliases(result);
                     self.last_result = Some(result);
                     output.push(match result {
-                        SolverResult::Sat => "sat".to_string(),
+                        SolverResult::Sat => {
+                            // A delta-ICP witness is reported as dReal
+                            // does: `delta-sat`, never a plain `sat`.
+                            if self.solver.last_answer_was_delta_sat() {
+                                "delta-sat".to_string()
+                            } else {
+                                "sat".to_string()
+                            }
+                        }
                         SolverResult::Unsat => "unsat".to_string(),
                         SolverResult::Unknown => "unknown".to_string(),
                     });

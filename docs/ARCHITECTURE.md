@@ -85,7 +85,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **nixie-core** | None (foundation) | AST, sorts, SMT-LIB2 parser, tactics, rewriters |
 | **nixie-math** | num-rational, num-bigint | Polynomials, simplex, intervals, LP, Grobner bases |
 | **nixie-sat** | nixie-core | CDCL SAT solver with VSIDS/LRB/VMTF/CHB |
-| **nixie-theories** | nixie-core, nixie-sat | EUF, LRA, LIA, BV, Arrays, Strings, FP, Datatypes |
+| **nixie-theories** | nixie-core, nixie-sat | EUF, LRA, LIA, BV, Arrays, Strings, FP, Datatypes, Transcendentals (δ-sat) |
 | **nixie-nlsat** | nixie-core, nixie-math | Non-linear arithmetic (CAD, NRA/NIA) |
 | **nixie-proof** | nixie-core, (nixie-sat optional) | DRAT, Alethe, LFSC, Coq/Lean/Isabelle exports |
 | **nixie-solver** | nixie-core, nixie-sat, nixie-theories | CDCL(T) orchestration, SMT-LIB2 execution |
@@ -161,6 +161,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Strings** | Brzozowski derivatives, automata-based regex, word equations |
 | **Floating-Point** | IEEE 754 with bit-blasting, rounding modes |
 | **Datatypes** | ADT with constructors, testers, selectors |
+| **Transcendentals** | dReal-style δ-satisfiability: dPLL over arithmetic atoms, per-assignment interval constraint propagation with rigorous outward-rounded enclosures (`exp`/`log`/`sin`/`cos`/`atan`/`sqrt`; `unsat` exact, `delta-sat` witness, else `unknown` — `docs/TRANS.md`) |
 | **Pseudo-Boolean** | Cardinality constraints, PB-specific propagation |
 | **Finite Graphs** | Reified directed reachability/acyclicity over fixed vertex universes; explained user-propagator integration (`docs/GRAPH.md`) |
 | **Guarded FSMs** | MonoSAT-style NFA acceptance of constant words with symbolic transition guards, lowered to graph reachability (`docs/FSM.md`) |

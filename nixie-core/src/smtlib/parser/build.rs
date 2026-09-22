@@ -41,6 +41,9 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "str.to_code" | "str.from_code" | "str.to_int" | "str.to.int" | "int.to_str"
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
             | "re.opt" | "re.comp" | "ff.neg" | "seq.unit" | "seq.len"
+            // Transcendentals over the reals (dReal-style surface; the
+            // delta-ICP theory owns them — see docs/TRANS.md).
+            | "exp" | "log" | "sin" | "cos" | "atan" | "sqrt"
             | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
             | "set.is_singleton" | "set.singleton"
             // Relations (CVC5's `rel.*` surface): transpose takes a
@@ -689,6 +692,33 @@ impl Parser<'_> {
             // injection is the identity on the term; the operand keeps its
             // (integer) constraints, which is exactly `to_real` semantics.
             "to_real" => x,
+            // ======== Transcendentals (Real -> Real) ========
+            // A non-arithmetic operand is a sort error per the standard's
+            // spirit (these are Real-embedded functions); reporting beats
+            // interning a term with a lying sort.
+            "exp" | "log" | "sin" | "cos" | "atan" | "sqrt" => {
+                if !(self.is_real_term(x)
+                    || self
+                        .manager
+                        .get(x)
+                        .is_some_and(|t| t.sort == self.manager.sorts.int_sort))
+                {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "{op}: operand must be Int or Real sorted (transcendental function)"
+                        ),
+                    });
+                }
+                match op {
+                    "exp" => self.manager.mk_exp(x),
+                    "log" => self.manager.mk_log(x),
+                    "sin" => self.manager.mk_sin(x),
+                    "cos" => self.manager.mk_cos(x),
+                    "atan" => self.manager.mk_atan(x),
+                    _ => self.manager.mk_sqrt(x),
+                }
+            }
             // (to_int r) is the floor of a real. For a *constant* operand we
             // compute the exact Euclidean floor (`numer.div_euclid(denom)`,
             // denom always positive in a normalized rational); an
@@ -1494,6 +1524,12 @@ mod tests {
         "abs",
         "to_real",
         "to_int",
+        "exp",
+        "log",
+        "sin",
+        "cos",
+        "atan",
+        "sqrt",
         "is_int",
         "bvnot",
         "bvneg",

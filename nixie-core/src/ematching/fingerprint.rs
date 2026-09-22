@@ -215,7 +215,15 @@ impl FingerprintCache {
                     arg_fp.0.hash(&mut hasher);
                 }
             }
-            TermKind::Not(inner) | TermKind::Neg(inner) | TermKind::FfNeg(inner) => {
+            TermKind::Not(inner)
+            | TermKind::Neg(inner)
+            | TermKind::FfNeg(inner)
+            | TermKind::Exp(inner)
+            | TermKind::Log(inner)
+            | TermKind::Sin(inner)
+            | TermKind::Cos(inner)
+            | TermKind::Atan(inner)
+            | TermKind::Sqrt(inner) => {
                 let inner_fp = self.compute(*inner, manager);
                 inner_fp.0.hash(&mut hasher);
             }

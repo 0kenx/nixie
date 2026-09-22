@@ -130,6 +130,24 @@ pub enum TermKind {
     /// Greater than or equal
     Ge(TermId, TermId),
 
+    // Transcendental functions over the reals (`Real -> Real`).  These make
+    // the constraint language undecidable; the transcendental theory answers
+    // them with dReal-style delta-satisfiability (interval constraint
+    // propagation — `nixie-theories/src/trans/`, `docs/TRANS.md`), never by
+    // pretending they are linear.
+    /// `e^x`
+    Exp(TermId),
+    /// Natural logarithm.  Total semantics: `log(x)` for `x ≤ 0` is `−∞`.
+    Log(TermId),
+    /// `sin(x)`
+    Sin(TermId),
+    /// `cos(x)`
+    Cos(TermId),
+    /// `atan(x)`, values in `(−π/2, π/2)`
+    Atan(TermId),
+    /// Square root.  Total semantics: `sqrt(x)` for `x < 0` is `0`.
+    Sqrt(TermId),
+
     // BitVector operations
     /// Bit vector concatenation
     BvConcat(TermId, TermId),

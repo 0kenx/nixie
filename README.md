@@ -23,7 +23,7 @@ Rust 1.88+, edition 2024.
 | `nixie-sat` | CDCL SAT core |
 | `nixie-nlsat` | NLSAT / CAD solver |
 | `nixie-proof` | proof logging and checking (DRAT, LRAT, …) |
-| `nixie-theories` | EUF, arithmetic, BV, arrays, strings, floats, datatypes |
+| `nixie-theories` | EUF, arithmetic, BV, arrays, strings, floats, datatypes, transcendentals (δ-sat) |
 | `nixie-solver` | CDCL(T) combination |
 | `nixie-spacer` | CHC solving / PDR model checking |
 | `nixie-opt` | MaxSAT / optimization |
@@ -35,8 +35,11 @@ Rust 1.88+, edition 2024.
 | `nixie` | meta-crate |
 
 Deeper docs: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
-[`docs/BENCHMARKING.md`](docs/BENCHMARKING.md). Differential parity against a
-real Z3 binary: [`bench/z3_parity`](bench/z3_parity).
+[`docs/BENCHMARKING.md`](docs/BENCHMARKING.md),
+[`docs/TRANS.md`](docs/TRANS.md) (the transcendental theory: `exp`, `log`,
+`sin`, `cos`, `atan`, `sqrt` as dReal-style δ-satisfiability — `unsat` is
+exact, `delta-sat` never claims an exact model). Differential parity against
+a real Z3 binary: [`bench/z3_parity`](bench/z3_parity).
 
 ## References
 

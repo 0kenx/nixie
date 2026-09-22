@@ -20,6 +20,7 @@ pub(super) mod check_fp_model;
 #[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
+pub(super) mod check_trans;
 pub(super) mod config;
 pub(super) mod dt_axioms;
 pub(super) mod encode;
@@ -792,6 +793,15 @@ pub struct Solver {
     /// Boolean — and must not veto a verdict from the engine that decided
     /// exactly those terms. Cleared at every `check_core` entry.
     pub(super) nl_dispatch_answered: bool,
+    /// The transcendental (delta-ICP) dispatcher answered THIS check: its
+    /// verdicts rest on its own interval arithmetic over the original
+    /// assertions, so the linear-layer honesty gates that would otherwise
+    /// downgrade a `Sat` (unparseable atoms, big-const abstraction) do not
+    /// apply to it.  See `check_trans`.
+    pub(super) trans_dispatch_answered: bool,
+    /// The last `Sat` verdict was a δ-satisfiability witness of the
+    /// transcendental theory (the CLI prints `delta-sat` for it).
+    pub(crate) trans_delta_sat: bool,
     /// z3-style triangle-axiom pairs `(ite-result term, const)` already
     /// asserted (see [`Solver::axiomatize_arith_constant_equalities`]).
     /// Trailed so the axiomatization is idempotent across repeated `check`s on
@@ -1344,6 +1354,8 @@ impl Solver {
             array_witness_budget_exhausted: false,
             arith_defined_terms: FxHashSet::default(),
             nl_dispatch_answered: false,
+            trans_dispatch_answered: false,
+            trans_delta_sat: false,
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
             dt_axioms_incomplete: false,
@@ -2732,6 +2744,14 @@ impl Solver {
         // whole-problem here, model validated exactly before `Sat`; a
         // declined goal falls through to CDCL(T), whose honesty gate
         // answers `unknown` rather than guessing.
+        // Transcendental goals (exp/log/sin/cos/atan/sqrt) go to the
+        // delta-ICP dispatcher BEFORE the polynomial engines: the NL
+        // translator treats a transcendental subterm as an opaque variable
+        // and must not see these goals at all.
+        if let Some(trans_result) = self.dispatch_trans_solver(manager) {
+            return trans_result;
+        }
+
         #[cfg(feature = "nlsat")]
         if let Some(ff_result) = self.dispatch_ff_solver(manager) {
             match ff_result {

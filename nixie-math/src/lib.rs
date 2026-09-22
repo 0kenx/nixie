@@ -142,6 +142,7 @@ pub mod simd;
 pub mod simplex;
 pub mod simplex_parametric;
 pub mod simplex_solver;
+pub mod transcendental;
 
 pub use simplex_solver::{
     Constraint as SimplexConstraint, ConstraintKind, SimplexError, SimplexSolver, SolveResult,
