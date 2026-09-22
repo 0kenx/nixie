@@ -7,6 +7,7 @@
 //! - BitVec(n): Bit vectors of width n
 //! - Array(domain, range): Arrays mapping domain to range
 
+pub mod binary_field;
 pub mod field;
 pub mod inference;
 
@@ -118,7 +119,7 @@ pub enum SortKind {
     /// Datatype sort
     /// Reference to a datatype definition by name
     Datatype(crate::interner::Spur),
-    /// Finite-field sort `(_ FiniteField <order>)`, identified by its
+    /// Finite-field sort (prime or explicit binary extension), identified by its
     /// interned [`FieldId`] in the [`FieldTable`] owned by
     /// [`SortManager`].
     ///
@@ -469,6 +470,12 @@ impl SortManager {
     /// reinterpreted as ℤ_n. See [`FieldTable::intern_prime`].
     pub fn finite_field(&mut self, p: num_bigint::BigUint) -> Result<SortId, FieldError> {
         let id = self.fields.intern_prime(p)?;
+        Ok(self.intern(SortKind::FiniteField(id)))
+    }
+
+    /// Intern a binary extension field with an explicit defining polynomial.
+    pub fn binary_field(&mut self, polynomial: num_bigint::BigUint) -> Result<SortId, FieldError> {
+        let id = self.fields.intern_binary(polynomial)?;
         Ok(self.intern(SortKind::FiniteField(id)))
     }
 
@@ -879,10 +886,7 @@ impl SortManager {
             SortKind::Seq(_) => Some("Seq".to_string()),
             SortKind::Set(_) => Some("Set".to_string()),
             SortKind::Bag(_) => Some("Bag".to_string()),
-            SortKind::FiniteField(id) => self
-                .fields
-                .get(*id)
-                .map(|f| format!("(_ FiniteField {})", f.modulus())),
+            SortKind::FiniteField(id) => self.fields.get(*id).map(|f| f.sort_syntax()),
             SortKind::Array { .. } => Some("Array".to_string()),
             // `try_resolve`, not `resolve`, and that is not defensiveness.
             // There are **two** interners in play — a `TermManager`'s and this

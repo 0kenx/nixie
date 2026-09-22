@@ -478,9 +478,9 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                         let modulus = sorts
                             .field_table()
                             .get(*id)
-                            .map(|f| f.modulus().to_string())
+                            .map(|f| f.sort_syntax())
                             .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
-                        out.push_str(&format!("(_ FiniteField {modulus})"));
+                        out.push_str(&modulus);
                     }
                     SortKind::Seq(elem) => {
                         out.push_str("(Seq ");

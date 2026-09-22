@@ -1,5 +1,8 @@
 # Finite Fields (`QF_FF`) — theory design
 
+**Binary extensions:** the initial bounded binary fragment is now supported;
+see §14 and its audit for syntax, API, solving limits and proof modes.
+
 **Status:** Phases 0–6 implemented (2026-09-14); `QF_UFFF` (the
 Phase-6 combination remainder) landed 2026-09-16 — see §7.1 for the
 as-built arrangement architecture. §6.5's split GB landed 2026-09-16 as
@@ -688,3 +691,17 @@ A useful solver exists at the end of Phase 3; a competitive one at the end of Ph
 - In-repo: `docs/THEORY_GUIDE.md`, `docs/TUTORIAL_CUSTOM_THEORY.md`,
   `docs/BENCHMARKING.md`, `docs/CERTIFIED_MODE.md`,
   `docs/studies/2026-08-bv-exhaustive-certification.md`.
+
+## 14. Binary extensions (2026-09-22)
+
+The earlier extension-field exclusion is superseded by the initial bounded
+binary fragment: `(_ BinaryField F)` identifies F_2[X]/(f), where F packs the
+monic irreducible polynomial's coefficients. `(as ffN (_ BinaryField F))`
+is a canonical polynomial-basis element, not an integer residue. Different
+defining polynomials name different sorts even at equal cardinality.
+
+QF_FF Boolean combinations use exact, budgeted enumeration; prime algebra
+and prime QF_UFFF retain their existing paths. Extension UF combinations
+and arithmetic UNSAT proof exports remain unsupported and decline honestly.
+See [representation, API, limits, independent audit and verification](studies/2026-09-22-binary-extension-fields.md)
+for the full supported fragment and characteristic/cardinality distinctions.

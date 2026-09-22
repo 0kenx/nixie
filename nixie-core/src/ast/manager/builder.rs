@@ -1681,7 +1681,11 @@ impl TermManager {
                             "FF({})",
                             self.sorts
                                 .field_desc(*id)
-                                .map(|d| d.modulus().to_string())
+                                .map(|d| if d.binary().is_some() {
+                                    d.sort_syntax()
+                                } else {
+                                    d.modulus().to_string()
+                                })
                                 .unwrap_or_else(|| format!("{}", id.raw()))
                         )),
                         SortKind::Seq(e) => {

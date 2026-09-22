@@ -270,6 +270,17 @@ impl Context {
                         _ => Err(Self::malformed_sort_error(name)),
                     }
                 }
+                [u, kw, polynomial] if u.as_str() == "_" && kw.as_str() == "BinaryField" => {
+                    match polynomial.parse::<num_bigint::BigUint>() {
+                        Ok(f) => self
+                            .terms
+                            .sorts
+                            .binary_field(f)
+                            .map(SortExprStep::Resolved)
+                            .map_err(|e| NixieError::Unsupported(e.to_string())),
+                        _ => Err(Self::malformed_sort_error(name)),
+                    }
+                }
                 [head, domain, range] if head.as_str() == "Array" => Ok(SortExprStep::Array {
                     domain_expr: std::mem::take(domain),
                     range_expr: std::mem::take(range),

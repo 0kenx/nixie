@@ -158,16 +158,10 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, "{}", super::format_string_literal(s));
             }
             TermKind::FfConst { value, field } => {
-                let modulus = self.manager.sorts.field_table().modulus(*field).cloned();
-                match modulus {
-                    Some(modulus) => {
-                        let _ = write!(w, "{}", super::format_ff_literal(value, &modulus));
-                    }
-                    None => {
-                        // An extension field has no integer modulus; the
-                        // honest rendering names the field id.
-                        let _ = write!(w, "#f{value}m(field {})", field.raw());
-                    }
+                if let Some(desc) = self.manager.sorts.field_desc(*field) {
+                    let _ = write!(w, "{}", desc.literal_syntax(value));
+                } else {
+                    let _ = write!(w, "<unknown field {}>", field.raw());
                 }
             }
             TermKind::FfAdd(args) => {
@@ -1295,9 +1289,9 @@ impl<'a> Printer<'a> {
                         .sorts
                         .field_table()
                         .get(*id)
-                        .map(|f| f.modulus().to_string())
+                        .map(|f| f.sort_syntax())
                         .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
-                    let _ = write!(w, "(_ FiniteField {modulus})");
+                    let _ = write!(w, "{modulus}");
                 }
                 SortKind::Seq(elem) => {
                     let _ = write!(w, "(Seq ");

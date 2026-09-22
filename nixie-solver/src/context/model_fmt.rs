@@ -635,16 +635,13 @@ impl Context {
                     SortKind::BitVec(w) => format!("(_ BitVec {w})"),
                     SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
                     SortKind::RoundingMode => "RoundingMode".to_string(),
-                    SortKind::FiniteField(id) => {
-                        let modulus = self
-                            .terms
-                            .sorts
-                            .field_table()
-                            .get(*id)
-                            .map(|f| f.modulus().to_string())
-                            .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
-                        format!("(_ FiniteField {modulus})")
-                    }
+                    SortKind::FiniteField(id) => self
+                        .terms
+                        .sorts
+                        .field_table()
+                        .get(*id)
+                        .map(|f| f.sort_syntax())
+                        .unwrap_or_else(|| format!("<unknown field {}>", id.raw())),
                     // An uninterpreted sort's name is interned by the *term*
                     // manager (`Parser::parse_sort` for `declare-sort` names
                     // and `TermManager::reglan_sort` both call
@@ -945,7 +942,7 @@ impl Context {
                             .sorts
                             .field_table()
                             .get(*id)
-                            .map(|f| format!("#f0m{}", f.modulus()))
+                            .map(|f| f.literal_syntax(&num_bigint::BigInt::from(0)))
                             .unwrap_or_else(|| format!("#f0m(field {})", id.raw()));
                         break zero;
                     }

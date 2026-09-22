@@ -156,8 +156,8 @@ impl<'a> PrettyPrinter<'a> {
                     .manager
                     .sorts
                     .field_table()
-                    .modulus(*field)
-                    .map(|m| super::format_ff_literal(value, m))
+                    .get(*field)
+                    .map(|desc| desc.literal_syntax(value))
                     .unwrap_or_else(|| format!("#f{value}m(field {})", field.raw()));
                 let _ = write!(w, "{rendered}");
             }

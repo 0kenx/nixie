@@ -90,6 +90,15 @@ impl Solver {
         // over the shared FF-sorted terms. The pure paths below are
         // untouched.
         if goal_uses_ff_uf(&self.assertions, manager) {
+            if self.goal_fields(manager).iter().any(|&f| {
+                manager
+                    .sorts
+                    .field_desc(f)
+                    .and_then(|d| d.binary())
+                    .is_some()
+            }) {
+                return Some(SolverResult::Unknown);
+            }
             return self.dpll_ufff(manager);
         }
 
@@ -189,9 +198,7 @@ impl Solver {
                         return None;
                     }
                     for (var, value) in model.assignments() {
-                        let value_term = manager
-                            .mk_ff_const(field, into_bigint(value))
-                            .expect("the field is interned and prime");
+                        let value_term = manager.mk_ff_const(field, into_bigint(value)).ok()?;
                         combined_model.set(*var, value_term);
                     }
                 }
@@ -534,8 +541,24 @@ impl Solver {
             }
         }
 
+        // Extension enumeration has a deterministic outer Boolean-case cap
+        // in addition to the per-conjunction arithmetic budget.
+        let mut binary_cases = self
+            .goal_fields(manager)
+            .iter()
+            .any(|&f| {
+                manager
+                    .sorts
+                    .field_desc(f)
+                    .and_then(|d| d.binary())
+                    .is_some()
+            })
+            .then_some(1024u32);
         // 3. The lazy loop.
         loop {
+            if let Some(left) = &mut binary_cases {
+                *left = left.checked_sub(1)?;
+            }
             match sat.solve() {
                 nixie_sat::SolverResult::Unsat => {
                     // Every Boolean assignment is refuted: UNSAT. (No
@@ -602,9 +625,8 @@ impl Solver {
                                     return None;
                                 }
                                 for (var_term, value) in ff_model.assignments() {
-                                    let value_term = manager
-                                        .mk_ff_const(field, into_bigint(value))
-                                        .expect("interned prime field");
+                                    let value_term =
+                                        manager.mk_ff_const(field, into_bigint(value)).ok()?;
                                     model.set(*var_term, value_term);
                                 }
                             }
@@ -1258,9 +1280,8 @@ impl Solver {
                             let mut model_out = Model::new();
                             for (field, map) in &completed.per_field {
                                 for (&term, value) in map {
-                                    let value_term = manager
-                                        .mk_ff_const(*field, into_bigint(value))
-                                        .expect("interned prime field");
+                                    let value_term =
+                                        manager.mk_ff_const(*field, into_bigint(value)).ok()?;
                                     model_out.set(term, value_term);
                                 }
                             }

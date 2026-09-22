@@ -53,17 +53,6 @@ pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> S
     }
 }
 
-/// Render a finite-field element as its SMT-LIB literal `#f<v>m<p>`.
-///
-/// `value` must already be normalized into `[0, p)` (every `FfConst` is, at
-/// construction), so the literal re-reads as the same interned term.
-pub(crate) fn format_ff_literal(
-    value: &num_bigint::BigInt,
-    modulus: &num_bigint::BigUint,
-) -> String {
-    format!("#f{value}m{modulus}")
-}
-
 /// Render a string value as a well-formed SMT-LIB2 string literal, including
 /// the enclosing double quotes.
 ///

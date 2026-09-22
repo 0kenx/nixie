@@ -356,7 +356,7 @@ impl<'a> Parser<'a> {
     /// consumed: read the order numeral and intern the field (classifying
     /// primality once — a composite order errors here, never silently
     /// reinterprets as Z_n).
-    fn finish_finite_field_sort(&mut self) -> Result<SortId> {
+    fn finish_finite_field_sort(&mut self, binary: bool) -> Result<SortId> {
         let numeral = match self.lexer.peek() {
             Some(token) if matches!(token.kind, TokenKind::Numeral(_)) => match token.kind {
                 TokenKind::Numeral(n) => n,
@@ -377,13 +377,15 @@ impl<'a> Parser<'a> {
             position: self.lexer.position(),
             message: format!("invalid finite-field order: {numeral}"),
         })?;
-        self.manager
-            .sorts
-            .finite_field(modulus)
-            .map_err(|e| NixieError::ParseError {
-                position: self.lexer.position(),
-                message: e.to_string(),
-            })
+        let result = if binary {
+            self.manager.sorts.binary_field(modulus)
+        } else {
+            self.manager.sorts.finite_field(modulus)
+        };
+        result.map_err(|e| NixieError::ParseError {
+            position: self.lexer.position(),
+            message: e.to_string(),
+        })
     }
 
     /// Finish an indexed identifier with the `_` and head name already
@@ -489,8 +491,8 @@ impl<'a> Parser<'a> {
                         // callers rely on that range check.
                         self.lexer.next_token();
                         let head = self.expect_symbol()?;
-                        if head == "FiniteField" {
-                            return self.finish_finite_field_sort();
+                        if head == "FiniteField" || head == "BinaryField" {
+                            return self.finish_finite_field_sort(head == "BinaryField");
                         }
                         // `(_ Tuple A B ...)`: the tuple sort's indices are
                         // SORTS, not numerals (CVC5's `mkTupleSort`), so it
@@ -743,9 +745,9 @@ impl<'a> Parser<'a> {
                                 .sorts
                                 .field_table()
                                 .get(*id)
-                                .map(|f| f.modulus().to_string())
+                                .map(|f| f.sort_syntax())
                                 .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
-                            out.push_str(&format!("(_ FiniteField {modulus})"));
+                            out.push_str(&modulus);
                         }
                         SortKind::Seq(elem) => {
                             out.push_str("(Seq ");

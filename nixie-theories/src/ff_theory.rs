@@ -44,6 +44,8 @@
 //! (`nixie-solver/src/solver/check_ff.rs`'s `dpll_ufff`), so this module
 //! needs no e-graph of its own.
 
+mod binary;
+
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use nixie_core::sort::field::FieldId;
@@ -529,7 +531,10 @@ impl FfCertificate {
                 let TermKind::Distinct(args) = &term.kind else {
                     return false;
                 };
-                if args.len() != *k {
+                if args.len() != *k || args.iter().any(|&arg| {
+                    !matches!(manager.get(arg).and_then(|t| manager.sorts.get(t.sort)).map(|s| &s.kind),
+                        Some(SortKind::FiniteField(actual)) if actual == field)
+                }) {
                     return false;
                 }
                 let Some(modulus) = manager.sorts.field_table().modulus(*field) else {
@@ -555,6 +560,14 @@ pub fn check_conjunction(
     assertions: &[TermId],
     budget_steps: u64,
 ) -> FfOutcome {
+    if manager
+        .sorts
+        .field_desc(field)
+        .and_then(|d| d.binary())
+        .is_some()
+    {
+        return binary::check(manager, field, assertions, budget_steps);
+    }
     let Some(modulus) = manager.sorts.field_table().modulus(field).cloned() else {
         return FfOutcome::InvalidModel("field has no prime modulus".to_string());
     };
@@ -2774,17 +2787,23 @@ fn eval_literal(
     root: TermId,
     assignment: &FxHashMap<TermId, BigUint>,
 ) -> Option<bool> {
-    match &manager.get(root)?.kind {
-        TermKind::True => Some(true),
-        TermKind::False => Some(false),
+    let mut root = root;
+    let mut negative = false;
+    while let TermKind::Not(inner) = &manager.get(root)?.kind {
+        negative = !negative;
+        root = *inner;
+    }
+    let value = match &manager.get(root)?.kind {
+        TermKind::True => true,
+        TermKind::False => false,
         TermKind::Eq(a, b) => {
             let va = eval_term(manager, field, modulus, *a, assignment)?;
             let vb = eval_term(manager, field, modulus, *b, assignment)?;
-            Some(va == vb)
+            va == vb
         }
-        TermKind::Not(inner) => eval_literal(manager, field, modulus, *inner, assignment).map_not(),
-        _ => None,
-    }
+        _ => return None,
+    };
+    Some(value != negative)
 }
 
 /// Exact FF-term evaluation in `BigUint` arithmetic mod `p`. ONE frame
@@ -2799,6 +2818,14 @@ fn eval_term(
     root: TermId,
     assignment: &FxHashMap<TermId, BigUint>,
 ) -> Option<BigUint> {
+    if manager
+        .sorts
+        .field_desc(field)
+        .and_then(|d| d.binary())
+        .is_some()
+    {
+        return binary::eval(manager, field, root, assignment, &mut (1 << 24));
+    }
     enum Combine {
         Add(usize),
         Mul(usize),
@@ -2905,17 +2932,6 @@ fn eval_term(
     results.pop()
 }
 
-/// `Option<bool>` negation without the identity-extension footgun.
-trait MapNot {
-    fn map_not(self) -> Self;
-}
-
-impl MapNot for Option<bool> {
-    fn map_not(self) -> Self {
-        self.map(|b| !b)
-    }
-}
-
 /// Exact evaluation of an FF term of `field` under a term→residue map —
 /// the public face of the [`validate_model`] fold, for callers outside
 /// this crate (the `QF_UFFF` combination layer's function-hood scan:
@@ -2930,7 +2946,7 @@ pub fn evaluate_term_exact(
     root: TermId,
     assignment: &FxHashMap<TermId, BigUint>,
 ) -> Option<BigUint> {
-    let modulus = manager.sorts.field_table().modulus(field)?.clone();
+    let modulus = manager.sorts.field_desc(field)?.modulus().clone();
     eval_term(manager, field, &modulus, root, assignment)
 }
 
@@ -2952,7 +2968,7 @@ pub fn validate_model(
 ) -> Result<(), String> {
     // Direct term evaluation under the assignment: independent of the
     // polynomial encoder (Step 5's "exact and costs one pass").
-    let Some(modulus) = manager.sorts.field_table().modulus(field).cloned() else {
+    let Some(modulus) = manager.sorts.field_desc(field).map(|d| d.modulus().clone()) else {
         return Err("field has no prime modulus".to_string());
     };
     for &assertion in assertions {

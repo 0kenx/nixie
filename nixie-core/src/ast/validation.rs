@@ -90,13 +90,12 @@ fn eval_cached(
                     // moduli are 254 bits, and this value feeds certified
                     // mode, where truncation would certify wrong models).
                     TermKind::FfConst { value, field } => {
-                        cache.insert(
-                            id,
-                            Some(ModelValue::FiniteField {
-                                value: value.clone(),
-                                field: *field,
-                            }),
-                        );
+                        let value = ModelValue::FiniteField {
+                            value: value.clone(),
+                            field: *field,
+                        };
+                        let valid = valid_field_leaf(&value, term.sort, manager);
+                        cache.insert(id, valid.then_some(value));
                     }
                     TermKind::BitVecConst { value, width } => {
                         // `ModelValue::BitVec` carries a `BigUint`, so every
@@ -111,7 +110,10 @@ fn eval_cached(
 
                     // Variables - look up in model
                     TermKind::Var(_) => {
-                        let value = model.get_assignment(id).cloned();
+                        let value = model
+                            .get_assignment(id)
+                            .cloned()
+                            .filter(|value| valid_field_leaf(value, term.sort, manager));
                         cache.insert(id, value);
                     }
 
@@ -124,7 +126,10 @@ fn eval_cached(
                     // the certified-mode gate in nixie-solver, which runs
                     // exactly that check before accepting a `Sat`).
                     TermKind::Apply { .. } => {
-                        let value = model.get_assignment(id).cloned();
+                        let value = model
+                            .get_assignment(id)
+                            .cloned()
+                            .filter(|value| valid_field_leaf(value, term.sort, manager));
                         cache.insert(id, value);
                     }
 
@@ -375,17 +380,11 @@ fn eval_cached(
                         // The neutral element depends on the field, so the
                         // fold starts at the first operand (an empty sum
                         // cannot occur: the builders keep ≥ 2).
-                        fold_operands_from_first(
-                            args,
-                            |a, b| ff_pair(a, b, manager, ff_add_mod),
-                            cache,
-                        )
+                        fold_operands_from_first(args, |a, b| ff_pair(a, b, manager, true), cache)
                     }
-                    TermKind::FfMul(args) => fold_operands_from_first(
-                        args,
-                        |a, b| ff_pair(a, b, manager, ff_mul_mod),
-                        cache,
-                    ),
+                    TermKind::FfMul(args) => {
+                        fold_operands_from_first(args, |a, b| ff_pair(a, b, manager, false), cache)
+                    }
                     TermKind::FfBitsum(args) => ff_bitsum_value(args, manager, cache),
                     TermKind::FfNeg(arg) => {
                         operand(arg, cache).and_then(|v| ff_neg_value(v, manager))
@@ -731,8 +730,29 @@ fn bv_extract(value: Option<ModelValue>, high: u32, low: u32) -> Option<ModelVal
 
 /// Left-fold the already-evaluated operands of an n-ary arithmetic term.
 ///
-/// An empty operand list yields the neutral element, exactly as the
-/// recursive evaluator did.
+/// Check representation identity and canonical encoding before trusting a
+/// field-valued model leaf, even when no arithmetic operator consumes it.
+fn valid_field_leaf(value: &ModelValue, sort: crate::sort::SortId, manager: &TermManager) -> bool {
+    let Some(crate::sort::SortKind::FiniteField(expected)) =
+        manager.sorts.get(sort).map(|s| &s.kind)
+    else {
+        return !matches!(value, ModelValue::FiniteField { .. });
+    };
+    let ModelValue::FiniteField { value, field } = value else {
+        return false;
+    };
+    if field != expected {
+        return false;
+    }
+    let Some(desc) = manager.sorts.field_desc(*field) else {
+        return false;
+    };
+    let Some(encoded) = value.to_biguint() else {
+        return false;
+    };
+    &encoded < desc.modulus()
+}
+
 /// Modular addition over one `BigInt` pair.
 fn ff_add_mod(a: &BigInt, b: &BigInt, p: &BigInt) -> BigInt {
     use num_integer::Integer;
@@ -752,7 +772,7 @@ fn ff_pair(
     lhs: &ModelValue,
     rhs: &ModelValue,
     manager: &TermManager,
-    op: fn(&BigInt, &BigInt, &BigInt) -> BigInt,
+    add: bool,
 ) -> Option<ModelValue> {
     match (lhs, rhs) {
         (
@@ -765,11 +785,22 @@ fn ff_pair(
                 field: fb,
             },
         ) if fa == fb => {
-            let modulus = ff_modulus(fa, manager)?;
-            Some(ModelValue::FiniteField {
-                value: op(a, b, &modulus),
-                field: *fa,
-            })
+            let value = if let Some(binary) = manager.sorts.field_desc(*fa)?.binary() {
+                let (a, b) = (a.to_biguint()?, b.to_biguint()?);
+                BigInt::from(if add {
+                    binary.add(&a, &b)?
+                } else {
+                    binary.mul(&a, &b)?
+                })
+            } else {
+                let modulus = ff_modulus(fa, manager)?;
+                if add {
+                    ff_add_mod(a, b, &modulus)
+                } else {
+                    ff_mul_mod(a, b, &modulus)
+                }
+            };
+            Some(ModelValue::FiniteField { value, field: *fa })
         }
         _ => None,
     }
@@ -779,6 +810,12 @@ fn ff_pair(
 fn ff_neg_value(v: ModelValue, manager: &TermManager) -> Option<ModelValue> {
     match v {
         ModelValue::FiniteField { value, field } => {
+            if let Some(binary) = manager.sorts.field_desc(field)?.binary() {
+                if !binary.contains(&value.to_biguint()?) {
+                    return None;
+                }
+                return Some(ModelValue::FiniteField { value, field });
+            }
             let modulus = ff_modulus(&field, manager)?;
             let negated = if value.is_zero() {
                 value
@@ -811,13 +848,26 @@ fn ff_bitsum_value(
                     Some(seen) if seen == f => {}
                     Some(_) => return None, // mixed fields: type error
                 }
-                acc += &power * &value;
+                if let Some(binary) = manager.sorts.field_desc(f)?.binary() {
+                    if !binary.contains(&value.to_biguint()?) {
+                        return None;
+                    }
+                    if power.is_one() {
+                        acc = value;
+                    }
+                    power = BigInt::zero(); // integer 2 embeds as zero
+                } else {
+                    acc += &power * &value;
+                }
             }
             _ => return None,
         }
         power *= 2;
     }
     let field = field?;
+    if manager.sorts.field_desc(field)?.binary().is_some() {
+        return Some(ModelValue::FiniteField { value: acc, field });
+    }
     let modulus = ff_modulus(&field, manager)?;
     use num_integer::Integer;
     Some(ModelValue::FiniteField {

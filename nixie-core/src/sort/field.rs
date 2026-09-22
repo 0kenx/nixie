@@ -8,11 +8,10 @@
 //! O(1) while giving the derived per-field data (derived parameters, primality
 //! evidence) a home computed once per field.
 //!
-//! Only prime-order fields are supported by the solver today. `FieldKind`
-//! nevertheless carries `Extension` so that `GF(2^k)` can be added later
-//! without an AST migration; an extension field is rejected with an explicit
-//! error everywhere it could be constructed, never silently reinterpreted as
-//! ℤ_n (`AGENTS.md` → *No silent fallthrough*).
+//! Prime fields use integer residues. Binary extensions use explicit, validated
+//! monic irreducible polynomials and polynomial-basis elements. Their identities
+//! include the defining polynomial; equal cardinality does not imply equality.
+//! `modulus(id)` intentionally remains PRIME ONLY, fencing off legacy algebra.
 
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
@@ -41,14 +40,15 @@ impl FieldId {
 pub enum FieldKind {
     /// Prime order `p`: the field is 𝔽_p = ℤ/pℤ.
     Prime,
-    /// Extension order `p^k`: the field is GF(p^k). **Unimplemented** —
-    /// present in the type so a future `GF(2^k)` needs no AST migration.
-    /// Every construction path rejects it with an explicit error today.
+    /// Extension order `p^k`, with explicit representation. This build
+    /// constructs binary extensions (p=2) only.
     Extension {
         /// The characteristic.
         p: Arc<BigUint>,
         /// The extension degree.
         k: u32,
+        /// Validated binary defining polynomial and arithmetic context.
+        binary: Arc<super::binary_field::BinaryField>,
     },
 }
 
@@ -75,7 +75,7 @@ pub struct FieldDesc {
     modulus: Arc<BigUint>,
     /// The kind (prime / extension) of the field.
     kind: FieldKind,
-    /// Primality evidence for the order.
+    /// Primality evidence for the characteristic (the order for prime fields).
     primality: Primality,
 }
 
@@ -86,13 +86,40 @@ impl FieldDesc {
         &self.modulus
     }
 
+    /// Binary extension arithmetic, when this is a supported extension field.
+    #[must_use]
+    pub fn binary(&self) -> Option<&super::binary_field::BinaryField> {
+        match &self.kind {
+            FieldKind::Prime => None,
+            FieldKind::Extension { binary, .. } => Some(binary),
+        }
+    }
+
+    /// Round-trippable SMT-LIB sort including the representation identity.
+    #[must_use]
+    pub fn sort_syntax(&self) -> String {
+        match self.binary() {
+            Some(binary) => format!("(_ BinaryField {})", binary.polynomial()),
+            None => format!("(_ FiniteField {})", self.modulus()),
+        }
+    }
+
+    /// Round-trippable literal. Extension values encode basis coefficients.
+    #[must_use]
+    pub fn literal_syntax(&self, value: &num_bigint::BigInt) -> String {
+        match self.binary() {
+            Some(_) => format!("(as ff{value} {})", self.sort_syntax()),
+            None => format!("#f{value}m{}", self.modulus()),
+        }
+    }
+
     /// The field's kind.
     #[must_use]
     pub fn kind(&self) -> &FieldKind {
         &self.kind
     }
 
-    /// The primality evidence for the order.
+    /// Primality evidence for the characteristic.
     #[must_use]
     pub fn primality(&self) -> Primality {
         self.primality
@@ -123,6 +150,7 @@ pub enum FieldError {
 pub struct FieldTable {
     fields: Vec<FieldDesc>,
     by_modulus: rustc_hash::FxHashMap<Arc<BigUint>, FieldId>,
+    by_binary_polynomial: rustc_hash::FxHashMap<BigUint, FieldId>,
 }
 
 /// Miller–Rabin bases that are *deterministically complete* for every
@@ -278,9 +306,8 @@ impl FieldTable {
     /// Intern the prime field of order `p`.
     ///
     /// Errors honestly (never silently reinterprets) when the order is not a
-    /// prime this build can certify. A later `GF(p^k)` needs no new entry
-    /// shape: [`FieldKind::Extension`] already exists and is rejected here
-    /// until implemented.
+    /// prime this build can certify. Composite orders are rejected even
+    /// when prime powers; extensions require [`Self::intern_binary`].
     pub fn intern_prime(&mut self, p: BigUint) -> Result<FieldId, FieldError> {
         if p < BigUint::from(2u8) {
             return Err(FieldError::Malformed {
@@ -298,14 +325,14 @@ impl FieldTable {
                 let reason = if cofactor.is_one() {
                     format!(
                         "order is composite (divisible by {smallest}); a finite-field sort \
-                         requires a prime order (or an explicit extension-field construction, \
-                         which is not supported by this build)"
+                         requires a prime order; use an explicit BinaryField defining polynomial \
+                         for binary extensions"
                     )
                 } else {
                     format!(
                         "order is composite ({smallest} × {cofactor}); a finite-field sort \
-                         requires a prime order (or an explicit extension-field construction, \
-                         which is not supported by this build)"
+                         requires a prime order; use an explicit BinaryField defining polynomial \
+                         for binary extensions"
                     )
                 };
                 Err(FieldError::NotAField {
@@ -327,6 +354,31 @@ impl FieldTable {
         }
     }
 
+    /// Intern `F_2[X]/(f)`. Identity includes f, even for isomorphic fields.
+    pub fn intern_binary(&mut self, polynomial: BigUint) -> Result<FieldId, FieldError> {
+        if let Some(&id) = self.by_binary_polynomial.get(&polynomial) {
+            return Ok(id);
+        }
+        let binary = super::binary_field::BinaryField::new(polynomial.clone())?;
+        let index = u32::try_from(self.fields.len()).map_err(|_| FieldError::NotAField {
+            order: polynomial.to_string(),
+            reason: "field table capacity exceeded".to_owned(),
+        })?;
+        let id = FieldId(index);
+        self.fields.push(FieldDesc {
+            modulus: Arc::new(binary.order()),
+            kind: FieldKind::Extension {
+                p: Arc::new(BigUint::from(2u8)),
+                k: binary.degree(),
+                binary: Arc::new(binary),
+            },
+            // The base characteristic is proven prime; irreducibility is exact.
+            primality: Primality::Verified,
+        });
+        self.by_binary_polynomial.insert(polynomial, id);
+        Ok(id)
+    }
+
     /// The prime field's order, if `id` names a prime field.
     #[must_use]
     pub fn modulus(&self, id: FieldId) -> Option<&BigUint> {
@@ -336,14 +388,17 @@ impl FieldTable {
         }
     }
 
-    /// Reduce `value` into `[0, p)` for the prime field `id`.
+    /// Normalize a prime residue, or validate a canonical binary encoding.
     ///
-    /// Returns `None` when `id` does not name a prime field (an extension
-    /// field's elements are not integers). The caller decides how to report
-    /// that; this method never fabricates a value. `value` may be negative;
-    /// the result is always the exact non-negative residue.
+    /// Negative prime residues reduce exactly. Binary encodings must already
+    /// be nonnegative and smaller than the order; they are coefficient bits,
+    /// never integer residues modulo the order.
     #[must_use]
     pub fn reduce(&self, id: FieldId, value: &num_bigint::BigInt) -> Option<num_bigint::BigInt> {
+        if let Some(binary) = self.get(id)?.binary() {
+            let encoded = value.to_biguint()?;
+            return binary.contains(&encoded).then(|| value.clone());
+        }
         let p = self.modulus(id)?;
         let p_int = num_bigint::BigInt::from_bytes_le(num_bigint::Sign::Plus, &p.to_bytes_le());
         use num_integer::Integer;

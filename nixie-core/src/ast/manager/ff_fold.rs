@@ -47,9 +47,12 @@ pub enum FfBuildError {
     /// Operands live in different fields: a type error, not a coercion.
     #[error("operands of a finite-field operator belong to different fields")]
     FieldMismatch,
-    /// The field's order is not prime (extension fields are unimplemented).
+    /// No supported field representation exists for this identifier.
     #[error("finite field {0:?} is not a prime field")]
     NotPrimeField(FieldId),
+    /// A binary polynomial-basis element must be nonnegative and canonical.
+    #[error("noncanonical binary field element")]
+    InvalidBinaryElement,
     /// An arity violation in an operator that requires ≥ 2 operands.
     #[error("finite-field operator requires at least 2 operands, got {0}")]
     TooFewOperands(usize),
@@ -69,9 +72,15 @@ impl TermManager {
     }
 
     /// Intern `#f<value>m<p>` for the already-interned field `field`,
-    /// reducing `value` into `[0, p)`. Negative values reduce exactly.
+    /// reducing prime residues into `[0, p)`. For binary extensions `value`
+    /// is a canonical polynomial-basis encoding, checked without reduction.
     pub fn mk_ff_const(&mut self, field: FieldId, value: BigInt) -> Result<TermId, FfBuildError> {
         let sort = self.ff_sort(field)?;
+        if let Some(binary) = self.sorts.field_desc(field).and_then(|d| d.binary())
+            && !value.to_biguint().is_some_and(|v| binary.contains(&v))
+        {
+            return Err(FfBuildError::InvalidBinaryElement);
+        }
         let reduced = self
             .sorts
             .field_table()
@@ -94,6 +103,14 @@ impl TermManager {
             .kind
             .clone();
         let field = self.ff_field_of(t)?;
+        if self
+            .sorts
+            .field_desc(field)
+            .and_then(|d| d.binary())
+            .is_some()
+        {
+            return Ok(t); // characteristic two: -a = a, not q-a
+        }
         if let TermKind::FfConst { value, .. } = &kind {
             return self.mk_ff_const(field, -value.clone());
         }
@@ -156,6 +173,14 @@ impl TermManager {
         let args: SmallVec<[TermId; 4]> = args.into_iter().collect();
         if args.is_empty() {
             return self.mk_ff_const(field, BigInt::zero());
+        }
+        if self
+            .sorts
+            .field_desc(field)
+            .and_then(|d| d.binary())
+            .is_some()
+        {
+            return self.mk_binary_fold(field, args, true);
         }
         let flat = self.ff_flatten(true, &args);
         // Every operand must live in `field` — a mix is a type error.
@@ -253,7 +278,8 @@ impl TermManager {
         let args: SmallVec<[TermId; 4]> = args.into_iter().collect();
         if args.len() <= 1 {
             return match args.into_iter().next() {
-                Some(a) => Ok(a),
+                Some(a) if self.ff_field_of(a)? == field => Ok(a),
+                Some(_) => Err(FfBuildError::FieldMismatch),
                 None => self.mk_ff_const(field, BigInt::one()),
             };
         }
@@ -267,6 +293,14 @@ impl TermManager {
         field: FieldId,
         args: SmallVec<[TermId; 4]>,
     ) -> Result<TermId, FfBuildError> {
+        if self
+            .sorts
+            .field_desc(field)
+            .and_then(|d| d.binary())
+            .is_some()
+        {
+            return self.mk_binary_fold(field, args, false);
+        }
         let flat = self.ff_flatten(false, &args);
         for &a in &flat {
             if self.ff_field_of(a)? != field {
@@ -298,6 +332,62 @@ impl TermManager {
         Ok(self.intern(TermKind::FfMul(children), sort))
     }
 
+    // Extension normal form deliberately avoids the prime-field scalar collector:
+    // encoded polynomial coefficients add by XOR, not integer addition.
+    fn mk_binary_fold(
+        &mut self,
+        field: FieldId,
+        args: SmallVec<[TermId; 4]>,
+        add: bool,
+    ) -> Result<TermId, FfBuildError> {
+        let binary = self
+            .sorts
+            .field_desc(field)
+            .and_then(|d| d.binary())
+            .ok_or(FfBuildError::UnknownField(field))?
+            .clone();
+        let flat = self.ff_flatten(add, &args);
+        let mut constant = num_bigint::BigUint::from(u8::from(!add));
+        let mut children: SmallVec<[TermId; 4]> = SmallVec::new();
+        for a in flat {
+            if self.ff_field_of(a)? != field {
+                return Err(FfBuildError::FieldMismatch);
+            }
+            match &self.get(a).ok_or(FfBuildError::UnknownTerm(a))?.kind {
+                TermKind::FfConst { value, .. } => {
+                    let value = value
+                        .to_biguint()
+                        .ok_or(FfBuildError::InvalidBinaryElement)?;
+                    constant = if add {
+                        binary.add(&constant, &value)
+                    } else {
+                        binary.mul(&constant, &value)
+                    }
+                    .ok_or(FfBuildError::InvalidBinaryElement)?;
+                }
+                _ => children.push(a),
+            }
+        }
+        if !add && constant.is_zero() {
+            children.clear();
+        }
+        children.sort_unstable();
+        if children.is_empty() || (add && !constant.is_zero()) || (!add && !constant.is_one()) {
+            let c = self.mk_ff_const(field, BigInt::from(constant))?;
+            children.insert(0, c);
+        }
+        if children.len() == 1 {
+            return Ok(children[0]);
+        }
+        let sort = self.ff_sort(field)?;
+        let kind = if add {
+            TermKind::FfAdd(children)
+        } else {
+            TermKind::FfMul(children)
+        };
+        Ok(self.intern(kind, sort))
+    }
+
     /// `ff.bitsum` over ≥ 2 field-element operands (little-endian), folding
     /// when every child is a numeral.
     pub fn mk_ff_bitsum(
@@ -313,6 +403,15 @@ impl TermManager {
             if self.ff_field_of(a)? != field {
                 return Err(FfBuildError::FieldMismatch);
             }
+        }
+        if self
+            .sorts
+            .field_desc(field)
+            .and_then(|d| d.binary())
+            .is_some()
+        {
+            // The coefficient 2 is 1+1=0, NOT the polynomial-basis value X.
+            return Ok(args[0]);
         }
         // All-constant: Σ 2ⁱ bᵢ evaluated in the field.
         let mut acc = BigInt::zero();

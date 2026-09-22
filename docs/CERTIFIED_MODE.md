@@ -36,6 +36,14 @@ re-encoded and re-multiplied by the gate — see `nixie-theories`'
 field's order). Field refutations without a certificate (exhaustive
 enumeration, branch exhaustion) fail closed to `unknown`.
 
+Binary extension fields (`(_ BinaryField F)`) also support certified SAT
+through exact polynomial-basis evaluation. Their initial bounded enumeration
+solver has no exported UNSAT certificate; arithmetic refutations therefore
+become `unknown` in certified mode. Prime polynomial certificates cannot be
+replayed under an extension-field ID. See the
+[binary extension fragment and audit](studies/2026-09-22-binary-extension-fields.md)
+for representation identity, supported combinations and deterministic limits.
+
 ## UNSAT certificates
 
 LRAT proves that a particular clause set is unsatisfiable; by itself it does not

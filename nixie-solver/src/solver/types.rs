@@ -929,6 +929,35 @@ impl Model {
                         current = lhs;
                     }
 
+                    TermKind::FfAdd(_)
+                    | TermKind::FfMul(_)
+                    | TermKind::FfNeg(_)
+                    | TermKind::FfBitsum(_) => {
+                        let Some(field) = manager.sorts.get(t.sort).and_then(|s| s.finite_field())
+                        else {
+                            break current;
+                        };
+                        let assignment = self
+                            .assignments
+                            .iter()
+                            .filter_map(|(&variable, &value)| match &manager.get(value)?.kind {
+                                TermKind::FfConst { value, field: seen } if *seen == field => {
+                                    Some((variable, value.to_biguint()?))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        let Some(value) = nixie_theories::ff_theory::evaluate_term_exact(
+                            manager,
+                            field,
+                            current,
+                            &assignment,
+                        ) else {
+                            break current;
+                        };
+                        break manager.mk_ff_const(field, value.into()).unwrap_or(current);
+                    }
+
                     // For other operations, just return the term (the model
                     // was already consulted above).
                     _ => break current,
