@@ -5,6 +5,10 @@ This change addresses all twelve findings in
 outputs remain historical evidence. Regressions with the corrected semantics
 live in `nixie-theories/tests/audit_theory_soundness.rs`.
 
+The subsequent [completeness work](2026-09-22-theory-completeness.md) adds
+symbolic FP conversion, arrangement search, fresh/cofinite set witnesses and
+decoded assertion interfaces. The limits below describe this earlier repair.
+
 ## Repairs and remaining completeness limits
 
 | Finding | Repair |

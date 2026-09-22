@@ -104,11 +104,14 @@ pub struct ArraySolver {
     /// hops a proof/explanation would need). See `explain_equal`'s doc
     /// comment for the full rationale.
     merge_log: Vec<(u32, u32, TermId)>,
+    /// Decoded equality atoms supplied by the owning term manager/dispatcher.
+    equality_atoms: FxHashMap<TermId, (TermId, TermId)>,
 }
 
 /// State for push/pop
 #[derive(Debug, Clone)]
 struct ContextState {
+    equality_atoms: FxHashMap<TermId, (TermId, TermId)>,
     num_nodes: usize,
     num_selects: usize,
     num_stores: usize,
@@ -143,6 +146,7 @@ impl ArraySolver {
             current_conflict: None,
             shared_equalities: Vec::new(),
             merge_log: Vec::new(),
+            equality_atoms: FxHashMap::default(),
         }
     }
 
@@ -154,6 +158,23 @@ impl ArraySolver {
         self.node_to_term.push(None);
         self.arrays.push(None);
         id
+    }
+
+    /// Register the decoded operands of a Boolean equality atom. Thereafter
+    /// `Theory::assert_true/false` asserts the corresponding equality/disequality.
+    /// Select/store terms must be interned with their structure as usual.
+    pub fn register_equality_atom(&mut self, atom: TermId, lhs: TermId, rhs: TermId) -> Result<()> {
+        if self
+            .equality_atoms
+            .get(&atom)
+            .is_some_and(|&(a, b)| (a, b) != (lhs, rhs) && (a, b) != (rhs, lhs))
+        {
+            return Err(nixie_core::error::NixieError::Unknown {
+                reason: "equality atom registered with inconsistent operands".into(),
+            });
+        }
+        self.equality_atoms.insert(atom, (lhs, rhs));
+        Ok(())
     }
 
     /// Intern a term, returning its node
@@ -574,13 +595,25 @@ impl Theory for ArraySolver {
         true
     }
 
-    fn assert_true(&mut self, _term: TermId) -> Result<TheoryResult> {
+    fn assert_true(&mut self, term: TermId) -> Result<TheoryResult> {
+        if let Some(&(lhs, rhs)) = self.equality_atoms.get(&term) {
+            let a = self.intern(lhs);
+            let b = self.intern(rhs);
+            self.merge(a, b, term)?;
+            return self.check();
+        }
         Err(nixie_core::error::NixieError::Unknown {
             reason: "ArraySolver needs decoded operands; use intern/merge/assert_diseq".into(),
         })
     }
 
-    fn assert_false(&mut self, _term: TermId) -> Result<TheoryResult> {
+    fn assert_false(&mut self, term: TermId) -> Result<TheoryResult> {
+        if let Some(&(lhs, rhs)) = self.equality_atoms.get(&term) {
+            let a = self.intern(lhs);
+            let b = self.intern(rhs);
+            self.assert_diseq(a, b, term);
+            return self.check();
+        }
         Err(nixie_core::error::NixieError::Unknown {
             reason: "ArraySolver cannot decode an opaque equality TermId".into(),
         })
@@ -605,6 +638,7 @@ impl Theory for ArraySolver {
 
     fn push(&mut self) {
         self.context_stack.push(ContextState {
+            equality_atoms: self.equality_atoms.clone(),
             num_nodes: self.next_node as usize,
             num_selects: self.selects.len(),
             num_stores: self.stores.len(),
@@ -617,6 +651,7 @@ impl Theory for ArraySolver {
 
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
+            self.equality_atoms = state.equality_atoms;
             // Restore nodes
             self.next_node = state.num_nodes as u32;
             self.node_to_term.truncate(state.num_nodes);
@@ -662,6 +697,7 @@ impl Theory for ArraySolver {
         self.context_stack.clear();
         self.current_conflict = None;
         self.shared_equalities.clear();
+        self.equality_atoms.clear();
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {

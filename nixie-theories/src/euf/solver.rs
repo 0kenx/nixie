@@ -526,6 +526,21 @@ impl Default for EufSolver {
 }
 
 impl EufSolver {
+    /// Input equality/disequality reasons supporting the current E-graph.
+    pub(crate) fn arrangement_reasons(&self) -> Vec<TermId> {
+        let mut reasons: Vec<_> = self.diseqs.iter().map(|d| d.reason).collect();
+        for edge in self.proof_forest.iter().flatten() {
+            if let MergeReason::Assertion(reason) = edge.reason {
+                reasons.push(reason);
+            }
+        }
+        for (_, _, reason) in &self.pending {
+            if let MergeReason::Assertion(reason) = reason {
+                reasons.push(*reason);
+            }
+        }
+        reasons
+    }
     /// Create a new EUF solver
     #[must_use]
     pub fn new() -> Self {

@@ -11,7 +11,9 @@
 //! - Good propagation
 //! - Reasonable clause count
 
-use crate::literal::{Lit, Var};
+use crate::literal::Lit;
+#[cfg(test)]
+use crate::literal::Var;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::solver::Solver;
@@ -156,84 +158,51 @@ impl CardinalityEncoder {
         }
 
         // Build totalizer tree
-        let root_vars = Self::build_totalizer_tree(solver, lits, k);
-
-        // Add constraint: at most k can be true
-        // This means the (k+1)-th totalizer variable must be false
-        if k < root_vars.len() {
-            solver.add_clause([Lit::neg(root_vars[k])]);
-        }
-
+        let root = Self::build_totalizer_tree(solver, lits, k);
+        let Some(&overflow) = root.get(k) else {
+            return false;
+        };
+        solver.add_clause([overflow.negate()]);
         true
     }
 
-    /// Build the totalizer tree and return the root counting variables
-    ///
-    /// Returns a vector where output[i] represents "at least i+1 literals are true"
-    fn build_totalizer_tree(solver: &mut Solver, lits: &[Lit], bound: usize) -> Vec<Var> {
-        if lits.len() == 1 {
-            // Leaf node: return the variable of the literal
-            return vec![lits[0].var()];
-        }
-
-        // Split the literals into two halves
-        let mid = lits.len() / 2;
-        let left_lits = &lits[..mid];
-        let right_lits = &lits[mid..];
-
-        // Recursively build subtrees
-        let left_vars = Self::build_totalizer_tree(solver, left_lits, bound);
-        let right_vars = Self::build_totalizer_tree(solver, right_lits, bound);
-
-        // Merge the two subtrees
-        let max_count = (left_vars.len() + right_vars.len()).min(bound + 1);
-        let mut output = Vec::with_capacity(max_count);
-
-        for _ in 0..max_count {
-            output.push(solver.new_var());
-        }
-
-        // Add clauses for the totalizer merge
-        Self::add_totalizer_clauses(solver, &left_vars, &right_vars, &output);
-
-        output
-    }
-
-    /// Add clauses for merging two totalizer trees
-    ///
-    /// Implements the totalizer merge operation:
-    /// output[i] is true iff at least i+1 of the input literals are true
-    fn add_totalizer_clauses(solver: &mut Solver, left: &[Var], right: &[Var], output: &[Var]) {
-        // For each output position i (representing "at least i+1 are true")
-        for (i, &out_var) in output.iter().enumerate() {
-            let count = i + 1; // Number of true literals needed
-
-            // If left has >= j and right has >= k where j+k >= count, then output[i] is true
-            for j in 0..=left.len() {
-                for k in 0..=right.len() {
-                    if j + k >= count && j + k > 0 {
-                        let mut clause = SmallVec::<[Lit; 4]>::new();
-
-                        // If left[j-1] is true and right[k-1] is true, then output[i] is true
-                        if j > 0 && j <= left.len() {
-                            clause.push(Lit::neg(left[j - 1]));
+    /// Bounded addition of unary counts, following Z3's pb2bv bounded_addition.
+    /// Leaves are LITERALS, including their polarity and repeated occurrences.
+    /// Only the forward implication is needed: the root overflow is forbidden.
+    /// Output bits need not be reified counts for arbitrary other consumers.
+    fn build_totalizer_tree(solver: &mut Solver, lits: &[Lit], bound: usize) -> Vec<Lit> {
+        let mut layer: Vec<Vec<Lit>> = lits.iter().map(|&lit| vec![lit]).collect();
+        while layer.len() > 1 {
+            let mut next = Vec::with_capacity(layer.len().div_ceil(2));
+            let mut pairs = layer.into_iter();
+            while let Some(left) = pairs.next() {
+                let Some(right) = pairs.next() else {
+                    next.push(left);
+                    break;
+                };
+                let size = (left.len() + right.len()).min(bound + 1);
+                let output: Vec<_> = (0..size).map(|_| Lit::pos(solver.new_var())).collect();
+                for i in 0..=left.len() {
+                    for j in 0..=right.len() {
+                        if i + j == 0 || i + j > size {
+                            continue;
                         }
-                        if k > 0 && k <= right.len() {
-                            clause.push(Lit::neg(right[k - 1]));
+                        let mut clause = SmallVec::<[Lit; 3]>::new();
+                        if i > 0 {
+                            clause.push(left[i - 1].negate());
                         }
-
-                        if !clause.is_empty() {
-                            clause.push(Lit::pos(out_var));
-                            solver.add_clause(clause.iter().copied());
+                        if j > 0 {
+                            clause.push(right[j - 1].negate());
                         }
+                        clause.push(output[i + j - 1]);
+                        solver.add_clause(clause);
                     }
                 }
+                next.push(output);
             }
-
-            // Reverse direction: if output[i] is true, then sufficient input must be true
-            // output[i] => (left[j] or right[k]) for all valid j, k where j+k+2 == count+1
-            // This is captured by the contrapositive of the above clauses
+            layer = next;
         }
+        layer.pop().unwrap_or_default()
     }
 }
 
@@ -241,6 +210,62 @@ impl CardinalityEncoder {
 mod tests {
     use super::*;
     use crate::solver::SolverResult;
+
+    #[test]
+    fn signed_and_repeated_literals_match_exhaustive_counts() {
+        for polarity in 0u32..32 {
+            for assignment in 0u32..32 {
+                for k in 0..=6 {
+                    for lower in [false, true] {
+                        let mut solver = Solver::new();
+                        let vars: Vec<_> = (0..5).map(|_| solver.new_var()).collect();
+                        let mut lits: Vec<_> = vars
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &v)| {
+                                if polarity & (1 << i) != 0 {
+                                    Lit::neg(v)
+                                } else {
+                                    Lit::pos(v)
+                                }
+                            })
+                            .collect();
+                        // A repeated occurrence counts twice, even when negated.
+                        lits.push(lits[0]);
+                        let count = (0..6)
+                            .filter(|&i| {
+                                let i = if i == 5 { 0 } else { i };
+                                (assignment & (1 << i) != 0) ^ (polarity & (1 << i) != 0)
+                            })
+                            .count();
+                        for (i, &v) in vars.iter().enumerate() {
+                            solver.add_clause([if assignment & (1 << i) != 0 {
+                                Lit::pos(v)
+                            } else {
+                                Lit::neg(v)
+                            }]);
+                        }
+                        let encoded = if lower {
+                            CardinalityEncoder::encode_at_least_k(&mut solver, &lits, k)
+                        } else {
+                            CardinalityEncoder::encode_at_most_k(&mut solver, &lits, k)
+                        };
+                        let expected = if lower { count >= k } else { count <= k };
+                        assert!(encoded);
+                        assert_eq!(
+                            solver.solve(),
+                            if expected {
+                                SolverResult::Sat
+                            } else {
+                                SolverResult::Unsat
+                            },
+                            "polarity={polarity} assignment={assignment} k={k} lower={lower}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_at_most_0() {

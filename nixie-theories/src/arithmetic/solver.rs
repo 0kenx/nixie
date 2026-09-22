@@ -425,6 +425,11 @@ enum FracVar {
 }
 
 impl ArithSolver {
+    /// Active input reasons, for a nonminimal core after exhaustive interface
+    /// case splitting. Branch-local reasons are excluded by snapshotting first.
+    pub(crate) fn arrangement_reasons(&self) -> Vec<TermId> {
+        self.reasons.clone()
+    }
     /// Create a new arithmetic solver
     #[must_use]
     pub fn new(is_integer: bool) -> Self {
