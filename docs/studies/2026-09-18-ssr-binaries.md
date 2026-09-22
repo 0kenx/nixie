@@ -108,3 +108,42 @@ end-to-end fold with model validation and a forced-inequality refutation).
 the landed base + kissat tiebreak: **0 verdict disagreements**. The
 resolvent addition is a resolution consequence of two live clauses (RUP via
 its parents — the same proof shape the hyper-binary path emits).
+
+---
+
+## Addendum (2026-09-21, fourth session): the search-quality gap is CLOSED — and the study's kissat number drifts
+
+Re-run of §4's controlled experiment on today's tree (same instance,
+same `NIXIE_DUMP_ELIM_ENTRY` machinery, the fold stack armed to freeze
+the residual):
+
+| solver | conflicts |
+|---|---|
+| kissat on OUR residual (identical bytes) | **7,645** |
+| nixie default on OUR residual | **7,787** (deterministic ×3) |
+
+**Search quality on the frozen formula is at parity** (within 2%) —
+the §4 "pure search-quality gap of 16–36×" no longer exists; the
+intervening landings (the branch-channel default, everything else)
+closed it.  The residual experiment remains the cleanest probe surface
+in the repo, now with no gap to chase on this anatomy.
+
+**A provenance correction (caught in review)**: this study's §2 table
+quotes kissat full-pipeline at 9,465 conflicts on bv_ILA; tonight's
+clean run of the same `../temp/kissat` build (binary dated Sep 6,
+predating the study) on the same instance reads **8,399**.  The 9,465
+is unreconciled — most plausibly a non-default option row leaked into
+the "full" line of the knockout table.  Treat 8,399 as the reference
+number.  Tonight's end-to-end, apples-to-apples:
+
+| arm | conflicts |
+|---|---|
+| kissat (defaults) | 8,399 |
+| nixie default | 16,023 (1.91× behind) |
+| nixie fold stack (opt-in: `NIXIE_SSR_BIN=1 NIXIE_ELS_PRESEARCH=1`) | **8,098** (3.6% ahead) |
+
+The composed-stack flip decision (refused earlier today on the Carry
+family band) is unchanged by this — but the prize is now stated
+correctly: **the opt-in stack is at parity-or-better with kissat
+end-to-end on this anatomy**, and the default's 1.91× is the cost of
+that refusal.
