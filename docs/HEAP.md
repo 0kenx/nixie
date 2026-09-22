@@ -202,3 +202,7 @@ complete-work metric. `set_random_seed` selects a reproducible backend seed and
 invalidates a previous model. The suite measures retired instructions through
 encoding, solving and independent model validation. These measurements concern
 the exact-heap LIA reduction, not inductive predicates or native SL performance.
+
+The [measured performance study](studies/2026-09-22-exact-heap-performance.md)
+records both successful workloads and the all-negative scaling limit, with ten
+seeds, complete-work instruction counters, and CVC5/Z3 comparisons.
