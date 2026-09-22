@@ -373,6 +373,10 @@ impl super::Solver {
             arith_purify: _,                   // rebuilt from assertions each check
             arith_defined_terms: _,            // TRAIL: ArithDefinedTermAdded
             nl_dispatch_answered: _,           // NOT trailed: per-check flag,
+            trans_dispatch_answered: _,        // NOT trailed: per-check flag,
+            trans_delta_sat: _,                // NOT trailed: per-check flag
+            // (cleared at every check entry, like its sibling above)
+            // (same lifecycle as `nl_dispatch_answered` above)
             // cleared at every check_core entry; a pop mid-check cannot
             // leave a stale verdict attribution behind.
             arith_const_axiom_pairs: _, // TRAIL: ArithConstAxiomAdded

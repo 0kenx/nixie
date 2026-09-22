@@ -246,6 +246,36 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *arg, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            TermKind::Exp(arg) => {
+                let _ = write!(w, "(exp ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::Log(arg) => {
+                let _ = write!(w, "(log ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::Sin(arg) => {
+                let _ = write!(w, "(sin ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::Cos(arg) => {
+                let _ = write!(w, "(cos ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::Atan(arg) => {
+                let _ = write!(w, "(atan ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::Sqrt(arg) => {
+                let _ = write!(w, "(sqrt ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::StrLen(arg) => {
                 let _ = write!(w, "(str.len ");
                 self.write_term(w, *arg, indent, depth + 1);

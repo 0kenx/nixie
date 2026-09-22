@@ -953,6 +953,37 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, "(_ NaN {eb} {sb})");
             }
             // Unary FP operations
+            // Transcendental functions (dReal-style surface).
+            TermKind::Exp(arg) => {
+                let _ = write!(w, "(exp ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::Log(arg) => {
+                let _ = write!(w, "(log ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::Sin(arg) => {
+                let _ = write!(w, "(sin ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::Cos(arg) => {
+                let _ = write!(w, "(cos ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::Atan(arg) => {
+                let _ = write!(w, "(atan ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::Sqrt(arg) => {
+                let _ = write!(w, "(sqrt ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
             TermKind::FpAbs(arg) => {
                 let _ = write!(w, "(fp.abs ");
                 self.write_term(w, *arg);

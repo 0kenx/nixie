@@ -814,6 +814,31 @@ impl TermManager {
                 let a = sub(a);
                 self.mk_neg(a)
             }
+            // ======== Transcendentals (Real -> Real) ========
+            TermKind::Exp(a) => {
+                let a = sub(a);
+                self.mk_exp(a)
+            }
+            TermKind::Log(a) => {
+                let a = sub(a);
+                self.mk_log(a)
+            }
+            TermKind::Sin(a) => {
+                let a = sub(a);
+                self.mk_sin(a)
+            }
+            TermKind::Cos(a) => {
+                let a = sub(a);
+                self.mk_cos(a)
+            }
+            TermKind::Atan(a) => {
+                let a = sub(a);
+                self.mk_atan(a)
+            }
+            TermKind::Sqrt(a) => {
+                let a = sub(a);
+                self.mk_sqrt(a)
+            }
             TermKind::Add(args) => {
                 let new: SmallVec<[TermId; 4]> = args.iter().map(|&a| sub(a)).collect();
                 self.mk_add(new)

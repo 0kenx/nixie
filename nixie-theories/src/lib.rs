@@ -103,6 +103,7 @@ pub mod special_relations;
 pub mod string;
 pub mod string_length_prop;
 mod theory;
+pub mod trans;
 pub mod user_propagator;
 pub mod utvpi;
 pub mod watched;

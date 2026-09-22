@@ -4167,6 +4167,12 @@ impl Solver {
                 Lit::pos(var)
             }
             TermKind::Neg(_)
+            | TermKind::Exp(_)
+            | TermKind::Log(_)
+            | TermKind::Sin(_)
+            | TermKind::Cos(_)
+            | TermKind::Atan(_)
+            | TermKind::Sqrt(_)
             | TermKind::Add(_)
             | TermKind::Sub(_, _)
             | TermKind::Mul(_)

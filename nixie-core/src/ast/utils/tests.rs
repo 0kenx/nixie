@@ -743,10 +743,16 @@ fn test_structural_hash_is_pinned() {
         ("add", add, 0xce22_9b07_edc5_2831),
         ("not_term", not_term, 0xa8b9_8aa7_17c4_d5eb),
         ("ite", ite, 0xf102_89ed_feac_017c),
-        ("mixed", mixed, 0xed25_1c25_737c_6735),
-        ("matched", matched, 0x5695_c821_f03c_3b10),
+        ("mixed", mixed, 0x5349_ffb3_31fd_4854),
+        ("matched", matched, 0x549f_f4bc_0baa_dea2),
         ("deep500", deep500, 0xc477_fc5b_c1a0_45f8),
     ];
+    // Re-pinned (again) 2026-09 for the six transcendental `TermKind`
+    // variants (`Exp`/`Log`/`Sin`/`Cos`/`Atan`/`Sqrt`): same story as below,
+    // inserted mid-enum in the arithmetic block, so everything sorting after
+    // `Ge` moved by six discriminants.  Only `mixed` re-pinned this time;
+    // `matched` also re-pinned: it contains `Apply`, the far end of the
+    // enum, whose discriminant the six mid-enum insertions move after all.
     // Re-pinned 2026-09 for the finite-field `TermKind` variants
     // (`FfConst`/`FfAdd`/`FfMul`/`FfNeg`/`FfBitsum`): they are declared
     // before `Apply`/`Forall`/`Let`/`Match`, so the *later* variants'

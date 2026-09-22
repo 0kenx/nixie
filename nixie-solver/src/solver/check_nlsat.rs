@@ -160,6 +160,16 @@ impl Solver {
     /// Resolve which NL backend to run, including formula-shape auto-detect
     /// under open logics (`ALL` / unset).
     fn nl_backend(&self, manager: &TermManager) -> Option<NlBackend> {
+        // Transcendental goals are the delta-ICP dispatcher's: the
+        // polynomial translator would treat `exp`/`sin`/… as opaque
+        // variables, dropping the terms' semantics.
+        if self
+            .assertions
+            .iter()
+            .any(|&a| super::check_trans::term_has_trans(a, manager))
+        {
+            return None;
+        }
         // Unset logic behaves like SMT-LIB `ALL` (no theory restriction).
         let logic = self.logic.as_deref().unwrap_or("ALL");
 
