@@ -147,3 +147,30 @@ fn exhaustive_two_variable_systems_over_f4() {
         }
     }
 }
+
+#[test]
+fn deeply_shared_field_expression_reaches_the_solver() {
+    // Each square shares its operand, so this has O(depth) DAG nodes and
+    // 2^depth paths. The assert-time theory-variable walk must not unfold it.
+    let mut expression = "(let ((s0 x)) ".to_owned();
+    for i in 1..=64 {
+        expression.push_str(&format!(
+            "(let ((s{i} (ff.add (ff.mul s{} s{}) (as ff1 (_ BinaryField 7))))) ",
+            i - 1,
+            i - 1
+        ));
+    }
+    expression.push_str("s64");
+    expression.push_str(&")".repeat(65));
+    // Over F4, (a -> a^2+1) iterated 64 times is the identity.
+    let out = run(&format!(
+        "(set-logic QF_FF) (declare-const x (_ BinaryField 7))
+        (assert (= {expression} (as ff2 (_ BinaryField 7))))
+        (check-sat) (get-value (x)) (push 1)
+        (assert (not (= x (as ff2 (_ BinaryField 7))))) (check-sat)
+        (pop 1) (check-sat)"
+    ));
+    assert_eq!(out[0], "sat");
+    assert!(out[1].contains("(as ff2 (_ BinaryField 7))"));
+    assert_eq!(&out[2..], &["unsat", "sat"]);
+}

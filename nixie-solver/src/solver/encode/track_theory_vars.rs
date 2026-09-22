@@ -340,12 +340,22 @@ impl Solver {
                 }
                 TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
                     self.ff_terms_unconstrained = true;
+                    // A shared squaring DAG has exponentially many paths but
+                    // only linearly many nodes. Use the same scope-journalled
+                    // memo as the other compound operations; set the honesty
+                    // flag even when this node was already claimed.
+                    if !self.claim_tracked_compound(current) {
+                        continue;
+                    }
                     for &arg in args.iter().rev() {
                         stack.push(arg);
                     }
                 }
                 TermKind::FfNeg(a) => {
                     self.ff_terms_unconstrained = true;
+                    if !self.claim_tracked_compound(current) {
+                        continue;
+                    }
                     stack.push(*a);
                 }
                 TermKind::Select(_, _) => {
