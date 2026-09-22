@@ -84,6 +84,20 @@ fn is_arith_constructor(kind: &TermKind) -> bool {
             | TermKind::Mod(_, _)
             | TermKind::Ite(_, _, _)
             | TermKind::Let { .. }
+            // Transcendentals stay INLINE (dReal-style): purifying them
+            // into a fresh `$p` var plus a definition atom DOUBLES the
+            // effective δ through the definition chain (each atom is
+            // weakened independently), and the δ-witness then satisfies
+            // the purified form while the original formula is 2δ off —
+            // measured on sin(x)+cos(y)=1.  Inline atoms keep one atom =
+            // one δ-weakened constraint, and the delta-ICP dispatcher
+            // (`check_trans`) interns them natively.
+            | TermKind::Exp(_)
+            | TermKind::Log(_)
+            | TermKind::Sin(_)
+            | TermKind::Cos(_)
+            | TermKind::Atan(_)
+            | TermKind::Sqrt(_)
     )
 }
 

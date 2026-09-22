@@ -224,7 +224,17 @@ impl Solver {
                     let desc = |t: TermId| {
                         manager
                             .get(t)
-                            .map(|x| format!("{:?}", x.kind))
+                            .map(|x| {
+                                format!(
+                                    "{:?}{}",
+                                    x.kind,
+                                    if let TermKind::Var(n) = &x.kind {
+                                        format!(":{}", manager.resolve_str(*n))
+                                    } else {
+                                        String::new()
+                                    }
+                                )
+                            })
                             .unwrap_or_else(|| "?".into())
                     };
                     eprintln!(
@@ -243,7 +253,18 @@ impl Solver {
                 }
                 eprintln!("[trans] assignment={:?}", assignment);
             }
-            match nixie_theories::trans::solve_conjunction(&prob, &opts) {
+            #[cfg(feature = "std")]
+            let stats_t0 = std::time::Instant::now();
+            let outcome = nixie_theories::trans::solve_conjunction(&mut prob, &opts);
+            #[cfg(feature = "std")]
+            if std::env::var_os("NIXIE_TRANS_STATS").is_some() {
+                eprintln!(
+                    "[trans-stats] round {round}: {:?} in {:?}",
+                    nixie_theories::trans::last_stats(),
+                    stats_t0.elapsed()
+                );
+            }
+            match outcome {
                 TransOutcome::DeltaSat { values } => {
                     self.trans_dispatch_answered = true;
                     self.trans_delta_sat = true;

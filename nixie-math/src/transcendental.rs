@@ -550,6 +550,17 @@ impl Ifx {
         // candidates are 0 and ±1 unit.
         Self { lo, hi }
     }
+    /// Exact conversion from a rational POINT (bracket of width ≤ 1 unit
+    /// when the denominator is not a power of two ≤ 2^FRAC — the bracket
+    /// semantics keep it sound).
+    fn from_rat_point(v: &BigRational) -> Self {
+        let s = ifx_scale();
+        Self {
+            lo: floor_div(&(v.numer() * &s), v.denom()),
+            hi: ceil_div(&(v.numer() * &s), v.denom()),
+        }
+    }
+
     /// Directed conversion from a rational bracket.
     fn from_rat_bracket(b: &RatBracket) -> Self {
         let s = ifx_scale();
@@ -989,6 +1000,200 @@ fn ifx_sqrt_pos(v: &Ifx) -> Ifx {
         if &r * &r == hi_in { r } else { r + 1 }
     };
     Ifx { lo: r_lo, hi: r_hi }
+}
+
+// ---------------------------------------------------------------------
+// Exact rational enclosures: the δ-witness's publication check evaluates
+// the published RATIONAL point in exact arithmetic; these hand back exact
+// rational brackets from the same Ifx series that power the f64 bounds.
+// ---------------------------------------------------------------------
+
+/// |q| for a rational.
+fn abs_rat(q: &BigRational) -> BigRational {
+    if *q < BigRational::new(BigInt::from(0), BigInt::from(1)) {
+        -q.clone()
+    } else {
+        q.clone()
+    }
+}
+
+/// `e^x` for an exact rational `x`, as an exact rational bracket.
+#[must_use]
+pub fn exp_rational(x: &BigRational) -> (BigRational, BigRational) {
+    let scale = ifx_scale();
+    let s = |v: &BigInt| BigRational::new(v.clone(), scale.clone());
+    // Saturation mirrors the f64 path.
+    let hi_f = x.to_f64().unwrap_or(f64::INFINITY);
+    if hi_f > 710.0 {
+        return (
+            BigRational::from_integer(BigInt::from(1) << 1023),
+            BigRational::from_integer((BigInt::from(1) << 1024) - 1u8),
+        );
+    }
+    let lo_f = x.to_f64().unwrap_or(f64::NEG_INFINITY);
+    if lo_f < -746.0 {
+        return (
+            BigRational::zero(),
+            BigRational::new(BigInt::one(), BigInt::one() << 1074),
+        );
+    }
+    let k = (hi_f / core::f64::consts::LN_2).round() as i64;
+    let c = ifx_consts();
+    let xf = Ifx::from_rat_point(x);
+    let kln2 = Ifx {
+        lo: &c.ln2.lo * k,
+        hi: &c.ln2.hi * k,
+    };
+    let r = xf.sub(&kln2);
+    let mut e = exp_ifx_series(&r);
+    if k >= 0 {
+        e.lo <<= k as u64;
+        e.hi <<= k as u64;
+    } else {
+        let d = BigInt::one() << (-k) as u64;
+        let lo_v = ceil_div(&e.lo, &d);
+        let hi_v = floor_div(&e.hi, &d);
+        e.lo = lo_v;
+        e.hi = hi_v;
+    }
+    (s(&e.lo), s(&e.hi))
+}
+
+/// `atan(x)` for an exact rational `x`, as an exact rational bracket.
+#[must_use]
+pub fn atan_rational(x: &BigRational) -> (BigRational, BigRational) {
+    let scale = ifx_scale();
+    let neg = x < &BigRational::zero();
+    let xf_abs = Ifx::from_rat_point(&abs_rat(x));
+    let one = Ifx::unit();
+    let (used_recip, t) = if xf_abs.lo > one.lo {
+        (true, one.div_pos(&xf_abs))
+    } else {
+        (false, xf_abs)
+    };
+    let one_plus = one.add(&t.mul(&t));
+    let sq = ifx_sqrt_pos(&one_plus);
+    let denom = one.add(&sq);
+    let y = t.div_pos(&denom);
+    let val = atan_ifx_series(&y);
+    let mut v = Ifx {
+        lo: &val.lo * 2 - 1,
+        hi: &val.hi * 2 + 1,
+    };
+    if used_recip {
+        let c = ifx_consts();
+        v = Ifx {
+            lo: &c.pi2.lo - &v.hi,
+            hi: &c.pi2.hi - &v.lo,
+        };
+    }
+    if neg {
+        v = v.neg();
+    }
+    (
+        BigRational::new(v.lo, scale.clone()),
+        BigRational::new(v.hi, scale),
+    )
+}
+
+/// `sin(x)`/`cos(x)` for an exact rational `x` (|x| ≤ 2^50), as exact
+/// rational brackets.  Larger arguments answer the full range.
+#[must_use]
+pub fn sin_cos_rational(x: &BigRational, want_cos: bool) -> (BigRational, BigRational) {
+    let scale = ifx_scale();
+    let xf = x.to_f64().unwrap_or(f64::INFINITY);
+    if !xf.is_finite() || xf.abs() > 2.0_f64.powi(50) {
+        return (
+            BigRational::from_integer(BigInt::from(-1)),
+            BigRational::from_integer(BigInt::from(1)),
+        );
+    }
+    let mut k: i128 = (xf * (2.0 / core::f64::consts::PI)).round() as i128;
+    if want_cos {
+        // cos(x) = sin(x + π/2): use k' = 2k+1-style shift via quadrant.
+        k = (xf / core::f64::consts::PI).round() as i128;
+    }
+    // Quadrant dispatch for BOTH functions: sin(r + kπ/2) = S(k mod 4, r),
+    // cos(r + kπ/2) = C(k mod 4, r).  (The first version forgot the sin
+    // dispatch — sin(366) evaluated as sin(r) ≈ 0.0036 instead of cos(r) ≈
+    // 1.0, and a false δ-witness slipped through the exact check.)
+    let (r, kk) = trig_reduce_ifx(xf);
+    let m = ((kk % 4) + 4) % 4;
+    let (bracket, flip) = match (want_cos, m) {
+        (false, 0) => (sin_ifx_bracket(&r), 1),
+        (false, 1) => (cos_ifx_bracket(&r), 1),
+        (false, 2) => (sin_ifx_bracket(&r), -1),
+        (false, _) => (cos_ifx_bracket(&r), -1),
+        (true, 0) => (cos_ifx_bracket(&r), 1),
+        (true, 1) => (sin_ifx_bracket(&r), -1),
+        (true, 2) => (cos_ifx_bracket(&r), -1),
+        (true, _) => (sin_ifx_bracket(&r), 1),
+    };
+    let _ = k;
+    let (lo, hi) = if flip < 0 {
+        (bracket.neg().hi, bracket.neg().lo)
+    } else {
+        (bracket.lo, bracket.hi)
+    };
+    (
+        BigRational::new(lo, scale.clone()),
+        BigRational::new(hi, scale),
+    )
+}
+
+/// `log(x)` for an exact positive rational `x`, as an exact rational
+/// bracket.
+#[must_use]
+pub fn log_rational(x: &BigRational) -> (BigRational, BigRational) {
+    debug_assert!(x > &BigRational::zero());
+    let scale = ifx_scale();
+    // Normalize x = m · 2^e with m ∈ [1, 2), exact in rationals.
+    let n = x.numer();
+    let d = x.denom();
+    let bn = n.bits() as i64;
+    let bd = d.bits() as i64;
+    let e = bn - bd;
+    // m = x / 2^e ∈ [1, 2): as an Ifx point.
+    let m_rat = if e >= 0 {
+        x / (BigInt::one() << e as u64)
+    } else {
+        x * (BigInt::one() << (-e) as u64)
+    };
+    let m = Ifx::from_rat_point(&m_rat);
+    let one = Ifx::unit();
+    let num = m.sub(&one);
+    let den = m.add(&one);
+    let t = num.div_pos(&den);
+    let a = atanh_ifx_series(&t);
+    let lm = Ifx {
+        lo: &a.lo * 2 - 1,
+        hi: &a.hi * 2 + 1,
+    };
+    let c = ifx_consts();
+    let e_ln2 = Ifx {
+        lo: &c.ln2.lo * e,
+        hi: &c.ln2.hi * e,
+    };
+    let out = e_ln2.add(&lm);
+    (
+        BigRational::new(out.lo, scale.clone()),
+        BigRational::new(out.hi, scale),
+    )
+}
+
+/// `sqrt(x)` for an exact nonnegative rational `x`, as an exact rational
+/// bracket.
+#[must_use]
+pub fn sqrt_rational(x: &BigRational) -> (BigRational, BigRational) {
+    debug_assert!(*x >= BigRational::zero());
+    // √(n/d) = √(n·d)/d with integer isqrt on a scaled product.
+    let n = x.numer();
+    let d = x.denom();
+    let scaled = (n * d) << 384;
+    let r = isqrt(&scaled);
+    let lo = BigRational::new(r.clone(), d.clone() << 192);
+    let hi = BigRational::new(r + 1, d << 192);
+    (lo, hi)
 }
 
 /// Rigorous f64 bracket for `log(x)`, `x > 0` finite:
