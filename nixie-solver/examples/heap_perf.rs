@@ -86,6 +86,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         Err(std::env::VarError::NotPresent) => {}
         _ => return Err("HEAP_PERF_UNFOLDED must be 0 or 1".into()),
     }
+    match std::env::var("HEAP_PERF_ANCHOR_REDUNDANCY") {
+        Ok(value) if value == "1" => solver.set_anchor_redundancy(true)?,
+        Ok(value) if value == "0" => {}
+        Err(std::env::VarError::NotPresent) => {}
+        _ => return Err("HEAP_PERF_ANCHOR_REDUNDANCY must be 0 or 1".into()),
+    }
     let vars: Vec<_> = (0..count)
         .map(|i| solver.int_var(&format!("x{i}")))
         .collect();
@@ -165,6 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "definitions {} {}",
         stats.definition_assertions, stats.backend_terms
     );
+    println!("comparisons {}", stats.heap_comparisons);
     if let Some(reason) = solver.reason_unknown() {
         println!("reason {reason}");
     }

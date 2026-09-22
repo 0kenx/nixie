@@ -249,9 +249,10 @@ fn oracle_patterns() -> Vec<u32> {
 
 #[test]
 fn all_boolean_patterns_against_exhaustive_heaps() -> Result<(), HeapError> {
-    for simplify in [false, true] {
+    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
         let mut s = HeapSolver::new();
         s.set_definition_simplification(simplify)?;
+        s.set_anchor_redundancy(redundancy)?;
         let mut atoms = Vec::new();
         for atom in ATOMS {
             let mut heaplet = Heaplet::emp();
@@ -298,9 +299,10 @@ fn all_boolean_patterns_against_exhaustive_heaps() -> Result<(), HeapError> {
 
 #[test]
 fn symbolic_aliases_and_values_against_exhaustive_heaps() -> Result<(), HeapError> {
-    for simplify in [false, true] {
+    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
         let mut s = HeapSolver::new();
         s.set_definition_simplification(simplify)?;
+        s.set_anchor_redundancy(redundancy)?;
         let x = s.int_var("x");
         let y = s.int_var("y");
         let a = s.int_var("a");
@@ -591,9 +593,10 @@ fn negative_heap_units_remove_definitions_and_preserve_witnesses() -> Result<(),
 
 #[test]
 fn specialized_definitions_follow_assertions_and_nested_scopes() -> Result<(), HeapError> {
-    for simplify in [false, true] {
+    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
         let mut s = HeapSolver::new();
         s.set_definition_simplification(simplify)?;
+        s.set_anchor_redundancy(redundancy)?;
         let x = s.int_var("x");
         let y = s.int_var("y");
         let value = s.integer(7);
@@ -626,10 +629,11 @@ fn specialized_definitions_follow_assertions_and_nested_scopes() -> Result<(), H
 
 #[test]
 fn boolean_unit_scan_does_not_choose_a_disjunct_or_negated_conjunct() -> Result<(), HeapError> {
-    for simplify in [false, true] {
+    for (simplify, redundancy) in [(false, false), (true, false), (true, true)] {
         for negative_conjunction in [false, true] {
             let mut s = HeapSolver::new();
             s.set_definition_simplification(simplify)?;
+            s.set_anchor_redundancy(redundancy)?;
             let one = s.integer(1);
             let two = s.integer(2);
             let a = s.reify(Heaplet::points_to(&one, &one))?;
@@ -656,6 +660,91 @@ fn boolean_unit_scan_does_not_choose_a_disjunct_or_negated_conjunct() -> Result<
             s.assert(&shared)?;
             assert_eq!(s.check(), SolverResult::Unsat);
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_anchor_defines_unforced_atoms_and_retracts_with_its_scope() -> Result<(), HeapError> {
+    for redundancy in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_anchor_redundancy(redundancy)?;
+        let zero = s.integer(0);
+        let one = s.integer(1);
+        let two = s.integer(2);
+        let emp = s.reify(Heaplet::emp())?;
+        let nil = s.reify(Heaplet::points_to(&zero, &one))?;
+        let overlap =
+            s.reify(Heaplet::points_to(&one, &one).star(Heaplet::points_to(&one, &one)))?;
+        let p = s.reify(Heaplet::points_to(&one, &one))?;
+        let q = s.reify(Heaplet::points_to(&two, &one))?;
+        let choice = s.bool_var("choose");
+        let alternatives = s.or(&[q.clone(), choice.clone()])?;
+        let no_choice = s.not(&choice)?;
+        // No entailed positive atom at base scope; use the full encoding.
+        assert_eq!(s.check(), SolverResult::Sat);
+        for (anchor, admits_q) in [(&p, false), (&q, true), (&emp, false)] {
+            s.push();
+            s.assert(anchor)?;
+            assert_eq!(s.check(), SolverResult::Sat, "{:?}", s.reason_unknown());
+            assert!(s.set_anchor_redundancy(true).is_err());
+            let model = s.model().ok_or(HeapError("missing model"))?;
+            assert!(s.evaluate(anchor, model)?);
+            assert!(!s.evaluate(&nil, model)?);
+            assert!(!s.evaluate(&overlap, model)?);
+            let before = s.statistics().heap_comparisons;
+            assert_eq!(s.check(), SolverResult::Sat);
+            assert_eq!(s.statistics().heap_comparisons, before);
+            s.push();
+            s.assert(&alternatives)?;
+            s.assert(&no_choice)?;
+            // q is not a syntactically inferred heap unit: the anchor must
+            // still determine its truth inside a Boolean context.
+            let expected = if admits_q {
+                SolverResult::Sat
+            } else {
+                SolverResult::Unsat
+            };
+            assert_eq!(s.check(), expected);
+            s.pop()?;
+            assert_eq!(s.check(), SolverResult::Sat);
+            s.pop()?;
+            assert_eq!(s.statistics().heap_comparisons, 0);
+            assert_eq!(s.check(), SolverResult::Sat);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn anchor_comparisons_grow_linearly_and_preserve_all_views() -> Result<(), HeapError> {
+    for redundancy in [false, true] {
+        let mut s = HeapSolver::new();
+        s.set_anchor_redundancy(redundancy)?;
+        let one = s.integer(1);
+        let seven = s.integer(7);
+        let mut atoms = Vec::new();
+        for i in 0..20 {
+            let x = s.int_var(&format!("x{i}"));
+            atoms.push(s.reify(Heaplet::points_to(&x, &seven))?);
+            let pin = s.eq(&x, &one)?;
+            s.assert(&pin)?;
+        }
+        // A late registered anchor; all earlier atoms remain syntactically free.
+        s.assert(&atoms[19])?;
+        assert_eq!(s.check(), SolverResult::Sat, "{:?}", s.reason_unknown());
+        assert_eq!(
+            s.statistics().heap_comparisons,
+            if redundancy { 190 } else { 19 }
+        );
+        let model = s.model().ok_or(HeapError("missing model"))?;
+        for atom in &atoms {
+            assert!(s.evaluate(atom, model)?);
+        }
+        // New assertions after a check must rebuild from the current units.
+        let not_first = s.not(&atoms[0])?;
+        s.assert(&not_first)?;
+        assert_eq!(s.check(), SolverResult::Unsat);
     }
     Ok(())
 }

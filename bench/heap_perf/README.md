@@ -130,3 +130,19 @@ After completing that matrix, run `analyze_optimization.py RECORDS_DIRECTORY
 OUTPUT_DIRECTORY` to check its exact 660-cell coverage and write the full
 median/min/max table, structural counters, and paired cost ratios. Seed 101 is
 reported separately from seeds 0–9. Unknown results never enter paired costs.
+
+## Positive-heap anchor comparison
+
+`anchor_experiment.py` runs the fixed baseline / retained-pair control /
+reduced-encoding experiment in the
+[anchor preregistration](../../docs/studies/2026-09-22-heap-anchor-reduction.md).
+It accepts the same baseline/driver/reference/store options as the earlier
+comparison. The driver uses `HEAP_PERF_ANCHOR_REDUNDANCY=1` for the control;
+`comparisons COUNT` reports actual map-comparison construction calls.
+The worker wrapper adds authenticated many-view schemas and calls the existing
+independent checker. No old measurements are rerun.
+
+`analyze_anchor.py RECORDS_DIRECTORY OUTPUT_DIRECTORY` requires the complete
+1,056-cell matrix and paired raw results, and writes cost distributions,
+comparison/definition counts, and shared-solve ratios. All ratios exclude
+Unknown costs and report the fresh held-out seed 102 separately.

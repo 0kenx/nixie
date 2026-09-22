@@ -122,6 +122,8 @@ pub struct HeapStatistics {
     pub backend_terms: usize,
     /// Nontrivial heap definitions in the current private check scope.
     pub definition_assertions: usize,
+    /// Finite-map comparisons constructed in the current private scope.
+    pub heap_comparisons: usize,
     /// Backend conflicts.
     pub conflicts: u64,
     /// Backend decisions.
@@ -149,6 +151,8 @@ pub struct HeapSolver {
     definition_scope_open: bool,
     definition_assertions: usize,
     simplify_definitions: bool,
+    retain_anchor_redundancy: bool,
+    heap_comparisons: usize,
     model: Option<HeapModel>,
     reason: Option<&'static str>,
 }
@@ -187,6 +191,8 @@ impl HeapSolver {
             definition_scope_open: false,
             definition_assertions: 0,
             simplify_definitions: true,
+            retain_anchor_redundancy: false,
+            heap_comparisons: 0,
             model: None,
             reason: None,
         }
@@ -358,6 +364,21 @@ impl HeapSolver {
         Ok(())
     }
 
+    /// Retain redundant comparisons between non-anchor heaplets for diagnostics.
+    /// The default is false. Both settings use the same forced positive heap
+    /// as an anchor; retaining its implied pair constraints is a performance
+    /// control with identical semantics. Set before the first push/check.
+    pub fn set_anchor_redundancy(&mut self, retain: bool) -> Result<(), HeapError> {
+        if self.closed {
+            return Err(HeapError(
+                "configure heap definitions before the first push or check",
+            ));
+        }
+        self.invalidate();
+        self.retain_anchor_redundancy = retain;
+        Ok(())
+    }
+
     // Extract only literal consequences justified by Boolean syntax. In
     // particular Or(true) and And(false) do not force any particular child.
     // The two-bit visited set bounds work on DAGs with shared subformulas.
@@ -417,6 +438,7 @@ impl HeapSolver {
             self.backend.pop();
             self.definition_scope_open = false;
             self.definition_assertions = 0;
+            self.heap_comparisons = 0;
         }
     }
 
@@ -424,6 +446,92 @@ impl HeapSolver {
         if term != self.tm.true_id {
             self.backend.assert(term, &mut self.tm);
             self.definition_assertions += 1;
+        }
+    }
+
+    fn heap_validity(&mut self, index: usize) -> TermId {
+        let zero = self.tm.mk_int(0);
+        let cells = &self.spatial[index].cells;
+        let mut valid = Vec::new();
+        for (j, &(l, _)) in cells.iter().enumerate() {
+            let nil = self.tm.mk_eq(self.terms[l], zero);
+            valid.push(self.tm.mk_not(nil));
+            for &(r, _) in &cells[..j] {
+                let alias = self.tm.mk_eq(self.terms[l], self.terms[r]);
+                valid.push(self.tm.mk_not(alias));
+            }
+        }
+        self.tm.mk_and(valid)
+    }
+
+    // With both validity conditions, equal cardinality and membership of
+    // every cell is equality of finite maps. This is not equality of lists.
+    fn same_heap(&mut self, i: usize, j: usize) -> TermId {
+        self.heap_comparisons += 1;
+        let cells = &self.spatial[i].cells;
+        let other = &self.spatial[j].cells;
+        if cells.len() != other.len() {
+            return self.tm.false_id;
+        }
+        let mut matches = Vec::new();
+        for &(l, v) in cells {
+            let mut choices = Vec::new();
+            for &(r, w) in other {
+                let address = self.tm.mk_eq(self.terms[l], self.terms[r]);
+                let value = self.tm.mk_eq(self.terms[v], self.terms[w]);
+                choices.push(self.tm.mk_and([address, value]));
+            }
+            matches.push(self.tm.mk_or(choices));
+        }
+        self.tm.mk_and(matches)
+    }
+
+    fn assert_heap_pair(&mut self, i: usize, j: usize, atoms: &[TermId], validity: &[TermId]) {
+        if atoms[i] == self.tm.false_id && atoms[j] == self.tm.false_id {
+            return;
+        }
+        let same = self.same_heap(i, j);
+        let other_matches = self.tm.mk_and([validity[j], same]);
+        let equivalence = self.tm.mk_eq(atoms[j], other_matches);
+        let forward = self.tm.mk_implies(atoms[i], equivalence);
+        self.assert_definition(forward);
+        let this_matches = self.tm.mk_and([validity[i], same]);
+        let equivalence = self.tm.mk_eq(atoms[i], this_matches);
+        let backward = self.tm.mk_implies(atoms[j], equivalence);
+        self.assert_definition(backward);
+    }
+
+    fn define_from_anchor(&mut self, anchor: usize, atoms: &[TermId]) {
+        let anchor_valid = self.heap_validity(anchor);
+        self.assert_definition(anchor_valid);
+        let mut validity = Vec::with_capacity(self.spatial.len());
+        for (i, &atom) in atoms.iter().enumerate() {
+            if i == anchor {
+                validity.push(anchor_valid);
+                continue;
+            }
+            let valid = self.heap_validity(i);
+            validity.push(valid);
+            let same = self.same_heap(i, anchor);
+            let matches = self.tm.mk_and([valid, same]);
+            let equivalence = self.tm.mk_eq(atom, matches);
+            self.assert_definition(equivalence);
+        }
+        // All maps are compared to the very same valid, asserted heap.
+        // Equality of those maps entails every omitted pair constraint.
+        // Keep exactly those constraints in the diagnostic control, after
+        // the common anchor definitions, to isolate their removal.
+        if self.retain_anchor_redundancy {
+            for i in 0..atoms.len() {
+                if i == anchor {
+                    continue;
+                }
+                for j in 0..i {
+                    if j != anchor {
+                        self.assert_heap_pair(i, j, atoms, &validity);
+                    }
+                }
+            }
         }
     }
 
@@ -451,54 +559,21 @@ impl HeapSolver {
             // than every registered heaplet supplies the concrete witness.
             return Ok(());
         }
-        let zero = self.tm.mk_int(0);
+        // A syntactically entailed positive heap fixes the entire current
+        // finite map. Never choose an arbitrary disjunct or a model guess.
+        if let Some(anchor) = atoms.iter().position(|&atom| atom == self.tm.true_id) {
+            self.define_from_anchor(anchor, &atoms);
+            return Ok(());
+        }
+        // No forced positive heap: retain the general Boolean-context encoding
+        // and its original interleaving of validity and pair constraints.
         let mut validity = Vec::with_capacity(self.spatial.len());
         for i in 0..self.spatial.len() {
-            let cells = &self.spatial[i].cells;
-            let mut valid = Vec::new();
-            for (j, &(l, _)) in cells.iter().enumerate() {
-                let nil = self.tm.mk_eq(self.terms[l], zero);
-                valid.push(self.tm.mk_not(nil));
-                for &(r, _) in &cells[..j] {
-                    let alias = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                    valid.push(self.tm.mk_not(alias));
-                }
-            }
-            validity.push(self.tm.mk_and(valid));
+            validity.push(self.heap_validity(i));
             let implication = self.tm.mk_implies(atoms[i], validity[i]);
             self.assert_definition(implication);
             for j in 0..i {
-                if atoms[i] == self.tm.false_id && atoms[j] == self.tm.false_id {
-                    continue;
-                }
-                let cells = &self.spatial[i].cells;
-                let other = &self.spatial[j].cells;
-                // Under validity, equal cardinality and cell membership give
-                // equality of finite maps. A false atom's validity is still
-                // needed when the other atom may be true.
-                let same = if cells.len() != other.len() {
-                    self.tm.false_id
-                } else {
-                    let mut matches = Vec::new();
-                    for &(l, v) in cells {
-                        let mut choices = Vec::new();
-                        for &(r, w) in other {
-                            let address = self.tm.mk_eq(self.terms[l], self.terms[r]);
-                            let value = self.tm.mk_eq(self.terms[v], self.terms[w]);
-                            choices.push(self.tm.mk_and([address, value]));
-                        }
-                        matches.push(self.tm.mk_or(choices));
-                    }
-                    self.tm.mk_and(matches)
-                };
-                let other_matches = self.tm.mk_and([validity[j], same]);
-                let equivalence = self.tm.mk_eq(atoms[j], other_matches);
-                let forward = self.tm.mk_implies(atoms[i], equivalence);
-                self.assert_definition(forward);
-                let this_matches = self.tm.mk_and([validity[i], same]);
-                let equivalence = self.tm.mk_eq(atoms[i], this_matches);
-                let backward = self.tm.mk_implies(atoms[j], equivalence);
-                self.assert_definition(backward);
+                self.assert_heap_pair(i, j, &atoms, &validity);
             }
         }
         Ok(())
@@ -596,6 +671,7 @@ impl HeapSolver {
             original_nodes: self.nodes.len(),
             backend_terms: self.tm.len(),
             definition_assertions: self.definition_assertions,
+            heap_comparisons: self.heap_comparisons,
             conflicts: backend.conflicts,
             decisions: backend.decisions,
             propagations: backend.propagations,

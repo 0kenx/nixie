@@ -108,7 +108,17 @@ validity/map comparison is still required when another atom may be true.
 `set_definition_simplification(false)` selects a semantics-equivalent diagnostic
 control that retains symbolic atoms while using the same deferred staging.
 
-The encoding costs O(n² k²) in the worst case for n heaplets of at most k cells.
+If an original assertion entails a positive heaplet `Ha`, the reduction uses
+it as an anchor: assert `Va` and, for each other heaplet, `pi <=> (Vi and Eia)`.
+These equations determine every atom on the same concrete map; equality of maps
+entails all remaining pair constraints. Empty anchors, invalid other heaplets,
+and Boolean contexts for unforced atoms follow the same rule. A disjunct or
+model guess never supplies an anchor. Anchors belong to the private definition
+scope and are discarded with it. `set_anchor_redundancy(true)` is a diagnostic
+control retaining the implied comparisons between the other heaplets. Disabling
+definition specialization also disables anchors.
+
+With an anchor, construction costs O(n k²). Without one, the encoding costs O(n² k²) in the worst case for n heaplets of at most k cells.
 This first implementation targets small allocation/aliasing obligations; it
 makes no performance claim for large heaps. There is no new search heuristic.
 
