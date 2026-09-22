@@ -1,0 +1,6 @@
+(set-logic QF_NRT)
+(declare-const x Real)
+(assert (or (= (exp x) 2.0) (= (exp x) 3.0) (= (exp x) 5.0) (= (exp x) 7.0)
+           (= (exp x) 11.0) (= (exp x) 13.0) (= (exp x) 17.0) (= (exp x) 19.0)))
+(assert (and (>= x 2.0) (<= x 3.0)))
+(check-sat)

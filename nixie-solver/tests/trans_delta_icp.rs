@@ -30,23 +30,27 @@ fn run_sat(script: &str) -> String {
 /// Extract the value of `x` from a `(get-value (x))` answer, as f64.
 fn x_value(script: &str) -> f64 {
     let r = run_last(script);
-    // Answer shape: ((x (/ n d)))
-    let start = r
-        .find("(/ ")
-        .map(|i| i + 3)
-        .or_else(|| r.find('(').map(|i| i + 1));
-    let Some(start) = start else {
-        return f64::NAN;
-    };
-    let end = r[start..]
-        .find([')', ' '])
-        .map(|i| start + i)
-        .unwrap_or(r.len());
-    let numer: i64 = r[start..end].trim().parse().unwrap_or(0);
-    let dstart = end;
-    let dend = r[dstart..].find(')').map(|i| dstart + i).unwrap_or(r.len());
-    let denom: i64 = r[dstart..dend].trim().parse().unwrap_or(1);
-    numer as f64 / denom as f64
+    // Answer shapes: ((x (/ n d))) or ((x 2.0)).
+    if let Some(i) = r.find("(/ ") {
+        let start = i + 3;
+        let end = r[start..]
+            .find([')', ' '])
+            .map(|j| start + j)
+            .unwrap_or(r.len());
+        let numer: f64 = r[start..end].trim().parse().unwrap_or(f64::NAN);
+        let dstart = end;
+        let dend = r[dstart..].find(')').map(|j| dstart + j).unwrap_or(r.len());
+        let denom: f64 = r[dstart..dend].trim().parse().unwrap_or(f64::NAN);
+        return numer / denom;
+    }
+    let inner = r.trim_matches(|c| c == '(' || c == ')');
+    inner
+        .rsplit(' ')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse()
+        .unwrap_or(f64::NAN)
 }
 
 // ======== δ-satisfiable goals (the answer must be delta-sat) ========

@@ -128,6 +128,54 @@ unsatisfiability after finitely many such lemmas is a proof.
 * Deep `let`/`ite` chains or huge coefficients may hit the encoder gates
   before the ICP runs.
 
+## Semantic decisions (2026-09 optimization round)
+
+Three defects found by benchmarking (`bench/trans`, 20-goal corpus) and
+fixed — each pinned by a test or visible in the table below:
+
+1. **Transcendentals stay INLINE (no `$p` purification proxies).**  The
+   grammar-driven arith purifier used to replace `(exp (- t))` with a
+   fresh `$p0` plus a definition atom.  Since δ-weakening applies per
+   atom, a purified definition *chain* doubles the effective δ: the
+   published point satisfied the purified form exactly on its δ-edges
+   while the original formula was 2δ off (`sin x + cos y = 1` converged
+   to `sin(x)−s = −0.001`, `s+cos(y)−c = +0.001`, … — a witness of the
+   rewritten problem only).  Transcendental nodes are now arithmetic
+   constructors (`purify_arith::is_arith_constructor`), dReal-style:
+   one atom stays one atom.
+2. **The publication check is EXACT rational arithmetic.**  The witness
+   evaluates the published `Rational64` point with exact
+   `BigRational` brackets (the `*_rational` enclosures in
+   `nixie-math::transcendental`), against the exact weakened bounds
+   stored per constraint.  The previous f64 check lost by one ulp at
+   boxes that converged exactly onto a δ-edge (measured: 99,974
+   identical failed witnesses on the decay-envelope goal).
+   Definition-shaped equalities additionally get a point-repair sweep
+   that snaps proxy variables to their defining expression, so the full
+   δ budget lands on the real constraints.
+3. **Pruning bounds carry a few ulps of slack** beyond the exact
+   admissible bound (δ+ε pruning).  This is sound for `unsat` — the
+   ε-larger weakened problem contains the δ-weakened one, so emptying
+   the larger still empties the smaller — while the exact witness keeps
+   demanding the true δ.
+
+Also fixed on the way: a 1-ulp interval can no longer be branched on
+(the bisect midpoint rounds to an endpoint, so the "other half" equals
+the parent — an infinite dive), and a branch that runs out of
+branchable variables now backtracks into its deferred sibling instead
+of aborting the whole solve with `unknown`.
+
+### Corpus results (release build, this machine, Z3 4.16.0)
+
+20 goals, `bench/trans/corpus/`: nixie decides **20/20** (13 delta-sat
+witnesses, 7 refutations) in ≤ 303 ms each; Z3 decides **0/20** —
+`unknown` on every sin/cos/atan goal it accepts, and it has no
+`exp`/`log`/`sqrt` on Reals at all (parse error).  Full table:
+`precompile/<sha>/benchmark/trans/*.tsv`.  Headline moves from the
+optimization round: coupled `sin x + cos y = 1` 729 ms→17 ms *and*
+unknown→delta-sat; the decay envelope 554 ms→98 ms and unknown→
+delta-sat; bounded Pythagorean refutation 41 ms→19 ms.
+
 ## Options
 
 * `(set-option :delta <rational>)` — the δ (default `0.001`, dReal's).
