@@ -9,6 +9,12 @@ description = "Encoding TLA+ kernel terms into Nixie's SMT solver"
 keywords = ["tla", "smt", "model-checking", "verification", "encoding"]
 categories = ["science"]
 
+# Keep the CLI from overwriting the nixie_tla library's API documentation.
+[[bin]]
+name = "nixie-tla"
+path = "src/bin/nixie-tla.rs"
+doc = false
+
 [dependencies]
 nixie-tla = { workspace = true }
 nixie-tla-syntax = { workspace = true }

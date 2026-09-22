@@ -370,3 +370,9 @@ Specialized polynomial witnesses for the remaining globals would improve proof
 checking cost; they are not required for the validity of this complete chain.
 No throughput or proof-size improvement is claimed. See the
 [complete-proof study](studies/2026-09-16-cp-complete-proof.md) for verification.
+
+Cumulative candidate checks borrow a singleton start override instead of
+copying all domains. This preserves the same filtering and explanations,
+including tasks sharing a start variable. The scoped public-API benchmark
+and controlled instruction measurements are recorded in
+[the scheduling performance study](studies/2026-09-22-cp-scheduling-perf.md).

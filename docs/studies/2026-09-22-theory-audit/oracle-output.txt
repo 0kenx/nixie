@@ -1,0 +1,24 @@
+integer parity: expected unsat
+unsat
+real strict: expected unsat
+unsat
+integer fractional strict: expected sat
+sat
+zero coefficients: expected unsat
+unsat
+scope rollback: expected unsat
+unsat
+unconstrained x need not be zero: expected sat
+sat
+FP widening 1.0 cannot be 2.0: expected unsat
+unsat
+polite alternative arrangement: expected sat
+sat
+model based inconsistent arrangement: expected unsat
+unsat
+disjoint identical singleton sets: expected unsat
+unsat
+contradictory Boolean assertions: expected unsat
+unsat
+array disequality: expected sat
+sat
