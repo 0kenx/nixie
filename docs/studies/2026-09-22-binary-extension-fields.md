@@ -161,5 +161,24 @@ Verification on the isolated implementation at base `1c9a2ef8`:
   heuristic performance claim is made.
 
 Raw verification logs, parity JSON, and the binary are retained in the
-untracked commit-addressed `precompile/` cache. Integration verification
-for concurrently landed main changes is recorded in the final landing.
+untracked commit-addressed `precompile/` cache.
+
+### Integration with concurrent main changes
+
+The feature commit is `f8a8ca0d`; merge `4ce171d8` integrates the concurrently
+landed CP scheduling changes and documentation without conflicts. The
+integrated workspace release rebuild is byte-for-byte identical to the
+frozen binary above. Its perf measurement is therefore **reused**, not
+rerun. The integrated Z3 4.16.0 parity check again has 176 decisive matches,
+zero mismatches and the same one inconclusive case out of 177. All integrated
+workspace checks passed: build, **12,261 nextest tests**
+(17 existing skips), **114 doctests** (31 ignored), Clippy with warnings
+as errors, formatting, and warning-free documentation. The extra arrangement
+canary passed in the feature verification; the merge did not modify its
+arrangement or model-checking code. A CLI smoke test over `(_ BinaryField 7)`
+returned `a = ff2` for `a*a = a+1` and evaluated `a*a` as `ff3`.
+
+Integrated logs and parity JSON live under
+`precompile/4ce171d811802c30cdb49a954b77c3feeabcf351/benchmark/binary-extension-landing/`;
+`verification.json` records the reused performance result's source commit
+and binary digest. No performance cell was rerun.
