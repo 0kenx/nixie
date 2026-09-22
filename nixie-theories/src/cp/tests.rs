@@ -155,6 +155,36 @@ fn indexed_domain_exclusion_rejects_bad_premise_hints() {
     assert!(statement.explain_fixed(foreign, &premises, 2).is_none());
 }
 
+#[test]
+fn indexed_domain_exclusion_preserves_first_global_witness() {
+    let mut tm = TermManager::new();
+    let mut cp = CpModel::new(&tm);
+    let x0 = tm.mk_var("x0", tm.sorts.bool_sort);
+    let x1 = tm.mk_var("x1", tm.sorts.bool_sort);
+    let y1 = tm.mk_var("y1", tm.sorts.bool_sort);
+    let x = cp
+        .variable(vec![(0.into(), x0), (1.into(), x1)], &mut tm)
+        .unwrap();
+    let y = cp.variable(vec![(1.into(), y1)], &mut tm).unwrap();
+    cp.alldifferent(vec![x, y]).unwrap();
+    let fixed = FxHashMap::from_iter([(x0, tm.mk_true()), (y1, tm.mk_true())]);
+    let mut queue = VecDeque::new();
+    let mut journal = Vec::new();
+    let equalities = FxHashSet::default();
+    let mut ctx = PropagatorContext::new(&mut queue, &mut journal, &fixed, &equalities);
+    assert_eq!(cp.run(&mut ctx), PropagatorResult::Sat);
+    assert_eq!(queue.len(), 1);
+    let consequence = queue.pop_front().unwrap();
+    assert_eq!(consequence.term, tm.mk_not(x1));
+    assert_eq!(consequence.justification, vec![x0, y1]);
+    // Both exactly-one and the global exclude x=1. Preserve the old global
+    // witness selection instead of short-circuiting on the snapshot's flag.
+    assert!(consequence.domain_certificate.is_none());
+    cp.statement()
+        .check_lemma(consequence.term, &consequence.justification, &mut 100_000)
+        .unwrap();
+}
+
 // Independent exhaustive oracle: check every emitted explanation against
 // every concrete assignment compatible with its antecedents, not just the
 // solver's selected model. Covers 5 * 7^3 partial domain states.

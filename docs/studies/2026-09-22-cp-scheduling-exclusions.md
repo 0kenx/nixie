@@ -5,6 +5,11 @@ removing repeated work in its finite-domain callback. It adds no propagation
 rule, task feature, search policy or proof shortcut. The external performance
 reference is installed Z3 4.16.0; Nixie before/after comparisons are separate.
 
+Candidate `44f30970` passes the pre-registered performance bar. On confirmation
+seeds its ordinary/certified **Nixie/Z3 instruction ratios are 0.4778/0.5086**.
+Against the preceding Nixie baseline, ratios are 0.8951/0.8984 (about 10% fewer
+instructions). These are paired geometric means, not wall-clock speedups.
+
 ## Protocol and ablation
 
 The [pre-registration](../../bench/cp_perf/explanation_protocol.md) fixes the
@@ -44,6 +49,43 @@ inside the measured process; Z3's extracted models are checked independently
 in Python outside Z3's measured process. Unknowns are never counted as solves.
 Callback-only diagnostics have no directly comparable Z3 API.
 
+## Confirmation results
+
+| Mode and shape | Previous Nixie / Z3 | Current Nixie / Z3 | Current / previous Nixie |
+|---|---:|---:|---:|
+| Ordinary, all | 0.5338 | 0.4778 | 0.8951 |
+| Ordinary, 4x4 | 0.1860 | 0.1802 | 0.9692 |
+| Ordinary, 8x16 | 1.5321 | 1.2666 | 0.8267 |
+| Certified, all | 0.5661 | 0.5086 | 0.8984 |
+| Certified, 4x4 | 0.2049 | 0.1992 | 0.9719 |
+| Certified, 8x16 | 1.5640 | 1.2989 | 0.8305 |
+
+No family regresses beyond the 5% neutral band. Ordinary family ratios versus
+previous Nixie are absent 0.9002, blocked 0.9153, present 0.9521 (neutral),
+shared 0.9144, sparse 0.8132, unknown 0.9064 and wide 0.8709. The larger sparse
+case falls from 9.3031 to 6.7606 times Z3's instructions: a substantial remaining
+gap despite the improvement. The larger all-present case remains 2.2557 times
+Z3. Small startup-sensitive cases must not hide those limitations.
+
+Selection ordinary/certified ratios versus previous Nixie were 0.8953/0.8984;
+the confirmation grid supports the same result. Isolating the second stage
+against the first-stage ablation gives selection ratios 0.9297/0.9323. We did
+not measure confirmation cells for the neutral first stage alone.
+
+The [paired CSV](2026-09-22-cp-scheduling-exclusions.csv) retains all 280
+confirmation comparisons and each ten-seed baseline distribution. Each seed
+grid has 280/280 decisive checked Nixie SAT cells per arm and 140/140 checked
+Z3 SAT cells, with no lost, censored or invalid-model cells. All paired Nixie
+transcripts agree byte for byte, including search counters. The same Z3 cells
+serve both modes; they are not independent additional reference samples.
+
+Callback diagnostics also retain 280/280 exact transcript matches per grid
+(140 partial callback states and 140 small public solves). Their confirmation
+callback ratio is 0.9614, neutral overall; absent is 0.9117 and wide is 0.9494.
+Other callback families are neutral, and none regresses beyond 5%. Partial
+callback `Unknown` states are not counted as SAT solves. These component
+figures compare Nixie revisions, not Nixie with Z3.
+
 ## Soundness and certification audit
 
 - Construction rejects duplicate values and indicators. Thus an unknown
@@ -70,5 +112,21 @@ checks every exclusion against an independent exactly-one oracle, compares
 every witness with the original search, and checks every emitted implication
 against the independent finite-domain lemma checker. A second regression
 rejects foreign/negative/same-value/out-of-range premise hints and malformed
-conclusions. Existing optional scheduling and exported-proof oracles remain
+conclusions. A third pins the original global witness when both an all-different
+constraint and exactly-one semantics exclude the same value. Existing optional
+scheduling and exported-proof oracles remain
 part of the full verification suite.
+
+## Verification setup
+
+All Cargo compilation uses release mode. Full workspace tests use local
+`CARGO_PROFILE_RELEASE_LTO=false` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`
+in a separate verification target directory; optimization level remains 3.
+The first full-LTO test build and a queued refresh were interrupted before
+running tests because linking hundreds of test executables was costly. Their
+logs are retained. Production CLI build/parity/perf gates use the repository's
+usual release profile; CP instruction measurements use the unchanged external
+profile described above. No profile change is credited as a CP optimization.
+An attempted focused test invocation through the external driver manifest
+was rejected because dependency packages with dev-dependencies cannot be tested
+as members of that driver workspace; the real workspace suite is the test gate.
