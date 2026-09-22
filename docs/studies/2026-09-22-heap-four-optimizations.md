@@ -173,6 +173,12 @@ These aggregate baseline numbers do not replace the individual controls:
   on contradictory alternatives and especially the alias example (median
   290.80M versus 242.83M instructions). The overall target verdict is negative;
   a favorable satisfiable subcase does not justify enabling it globally.
+  The alias case installs all 16 rows over 16 refinement rounds, ending with
+  the same 256 definitions as eager encoding. It saves no definitions and pays
+  for repeated solves/validation. The unsatisfiable alternatives need eight
+  rounds; the satisfiable alternatives need none. Avoid retrying a global lazy
+  default based only on the favorable zero-round cases; equivalent heaplets and
+  repeated candidate rejection are the concrete remaining targets.
 
 Baseline and control distributions (minimum, median, maximum), solved counts,
 and diagnostics are in [the CSV](2026-09-22-heap-four-optimizations.csv).
@@ -267,7 +273,37 @@ same limits and independent checks. No old cells are rerun. `--eager-replay`
 selects this matrix; `--library-revision` records the actual frozen library
 separately from the runner's newer source revision. This checks the selected
 eager configuration, rather than presenting hindsight selection as a new gain.
-The planned production change after the first matrix is `lazy_boolean: false`
+The production change after the first matrix is `lazy_boolean: false`
 in the default options. The benchmark client explicitly sets every option, so
 its eager arm is the exact selected solver configuration. Repeat all landing
 gates for the default change.
+
+
+### Fresh-seed result
+
+All **81 replay cells** completed once at seed 104, with 25/27 complete solves
+in each arm, six Unknowns on the same scope cases, and no wrong answer or lost
+solve. Lazy/eager is **1.0238** on the five Boolean target pairs; the alias case
+is again 290.70M versus 242.74M instructions. The negative lazy verdict survives
+replay. The selected eager configuration uses **0.4796** of baseline instructions
+on the 25 shared solved cases (about **52.0% less**). This one fresh-seed check
+validates the selection; it does not replace the ten-seed distributions above.
+
+The [replay CSV](2026-09-22-heap-four-eager-replay.csv) contains all cases and
+arms. Raw data are under
+`precompile/591f9e69/benchmark/{runs/heap-four-eager-replay-v1,heap-four-eager-replay-v1}/`.
+Source revision 591f9e69 is the replay harness and preregistration; the manifest
+explicitly records candidate library 16e323ec and baseline library cb50c87e.
+Measured binaries and policies remained frozen throughout both matrices.
+
+
+### Final landing verification
+
+After changing the default to eager, every gate passed again: all-feature build,
+Clippy with warnings denied, formatting, documentation with warnings denied,
+**12,243/12,243 nextest tests** (17 skipped), **114 doc tests** (31 ignored),
+all **832 CVC5 reference cases**, and Z3 **4.16.0** parity (**176 correct,
+one inconclusive, zero wrong**). The final frozen-CLI perf gate reports
+**1.000 conflicts and decisions**, secondary wall ratio **1.00**, nine nontrivial
+pairs and three agreeing trivial cases. Heap semantics, proof/Unknown boundaries,
+and the independent validator are unchanged by the default decision.

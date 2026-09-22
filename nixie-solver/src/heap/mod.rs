@@ -122,7 +122,7 @@ pub struct HeapOptimizations {
     pub equality_propagation: bool,
     /// Reuse immutable encoding expressions across assertion scopes.
     pub cache_templates: bool,
-    /// Refine abstract Boolean candidates with guarded heap definitions on demand.
+    /// Opt in to guarded Boolean refinement (eager encoding is the default).
     pub lazy_boolean: bool,
 }
 
@@ -142,7 +142,7 @@ impl Default for HeapOptimizations {
             anchor_coverage: true,
             equality_propagation: true,
             cache_templates: true,
-            lazy_boolean: true,
+            lazy_boolean: false,
         }
     }
 }

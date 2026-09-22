@@ -133,18 +133,29 @@ assertions, rewritten operand maps and refinement rows are discarded and rebuilt
 under the current original assertions. No cached truth or equality assumption
 can leak from a popped scope.
 
-Without an entailed positive anchor, the solver first checks an abstract Boolean
-candidate against the original input. A failed candidate with selected `pi`
+With lazy refinement enabled and no entailed positive anchor, the solver first
+checks an abstract Boolean candidate against the original input. A failed candidate with selected `pi`
 installs the guarded row `pi => Vi` and `pi => (pj <=> Eij)` for all other j.
 These constraints hold for every concrete heap; the model guess is never asserted
 unconditionally. Each iteration adds a previously absent row or returns Unknown.
 At most n rows are added. Independent validation still precedes every Sat.
 
 `HeapOptimizations` and `set_optimizations` expose the four options before the
-first push/check; all are enabled by default. Diagnostic controls retain redundant
-validity, use identity substitutions after the same discovery pass, recompute
+first push/check. Coverage, equality propagation and templates are enabled by
+default; lazy Boolean refinement is opt-in after its measured regression. The
+default eagerly installs the same guarded row family. Diagnostic controls retain
+redundant validity, use identity substitutions after the same discovery pass, recompute
 cached expressions, or install the same guarded row family eagerly. `NONE` is
 a diagnostic eager encoding, not a byte-identical historical implementation.
+
+To opt in to lazy refinement before the first push/check:
+
+```rust
+solver.set_optimizations(nixie_solver::heap::HeapOptimizations {
+    lazy_boolean: true,
+    ..Default::default()
+})?;
+```
 
 With an anchor, construction costs O(n k²). Lazy Boolean construction costs
 O(r n k²) for r installed rows, at worst O(n² k²), excluding backend solving.
