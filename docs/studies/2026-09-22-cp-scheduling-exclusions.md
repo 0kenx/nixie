@@ -130,3 +130,9 @@ profile described above. No profile change is credited as a CP optimization.
 An attempted focused test invocation through the external driver manifest
 was rejected because dependency packages with dev-dependencies cannot be tested
 as members of that driver workspace; the real workspace suite is the test gate.
+
+Release Clippy exposed a pre-existing configuration mismatch in SAT diagnostics:
+`check_fixpoint` was compiled in release unit tests although its only caller
+is guarded by `debug_assertions`. Its definition now uses the same guard.
+This changes no search policy or runtime check. The original Clippy failure
+is retained; the complete gate is rerun after this correction.

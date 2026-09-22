@@ -70,6 +70,7 @@ env_flag_fn!(
 );
 env_flag_fn!(
     /// `NIXIE_CHECK_FIXPOINT` — assignment-fixpoint re-check.
+    #[cfg(debug_assertions)]
     check_fixpoint,
     "NIXIE_CHECK_FIXPOINT"
 );
