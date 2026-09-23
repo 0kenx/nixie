@@ -17,6 +17,17 @@ import time
 
 FAMILIES = ['unknown', 'present', 'absent', 'shared', 'blocked', 'wide', 'sparse']
 SUITE = 'cp-scheduling-z3'
+DEFAULT_SHAPES = [(4, 4), (8, 16)]
+
+
+def parse_shape(value):
+    try:
+        count, width = map(int, value.split('x'))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('expected positive TASKSxWIDTH') from error
+    if count <= 0 or width <= 0:
+        raise argparse.ArgumentTypeError('expected positive TASKSxWIDTH')
+    return count, width
 
 
 def digest(data):
@@ -143,8 +154,8 @@ def run(a):
         config_hash = store.canonical_flags(flags)
         raw = a.root / a.sha / 'benchmark/cp-z3-raw' / config_hash
         raw.mkdir(parents=True, exist_ok=True)
-        for count, width in [(4, 4), (8, 16)]:
-            for family in FAMILIES:
+        for count, width in a.shapes:
+            for family in a.families:
                 name = f'{family}-{count}x{width}'
                 for seed in range(a.first_seed, a.first_seed + a.seeds):
                     smt = problem(family, count, width, seed)
@@ -223,8 +234,8 @@ def report(a):
     groups = defaultdict(list)
     rows = []
     for mode in ['solver', 'certified']:
-        for count, width in [(4, 4), (8, 16)]:
-            for family in FAMILIES:
+        for count, width in a.shapes:
+            for family in a.families:
                 name = f'{family}-{count}x{width}'
                 for seed in range(a.first_seed, a.first_seed + a.seeds):
                     b, c, z = base[(mode, name, seed)], cand[(mode, name, seed)], reference[('z3', name, seed)]
@@ -267,7 +278,13 @@ if __name__ == '__main__':
     reporter.add_argument('--csv', type=Path)
     for command in [runner, reporter]:
         command.add_argument('--root', type=Path, required=True)
+        command.add_argument('--shape', dest='shapes', type=parse_shape, action='append',
+                             help='TASKSxWIDTH, repeatable; default: 4x4 and 8x16')
+        command.add_argument('--family', dest='families', choices=FAMILIES, action='append',
+                             help='repeatable; default: all families')
         command.add_argument('--first-seed', type=int, default=0)
         command.add_argument('--seeds', type=int, default=10)
     args = parser.parse_args()
+    args.shapes = list(dict.fromkeys(args.shapes or DEFAULT_SHAPES))
+    args.families = list(dict.fromkeys(args.families or FAMILIES))
     (run if args.command == 'run' else report)(args)
