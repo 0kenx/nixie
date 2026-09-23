@@ -271,7 +271,11 @@ pub(crate) enum ConsequenceOp {
     /// needed to undo it).
     Pushed,
     /// front-drain happened; undo = `push_front` of the drained entry.
-    Drained(Consequence),
+    /// Boxed: the no-data `Pushed` marker would otherwise pad every
+    /// journal entry to the full consequence size (the drain already
+    /// heap-allocates for the restore copy, so the box adds no new
+    /// allocation class to the path).
+    Drained(Box<Consequence>),
 }
 
 struct PropagatorMark {
@@ -440,7 +444,7 @@ impl UserPropagatorManager {
             .drain(..)
             .inspect(|c| {
                 self.consequence_journal
-                    .push(ConsequenceOp::Drained(c.clone()))
+                    .push(ConsequenceOp::Drained(Box::new(c.clone())))
             })
             .collect();
         self.stats.num_propagations = self
@@ -490,7 +494,7 @@ impl UserPropagatorManager {
                         self.consequences.pop_back();
                     }
                     Some(ConsequenceOp::Drained(consequence)) => {
-                        self.consequences.push_front(consequence);
+                        self.consequences.push_front(*consequence);
                     }
                     None => break,
                 }
