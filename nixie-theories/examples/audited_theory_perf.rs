@@ -56,7 +56,7 @@ fn fp(family: &str, count: usize, seed: usize, emit: bool) -> Result<(), Box<dyn
         };
         let input = FpValue {
             format: source,
-            sign: (seed + i) % 2 != 0,
+            sign: !(seed + i).is_multiple_of(2),
             exponent,
             significand: ((seed as u64 + 1) * 0x123456789 + i as u64)
                 & ((1u64 << (source.significand_bits - 1)) - 1),

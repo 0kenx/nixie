@@ -61,3 +61,39 @@ the original forced-snapshot computation in unit tests and compare complete
 state across complete/partial trails, conflicts and scopes. This is an
 allocation/copy change, not a search policy. The acceptance target is the
 FP family geomean; apply the originally registered 5% bar and held-out seeds.
+
+## Reproduction
+
+The external package contains the example as `src/main.rs`, path dependencies
+on `nixie-core` and `nixie-theories`, `num-rational = "0.4"`, edition 2024,
+and `[profile.release] debug = 1`. The actual manifest, Cargo.lock, driver,
+profile and binary are retained under each measured revision's `theory-perf/`
+cache directory. Use that lockfile, the recorded compiler, and identical
+package/build paths for both arms. The workspace's LTO release profile is
+different; do not mix its instruction cells with the external package cells.
+
+Example commands (substitute the recorded full revisions and cached binaries):
+
+```sh
+python3 bench/theory_perf/run.py --binary precompile/BASE/theory-perf/audited-theory-perf \
+  --driver-binary precompile/BASE/theory-perf/audited-theory-perf \
+  --driver precompile/BASE/theory-perf/driver.rs --sha BASE --role baseline \
+  --root precompile --lock precompile/BASE/theory-perf/Cargo.lock
+python3 bench/theory_perf/run.py --binary /path/to/z3 \
+  --driver-binary precompile/BASE/theory-perf/audited-theory-perf \
+  --driver precompile/BASE/theory-perf/driver.rs --sha BASE --role reference \
+  --root precompile --lock precompile/BASE/theory-perf/Cargo.lock
+python3 bench/theory_perf/run.py --binary precompile/CAND/theory-perf/audited-theory-perf \
+  --driver-binary precompile/BASE/theory-perf/audited-theory-perf \
+  --driver precompile/BASE/theory-perf/driver.rs --sha CAND --role treatment \
+  --root precompile --lock precompile/BASE/theory-perf/Cargo.lock
+python3 bench/theory_perf/report.py --root precompile --baseline BASE --treatment CAND --csv paired.csv
+python3 -m unittest discover -s bench/theory_perf -p 'test_*.py'
+```
+
+Add `--first-seed 10` to all three run commands and the report for held-out
+confirmation. `report.py` rejects missing/ambiguous pairs, differing Nixie
+configurations, hosts, input hashes, verdict transcripts, or failed validation.
+It reports failure/censoring rather than treating Unknown as a matched answer.
+The three-check transcript is one benchmark cell; successful cells certify two
+SAT witnesses and a contradictory scoped extension, not three independent inputs.
