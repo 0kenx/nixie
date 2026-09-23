@@ -429,6 +429,30 @@ fn ifx_scale() -> BigInt {
     BigInt::one() << FRAC
 }
 
+/// `num / 2^frac_bits` in lowest terms, WITHOUT the general gcd.
+///
+/// The `*_rational` enclosures all return dyadic fractions (denominator
+/// `2^FRAC`), and `BigRational::new` runs a full binary-gcd plus two big
+/// divisions per construction — two constructions per call — which
+/// dominated the δ-witness profile (t19: ~35% of samples in
+/// `BigUint::gcd`/`div_rem`).  With a power-of-two denominator, reduction
+/// is a right-shift by the numerator's trailing zeros: the shifted
+/// numerator is odd, hence coprime to the remaining `2^(frac_bits − tz)`,
+/// so `new_unchecked` is exact.  Bit-for-bit identical output to
+/// `BigRational::new(num, 1 << frac_bits)`.
+fn rational_dyadic(num: BigInt, frac_bits: u64) -> BigRational {
+    let Some(tz) = num.trailing_zeros() else {
+        return BigRational::zero();
+    };
+    let tz = tz.min(frac_bits);
+    let n = num >> tz;
+    if tz == frac_bits {
+        BigRational::from(n)
+    } else {
+        BigRational::new_raw(n, BigInt::one() << (frac_bits - tz))
+    }
+}
+
 /// A directed IFX bracket `[lo, hi]` (units of `2^-FRAC`), `lo ≤ hi`.
 #[derive(Clone, Debug)]
 struct Ifx {
@@ -1020,8 +1044,7 @@ fn abs_rat(q: &BigRational) -> BigRational {
 /// `e^x` for an exact rational `x`, as an exact rational bracket.
 #[must_use]
 pub fn exp_rational(x: &BigRational) -> (BigRational, BigRational) {
-    let scale = ifx_scale();
-    let s = |v: &BigInt| BigRational::new(v.clone(), scale.clone());
+    let s = |v: &BigInt| rational_dyadic(v.clone(), FRAC);
     // Saturation mirrors the f64 path.
     let hi_f = x.to_f64().unwrap_or(f64::INFINITY);
     if hi_f > 710.0 {
@@ -1062,7 +1085,6 @@ pub fn exp_rational(x: &BigRational) -> (BigRational, BigRational) {
 /// `atan(x)` for an exact rational `x`, as an exact rational bracket.
 #[must_use]
 pub fn atan_rational(x: &BigRational) -> (BigRational, BigRational) {
-    let scale = ifx_scale();
     let neg = x < &BigRational::zero();
     let xf_abs = Ifx::from_rat_point(&abs_rat(x));
     let one = Ifx::unit();
@@ -1090,17 +1112,13 @@ pub fn atan_rational(x: &BigRational) -> (BigRational, BigRational) {
     if neg {
         v = v.neg();
     }
-    (
-        BigRational::new(v.lo, scale.clone()),
-        BigRational::new(v.hi, scale),
-    )
+    (rational_dyadic(v.lo, FRAC), rational_dyadic(v.hi, FRAC))
 }
 
 /// `sin(x)`/`cos(x)` for an exact rational `x` (|x| ≤ 2^50), as exact
 /// rational brackets.  Larger arguments answer the full range.
 #[must_use]
 pub fn sin_cos_rational(x: &BigRational, want_cos: bool) -> (BigRational, BigRational) {
-    let scale = ifx_scale();
     let xf = x.to_f64().unwrap_or(f64::INFINITY);
     if !xf.is_finite() || xf.abs() > 2.0_f64.powi(50) {
         return (
@@ -1135,10 +1153,7 @@ pub fn sin_cos_rational(x: &BigRational, want_cos: bool) -> (BigRational, BigRat
     } else {
         (bracket.lo, bracket.hi)
     };
-    (
-        BigRational::new(lo, scale.clone()),
-        BigRational::new(hi, scale),
-    )
+    (rational_dyadic(lo, FRAC), rational_dyadic(hi, FRAC))
 }
 
 /// `log(x)` for an exact positive rational `x`, as an exact rational
@@ -1146,7 +1161,6 @@ pub fn sin_cos_rational(x: &BigRational, want_cos: bool) -> (BigRational, BigRat
 #[must_use]
 pub fn log_rational(x: &BigRational) -> (BigRational, BigRational) {
     debug_assert!(x > &BigRational::zero());
-    let scale = ifx_scale();
     // Normalize x = m · 2^e with m ∈ [1, 2), exact in rationals.
     let n = x.numer();
     let d = x.denom();
@@ -1175,10 +1189,7 @@ pub fn log_rational(x: &BigRational) -> (BigRational, BigRational) {
         hi: &c.ln2.hi * e,
     };
     let out = e_ln2.add(&lm);
-    (
-        BigRational::new(out.lo, scale.clone()),
-        BigRational::new(out.hi, scale),
-    )
+    (rational_dyadic(out.lo, FRAC), rational_dyadic(out.hi, FRAC))
 }
 
 /// `sqrt(x)` for an exact nonnegative rational `x`, as an exact rational
@@ -1663,7 +1674,7 @@ fn cos_point_capped(x: f64) -> (f64, f64) {
 /// sound over-approximation, never a fabricated value.
 #[must_use]
 pub fn asin_enclosure(y: f64) -> (f64, f64) {
-    asin_point(y)
+    asin_point_cached(y)
 }
 
 /// Rigorous f64 bracket for π (public: the ICP engine's periodicity
@@ -1735,6 +1746,16 @@ fn cos_point_cached(x: f64) -> (f64, f64) {
 fn atan_point_cached(x: f64) -> (f64, f64) {
     cache_get_or_insert(4, x, atan_point)
 }
+#[cfg(feature = "std")]
+fn asin_point_cached(x: f64) -> (f64, f64) {
+    // asin is the most expensive point enclosure on the contraction path
+    // (a ~500-bit isqrt plus two atan series per call) and the ICP's
+    // sin/cos contraction calls it twice per propagation of a Sin/Cos
+    // node — overwhelmingly at repeat arguments while a box converges or
+    // is re-propagated after `BranchInto`.  Measured on the t19 corpus
+    // goal, uncached asin dominated the whole run.
+    cache_get_or_insert(5, x, asin_point)
+}
 
 #[cfg(not(feature = "std"))]
 fn exp_point_cached(x: f64) -> (f64, f64) {
@@ -1755,6 +1776,10 @@ fn cos_point_cached(x: f64) -> (f64, f64) {
 #[cfg(not(feature = "std"))]
 fn atan_point_cached(x: f64) -> (f64, f64) {
     atan_point(x)
+}
+#[cfg(not(feature = "std"))]
+fn asin_point_cached(x: f64) -> (f64, f64) {
+    asin_point(x)
 }
 
 #[cfg(test)]
@@ -1917,6 +1942,40 @@ mod tests {
         // Out of range: full principal range, not a fabrication.
         let (lo, hi) = asin_enclosure(2.0);
         assert!(lo <= -1.57 && hi >= 1.57);
+    }
+
+    #[test]
+    fn rational_dyadic_matches_the_reducing_constructor() {
+        // The dyadic fast path must produce BIT-FOR-BIT the same reduced
+        // fraction as the gcd-reducing `BigRational::new` — it replaced
+        // that constructor on the δ-witness hot path (sin/cos/exp/log/atan
+        // enclosures), where the big-integer gcd + divisions dominated
+        // the runtime profile.
+        let mut n: i64 = -1;
+        while n <= 1 {
+            let num = BigInt::from(n);
+            for frac_bits in [0u64, 1, 7, 63, 64, 100, FRAC] {
+                let fast = rational_dyadic(num.clone(), frac_bits);
+                let slow = BigRational::new(num.clone(), BigInt::one() << frac_bits);
+                assert_eq!(fast, slow, "num={n} frac={frac_bits}");
+            }
+            n += 1;
+        }
+        // Odd, even, heavily-even and zero numerators at scale.
+        for num in [
+            1_i64 << 40,
+            (1_i64 << 40) + 1,
+            -(1_i64 << 40) - 1,
+            (1_i64 << 40) * 5,
+            0,
+        ] {
+            let big = BigInt::from(num);
+            for frac_bits in [1u64, 41, 42, FRAC, FRAC + 40] {
+                let fast = rational_dyadic(big.clone(), frac_bits);
+                let slow = BigRational::new(big.clone(), BigInt::one() << frac_bits);
+                assert_eq!(fast, slow, "num={num} frac={frac_bits}");
+            }
+        }
     }
 
     #[test]

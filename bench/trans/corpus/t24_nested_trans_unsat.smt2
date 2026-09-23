@@ -1,0 +1,6 @@
+(set-logic QF_NRT)
+(declare-const x Real)
+(assert (> (sin (exp x)) 0.9))
+(assert (< (sin (exp x)) 0.2))
+(assert (and (>= x 0.0) (<= x 0.5)))
+(check-sat)

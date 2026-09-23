@@ -45,7 +45,17 @@ pub(super) fn collect_structural_children(kind: &TermKind, out: &mut Vec<TermId>
         | TermKind::FpIsNegative(a)
         | TermKind::FpIsPositive(a)
         | TermKind::FpSqrt(_, a)
-        | TermKind::FpRoundToIntegral(_, a) => out.push(*a),
+        | TermKind::FpRoundToIntegral(_, a)
+        // The six transcendental constructors carry exactly one arithmetic
+        // sub-term; omitting them here silently hid every term under a
+        // transcendental from every structural walk (found by the trans
+        // UF gate: `(exp (f x))` reported no `Apply` child).
+        | TermKind::Exp(a)
+        | TermKind::Log(a)
+        | TermKind::Sin(a)
+        | TermKind::Cos(a)
+        | TermKind::Atan(a)
+        | TermKind::Sqrt(a) => out.push(*a),
         TermKind::BvExtract { arg, .. }
         | TermKind::DtTester { arg, .. }
         | TermKind::DtSelector { arg, .. }

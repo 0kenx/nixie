@@ -1040,7 +1040,32 @@ impl<'a> IcpEngine<'a> {
         self.stats.constraint_props += 1;
         let c = self.prob.constraints[cid as usize].clone();
         if c.cmp == Cmp::Ne {
-            return true; // disequalities never prune
+            // Disequality pruning (whole-box form): `root ≠ rhs` is
+            // δ-violated by every point inside the exact δ-window, so a
+            // root interval lying WHOLLY inside it can offer no witness —
+            // the box is empty for this branch.  The comparison is exact
+            // rational arithmetic against the constraint's stored
+            // `admissible_exact` bounds; the f64 `rhs_interval` carries
+            // the δ+ε widening slack, which points the WRONG way for a
+            // disequality (it would fire conflicts on boxes that are
+            // δ-outside but only ε-inside).  Provenance: the pinned
+            // bounds' deps plus this constraint.
+            let cur = self.iv[c.root as usize];
+            let (Some(lo_x), Some(hi_x)) = (f64_exact_rational(cur.lo), f64_exact_rational(cur.hi))
+            else {
+                return true; // infinite bound: cannot be wholly inside
+            };
+            if lo_x >= c.admissible_exact.0 && hi_x <= c.admissible_exact.1 {
+                let mut d = self.deps_of(c.root);
+                if !d.contains(&cid) {
+                    d.push(cid);
+                }
+                self.iv[c.root as usize] = DI::EMPTY;
+                self.deps_lo[c.root as usize] = d.clone();
+                self.deps_hi[c.root as usize] = d;
+                return false;
+            }
+            return true;
         }
         let cur = self.iv[c.root as usize];
         let new_iv = cur.intersect(&c.rhs_interval);
@@ -1065,14 +1090,23 @@ impl<'a> IcpEngine<'a> {
     /// Drain both queues toward a fixpoint.  Returns the conflict set when
     /// a node went empty, `None` otherwise.
     ///
-    /// The drain is CAPPED per call (`prop_cap`): interval fixpoints can
-    /// converge ulp-by-ulp, and waiting for the exact fixed point lets one
-    /// branch consume the whole budget.  Stopping early is sound — every
-    /// contraction applied was valid on its own; only pruning POWER is
-    /// lost, and the branching loop compensates.  (dReal/ibex cap their
-    /// propagation the same way.)
+    /// Two caps keep one branch from eating the whole budget:
+    ///
+    /// * the per-call step cap `prop_cap` (interval fixpoints can converge
+    ///   ulp-by-ulp; dReal/ibex cap their propagation the same way), and
+    /// * a **sweep-level convergence check**: every 256 steps, the total
+    ///   mass of all node intervals (sum of finite widths) is compared
+    ///   against the mass 256 steps ago; a relative improvement below
+    ///   1e-9 means the fixpoint is only creeping (chains of 1-ulp
+    ///   tightenings through Mul/Exp/Log keep the queue alive while
+    ///   narrowing nothing that matters) — cut it and let the brancher
+    ///   make progress instead.  Stopping early is sound — every
+    ///   contraction applied was valid on its own; only pruning POWER is
+    ///   lost, and branching compensates.
     fn propagate(&mut self) -> Option<Vec<u32>> {
         let mut steps_left = self.prop_cap;
+        let mut since_mass_check: u32 = 0;
+        let mut last_mass: Option<f64> = None;
         loop {
             if self.budget == 0 || steps_left == 0 {
                 return None;
@@ -1089,7 +1123,32 @@ impl<'a> IcpEngine<'a> {
             if !self.propagate_node(idx) {
                 return Some(self.conflict_set());
             }
+            since_mass_check += 1;
+            if since_mass_check >= 256 {
+                since_mass_check = 0;
+                let mass = self.interval_mass();
+                if let Some(lm) = last_mass
+                    && mass > 0.0
+                    && lm - mass <= lm * 1e-9
+                {
+                    return None; // creeping, not converging: branch instead
+                }
+                last_mass = Some(mass);
+            }
         }
+    }
+
+    /// Total mass (sum of finite widths) of every node interval — the
+    /// convergence meter for [`Self::propagate`].
+    fn interval_mass(&self) -> f64 {
+        let mut m = 0.0;
+        for iv in &self.iv {
+            let w = iv.width();
+            if w.is_finite() {
+                m += w;
+            }
+        }
+        m
     }
 
     /// Union of the provenance of every empty node's two bounds.
@@ -1249,13 +1308,17 @@ impl<'a> IcpEngine<'a> {
                     mul_brackets(&vals[*a as usize], &inv)
                 }
                 Node::Exp(a) => {
+                    // exp is strictly increasing, so the enclosure over
+                    // [la, ha] is the lower bracket at la joined with the
+                    // upper bracket at ha — one call per DISTINCT endpoint
+                    // (the previous four-call min/max dance was vacuous
+                    // for a monotone function, and point args paid double).
                     let (la, ha) = &vals[*a as usize];
-                    let e_lo = tm::exp_rational(la).0;
-                    let e_hi = tm::exp_rational(ha).1;
-                    (
-                        e_lo.min(tm::exp_rational(ha).0),
-                        e_hi.max(tm::exp_rational(la).1),
-                    )
+                    if la == ha {
+                        tm::exp_rational(la)
+                    } else {
+                        (tm::exp_rational(la).0, tm::exp_rational(ha).1)
+                    }
                 }
                 Node::Log(a) => {
                     let (la, ha) = &vals[*a as usize];
@@ -1270,23 +1333,17 @@ impl<'a> IcpEngine<'a> {
                     }
                     (tm::log_rational(la).0, tm::log_rational(ha).1)
                 }
-                Node::Sin(a) => {
-                    let (la, ha) = &vals[*a as usize];
-                    let s1 = tm::sin_cos_rational(la, false);
-                    let s2 = tm::sin_cos_rational(ha, false);
-                    (s1.0.min(s2.0), s1.1.max(s2.1))
-                }
-                Node::Cos(a) => {
-                    let (la, ha) = &vals[*a as usize];
-                    let c1 = tm::sin_cos_rational(la, true);
-                    let c2 = tm::sin_cos_rational(ha, true);
-                    (c1.0.min(c2.0), c1.1.max(c2.1))
-                }
+                Node::Sin(a) => sin_cos_exact(&vals[*a as usize], false),
+                Node::Cos(a) => sin_cos_exact(&vals[*a as usize], true),
                 Node::Atan(a) => {
+                    // atan is strictly increasing: lower bracket at la,
+                    // upper at ha (one call for a point arg).
                     let (la, ha) = &vals[*a as usize];
-                    let a1 = tm::atan_rational(la);
-                    let a2 = tm::atan_rational(ha);
-                    (a1.0.min(a2.0), a1.1.max(a2.1))
+                    if la == ha {
+                        tm::atan_rational(la)
+                    } else {
+                        (tm::atan_rational(la).0, tm::atan_rational(ha).1)
+                    }
                 }
                 Node::Sqrt(a) => {
                     let (la, ha) = &vals[*a as usize];
@@ -1358,6 +1415,107 @@ impl<'a> IcpEngine<'a> {
         }
         best_compound.or(best_any).map(|(_, i)| i)
     }
+}
+
+/// `sin`/`cos` of the exact bracket `arg`, as a rigorous exact bracket.
+///
+/// A point argument (the overwhelmingly common case: every variable is
+/// pinned and transcendental args degenerate) evaluates once.  A
+/// NON-degenerate bracket (reachable when the argument itself contains a
+/// transcendental, e.g. `sin(exp(x))` — the inner enclosure has width,
+/// and nested `exp`s widen it multiplicatively) needs care: sin/cos are
+/// not monotone, so the hull of the two endpoint enclosures is NOT an
+/// enclosure.  Rigorous fallback: `|f″| ≤ 1` on ℝ for both, so the range
+/// over `[la, ha]` lies within the endpoint hull widened by
+/// `(ha − la)²/8` (the linear-interpolation remainder bound); the result
+/// is then intersected with `[-1, 1]` (intersecting an enclosure with a
+/// superset of the true range keeps it an enclosure).  For wide brackets
+/// the correction saturates to the full range — the honest answer.
+fn sin_cos_exact(arg: &(BigRational, BigRational), want_cos: bool) -> (BigRational, BigRational) {
+    use nixie_math::transcendental as tm;
+    let (la, ha) = arg;
+    if la == ha {
+        return tm::sin_cos_rational(la, want_cos);
+    }
+    let e1 = tm::sin_cos_rational(la, want_cos);
+    let e2 = tm::sin_cos_rational(ha, want_cos);
+    let hull_lo = e1.0.min(e2.0);
+    let hull_hi = e1.1.max(e2.1);
+    let w = ha - la;
+    let eighth = (&w * &w) / BigInt::from(8);
+    let lo = (hull_lo - &eighth).max(BigRational::from(BigInt::from(-1)));
+    let hi = (hull_hi + &eighth).min(BigRational::from(BigInt::from(1)));
+    (lo, hi)
+}
+
+/// A finite `f64` as an EXACT `BigRational` (mantissa·2^exp, no rounding
+/// step) — the disequality conflict rule compares box bounds against the
+/// exact δ-window and must not launder an f64 through a lossy conversion.
+fn f64_exact_rational(x: f64) -> Option<BigRational> {
+    if !x.is_finite() {
+        return None;
+    }
+    let bits = x.to_bits();
+    let neg = bits >> 63 == 1;
+    let abs = bits & !(1_u64 << 63);
+    let biased = ((abs >> 52) & 0x7ff) as i64;
+    let mantissa = if biased == 0 {
+        abs & ((1_u64 << 52) - 1)
+    } else {
+        (abs & ((1_u64 << 52) - 1)) | (1_u64 << 52)
+    };
+    let exp = if biased == 0 {
+        -1074
+    } else {
+        biased - 1023 - 52
+    };
+    let m = BigInt::from(mantissa);
+    let v = if exp >= 0 {
+        BigRational::from(m << exp as u64)
+    } else {
+        BigRational::new(m, BigInt::one() << (-exp) as u64)
+    };
+    Some(if neg { -v } else { v })
+}
+
+/// Periodic-aware split point for the branch variable's window `iv`.
+///
+/// When the variable DIRECTLY feeds a `Sin`/`Cos` node, the asin
+/// contraction only engages once the argument window is narrower than
+/// π/2 AND lies inside one monotone piece — plain midpoint bisection of a
+/// multi-period window (e.g. `sin x = 0.5` on `[90, 100]`, ~3 periods)
+/// spends its first splits blind: no contraction, no conflict, every
+/// level re-propagated from scratch.  Splitting at the multiple of π/2
+/// nearest the midpoint lands both halves on monotone-segment boundaries
+/// (consecutive multiples of π/2 bound the monotone pieces of BOTH sin
+/// and cos), so the contraction engages after at most a handful of
+/// splits instead of never.
+///
+/// This is pure search guidance: ANY split point strictly inside the
+/// window is sound, and the midpoint stays the fallback when the nearest
+/// multiple of π/2 rounds outside the window (both non-degeneracy of the
+/// halves — a split at an endpoint makes the "other half" equal its
+/// parent, the 1-ulp loop trap — and real critical position are
+/// required).
+fn branch_split_point(prob: &TransProblem, var: u32, iv: DI) -> f64 {
+    let feeds_periodic = prob.users[var as usize]
+        .iter()
+        .any(|&u| matches!(prob.nodes[u as usize], Node::Sin(_) | Node::Cos(_)));
+    if feeds_periodic {
+        let (_, pi2_hi) = nixie_math::transcendental::pi2_bracket();
+        let width = iv.width();
+        if width.is_finite() && width >= pi2_hi / 2.0 {
+            let mid = iv.midpoint();
+            // The multiple of π/2 nearest the midpoint.  Any k is sound;
+            // nearest keeps the halves balanced.
+            let k = (mid * (2.0 / core::f64::consts::PI)).round();
+            let m = k * core::f64::consts::FRAC_PI_2;
+            if m.is_finite() && m > iv.lo && m < iv.hi {
+                return m;
+            }
+        }
+    }
+    iv.midpoint()
 }
 
 /// Convert an f64 to the nearest `Rational64` (exact when it fits; the
@@ -1513,13 +1671,15 @@ fn solve_conjunction_inner(
                 // gets published, re-verified after rounding.  (A box that
                 // verifies universally makes its midpoint verify too, up to
                 // the rounding double-check built into the witness.)
+                root.stats.witness_tries += 1;
                 if let Some(w) = root.try_point_witness() {
                     return (TransOutcome::DeltaSat { values: w }, root.stats);
                 }
                 match root.pick_branch_var() {
                     Some(v) => {
+                        root.stats.branches += 1;
                         let iv = root.iv[v as usize];
-                        let m = iv.midpoint();
+                        let m = branch_split_point(root.prob, v, iv);
                         if !m.is_finite() {
                             return (TransOutcome::Unknown, root.stats);
                         }
@@ -1836,5 +1996,62 @@ mod d15_probe {
         let out = solve_conjunction(&mut prob, &TransOptions::default());
         eprintln!("[d15] {out:?}");
         assert!(matches!(out, TransOutcome::DeltaSat { .. }), "got {out:?}");
+    }
+}
+
+/// Regression pins for the exact-witness enclosure fix: `sin`/`cos` over a
+/// NON-degenerate bracket must widen the endpoint hull by the rigorous
+/// curvature remainder (the hull alone is not an enclosure once the
+/// bracket spans a monotonicity change — reachable in the witness through
+/// nested transcendental arguments such as `sin(exp(x))`, whose inner
+/// exact brackets have width).
+#[cfg(test)]
+mod sin_cos_exact_probe {
+    use super::*;
+    use num_traits::FromPrimitive;
+
+    fn rat(x: f64) -> BigRational {
+        BigRational::from_f64(x).unwrap_or_else(BigRational::zero)
+    }
+
+    #[test]
+    fn wide_bracket_encloses_the_peak() {
+        // sin over [0, π]: the endpoint hull is ≈ {0} but the true range
+        // reaches 1 at π/2 — the curvature remainder must cover it.
+        let arg = (rat(0.0), rat(core::f64::consts::PI));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        assert!(lo <= rat(1.0), "lo {lo} must enclose the peak 1");
+        assert!(hi >= rat(1.0), "hi {hi} must enclose the peak 1");
+        // cos over the same bracket reaches −1 at π.
+        let (clo, chi) = sin_cos_exact(&arg, true);
+        assert!(clo <= rat(-1.0), "cos lo {clo} must enclose the trough −1");
+        assert!(chi >= rat(-1.0) || chi >= rat(1.0), "cos hi {chi} sanity");
+    }
+
+    #[test]
+    fn narrow_bracket_stays_tight() {
+        // A 1e-3-wide bracket: the remainder (w²/8 = 1.25e-7) keeps the
+        // enclosure within ~2e-7 of the endpoint hull — no full-range
+        // blowup on the common nested-witness shape.
+        let arg = (rat(1.0), rat(1.001));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        let s1 = 1.0f64.sin();
+        let s2 = 1.001f64.sin();
+        let (hull_lo, hull_hi) = (s1.min(s2), s1.max(s2));
+        assert!(lo.to_f64().unwrap() <= hull_lo + 1e-7);
+        assert!(hi.to_f64().unwrap() >= hull_hi - 1e-7);
+        assert!(lo.to_f64().unwrap() >= hull_lo - 1e-6);
+        assert!(hi.to_f64().unwrap() <= hull_hi + 1e-6);
+    }
+
+    #[test]
+    fn point_bracket_is_the_point_enclosure() {
+        // Degenerate bracket: exactly the rigorous point enclosure (the
+        // one-call fast path).
+        let arg = (rat(0.3), rat(0.3));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        let (plo, phi) = nixie_math::transcendental::sin_cos_rational(&rat(0.3), false);
+        assert_eq!(lo, plo);
+        assert_eq!(hi, phi);
     }
 }
