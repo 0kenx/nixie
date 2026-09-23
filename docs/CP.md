@@ -397,3 +397,9 @@ scaling against Z3 across task counts and domain widths. It identifies
 quadratic explanation processing and repeated timetable construction as
 optimization targets; its resource constraints are redundant, so these
 results do not establish performance on capacity-binding packing problems.
+
+Long SAT explanation clauses now use local membership tracking to remove
+duplicate variables while preserving first-occurrence order. Short explanations
+retain the existing scan; callback premises, certificate checks and model replay
+are unchanged. The [reason-deduplication study](studies/2026-09-23-theory-reason-dedup.md)
+records the measured large-sparse improvement and remaining gap to Z3.

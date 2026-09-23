@@ -2,6 +2,100 @@ use super::equiv::SubstOutcome;
 use super::*;
 
 #[test]
+fn theory_reason_dedup_matches_ordered_scan_exhaustively() {
+    fn original(reasons: &[Lit], propagated: Lit) -> SmallVec<[Lit; 8]> {
+        let mut result = smallvec::smallvec![propagated];
+        for &lit in reasons {
+            if !result.iter().any(|l: &Lit| l.var() == lit.var()) {
+                result.push(lit.negate());
+            }
+        }
+        result
+    }
+    // Include both polarities, repeated premises, self premises and sparse IDs.
+    // Opposite-polarity premises cannot both be true in a valid explanation,
+    // but even these inputs must retain the old first-occurrence behavior.
+    let alphabet = [
+        Lit::pos(Var(0)),
+        Lit::neg(Var(0)),
+        Lit::pos(Var(17)),
+        Lit::neg(Var(17)),
+        Lit::pos(Var(1 << 29)),
+        Lit::neg(Var(1 << 29)),
+    ];
+    for len in 0..=6 {
+        for mut code in 0..6_usize.pow(len) {
+            let mut reasons = Vec::new();
+            for _ in 0..len {
+                reasons.push(alphabet[code % 6]);
+                code /= 6;
+            }
+            for propagated in [alphabet[0], alphabet[1]] {
+                assert_eq!(
+                    super::learn::theory_reason_literals(&reasons, propagated),
+                    original(&reasons, propagated)
+                );
+                // Exercise the set path on the same enumeration as the scan.
+                let long: Vec<_> = reasons.iter().copied().cycle().take(18).collect();
+                assert_eq!(
+                    super::learn::theory_reason_literals(&long, propagated),
+                    original(&long, propagated)
+                );
+            }
+        }
+    }
+    for len in [7, 8, 9, 32, 256, 1024] {
+        let mut reasons: Vec<_> = (0..len).map(|i| Lit::pos(Var(i * 31 + 17))).collect();
+        reasons.extend(reasons.clone().into_iter().rev().map(Lit::negate));
+        for propagated in [Lit::pos(Var(0)), reasons[0], reasons[len as usize - 1]] {
+            assert_eq!(
+                super::learn::theory_reason_literals(&reasons, propagated),
+                original(&reasons, propagated)
+            );
+        }
+    }
+}
+
+#[test]
+fn theory_reason_dedup_preserves_watches_proof_and_scopes() {
+    for count in [1, 7, 8, 9, 64] {
+        let build = |duplicate: bool| {
+            let mut solver = Solver::new();
+            let transcript = solver.enable_lrat_transcript();
+            let vars: Vec<_> = (0..=count).map(|_| solver.new_var()).collect();
+            let propagated = Lit::pos(vars[count]);
+            let mut reasons: Vec<_> = vars[..count].iter().copied().map(Lit::pos).collect();
+            if duplicate {
+                reasons.extend(reasons.clone());
+            }
+            for _ in 0..2 {
+                solver.push();
+                for &var in &vars[..count] {
+                    solver.trail.new_decision_level();
+                    solver.trail.assign_decision(Lit::pos(var));
+                }
+                let cid = solver.add_theory_reason_clause(&reasons, propagated);
+                let clause = solver.clauses.get(cid).expect("live explanation");
+                assert_eq!(clause.lits.len(), count + 1);
+                assert_eq!(clause.lits[0], propagated);
+                assert_eq!(clause.lits[1], Lit::neg(vars[count - 1]));
+                solver.trail.assign_propagation(propagated, cid);
+                solver.backtrack_with_phase_saving((count - 1) as u32);
+                solver.trail.new_decision_level();
+                solver.trail.assign_decision(Lit::pos(vars[count - 1]));
+                assert!(solver.propagate().is_none());
+                assert!(solver.trail.lit_value(propagated).is_true());
+                solver.pop();
+                assert!(solver.clauses.get(cid).is_some_and(|c| c.deleted));
+                assert_eq!(solver.trail.lit_value(propagated), LBool::Undef);
+            }
+            transcript.snapshot().expect("proof transcript").proof
+        };
+        assert_eq!(build(false), build(true));
+    }
+}
+
+#[test]
 fn test_empty_sat() {
     let mut solver = Solver::new();
     assert_eq!(solver.solve(), SolverResult::Sat);
