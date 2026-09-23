@@ -252,6 +252,10 @@ impl Solver {
         // copies multiplies reads without bound -- the closure growth that
         // stalled the refinement loop on deep `swap` / `storecomm` chains.
         build_equality_read_congruence(manager, &collected, &mut candidates);
+        // Axiom 1, eagerly (Z3 `assert_store_axiom1_core`): every store's
+        // self-read.  See `build_store_self_reads` for why this family is
+        // what makes an equality-only contradiction reachable at all.
+        build_store_self_reads(manager, &collected, &mut candidates);
 
         // ======== Phase 2.4: constant-array reads ========
         // `select((as const S) v, i) = v` for every observed read of a
@@ -1269,6 +1273,63 @@ fn build_read_over_write(
 /// the stores must be reconciled at one another's write indices even when the
 /// input contains no read.  Those congruence instances are the propagation
 /// bridge required by the Stump-Barrett-Dill-Levitt array-incompleteness case.
+/// **Axiom 1, eagerly** (Z3 `theory_array_base::assert_store_axiom1_core`):
+/// for every `store(b, i, v)` term the walk encountered, the unit
+///
+/// ```text
+/// select(store(b, i, v), i) = v
+/// ```
+///
+/// This family **bootstraps the reads**, and without it an entire class of
+/// UNSAT goals is invisible.  Every other family here is gated on indices
+/// something already reads (`read_indices`), on pairs already *separated*,
+/// or on observed `select` terms — and a store's own write index is read by
+/// nothing until this unit mints the read.  A contradiction that lives
+/// entirely in array EQUALITIES — e.g.
+/// `(= f (store b1 1 1)) ∧ (= f g) ∧ (= g (store b2 1 2))`, UNSAT because
+/// the merged chains write 1 and 2 at the same index — then has no lever:
+/// EUF merges the arrays (the equalities are facts) but congruence closure
+/// has no selects to close over, the refinement loop asserts nothing, and
+/// the solver answers a false `sat` (found through the TLA+ two-array BMC
+/// shape, where two branch-update atoms go simultaneously true through
+/// no-op writes and the decoded trace then satisfies no branch).
+///
+/// With the self-read minted, the standard machinery finishes the job: the
+/// unit pins `select(store1, 1) = 1`; EUF congruence merges the two stores'
+/// self-reads (same index, arrays merged by the committed equalities); the
+/// pinned values collide; the search backtracks off the contradictory
+/// equality arrangement.
+///
+/// One unit per store term, deduplicated by interned term id like every
+/// other family — bounded by the input's store terms plus the stores
+/// earlier rounds minted, never by pairs × indices (the store-congruence
+/// cascade shape).  A read the INPUT already makes at the store's own
+/// index is left to `build_read_over_write`, which derives the same
+/// content from the observed read.
+fn build_store_self_reads(
+    manager: &mut TermManager,
+    collected: &ArrayStructure,
+    candidates: &mut Vec<TermId>,
+) {
+    for &store in &collected.store_apps {
+        let Some(TermKind::Store(_, idx, val)) = manager.get(store).map(|t| t.kind.clone()) else {
+            continue;
+        };
+        let self_read = manager.mk_select(store, idx);
+        if collected
+            .selects
+            .iter()
+            .any(|&(sel, _, _)| sel == self_read)
+        {
+            // Already observed (input or an earlier round): its own family
+            // carries the content; a second unit would be a duplicate term
+            // anyway, but skipping keeps the candidate list lean.
+            continue;
+        }
+        candidates.push(manager.mk_eq(self_read, val));
+    }
+}
+
 fn build_equality_read_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
@@ -2404,6 +2465,110 @@ mod s8_iterative_tests {
         let mut out = ArrayStructure::default();
         collect_array_structure(ga, true, &tm, &mut visited, &mut out);
         assert_eq!(out.interface_arrays, vec![a]);
+    }
+}
+
+#[cfg(test)]
+mod store_self_read_tests {
+    use crate::Context;
+
+    /// Runs `script`, returns the final verdict line.
+    fn verdict(script: &str) -> String {
+        let mut ctx = Context::new();
+        let out = ctx.execute_script(script).expect("executes");
+        out.iter()
+            .rev()
+            .find(|l| matches!(l.as_str(), "sat" | "unsat" | "unknown"))
+            .cloned()
+            .unwrap_or_else(|| "no-verdict".to_string())
+    }
+
+    /// Two stores writing DIFFERENT values at the SAME index, equated
+    /// through a variable chain — UNSAT by extensionality, and nothing in
+    /// the input selects at that index.  Before the eager axiom-1 family
+    /// (`build_store_self_reads`) every instantiation family here was
+    /// gated on an observed read, a separated pair, or a select term, so
+    /// this contradiction had no lever: EUF merged the three arrays (the
+    /// equalities are facts) but congruence closure had no selects to
+    /// close over, the refinement loop asserted nothing, and the solver
+    /// answered `sat`.  Z3: `unsat`.  Found through the TLA+ two-array BMC
+    /// shape (see `a_two_array_pluscal_spec_never_answers_a_false_clean`
+    /// in nixie-tla-check).
+    #[test]
+    fn equality_only_store_collision_is_unsat() {
+        let script = r#"
+(set-logic ALL)
+(declare-fun f () (Array Int Int))
+(declare-fun g () (Array Int Int))
+(declare-fun b1 () (Array Int Int))
+(declare-fun b2 () (Array Int Int))
+(assert (= f (store b1 1 1)))
+(assert (= f g))
+(assert (= g (store b2 1 2)))
+(check-sat)
+"#;
+        assert_eq!(verdict(script), "unsat");
+    }
+
+    /// The BMC branch shape in isolation: an UNCHANGED-style alias
+    /// (`x1 = x2`) simultaneously true with a branch update
+    /// (`x2 = store(x1, 1, 1)`) and an init chain pinning `x1[1] = 0`.
+    /// UNSAT — the alias forces `x1[1] = 1` — and again no select exists.
+    /// This is the exact committed-equality set the two-array pipeline
+    /// model used to accept, and the decoder then had to complete the
+    /// never-read point `x2[1]` against a contradictory model.
+    #[test]
+    fn branch_alias_and_init_chain_contradiction_is_unsat() {
+        let script = r#"
+(set-logic ALL)
+(declare-fun x1 () (Array Int Int))
+(declare-fun x2 () (Array Int Int))
+(declare-fun b () (Array Int Int))
+(assert (= x1 x2))
+(assert (= x2 (store x1 1 1)))
+(assert (= x1 (store (store b 1 0) 2 0)))
+(check-sat)
+"#;
+        assert_eq!(verdict(script), "unsat");
+    }
+
+    /// The neighbouring SAT shape: identical write values at the same
+    /// index make the stores equal, and the arrangement is satisfiable
+    /// with free bases.  Pins that the new family does not over-refute.
+    #[test]
+    fn no_op_store_collision_stays_sat() {
+        let script = r#"
+(set-logic ALL)
+(declare-fun f () (Array Int Int))
+(declare-fun g () (Array Int Int))
+(declare-fun b1 () (Array Int Int))
+(declare-fun b2 () (Array Int Int))
+(assert (= f (store b1 1 7)))
+(assert (= f g))
+(assert (= g (store b2 1 7)))
+(check-sat)
+"#;
+        assert_eq!(verdict(script), "sat");
+    }
+
+    /// A disjunctive branch taking the store side while the alias side is
+    /// ruled out: satisfiable (the store's write makes the arrays differ),
+    /// and Z3 agrees.  The complement of
+    /// [`Self::branch_alias_and_init_chain_contradiction_is_unsat`]: with
+    /// the alias disjunct *negated*, the arrangement must survive.
+    #[test]
+    fn branch_disjunction_without_alias_stays_sat() {
+        let script = r#"
+(set-logic ALL)
+(declare-fun x1 () (Array Int Int))
+(declare-fun x2 () (Array Int Int))
+(declare-fun b () (Array Int Int))
+(assert (= x1 (store (store b 1 0) 2 0)))
+(assert (or (= x1 x2) (= x2 (store x1 1 1))))
+(assert (not (= x1 x2)))
+(check-sat)
+"#;
+        assert_eq!(verdict(script), "sat");
     }
 }
 
