@@ -391,3 +391,9 @@ membership scan, and snapshot construction stops copying alternatives after
 a fixed value is found. This local reuse does not survive a callback or scope.
 The [exclusion study](studies/2026-09-22-cp-scheduling-exclusions.md) records
 the controlled Z3 comparison and unchanged explanation/proof checks.
+
+The [larger-case investigation](studies/2026-09-23-cp-larger-cases.md) measures
+scaling against Z3 across task counts and domain widths. It identifies
+quadratic explanation processing and repeated timetable construction as
+optimization targets; its resource constraints are redundant, so these
+results do not establish performance on capacity-binding packing problems.
