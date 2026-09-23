@@ -407,7 +407,7 @@ fn main() {
             use nixie_theories::graph::{TRACE, TraceKind};
             let g = |k: TraceKind| TRACE[k as usize].load(std::sync::atomic::Ordering::Relaxed);
             eprintln!(
-                "c graph: pops={} inval={} reread={} evT={} evF={} witDrop={} cycDrop={} closureRebuild={}",
+                "c graph: pops={} inval={} reread={} evT={} evF={} witDrop={} cycDrop={} closureRebuild={} emitPath={} emitCut={} emitCyc={} emitTopo={} emitNoCyc={}",
                 g(TraceKind::Pops),
                 g(TraceKind::Invalidations),
                 g(TraceKind::FullRereads),
@@ -416,6 +416,11 @@ fn main() {
                 g(TraceKind::WitnessDrops),
                 g(TraceKind::CycleMemoDrops),
                 g(TraceKind::ClosureRebuilds),
+                g(TraceKind::EmitPath),
+                g(TraceKind::EmitCut),
+                g(TraceKind::EmitCycle),
+                g(TraceKind::EmitTopo),
+                g(TraceKind::EmitNoCycle),
             );
         }
     }

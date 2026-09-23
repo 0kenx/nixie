@@ -26,6 +26,12 @@ pub struct GraphStatement {
     acyclic: Option<(TermId, TermId)>,
     vertices: usize,
     false_term: TermId,
+    /// `(from, to)` per edge, packed back to back for the witness checks'
+    /// edge scans — the full 16-byte tuples interleave the atom/negation
+    /// payload the scans never touch, doubling their cache footprint.
+    /// Behind an `Arc` so statement clones stay O(1). A pure function of
+    /// `edges`, keeping derived `PartialEq` consistent.
+    endpoints: Arc<[(u32, u32)]>,
 }
 
 /// Invalid graph lemma; malformed structure is an error, never a panic.
@@ -65,14 +71,19 @@ pub enum GraphRule {
     /// `closed`: `from ∈ closed`, `to ∉ closed`, and every edge whose
     /// tail is in `closed` while its head is not has its negation among
     /// the premises — so no premise-true edge leaves the set, and
-    /// nothing reachable from `from` escapes it.
+    /// nothing reachable from `from` escapes it. The set is carried as a
+    /// **membership bitmap** (vertex `v` ∈ closed ⇔ bit `v` set), shared
+    /// by every rule the emitting memo produces: the emitting closure
+    /// computes it once per lifetime as the packed complement of its
+    /// `seen` array, and the per-consequence check then runs pure bit
+    /// tests — no set materialization on the checking path at all.
     Cut {
         /// Separated source vertex.
         from: u32,
         /// Separated target vertex.
         to: u32,
-        /// The closed vertex set (unsorted; membership only).
-        closed: Vec<u32>,
+        /// The closed vertex set as a membership bitmap (`vertices` bits).
+        closed: Arc<[u64]>,
     },
     /// `¬acyclic` witnessed by an explicit directed cycle of edge
     /// indices, every walked edge's presence atom a premise.
@@ -98,8 +109,9 @@ pub enum GraphRule {
     NoCycleThrough {
         /// The vertex the cycle must pass through.
         v: u32,
-        /// The ≥1-step forward closure (unsorted; membership only).
-        closed: Vec<u32>,
+        /// The ≥1-step forward closure as a membership bitmap
+        /// (`vertices` bits).
+        closed: Arc<[u64]>,
     },
 }
 
@@ -220,18 +232,30 @@ impl GraphCertificate {
                 if *from != want_from || *to != want_to {
                     return Err(GraphProofError("cut witness endpoints mismatch"));
                 }
-                let set: FxHashSet<u32> = closed.iter().copied().collect();
-                if !set.contains(from) || set.contains(to) {
+                // The witness bitmap is used as-is (pure bit tests; no set
+                // materialization on the checking path — this check runs
+                // per emitted consequence, and over product-scale statements
+                // both hash sets and per-check fills dominated certificate
+                // checking). Endpoints come from the statement's packed
+                // (from, to) array — half the cache footprint of the full
+                // edge tuples — and only actual crossing edges touch the
+                // atom/negation payload.
+                let bits = closed;
+                if bits.len() != self.statement.vertices_count().div_ceil(64) {
+                    return Err(GraphProofError("cut witness bitmap is mis-sized"));
+                }
+                if !bit_get(bits, *from) || bit_get(bits, *to) {
                     return Err(GraphProofError(
                         "cut witness set does not separate the pair",
                     ));
                 }
-                for &(from_e, to_e, _, negation) in edges {
+                let endpoints = self.statement.endpoints();
+                for (i, &(from_e, to_e)) in endpoints.iter().enumerate() {
                     // A crossing edge has its tail in the set and its head
                     // outside; every crossing edge must be premise-refuted.
-                    if set.contains(&from_e)
-                        && !set.contains(&to_e)
-                        && !premise_set.contains(&negation)
+                    if bit_get(bits, from_e)
+                        && !bit_get(bits, to_e)
+                        && !premise_set.contains(&self.statement.edges[i].3)
                     {
                         return Err(GraphProofError(
                             "cut witness set is crossed by an unrefuted edge",
@@ -269,16 +293,21 @@ impl GraphCertificate {
                         "no-cycle witness must conclude a self-pair negation",
                     ));
                 }
-                let set: FxHashSet<u32> = closed.iter().copied().collect();
-                if set.contains(v) || closed.len() != set.len() {
-                    return Err(GraphProofError(
-                        "no-cycle witness set contains the vertex (or repeats)",
-                    ));
+                let bits = closed;
+                if bits.len() != self.statement.vertices_count().div_ceil(64) {
+                    return Err(GraphProofError("no-cycle witness bitmap is mis-sized"));
                 }
-                for &(from_e, to_e, _, negation) in edges {
-                    if (set.contains(&from_e) || from_e == *v)
-                        && !set.contains(&to_e)
-                        && !premise_set.contains(&negation)
+                if bit_get(bits, *v) {
+                    return Err(GraphProofError("no-cycle witness set contains the vertex"));
+                }
+                // The region whose leaving edges must be premise-refuted is
+                // `closed ∪ {v}` (the `v` bit is tested inline — no copy of
+                // the shared witness).
+                let endpoints = self.statement.endpoints();
+                for (i, &(from_e, to_e)) in endpoints.iter().enumerate() {
+                    if (bit_get(bits, from_e) || from_e == *v)
+                        && !bit_get(bits, to_e)
+                        && !premise_set.contains(&self.statement.edges[i].3)
                     {
                         return Err(GraphProofError(
                             "no-cycle witness is left by an unrefuted edge",
@@ -330,6 +359,13 @@ impl GraphCertificate {
     }
 }
 
+/// Membership test against a packed witness bitmap.
+fn bit_get(bits: &[u64], v: u32) -> bool {
+    let idx = v as usize;
+    bits.get(idx / 64)
+        .is_some_and(|word| word >> (idx % 64) & 1 == 1)
+}
+
 /// How a premise participates in a graph lemma.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PremiseKind {
@@ -355,6 +391,13 @@ impl GraphStatement {
         false_term: TermId,
     ) -> Self {
         Self {
+            endpoints: Arc::from(
+                edges
+                    .iter()
+                    .map(|&(from, to, _, _)| (from, to))
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+            ),
             edges,
             reach,
             acyclic,
@@ -379,6 +422,13 @@ impl GraphStatement {
     #[must_use]
     pub fn edges(&self) -> &[(u32, u32, TermId, TermId)] {
         &self.edges
+    }
+
+    /// The declaration's edge endpoints as packed `(from, to)` pairs, in
+    /// edge order (the witness checks' scan view).
+    #[must_use]
+    pub fn endpoints(&self) -> &[(u32, u32)] {
+        &self.endpoints
     }
 
     /// The declaration's reified reach atoms as `(from, to, atom, negation)`.
@@ -729,6 +779,16 @@ mod tests {
     use super::*;
     use nixie_core::ast::TermManager;
 
+    /// Pack a membership bitmap for a test witness (mirrors the
+    /// propagator's emission-side packer).
+    fn proof_test_bits(vertices: usize, members: &[u32]) -> Arc<[u64]> {
+        let mut bits = vec![0u64; vertices.div_ceil(64)];
+        for &v in members {
+            bits[v as usize / 64] |= 1 << (v % 64);
+        }
+        bits.into()
+    }
+
     /// Triangle 0→1→2→0 plus chord 0→2; reach (0,2), (0,0); acyclic.
     fn triangle(tm: &mut TermManager) -> (GraphStatement, Vec<TermId>, Vec<TermId>, TermId) {
         let edges = ["e01", "e12", "e20", "e02"]
@@ -1001,7 +1061,7 @@ mod tests {
             GraphRule::Cut {
                 from: 0,
                 to: 2,
-                closed: vec![0, 1],
+                closed: proof_test_bits(2, &[0, 1]),
             },
         );
         let not_reach02 = tm.mk_not(reach[0]);
@@ -1025,7 +1085,7 @@ mod tests {
             GraphRule::Cut {
                 from: 0,
                 to: 2,
-                closed: vec![0, 1, 2],
+                closed: proof_test_bits(3, &[0, 1, 2]),
             },
         );
         assert!(

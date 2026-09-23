@@ -127,6 +127,11 @@ pub use nixie_sat::{RestartStrategy, SolverStats};
 // Re-export theory combination types from nixie-theories
 pub use nixie_theories::{EqualityNotification, TheoryCombination};
 
+/// The graph propagator's maintenance counters (diagnosis; see
+/// `nixie_theories::graph::TraceKind`), re-exported so CLI-level tooling
+/// can print them without a direct dependency edge.
+pub use nixie_theories::graph::{TRACE as GRAPH_TRACE, TraceKind as GraphTraceKind};
+
 // Phase 2 enhancements
 pub mod combination;
 pub mod conflict;

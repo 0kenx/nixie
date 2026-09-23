@@ -68,9 +68,20 @@ env_flag_fn!(
     conflict_trace,
     "NIXIE_CONFLICT_TRACE"
 );
-#[cfg(debug_assertions)]
+// Gated to the same configuration as its only caller (the decision-point
+// diagnostic in `solver/search_ext.rs`, `#[cfg(all(feature = "std",
+// debug_assertions))]`): in a release build the call site compiles away and
+// the probe would otherwise be dead code — which fails the `-D warnings`
+// clippy bar on a clean tree.
+#[cfg(all(feature = "std", debug_assertions))]
 env_flag_fn!(
-    /// `NIXIE_CHECK_FIXPOINT` — assignment-fixpoint re-check.
+    /// `NIXIE_CHECK_FIXPOINT` — assignment-fixpoint re-check. The only
+    /// caller is `debug_assertions`-gated; keep the release build of the
+    /// probe link-dead without tripping `-D warnings` (it must stay
+    /// reachable for release debugging, and the cfg is exactly the
+    /// use/no-use split, so the expectation is always fulfilled where it
+    /// exists).
+    #[cfg_attr(not(all(feature = "std", debug_assertions)), expect(dead_code))]
     check_fixpoint,
     "NIXIE_CHECK_FIXPOINT"
 );
