@@ -21,13 +21,22 @@ solver); dReal users should feel at home.
 
 Ground, quantifier-free goals whose arithmetic (over `Real`) is built from
 `+ − * /`, the six transcendental functions, numeric `ite`, and
-`≤ < > ≥ = ≠`, under arbitrary Boolean structure (`and or not => xor ite`).
-Variables are `Real`-sorted. Set the logic to `QF_NRT` (or leave it
+`≤ < > ≥ = ≠ distinct`, under arbitrary Boolean structure (`and or not =>
+xor ite`). Variables are `Real`-sorted. Set the logic to `QF_NRT` (or leave it
 unset/`ALL`).
 
+**Ground uninterpreted functions over the reals** are admitted via
+Ackermannization before the Boolean abstraction: every application `f(t…)`
+becomes a fresh Real variable and the functional-consistency implications
+`(t1 = t1' ∧ …) ⇒ v = v'` join the Boolean skeleton, so the dPLL loop
+carries exactly the ground congruence semantics EUF would (applications
+whose arguments are quantifier-bound are never Ackermannized — those goals
+stay declined). A `distinct` expands to its pairwise negated equalities
+(arity ≤ 16; beyond that the goal is declined rather than atom-bombed).
+
 Everything outside the fragment is **declined with `unknown`**, not
-approximated: quantifiers, uninterpreted functions inside the arithmetic,
-arrays, strings, FP, datatypes, integer-sorted variables, `distinct`. The
+approximated: quantifiers, uninterpreted functions with non-ground
+occurrences, arrays, strings, FP, datatypes, integer-sorted variables. The
 reasoning is always the same: an encoding that *drops* the semantics of a
 construct solves a weaker problem than the one asked, which yields false
 `sat`s. (A closed logic like `QF_LRA` rejects a transcendental atom at the
@@ -123,8 +132,10 @@ unsatisfiability after finitely many such lemmas is a proof.
   (bounded variants refute quickly). dReal has the same shape.
 * **Budgets**: branch nodes (100k default) and propagation steps are
   bounded; exhaustion is `unknown`.
-* `≠` never prunes (removing a point from an interval is disjunctive); it
-  verifies pointwise only.
+* `≠` prunes only in its whole-box form: a disequality conflicts when the
+  root interval lies entirely inside the δ-window (no point of the box can
+  δ-satisfy it); otherwise it verifies pointwise. Splitting a box to
+  exclude a single point is disjunctive and not attempted.
 * Deep `let`/`ite` chains or huge coefficients may hit the encoder gates
   before the ICP runs.
 
@@ -181,6 +192,10 @@ delta-sat; bounded Pythagorean refutation 41 ms→19 ms.
 * `(set-option :delta <rational>)` — the δ (default `0.001`, dReal's).
   A larger δ widens what counts as δ-satisfiable; `unsat` answers are
   sound for every δ ≥ 0.
+* `(set-option :trans-max-branches <uint>)` — branch-node budget
+  (default `100000`). Exhaustion answers `unknown`, never a guess.
+* `(set-option :trans-max-propagations <uint>)` — propagation-step budget
+  (default `8000000`).
 
 ## Numeric hygiene
 

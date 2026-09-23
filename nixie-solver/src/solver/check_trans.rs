@@ -29,6 +29,7 @@
 //! * everything else is `Unknown`.
 
 use nixie_core::ast::{TermId, TermKind, TermManager};
+use nixie_core::tactic::AckermannizeTactic;
 use nixie_sat::{Lit, Solver as SatSolver, Var};
 use nixie_theories::trans::{Cmp, TransOptions, TransOutcome, TransProblem};
 use num_rational::Rational64;
@@ -73,6 +74,29 @@ pub(super) fn term_has_trans(term: TermId, manager: &TermManager) -> bool {
     false
 }
 
+/// Does the DAG rooted at `term` mention an uninterpreted-function
+/// application?  (Same walk shape as [`term_has_trans`].)
+fn term_has_apply(term: TermId, manager: &TermManager) -> bool {
+    use rustc_hash::FxHashSet;
+    let mut stack: Vec<TermId> = vec![term];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(t) = stack.pop() {
+        if !visited.insert(t) {
+            continue;
+        }
+        let Some(node) = manager.get(t) else {
+            continue;
+        };
+        if matches!(node.kind, TermKind::Apply { .. }) {
+            return true;
+        }
+        let mut kids = Vec::new();
+        super::term_walk::collect_structural_children(&node.kind, &mut kids);
+        stack.extend(kids);
+    }
+    false
+}
+
 impl Solver {
     /// Dispatch a transcendental goal to the δ-ICP engine.  `None` = not
     /// ours (no trans terms) or declined fragment — the caller falls
@@ -93,10 +117,32 @@ impl Solver {
             return None;
         }
 
+        // ---- Ground UF Ackermannization. ----
+        // `f x = f y` under `x = y` is EUF semantics ICP does not carry;
+        // treating applications as free arithmetic variables would
+        // δ-satisfy goals EUF refutes.  Ackermannization closes the gap
+        // for GROUND applications (the whole fragment is ground): each
+        // occurrence becomes a fresh Real variable, and the functional-
+        // consistency implications `(a1=b1 ∧ …) ⇒ v=v'` join the Boolean
+        // skeleton — the dPLL loop enumerates their disjunctive content
+        // exactly.  Non-ground (quantifier-tainted) applications survive
+        // and are declined downstream, as before.
+        let mut ack_apps: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut goal_assertions: Vec<TermId> = self.assertions.clone();
+        if goal_assertions.iter().any(|&a| term_has_apply(a, manager)) {
+            let mut tactic = AckermannizeTactic::new(manager);
+            if let Some((new_assertions, app_to_var)) =
+                tactic.ackermannize_assertions(&goal_assertions)
+            {
+                goal_assertions = new_assertions;
+                ack_apps = app_to_var;
+            }
+        }
+
         // ---- Boolean abstraction over the arithmetic atoms. ----
         let mut build = TransBuild::new();
         let mut root_units: Vec<i32> = Vec::new();
-        for &a in &self.assertions {
+        for &a in &goal_assertions {
             match build.tseitin(a, manager, true) {
                 TseitinOut::Lit(l) => root_units.push(l),
                 TseitinOut::Const(true) => {}
@@ -157,7 +203,8 @@ impl Solver {
 
         let opts = TransOptions {
             delta: trans_delta_of(&self.config),
-            ..TransOptions::default()
+            max_branch_nodes: self.config.trans_max_branches,
+            max_propagations: self.config.trans_max_propagations,
         };
 
         // ---- dPLL ∘ ICP. ----
@@ -210,6 +257,10 @@ impl Solver {
                 let Some((root, rhs_const, cmp)) =
                     ctx.constraint_for(lhs, rhs, cmp, manager, &mut prob, &mut cache)
                 else {
+                    #[cfg(feature = "std")]
+                    if std::env::var_os("NIXIE_TRANS_DEBUG").is_some() {
+                        eprintln!("[trans] atom {i} declined to compile (outside fragment)");
+                    }
                     ok = false;
                     break;
                 };
@@ -274,6 +325,7 @@ impl Solver {
                         &assignment,
                         &atom_terms,
                         &build,
+                        &ack_apps,
                         manager,
                     );
                     return Some(SolverResult::Sat);
@@ -331,6 +383,7 @@ impl Solver {
         assignment: &[bool],
         atom_terms: &[TermId],
         build: &TransBuild,
+        ack_apps: &FxHashMap<TermId, TermId>,
         manager: &mut TermManager,
     ) {
         let mut model = Model::new();
@@ -338,6 +391,20 @@ impl Solver {
             let v = values.get(slot).copied().unwrap_or_else(Rational64::zero);
             let value_term = manager.mk_real(v);
             model.set(term, value_term);
+        }
+        // Ackermannized applications publish their fresh variable's
+        // value — `(get-value (f x))` after a δ-witness answers with what
+        // the witness actually used, not an uninterpreted blank.
+        let value_of: FxHashMap<TermId, TermId> = prob
+            .var_terms()
+            .iter()
+            .zip(values.iter())
+            .map(|(&t, &v)| (t, manager.mk_real(v)))
+            .collect();
+        for (&app, &var) in ack_apps {
+            if let Some(&value) = value_of.get(&var) {
+                model.set(app, value);
+            }
         }
         for (i, &atom) in atom_terms.iter().enumerate() {
             let value = if assignment.get(i).copied().unwrap_or(true) {
@@ -576,6 +643,26 @@ impl TransBuild {
                             let key = manager.mk_ge(*a, *b);
                             let v = self.intern_atom(*a, *b, 2, key);
                             pending.push(LitOrConst::L(lit_of(v, p)));
+                        }
+                        // `distinct` over any sort: the conjunction of
+                        // pairwise negated equalities, as arithmetic (or
+                        // Boolean) atoms under the same abstraction.  A
+                        // negated equality atom compiles to a `≠`
+                        // constraint, which the ICP verifies pointwise and
+                        // refutes when the root interval lies wholly
+                        // inside the δ-window.  Arity is capped: the pair
+                        // count is quadratic and this fragment's SAT
+                        // instance is not built for thousands of atoms.
+                        TermKind::Distinct(args) if args.len() >= 2 && args.len() <= 16 => {
+                            let n = args.len();
+                            let npairs = n * (n - 1) / 2;
+                            stack.push(Frame::CombineAnd(p, npairs));
+                            for i in 0..n {
+                                for j in (i + 1)..n {
+                                    let eq = manager.mk_eq(args[i], args[j]);
+                                    stack.push(Frame::Encode(eq, false));
+                                }
+                            }
                         }
                         _ => return TseitinOut::Declined,
                     }

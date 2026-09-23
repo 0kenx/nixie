@@ -340,6 +340,13 @@ pub struct SolverConfig {
     /// value).  A constraint `e ⋀ c` is decided against the weakened bound
     /// `c ± δ·(1+|c|)`.  See `docs/TRANS.md`.
     pub trans_delta_nanos: i64,
+    /// The transcendental theory's branch-node budget
+    /// (`(set-option :trans-max-branches …)`; default 100_000).  Budget
+    /// exhaustion answers `unknown`, never a guess.
+    pub trans_max_branches: u64,
+    /// The transcendental theory's propagation-step budget
+    /// (`(set-option :trans-max-propagations …)`; default 8_000_000).
+    pub trans_max_propagations: u64,
 }
 
 impl Default for SolverConfig {
@@ -382,6 +389,8 @@ impl SolverConfig {
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
             trans_delta_nanos: 1_000_000,
+            trans_max_branches: 100_000,
+            trans_max_propagations: 8_000_000,
         }
     }
 
@@ -418,6 +427,8 @@ impl SolverConfig {
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
             trans_delta_nanos: 1_000_000,
+            trans_max_branches: 100_000,
+            trans_max_propagations: 8_000_000,
         }
     }
 
@@ -454,6 +465,8 @@ impl SolverConfig {
             nonlinear_model_search: true,
             enable_domain_first_branching: false,
             trans_delta_nanos: 1_000_000,
+            trans_max_branches: 100_000,
+            trans_max_propagations: 8_000_000,
         }
     }
 
@@ -492,6 +505,8 @@ impl SolverConfig {
             nonlinear_model_search: false,
             enable_domain_first_branching: false,
             trans_delta_nanos: 1_000_000,
+            trans_max_branches: 100_000,
+            trans_max_propagations: 8_000_000,
         }
     }
 
