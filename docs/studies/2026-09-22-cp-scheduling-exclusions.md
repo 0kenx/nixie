@@ -5,7 +5,7 @@ removing repeated work in its finite-domain callback. It adds no propagation
 rule, task feature, search policy or proof shortcut. The external performance
 reference is installed Z3 4.16.0; Nixie before/after comparisons are separate.
 
-Candidate `44f30970` passes the pre-registered performance bar. On confirmation
+Integrated candidate `afb4e85b` passes the pre-registered performance bar. On confirmation
 seeds its ordinary/certified **Nixie/Z3 instruction ratios are 0.4778/0.5086**.
 Against the preceding Nixie baseline, ratios are 0.8951/0.8984 (about 10% fewer
 instructions). These are paired geometric means, not wall-clock speedups.
@@ -55,15 +55,15 @@ Callback-only diagnostics have no directly comparable Z3 API.
 |---|---:|---:|---:|
 | Ordinary, all | 0.5338 | 0.4778 | 0.8951 |
 | Ordinary, 4x4 | 0.1860 | 0.1802 | 0.9692 |
-| Ordinary, 8x16 | 1.5321 | 1.2666 | 0.8267 |
+| Ordinary, 8x16 | 1.5321 | 1.2667 | 0.8267 |
 | Certified, all | 0.5661 | 0.5086 | 0.8984 |
 | Certified, 4x4 | 0.2049 | 0.1992 | 0.9719 |
-| Certified, 8x16 | 1.5640 | 1.2989 | 0.8305 |
+| Certified, 8x16 | 1.5640 | 1.2988 | 0.8304 |
 
 No family regresses beyond the 5% neutral band. Ordinary family ratios versus
 previous Nixie are absent 0.9002, blocked 0.9153, present 0.9521 (neutral),
 shared 0.9144, sparse 0.8132, unknown 0.9064 and wide 0.8709. The larger sparse
-case falls from 9.3031 to 6.7606 times Z3's instructions: a substantial remaining
+case falls from 9.3031 to 6.7610 times Z3's instructions: a substantial remaining
 gap despite the improvement. The larger all-present case remains 2.2557 times
 Z3. Small startup-sensitive cases must not hide those limitations.
 
@@ -71,6 +71,12 @@ Selection ordinary/certified ratios versus previous Nixie were 0.8953/0.8984;
 the confirmation grid supports the same result. Isolating the second stage
 against the first-stage ablation gives selection ratios 0.9297/0.9323. We did
 not measure confirmation cells for the neutral first stage alone.
+
+The optimization-only source is `44f30970`; its confirmation ratios were also
+0.4778/0.5086 against Z3 and 0.8951/0.8984 against previous Nixie. After the
+release-Clippy guard fix below, `afb4e85b` repeats the confirmation grid with
+a newly frozen binary, retaining every transcript and the same finding.
+This is integration replay, not additional independent selection data.
 
 The [paired CSV](2026-09-22-cp-scheduling-exclusions.csv) retains all 280
 confirmation comparisons and each ten-seed baseline distribution. Each seed
@@ -81,7 +87,7 @@ serve both modes; they are not independent additional reference samples.
 
 Callback diagnostics also retain 280/280 exact transcript matches per grid
 (140 partial callback states and 140 small public solves). Their confirmation
-callback ratio is 0.9614, neutral overall; absent is 0.9117 and wide is 0.9494.
+callback ratio is 0.9615, neutral overall; absent is 0.9117 and wide is 0.9494.
 Other callback families are neutral, and none regresses beyond 5%. Partial
 callback `Unknown` states are not counted as SAT solves. These component
 figures compare Nixie revisions, not Nixie with Z3.
@@ -136,3 +142,14 @@ Release Clippy exposed a pre-existing configuration mismatch in SAT diagnostics:
 is guarded by `debug_assertions`. Its definition now uses the same guard.
 This changes no search policy or runtime check. The original Clippy failure
 is retained; the complete gate is rerun after this correction.
+
+Before integration with the September 23 main branch, release build, Clippy,
+rustdoc, doctests, formatting and the Python harness checks passed. Z3 4.16.0
+parity had 176 decisive matches, no disagreements and one inconclusive case
+(`array_unique.smt2`: Z3 Unknown). A complete 12,349-test run passed 12,348
+and timed out on the fixed-seed `odd_width_identity_pairs_hold` at 180 seconds;
+18 tests were already skipped by the suite. An earlier attempt timed out on
+the fixed-input F4/Buchberger comparison and was stopped; the complete run
+used a local 600-second allowance for that test and it passed. These attempts
+are preserved, not counted as a clean full-suite pass. Final integration
+verification is recorded separately below.

@@ -91,7 +91,7 @@ they must occupy nonoverlapping windows; cancelling one removes its resource
 usage without restricting its start. Run it with:
 
 ```sh
-cargo run -p nixie-solver --example optional_resource_allocation
+cargo run --release -p nixie-solver --example optional_resource_allocation
 ```
 
 The API pattern is:
