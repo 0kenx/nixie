@@ -280,3 +280,29 @@ fn unsupported_field_presence_is_scoped_and_declarations_are_harmless() {
         (pop 1) (check-sat)");
     assert_eq!(out, ["sat", "unknown", "sat", "unknown", "sat"]);
 }
+
+#[test]
+fn coupled_binary_affine_systems_certify_and_restore_scopes() {
+    for certified in [false, true] {
+        let mut ctx = Context::new();
+        if certified {
+            ctx.require_certified_mode();
+        }
+        // Plant x=201,y=213 independently. Both equations share both variables.
+        let (a, b) = (201, 213);
+        let left = multiply(a, a, 283) ^ multiply(2, b, 283);
+        let right = a ^ multiply(b, b, 283);
+        let out = ctx.execute_script(&format!(
+            "(set-logic QF_FF)
+             (declare-const x (_ BinaryField 283)) (declare-const y (_ BinaryField 283))
+             (assert (= (ff.add (ff.mul x x) (ff.mul (as ff2 (_ BinaryField 283)) y)) (as ff{left} (_ BinaryField 283))))
+             (assert (= (ff.add x (ff.mul y y)) (as ff{right} (_ BinaryField 283))))
+             (check-sat) (push 1)
+             (assert (= (ff.add x (ff.mul y y)) (as ff{} (_ BinaryField 283))))
+             (check-sat) (pop 1) (check-sat)", right ^ 1)).unwrap();
+        assert_eq!(
+            out,
+            ["sat", if certified { "unknown" } else { "unsat" }, "sat"]
+        );
+    }
+}

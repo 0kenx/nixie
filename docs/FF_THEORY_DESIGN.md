@@ -716,3 +716,10 @@ theory equalities cannot be silently accepted as free Boolean atoms.
 Presence detection includes application result sorts and fields nested inside
 container/datatype definitions. Unsupported combinations cannot bypass the
 SAT honesty gate merely because no explicit field constant or variable occurs.
+
+Binary equalities that are affine over F2 now have a budgeted Gaussian
+elimination path before enumeration. This includes Frobenius powers and
+constant multiples, including flattened repeated factors. General products
+and disequalities retain bounded enumeration. The total 22-bit assignment
+space cap and certified-UNSAT restrictions remain unchanged. See the
+[affine hard-case study](studies/2026-09-23-ff-affine.md).

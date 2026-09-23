@@ -1,6 +1,9 @@
-//! Bounded enumeration for binary extensions. No prime polynomial or GB API
+//! Affine F2 solving, then bounded enumeration for binary extensions.
+//! No prime polynomial or GB API
 //! accepts these fields. Evaluation uses shift-and-reduce multiplication,
 //! independently of core's carryless convolution and polynomial division.
+
+mod affine;
 
 use super::*;
 use nixie_core::sort::binary_field::BinaryField;
@@ -25,6 +28,9 @@ pub(super) fn check(
         return FfOutcome::OutOfBudget {
             where_: "binary enumeration space",
         };
+    }
+    if let Some(outcome) = affine::check(manager, field, binary, &vars, assertions, &mut budget) {
+        return outcome;
     }
     let mut assignment = FxHashMap::default();
     let mask = binary.order() - 1u8;

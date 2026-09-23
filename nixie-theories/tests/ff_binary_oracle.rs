@@ -245,3 +245,46 @@ fn cardinality_certificate_binds_every_argument_to_claimed_field() {
         .verify(&m, &[genuine])
     );
 }
+
+#[test]
+fn coupled_affine_systems_match_exhaustive_f4_oracle() {
+    let mut m = TermManager::new();
+    let sort = m.sorts.binary_field(7u8.into()).unwrap();
+    let field = m.sorts.get(sort).unwrap().finite_field().unwrap();
+    let x = m.mk_var("x", sort);
+    let y = m.mk_var("y", sort);
+    let xx = m.mk_ff_mul([x, x]).unwrap();
+    let yy = m.mk_ff_mul([y, y]).unwrap();
+    for a in 0u32..4 {
+        for b in 0u32..4 {
+            let aa = m.mk_ff_const(field, a.into()).unwrap();
+            let bb = m.mk_ff_const(field, b.into()).unwrap();
+            let axx = m.mk_ff_mul([aa, xx]).unwrap();
+            let byy = m.mk_ff_mul([bb, yy]).unwrap();
+            let left = m.mk_ff_add([axx, y]).unwrap();
+            let right = m.mk_ff_add([x, byy]).unwrap();
+            for c in 0u32..4 {
+                for d in 0u32..4 {
+                    let cc = m.mk_ff_const(field, c.into()).unwrap();
+                    let dd = m.mk_ff_const(field, d.into()).unwrap();
+                    let assertions = [m.mk_eq(left, cc), m.mk_eq(right, dd)];
+                    let solutions = (0..16u32)
+                        .filter(|&v| {
+                            let (x, y) = (v & 3, v >> 2);
+                            multiply(a, multiply(x, x, 7), 7) ^ y == c
+                                && x ^ multiply(b, multiply(y, y, 7), 7) == d
+                        })
+                        .collect::<Vec<_>>();
+                    match check_conjunction(&m, field, &assertions, 100_000) {
+                        FfOutcome::Model(model) => {
+                            assert!(!solutions.is_empty());
+                            validate_model(&m, field, &assertions, &model).unwrap();
+                        }
+                        FfOutcome::Exhausted { certificate: None } => assert!(solutions.is_empty()),
+                        other => panic!("unexpected {other:?}"),
+                    }
+                }
+            }
+        }
+    }
+}
