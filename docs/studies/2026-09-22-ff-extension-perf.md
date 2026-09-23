@@ -486,3 +486,49 @@ integer/field functions or field containers. End-to-end prime/binary and
 certified-mode regressions, plus direct internal tracking tests, protect
 these separate entry points. The arithmetic and certificate replay layers
 remain unchanged by this guard.
+
+
+### Guard verification and final performance snapshot
+
+The six focused presence regressions pass. Source `260c0728` includes the
+fix and current main integration; its standard-LTO production binary returns
+Unknown for all five retained unsupported-combination probes, and exposes
+no model after Unknown. The [new distribution CSV](2026-09-23-ff-extension-presence.csv)
+records 260 new cells, with 220 SAT, 20 UNSAT and 20 budget Unknowns. Every
+output matches the baseline, and both pre-registered acceptance gates pass.
+Solved extension instruction ratios are **0.7233 / 0.7228** (initial/fresh),
+or **27.7% fewer instructions**. Ratios including fixed-budget work are
+0.6830 / 0.6825; shared F256 ratios are 0.3364 / 0.3362. The prime and wide
+controls remain within 0.6% of baseline. The added soundness guard preserves
+the optimization; the isolated 4a773b8f/2285fc37 comparison remains its
+attribution evidence.
+
+The [Z3 comparison](2026-09-23-ff-extension-z3-presence.csv) reuses every
+reference cell. Jointly solved extension cost is 0.3602 times Z3, dominated
+by tiny inputs and startup costs, so this is not a general solver superiority
+claim. The harder two-variable F256 case still costs **13.138×** Z3
+(243.88M versus 18.72M median instructions). Z3 solves all 20 budget cases
+that Nixie cannot decide. Unknown remains unsolved and excluded from solved
+cost ratios. All **2,320 canonical records** pass schema, content identity,
+path and uniqueness checks; the previously disclosed 20 duplicate Z3
+attempts remain outside the canonical store.
+
+
+All landing gates pass on `260c0728`: standard-LTO all-feature and default
+release builds; **12,381 tests** (18 skipped, 244.702 seconds); **114
+doctests** (31 ignored); release Clippy with warnings denied; formatting;
+warning-free rustdoc; and the ignored trajectory canary (33.928 seconds).
+Full tests/lint/docs use the documented separate release target with LTO off.
+Z3 **4.16.0** parity has **176 decisive matches, zero wrong answers, one
+inconclusive** (`array_unique.smt2`, Z3 Unknown). The performance landing
+gate passes with all 12 verdicts matching and all nine conflict/decision
+ratios **1.000**. Its predeclared external cap remains 600 seconds per arm;
+no solver budget changes were made. The two benchmark-runner regression
+tests also pass.
+
+Exact source/binary metadata, all final logs, the runner configuration,
+production counterexample outputs, and parity JSON are retained under
+`precompile/260c0728b00fe13f012e8f067e8167392718aa43/benchmark/ff-extension-verification/`.
+Benchmark records and raw outputs remain in the result store. Disposable
+profile binaries/data and the private build worktree are removed during
+landing cleanup; text profiles and cached solver binaries are retained.
