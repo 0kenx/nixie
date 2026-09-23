@@ -186,6 +186,56 @@ impl<'a> AckermannizeTactic<'a> {
         Ok(self.apply_mut_with_converter(goal)?.0)
     }
 
+    /// Apply ackermannization to a list of assertions, returning the
+    /// transformed assertion list together with the application→fresh-
+    /// variable substitution map (for callers that must publish values
+    /// for the original application terms — the transcendental δ-ICP
+    /// dispatcher).  `None` when nothing was eliminated.
+    ///
+    /// This is the core both of [`Self::apply_mut_with_converter`] and of
+    /// solver-internal callers that do not run the tactic pipeline.
+    pub fn ackermannize_assertions(
+        &mut self,
+        assertions: &[TermId],
+    ) -> Option<(Vec<TermId>, crate::prelude::FxHashMap<TermId, TermId>)> {
+        use crate::prelude::FxHashSet;
+
+        let mut all_apps: Vec<(
+            crate::interner::Spur,
+            smallvec::SmallVec<[TermId; 4]>,
+            TermId,
+        )> = Vec::new();
+        let mut tainted: FxHashSet<crate::interner::Spur> = FxHashSet::default();
+        let bound_names = self.collect_bound_names(assertions);
+        let mut visited = FxHashSet::default();
+
+        for &assertion in assertions {
+            self.collect_func_apps(
+                assertion,
+                &bound_names,
+                &mut all_apps,
+                &mut tainted,
+                &mut visited,
+            );
+        }
+
+        // Drop every application of a symbol that had a quantified
+        // (bound-variable-dependent) occurrence – Ackermannizing it would
+        // be unsound.
+        if !tainted.is_empty() {
+            all_apps.retain(|(func, _, _)| !tainted.contains(func));
+        }
+
+        if all_apps.is_empty() {
+            return None;
+        }
+
+        let (new_assertions, term_to_var, fresh_vars) =
+            self.substitute_and_constrain(assertions, all_apps);
+        let _ = fresh_vars;
+        Some((new_assertions, term_to_var))
+    }
+
     /// Apply ackermannization to a goal, additionally returning a
     /// [`ModelConverter`] that lifts a model of the transformed sub-goal back
     /// to a model over the original goal's variables (dropping the fresh
@@ -198,7 +248,7 @@ impl<'a> AckermannizeTactic<'a> {
         &mut self,
         goal: &Goal,
     ) -> Result<(TacticResult, Option<Box<dyn ModelConverter>>)> {
-        use crate::prelude::{FxHashMap, FxHashSet};
+        use crate::prelude::FxHashSet;
 
         // Collect ground function applications, tracking symbols with any
         // quantifier-bound-argument occurrence (see `collect_func_apps`).
@@ -222,8 +272,8 @@ impl<'a> AckermannizeTactic<'a> {
         }
 
         // Drop every application of a symbol that had a quantified
-        // (bound-variable-dependent) occurrence – Ackermannizing it would be
-        // unsound.
+        // (bound-variable-dependent) occurrence – Ackermannizing it would
+        // be unsound.
         if !tainted.is_empty() {
             all_apps.retain(|(func, _, _)| !tainted.contains(func));
         }
@@ -232,6 +282,38 @@ impl<'a> AckermannizeTactic<'a> {
         if all_apps.is_empty() {
             return Ok((TacticResult::NotApplicable, None));
         }
+
+        let (new_assertions, _term_to_var, fresh_vars) =
+            self.substitute_and_constrain(&goal.assertions, all_apps);
+
+        let converter: Box<dyn ModelConverter> = Box::new(AckermannModelConverter { fresh_vars });
+
+        Ok((
+            TacticResult::SubGoals(vec![Goal {
+                assertions: new_assertions,
+                precision: goal.precision,
+            }]),
+            Some(converter),
+        ))
+    }
+
+    /// Shared core: fresh variables per application, pairwise functional-
+    /// consistency constraints, and the substituted assertion list.
+    /// Returns `(new_assertions, app -> fresh_var, fresh_vars)`.
+    fn substitute_and_constrain(
+        &mut self,
+        assertions: &[TermId],
+        all_apps: Vec<(
+            crate::interner::Spur,
+            smallvec::SmallVec<[TermId; 4]>,
+            TermId,
+        )>,
+    ) -> (
+        Vec<TermId>,
+        crate::prelude::FxHashMap<TermId, TermId>,
+        crate::prelude::FxHashSet<TermId>,
+    ) {
+        use crate::prelude::{FxHashMap, FxHashSet};
 
         // Group applications by function symbol
         let mut func_groups: FxHashMap<crate::interner::Spur, Vec<FuncApp>> = FxHashMap::default();
@@ -273,9 +355,27 @@ impl<'a> AckermannizeTactic<'a> {
                     }
 
                     // Build: (a1 = b1) ∧ (a2 = b2) ∧ ... => (var_i = var_j)
+                    //
+                    // The arguments are compared as the terms the
+                    // SUBSTITUTION leaves behind: a nested application
+                    // (`f(f x)`) has applications as arguments, and the
+                    // goal's assertions no longer contain them — the
+                    // congruence must speak about their fresh variables
+                    // (the raw `Apply` terms here made every downstream
+                    // consumer that had eliminated applications see a
+                    // foreign construct; found by the trans dispatcher,
+                    // where `(= (f x) (f y))` declined the fragment).
                     let mut arg_eqs: Vec<TermId> = Vec::new();
                     for k in 0..app_i.args.len() {
-                        let eq = self.manager.mk_eq(app_i.args[k], app_j.args[k]);
+                        let a = term_to_var
+                            .get(&app_i.args[k])
+                            .copied()
+                            .unwrap_or(app_i.args[k]);
+                        let b = term_to_var
+                            .get(&app_j.args[k])
+                            .copied()
+                            .unwrap_or(app_j.args[k]);
+                        let eq = self.manager.mk_eq(a, b);
                         arg_eqs.push(eq);
                     }
 
@@ -295,7 +395,7 @@ impl<'a> AckermannizeTactic<'a> {
         // Substitute function applications with their fresh variables in the goal
         let mut new_assertions: Vec<TermId> = Vec::new();
 
-        for &assertion in &goal.assertions {
+        for &assertion in assertions {
             let substituted = self.manager.substitute(assertion, &term_to_var);
             new_assertions.push(substituted);
         }
@@ -303,15 +403,7 @@ impl<'a> AckermannizeTactic<'a> {
         // Add the functional consistency constraints
         new_assertions.extend(constraints);
 
-        let converter: Box<dyn ModelConverter> = Box::new(AckermannModelConverter { fresh_vars });
-
-        Ok((
-            TacticResult::SubGoals(vec![Goal {
-                assertions: new_assertions,
-                precision: goal.precision,
-            }]),
-            Some(converter),
-        ))
+        (new_assertions, term_to_var, fresh_vars)
     }
 }
 

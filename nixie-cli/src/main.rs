@@ -2019,6 +2019,41 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                 checkpointing::write(script, args, ctx, &output);
             }
 
+            // `--stats` (or `STATS=1` for A/B scripts): deterministic
+            // search counters plus the graph propagator's maintenance
+            // counters on stderr, so stdout stays valid SMT-LIB output.
+            // The flag existed but was never wired — it silently did
+            // nothing.
+            if args.stats || std::env::var_os("STATS").is_some() {
+                let stats = ctx.stats();
+                eprintln!(
+                    "; stats: conflicts={} decisions={} propagations={}",
+                    stats.conflicts, stats.decisions, stats.propagations
+                );
+                {
+                    use nixie_solver::{GRAPH_TRACE, GraphTraceKind};
+                    let g = |k: GraphTraceKind| {
+                        GRAPH_TRACE[k as usize].load(std::sync::atomic::Ordering::Relaxed)
+                    };
+                    eprintln!(
+                        "; stats graph: pops={} inval={} reread={} evT={} evF={} witDrop={} cycDrop={} closureRebuild={} emitPath={} emitCut={} emitCyc={} emitTopo={} emitNoCyc={}",
+                        g(GraphTraceKind::Pops),
+                        g(GraphTraceKind::Invalidations),
+                        g(GraphTraceKind::FullRereads),
+                        g(GraphTraceKind::EventsTrue),
+                        g(GraphTraceKind::EventsFalse),
+                        g(GraphTraceKind::WitnessDrops),
+                        g(GraphTraceKind::CycleMemoDrops),
+                        g(GraphTraceKind::ClosureRebuilds),
+                        g(GraphTraceKind::EmitPath),
+                        g(GraphTraceKind::EmitCut),
+                        g(GraphTraceKind::EmitCycle),
+                        g(GraphTraceKind::EmitTopo),
+                        g(GraphTraceKind::EmitNoCycle),
+                    );
+                }
+            }
+
             if args.smtcomp {
                 // SMT-COMP compatible output
                 output.join("\n")

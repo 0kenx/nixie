@@ -72,6 +72,12 @@ impl Solver {
 
         // Extract values from equality constraints (e.g., x = 5)
         // This handles cases where a variable is equated to a constant
+        //
+        // `array_alias_eqs` collects the committed-true array-sorted
+        // equalities whose NEITHER side is a store — `f = g` — for the
+        // second pass below the loop; see the deferral note in the alias
+        // arm.
+        let mut array_alias_eqs: Vec<(TermId, TermId)> = Vec::new();
         for (&var, constraint) in &self.var_to_constraint {
             // Check if the equality is assigned true in the SAT model
             let is_true = sat_model
@@ -135,15 +141,24 @@ impl Solver {
                     } else {
                         None
                     };
-                    if let Some((name, value)) = pair
-                        && model.get(name).is_none()
-                        // `x = (store x i v)` would make evaluating `x`
-                        // descend into itself forever. A name that occurs in
-                        // its own value is left unassigned, which is the
-                        // answer it had before.
-                        && !occurs_in(manager, name, value)
-                    {
-                        model.set(name, value);
+                    if let Some((name, value)) = pair {
+                        if model.get(name).is_none()
+                            // `x = (store x i v)` would make evaluating `x`
+                            // descend into itself forever. A name that occurs in
+                            // its own value is left unassigned, which is the
+                            // answer it had before.
+                            && !occurs_in(manager, name, value)
+                        {
+                            model.set(name, value);
+                        }
+                    } else {
+                        // Neither side is a store — a pure ALIAS, `f = g`.
+                        // Deferred to a second pass below the loop: the order
+                        // this map iterates is arbitrary, and an alias firing
+                        // before the name's store equality would record
+                        // `g -> f` and (first-wins) block `g -> store(…)` —
+                        // strictly less information for every reader.
+                        array_alias_eqs.push((*lhs, *rhs));
                     }
                     continue;
                 }
@@ -215,6 +230,45 @@ impl Solver {
                     }
                     _ => {}
                 }
+            }
+        }
+
+        // **Second pass: array aliases** (`f = g`, neither side a store).
+        // The equality is committed true in this model, so the two names
+        // denote the same array and recording one as the other's value
+        // states exactly what the query forced — the same justification the
+        // store arm runs under, and the one
+        // `docs/studies/2026-09-14-no-model-for-array-variables.md` gives for
+        // chains. Without this pass an UNCHANGED-style variable — `x@2 =
+        // x@1`, no store anywhere — has no value at all, every read of it is
+        // unreducible, and a reader completing it (the TLA+ trace decoder)
+        // has to invent a point value the taken branch may disagree with.
+        //
+        // After the store pass, so a name's own chain always wins; and each
+        // alias resolves through the entries that exist at record time, so
+        // `f = g` lands as `f -> g`'s chain when `g` has one.
+        for &(l, r) in &array_alias_eqs {
+            let is_name = |t: TermId| {
+                manager
+                    .get(t)
+                    .is_some_and(|d| matches!(d.kind, TermKind::Var(_)))
+            };
+            for (name, other) in [(l, r), (r, l)] {
+                if !is_name(name) || model.get(name).is_some() {
+                    continue;
+                }
+                // Prefer the other side's recorded value: it is the same
+                // array, and a chain beats a name for every reader. A value
+                // that mentions `name` itself (the self-referential shape
+                // `x = y` with `y = store(x, 1, 7)`) falls back to the RAW
+                // name: the walk (`select_in`) follows it to the chain one
+                // hop later, and no entry ever contains its own key.
+                let value = match model.get(other) {
+                    Some(v) if !occurs_in(manager, name, v) => v,
+                    _ if !occurs_in(manager, name, other) => other,
+                    _ => continue,
+                };
+                model.set(name, value);
             }
         }
 
@@ -338,6 +392,17 @@ impl Solver {
         // model pinned `fdi0 = emi0 = 0` yet the merged applications read
         // `-1` and `4`).  Overwrite every member's entry with its class
         // representative's value.
+        //
+        // OCCURS GUARD: the representative's value may *mention* the member
+        // — an array-sorted class whose members hold each other's store
+        // chains (`x@1 -> store(x@0,…)` for a merged `x@0 ≈ x@1`) would
+        // otherwise install `x@0 -> store(x@0,…)`, a value containing its
+        // own name.  `Model::eval` on such an entry ping-pongs through the
+        // assignment table (`select_in` re-resolves the base every link),
+        // so the entry is worse than none: it spins the walk to its chain
+        // bound and reads back garbage.  The equality-recording pass above
+        // already applies exactly this check (`occurs_in`); this pass must
+        // too, because it installs values the recording pass never chose.
         {
             let keys: Vec<TermId> = model.assignments().keys().copied().collect();
             let mut reconciled: Vec<(TermId, TermId)> = Vec::new();
@@ -358,7 +423,9 @@ impl Solver {
                 reconciled.push((term, rep_term));
             }
             for (term, rep_term) in reconciled {
-                if let Some(rep_value) = model.get(rep_term) {
+                if let Some(rep_value) = model.get(rep_term)
+                    && !occurs_in(manager, term, rep_value)
+                {
                     model.set(term, rep_value);
                 }
             }
@@ -669,6 +736,7 @@ impl Solver {
         // also what makes `bag.count` queries answer with numbers.
         self.extract_bag_model(&mut model, manager);
 
+        dereference_array_aliases(&mut model, manager);
         self.model = Some(model);
     }
 
@@ -2822,6 +2890,69 @@ fn is_array_sorted(manager: &TermManager, t: TermId) -> bool {
 /// `select_in`'s walk is bounded anyway. This refuses to record one regardless,
 /// because a model entry that says a term is built from itself is not a value.
 ///
+/// Resolve array-sorted entries whose value is a plain name with an entry of
+/// its own, so an alias `f -> g` prints as `g`'s ultimate value instead of a
+/// bare name.
+///
+/// The alias-recording arm of the equality loop can only record what it sees
+/// at the time: if `f = g` is visited before `g = (store …)`, `f` gets the raw
+/// name `g`, and a consumer that prints the entry verbatim (`get-model`,
+/// `get-value`) shows `f = ?` while `g` shows its chain — two different values
+/// for names one committed-true equality pins as the same array. One bounded
+/// fixpoint over the table resolves every such entry to the first non-name
+/// value on its path (a cycle — a malformed model, since recording refuses
+/// self-occurrence — leaves the entry untouched rather than spinning).
+///
+/// Scoped to ARRAY-sorted keys and values deliberately: uninterpreted-sort
+/// entries map terms to class representatives whose *names* are the intended
+/// value (`@uc` witnesses), and re-valuing those would rename witnesses for
+/// no gain.
+fn dereference_array_aliases(model: &mut Model, manager: &TermManager) {
+    /// A malformed alias cycle longer than this is not a walk to follow.
+    const MAX_HOPS: usize = 1_000_000;
+    let array_sorted = |t: TermId| {
+        manager.get(t).is_some_and(|d| {
+            matches!(
+                manager.sorts.get(d.sort).map(|s| &s.kind),
+                Some(SortKind::Array { .. })
+            )
+        })
+    };
+    let entries: Vec<(TermId, TermId)> =
+        model.assignments().iter().map(|(k, v)| (*k, *v)).collect();
+    for (term, mut value) in entries {
+        if !array_sorted(term) {
+            continue;
+        }
+        for _ in 0..MAX_HOPS {
+            let is_name = manager
+                .get(value)
+                .is_some_and(|d| matches!(d.kind, TermKind::Var(_)));
+            if !is_name || !array_sorted(value) {
+                break;
+            }
+            let Some(next) = model.get(value) else {
+                break;
+            };
+            if next == value {
+                break;
+            }
+            value = next;
+        }
+        if let Some(current) = model.get(term)
+            && current != value
+            // The dereferenced value may mention the entry's own key (the
+            // self-referential alias shape): installing it would recreate
+            // exactly the self-mention the recording pass declined, so the
+            // raw name entry stands (its point readings still resolve —
+            // `select_in` follows it one hop).
+            && !occurs_in(manager, term, value)
+        {
+            model.set(term, value);
+        }
+    }
+}
+
 /// Walks only the ways an array term is formed, which is all that can be on
 /// the right of an array equality; anything else is a leaf.
 fn occurs_in(manager: &TermManager, needle: TermId, haystack: TermId) -> bool {

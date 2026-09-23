@@ -1,0 +1,7 @@
+(set-logic QF_NRT)
+(declare-const x0 Real)
+(declare-const t Real)
+(assert (= (* x0 (exp (- t))) 0.3))
+(assert (and (>= x0 0.5) (<= x0 1.0)))
+(assert (and (>= t 0.0) (<= t 2.0)))
+(check-sat)

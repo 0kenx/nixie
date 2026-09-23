@@ -1,0 +1,6 @@
+(set-logic QF_NRT)
+(declare-const x Real)
+(declare-const b Bool)
+(assert (= x (ite b 4.0 9.0)))
+(assert (= (sqrt x) 2.0))
+(check-sat)

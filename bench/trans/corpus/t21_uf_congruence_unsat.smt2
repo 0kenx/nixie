@@ -1,0 +1,8 @@
+(set-logic QF_NRT)
+(declare-fun f (Real) Real)
+(declare-const x Real)
+(declare-const y Real)
+(assert (= x y))
+(assert (< (exp (f x)) 1.0))
+(assert (> (exp (f y)) 2.0))
+(check-sat)

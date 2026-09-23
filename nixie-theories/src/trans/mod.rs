@@ -61,8 +61,9 @@ use alloc::vec;
 #[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use nixie_math::transcendental::DI;
-use num_rational::Rational64;
-use num_traits::ToPrimitive;
+use num_bigint::BigInt;
+use num_rational::{BigRational, Rational64};
+use num_traits::{FromPrimitive, One, ToPrimitive, Zero};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 #[cfg(feature = "std")]
@@ -125,8 +126,12 @@ pub enum TransOutcome {
 /// `TransProblem::nodes`.
 #[derive(Clone, Debug)]
 pub(crate) enum Node {
-    /// A rational constant as a rigorous interval.
-    Const(DI),
+    /// A rational constant, kept EXACT: the δ-witness's publication check
+    /// evaluates the published point in exact arithmetic, and an f64
+    /// bracket would lose the constant's true value (the first version
+    /// stored the bracket and every witness failed on `0.15`, whose
+    /// downward-rounded bound differs from the exact value).
+    Const(Rational64),
     /// A Real variable; the payload is its `var_terms` slot.
     Var(u32),
     /// `-a`
@@ -199,8 +204,15 @@ pub(crate) struct Constraint {
     pub(crate) rhs: Rational64,
     /// The comparison.
     pub(crate) cmp: Cmp,
-    /// The δ-weakened admissible interval for `root`.
+    /// The δ-weakened admissible interval for `root` (f64 propagation
+    /// bound).
     pub(crate) rhs_interval: DI,
+    /// The δ-weakened admissible bounds in EXACT arithmetic — the
+    /// publication check compares the evaluated rational bracket against
+    /// exactly these (re-deriving them from a float δ in two places
+    /// drifted: the constraint's build-δ and the engine's run-δ differed
+    /// by a factor 150 on the d15 regression).
+    pub(crate) admissible_exact: (BigRational, BigRational),
 }
 
 /// A conjunctive ICP problem over the shared node DAG.
@@ -216,13 +228,19 @@ pub struct TransProblem {
     pub(crate) var_terms: Vec<nixie_core::ast::TermId>,
     /// Node index of each variable.
     pub(crate) var_nodes: Vec<u32>,
+    /// Static search memos (built by `prepare_search`): (reachable,
+    /// feeds_compound).
+    pub(crate) search_memo: Option<(Vec<bool>, Vec<bool>)>,
 }
 
 impl TransProblem {
-    /// Whether the variable node feeds (transitively, downward is not
-    /// needed — `users` points up) any compound arithmetic node.
+    /// Whether the variable node feeds (transitively, via `users`) any
+    /// compound arithmetic node — memoized by `prepare_search`.
     #[must_use]
     pub(crate) fn feeds_compound(&self, node: u32) -> bool {
+        if let Some((_, feeds)) = self.search_memo.as_ref() {
+            return feeds[node as usize];
+        }
         let mut seen = vec![false; self.nodes.len()];
         let mut stack = vec![node];
         while let Some(i) = stack.pop() {
@@ -246,9 +264,14 @@ impl TransProblem {
         &self.var_terms
     }
 
-    /// Whether any constraint transitively reads `node` (via `users`).
+    /// Whether any constraint transitively reads `node` (via `users`) —
+    /// memoized by [`Self::prepare_search`] (the graph is static; the
+    /// per-call DFS this replaces sat on `pick_branch_var`'s hot path).
     #[must_use]
     pub(crate) fn constraint_reachable(&self, node: u32) -> bool {
+        if let Some((reachable, _)) = self.search_memo.as_ref() {
+            return reachable[node as usize];
+        }
         let mut seen = vec![false; self.nodes.len()];
         let mut stack = vec![node];
         while let Some(i) = stack.pop() {
@@ -262,6 +285,43 @@ impl TransProblem {
             stack.extend(self.users[i as usize].iter().copied());
         }
         false
+    }
+
+    /// Precompute the static search memos (constraint reachability,
+    /// compound feeding) — once per problem, at solve entry.
+    pub(crate) fn prepare_search(&mut self) {
+        if self.search_memo.is_some() {
+            return;
+        }
+        let n = self.nodes.len();
+        let mut reachable = vec![false; n];
+        let mut feeds = vec![false; n];
+        // Reverse reachability from the constraint roots.
+        let mut rstack: Vec<u32> = self.constraints.iter().map(|c| c.root).collect();
+        while let Some(i) = rstack.pop() {
+            if reachable[i as usize] {
+                continue;
+            }
+            reachable[i as usize] = true;
+            rstack.extend(self.nodes[i as usize].children().iter().copied());
+        }
+        // Compound feeding: a compound node anywhere above.
+        for (i, users) in self.users.iter().enumerate() {
+            let mut stack: Vec<u32> = users.clone();
+            let mut seen = vec![false; n];
+            while let Some(u) = stack.pop() {
+                if seen[u as usize] {
+                    continue;
+                }
+                seen[u as usize] = true;
+                if !matches!(self.nodes[u as usize], Node::Var(_) | Node::Const(_)) {
+                    feeds[i] = true;
+                    break;
+                }
+                stack.extend(self.users[u as usize].iter().copied());
+            }
+        }
+        self.search_memo = Some((reachable, feeds));
     }
 
     /// Intern `term` (bottom-up, explicit stack) as a node, deduplicating
@@ -321,10 +381,10 @@ impl TransProblem {
                     if !compound {
                         // Leaf: constant or (Real) variable, or a decline.
                         let node = match &kind {
-                            K::RealConst(r) => Some(Node::Const(DI::from_rational64(r))),
-                            K::IntConst(n) => n.to_i64().map(|v| {
-                                Node::Const(DI::from_rational64(&Rational64::from_integer(v)))
-                            }),
+                            K::RealConst(r) => Some(Node::Const(*r)),
+                            K::IntConst(n) => {
+                                n.to_i64().map(|v| Node::Const(Rational64::from_integer(v)))
+                            }
                             K::Var(_) => {
                                 if node_term.sort != manager.sorts.real_sort {
                                     // Int-sorted (or worse) variable: the
@@ -439,18 +499,36 @@ impl TransProblem {
 
     /// Add `root ⋈ rhs` with the δ-tolerance `δ·(1+|rhs|)` precomputed.
     pub fn add_constraint(&mut self, root: u32, rhs: Rational64, cmp: Cmp, delta: f64) {
+        let rhs_big = widen(&rhs);
+        let tol_exact = widen_f64(delta) * (BigRational::one() + abs_big(&rhs_big));
         let tol = delta * (1.0 + rhs.to_f64().unwrap_or(0.0).abs());
         let widened = DI::from_rational64(&rhs).add(&DI { lo: -tol, hi: tol });
+        // Widen the F64 pruning bound by a few ulps beyond the exact
+        // admissible bound: outward-rounded propagation saturates boxes
+        // exactly AT the bound, leaving the exact publication check no
+        // interior slack (it then fails by an ulp forever — the t15/t16
+        // flounder).  Pruning against δ+ε is SOUND for `unsat` (the
+        // ε-larger weakened problem contains the δ-weakened one), and the
+        // exact witness still demands the true δ.
+        const PRUNE_ULPS: u32 = 4;
         let rhs_interval = match cmp {
             Cmp::Le => DI {
                 lo: f64::NEG_INFINITY,
-                hi: widened.hi,
+                hi: widen_ulps(widened.hi, PRUNE_ULPS),
             },
             Cmp::Ge => DI {
-                lo: widened.lo,
+                lo: widen_ulps_low(widened.lo, PRUNE_ULPS),
                 hi: f64::INFINITY,
             },
-            Cmp::Eq | Cmp::Ne => widened,
+            Cmp::Eq | Cmp::Ne => DI {
+                lo: widen_ulps_low(widened.lo, PRUNE_ULPS),
+                hi: widen_ulps(widened.hi, PRUNE_ULPS),
+            },
+        };
+        let admissible_exact = match cmp {
+            Cmp::Le => (neg_infinite_sentinel(), &rhs_big + &tol_exact),
+            Cmp::Ge => (&rhs_big - &tol_exact, pos_infinite_sentinel()),
+            Cmp::Eq | Cmp::Ne => (&rhs_big - &tol_exact, &rhs_big + &tol_exact),
         };
         let cid = self.constraints.len() as u32;
         self.constraint_users[root as usize].push(cid);
@@ -459,6 +537,7 @@ impl TransProblem {
             rhs,
             cmp,
             rhs_interval,
+            admissible_exact,
         });
     }
 }
@@ -470,9 +549,120 @@ impl TransProblem {
 /// Dependency provenance of one bound: which constraints produced it.
 type Deps = SmallVec<[u32; 2]>;
 
+/// Exact bracket product (corner hull).
+fn mul_brackets(
+    a: &(BigRational, BigRational),
+    b: &(BigRational, BigRational),
+) -> (BigRational, BigRational) {
+    let c1 = &a.0 * &b.0;
+    let c2 = &a.0 * &b.1;
+    let c3 = &a.1 * &b.0;
+    let c4 = &a.1 * &b.1;
+    let lo = c1.clone().min(c2.clone()).min(c3.clone()).min(c4.clone());
+    let hi = c1.max(c2).max(c3).max(c4);
+    (lo, hi)
+}
+
+/// |q| as a BigRational.
+fn abs_big(q: &BigRational) -> BigRational {
+    if *q < BigRational::new(BigInt::from(0), BigInt::from(1)) {
+        -q.clone()
+    } else {
+        q.clone()
+    }
+}
+
+/// A finite-but-astronomically-magnitude sentinel standing for ±∞ in the
+/// exact admissible bounds (the comparisons only ever test against it;
+/// f64 propagation intervals are already unbounded there).
+fn neg_infinite_sentinel() -> BigRational {
+    BigRational::new(BigInt::from(-10) << 10_000, BigInt::one())
+}
+
+fn pos_infinite_sentinel() -> BigRational {
+    BigRational::new(BigInt::from(10) << 10_000, BigInt::one())
+}
+
+/// `hi` widened by `k` ulps toward +∞.
+fn widen_ulps(hi: f64, k: u32) -> f64 {
+    let mut v = hi;
+    for _ in 0..k {
+        v = nixie_math::transcendental::f64_next_up(v);
+    }
+    v
+}
+
+/// `lo` widened by `k` ulps toward −∞.
+fn widen_ulps_low(lo: f64, k: u32) -> f64 {
+    let mut v = lo;
+    for _ in 0..k {
+        v = nixie_math::transcendental::f64_next_down(v);
+    }
+    v
+}
+
+/// An `f64` → exact `BigRational` via nanos (the same quantization the
+/// option parser applies, so engine and constraints agree bit-for-bit).
+fn widen_f64(x: f64) -> BigRational {
+    widen(&Rational64::new((x * 1e9).round() as i64, 1_000_000_000))
+}
+
+/// Whether the sub-DAG under `node` reads the variable slot `slot`.
+fn reads_node_helper(nodes: &[Node], node: u32, slot: u32, seen: &mut Vec<bool>) -> bool {
+    if seen[node as usize] {
+        return false;
+    }
+    seen[node as usize] = true;
+    match &nodes[node as usize] {
+        Node::Var(s) => *s == slot,
+        Node::Const(_) => false,
+        other => other
+            .children()
+            .iter()
+            .any(|&c| reads_node_helper(nodes, c, slot, seen)),
+    }
+}
+
+/// `BigRational` → `Rational64` (exact when representable, else the
+/// nearest; the final exact check arbitrates whatever lands).
+fn rational64_from_bigrational(q: &BigRational) -> Option<Rational64> {
+    let n = q.numer();
+    let d = q.denom();
+    if let (Some(ni), Some(di)) = (n.to_i64(), d.to_i64())
+        && di != 0
+    {
+        return Some(Rational64::new(ni, di));
+    }
+    let f = q.to_f64()?;
+    Rational64::from_f64(f)
+}
+
+/// `Rational64` → `BigRational`, exactly.
+fn widen(q: &Rational64) -> BigRational {
+    BigRational::new(BigInt::from(*q.numer()), BigInt::from(*q.denom()))
+}
+
+/// Counters for `NIXIE_TRANS_STATS` diagnostics (cheap increments; the
+/// print is the only gated part, in `solve_conjunction`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct IcpStats {
+    /// `propagate_node` invocations.
+    pub node_props: u64,
+    /// `apply_constraint` invocations.
+    pub constraint_props: u64,
+    /// Branch splits performed.
+    pub branches: u64,
+    /// Conflicts (empty boxes) discovered.
+    pub conflicts: u64,
+    /// Point-witness attempts.
+    pub witness_tries: u64,
+}
+
 /// Mutable search state over a [`TransProblem`].
 pub struct IcpEngine<'a> {
     prob: &'a TransProblem,
+    /// Diagnostics (see `IcpStats`).
+    pub(crate) stats: IcpStats,
     iv: Vec<DI>,
     deps_lo: Vec<Deps>,
     deps_hi: Vec<Deps>,
@@ -495,12 +685,13 @@ impl<'a> IcpEngine<'a> {
             .nodes
             .iter()
             .map(|nd| match nd {
-                Node::Const(c) => *c,
+                Node::Const(c) => DI::from_rational64(c),
                 _ => DI::RN,
             })
             .collect();
         let mut eng = Self {
             prob,
+            stats: IcpStats::default(),
             iv,
             deps_lo: (0..n).map(|_| Deps::new()).collect(),
             deps_hi: (0..n).map(|_| Deps::new()).collect(),
@@ -568,7 +759,7 @@ impl<'a> IcpEngine<'a> {
     /// Forward evaluation of `node` over the current box.
     fn eval_node(&self, node: &Node) -> DI {
         match node {
-            Node::Const(c) => *c,
+            Node::Const(c) => DI::from_rational64(c),
             Node::Var(_) => DI::RN,
             Node::Neg(a) => self.iv[*a as usize].neg(),
             Node::Add(args) => {
@@ -611,6 +802,7 @@ impl<'a> IcpEngine<'a> {
             return true; // handled by the budget check in `propagate`
         }
         self.budget -= 1;
+        self.stats.node_props += 1;
         let node = self.prob.nodes[idx as usize].clone();
         let fwd = self.eval_node(&node);
         if !self.tighten(idx, fwd, &Deps::new(), &Deps::new()) {
@@ -752,16 +944,9 @@ impl<'a> IcpEngine<'a> {
                 // `v.hi < plo ⟹ v.hi < π/2` — where cos > 0 and tan is
                 // monotone: t ∈ tan(v) = sin(v)/cos(v).
                 if v.lo > -plo && v.hi < plo {
-                    #[cfg(feature = "std")]
-                    let tsc = std::time::Instant::now();
                     let s = v.sin();
                     let c = v.cos();
-                    #[cfg(feature = "std")]
-                    eprintln!("[icp] sin/cos took {:?}", tsc.elapsed());
-                    let dv = s.div(&c);
-                    #[cfg(feature = "std")]
-                    eprintln!("[icp] div took {:?} -> {dv:?}", tsc.elapsed());
-                    if !self.tighten(t_, dv, &d, &d) {
+                    if !self.tighten(t_, s.div(&c), &d, &d) {
                         return false;
                     }
                 }
@@ -852,9 +1037,35 @@ impl<'a> IcpEngine<'a> {
     /// The only place δ enters: intersect the constraint root with its
     /// weakened admissible interval.  `false` = empty.
     fn apply_constraint(&mut self, cid: u32) -> bool {
+        self.stats.constraint_props += 1;
         let c = self.prob.constraints[cid as usize].clone();
         if c.cmp == Cmp::Ne {
-            return true; // disequalities never prune
+            // Disequality pruning (whole-box form): `root ≠ rhs` is
+            // δ-violated by every point inside the exact δ-window, so a
+            // root interval lying WHOLLY inside it can offer no witness —
+            // the box is empty for this branch.  The comparison is exact
+            // rational arithmetic against the constraint's stored
+            // `admissible_exact` bounds; the f64 `rhs_interval` carries
+            // the δ+ε widening slack, which points the WRONG way for a
+            // disequality (it would fire conflicts on boxes that are
+            // δ-outside but only ε-inside).  Provenance: the pinned
+            // bounds' deps plus this constraint.
+            let cur = self.iv[c.root as usize];
+            let (Some(lo_x), Some(hi_x)) = (f64_exact_rational(cur.lo), f64_exact_rational(cur.hi))
+            else {
+                return true; // infinite bound: cannot be wholly inside
+            };
+            if lo_x >= c.admissible_exact.0 && hi_x <= c.admissible_exact.1 {
+                let mut d = self.deps_of(c.root);
+                if !d.contains(&cid) {
+                    d.push(cid);
+                }
+                self.iv[c.root as usize] = DI::EMPTY;
+                self.deps_lo[c.root as usize] = d.clone();
+                self.deps_hi[c.root as usize] = d;
+                return false;
+            }
+            return true;
         }
         let cur = self.iv[c.root as usize];
         let new_iv = cur.intersect(&c.rhs_interval);
@@ -879,14 +1090,23 @@ impl<'a> IcpEngine<'a> {
     /// Drain both queues toward a fixpoint.  Returns the conflict set when
     /// a node went empty, `None` otherwise.
     ///
-    /// The drain is CAPPED per call (`prop_cap`): interval fixpoints can
-    /// converge ulp-by-ulp, and waiting for the exact fixed point lets one
-    /// branch consume the whole budget.  Stopping early is sound — every
-    /// contraction applied was valid on its own; only pruning POWER is
-    /// lost, and the branching loop compensates.  (dReal/ibex cap their
-    /// propagation the same way.)
+    /// Two caps keep one branch from eating the whole budget:
+    ///
+    /// * the per-call step cap `prop_cap` (interval fixpoints can converge
+    ///   ulp-by-ulp; dReal/ibex cap their propagation the same way), and
+    /// * a **sweep-level convergence check**: every 256 steps, the total
+    ///   mass of all node intervals (sum of finite widths) is compared
+    ///   against the mass 256 steps ago; a relative improvement below
+    ///   1e-9 means the fixpoint is only creeping (chains of 1-ulp
+    ///   tightenings through Mul/Exp/Log keep the queue alive while
+    ///   narrowing nothing that matters) — cut it and let the brancher
+    ///   make progress instead.  Stopping early is sound — every
+    ///   contraction applied was valid on its own; only pruning POWER is
+    ///   lost, and branching compensates.
     fn propagate(&mut self) -> Option<Vec<u32>> {
         let mut steps_left = self.prop_cap;
+        let mut since_mass_check: u32 = 0;
+        let mut last_mass: Option<f64> = None;
         loop {
             if self.budget == 0 || steps_left == 0 {
                 return None;
@@ -903,7 +1123,32 @@ impl<'a> IcpEngine<'a> {
             if !self.propagate_node(idx) {
                 return Some(self.conflict_set());
             }
+            since_mass_check += 1;
+            if since_mass_check >= 256 {
+                since_mass_check = 0;
+                let mass = self.interval_mass();
+                if let Some(lm) = last_mass
+                    && mass > 0.0
+                    && lm - mass <= lm * 1e-9
+                {
+                    return None; // creeping, not converging: branch instead
+                }
+                last_mass = Some(mass);
+            }
         }
+    }
+
+    /// Total mass (sum of finite widths) of every node interval — the
+    /// convergence meter for [`Self::propagate`].
+    fn interval_mass(&self) -> f64 {
+        let mut m = 0.0;
+        for iv in &self.iv {
+            let w = iv.width();
+            if w.is_finite() {
+                m += w;
+            }
+        }
+        m
     }
 
     /// Union of the provenance of every empty node's two bounds.
@@ -923,8 +1168,11 @@ impl<'a> IcpEngine<'a> {
 
     /// Point witness: pin every variable to its midpoint rounded to
     /// `Rational64`, re-evaluate every node at exactly that point, and
-    /// verify every constraint.  Returns the published values on success —
-    /// what was verified is what gets returned.
+    /// verify every constraint — in EXACT rational arithmetic (the
+    /// published point is rational, so the publication check is
+    /// ulp-free; the f64 box propagation that guided the search here
+    /// only over-approximates).  Returns the published values on
+    /// success — what was verified is what gets returned.
     fn try_point_witness(&self) -> Option<Vec<Rational64>> {
         let mut pinned: Vec<Rational64> = Vec::with_capacity(self.prob.var_nodes.len());
         for &node_idx in &self.prob.var_nodes {
@@ -935,15 +1183,60 @@ impl<'a> IcpEngine<'a> {
             }
             pinned.push(rational64_from_f64(m));
         }
-        let vals = self.evaluate_at(&pinned)?;
+        // Point repair: for every definition-shaped constraint
+        // (`Sub(expr, v) = 0` with `v` a bare variable and `expr` not
+        // reading `v`), snap `v`'s pinned value to `expr`'s value at the
+        // current point.  Without this the purified variables drift
+        // INDEPENDENTLY to their δ-edges (each def-constraint absorbing
+        // its full δ), and the midpoint tuple sits exactly on the
+        // boundary where the exact check coin-flips on ulps (measured:
+        // t15 converged with sin(x)−s = −0.0010000000 and never
+        // published).  Snapping makes the definitions hold EXACTLY, so
+        // the entire δ budget lands on the real constraints.
+        for _ in 0..3 {
+            let mut changed = false;
+            for c in &self.prob.constraints {
+                if c.rhs != Rational64::zero() || c.cmp != Cmp::Eq {
+                    continue;
+                }
+                let (a, b) = match &self.prob.nodes[c.root as usize] {
+                    Node::Sub(a, b) => (*a, *b),
+                    _ => continue,
+                };
+                let var_slot = match &self.prob.nodes[b as usize] {
+                    Node::Var(slot) if !self.reads_node(a, *slot) => *slot,
+                    _ => continue,
+                };
+                let vals = self.evaluate_at_exact(&pinned)?;
+                let (lo, hi) = &vals[a as usize];
+                if lo > hi {
+                    return None;
+                }
+                let snapped = (lo + hi) / BigInt::from(2);
+                let q = rational64_from_bigrational(&snapped)?;
+                if q != pinned[var_slot as usize] {
+                    pinned[var_slot as usize] = q;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let vals = self.evaluate_at_exact(&pinned)?;
         for c in &self.prob.constraints {
-            let r = vals[c.root as usize];
-            let t = c.rhs_interval;
+            let r = &vals[c.root as usize];
+            // The admissible interval, in exact rationals: rhs ± δ(1+|rhs|)
+            // widened by the transcendental enclosures' own bracket widths
+            // below (they are part of `r`).
+            let lo = c.admissible_exact.0.clone();
+            let hi = c.admissible_exact.1.clone();
+            let (rlo, rhi) = (r.0.clone(), r.1.clone());
             let ok = match c.cmp {
-                Cmp::Le => r.hi <= t.hi,
-                Cmp::Ge => r.lo >= t.lo,
-                Cmp::Eq => r.hi <= t.hi && r.lo >= t.lo,
-                Cmp::Ne => !(r.lo <= t.hi && r.hi >= t.lo),
+                Cmp::Le => rhi <= hi,
+                Cmp::Ge => rlo >= lo,
+                Cmp::Eq => rhi <= hi && rlo >= lo,
+                Cmp::Ne => rlo > hi || rhi < lo,
             };
             if !ok {
                 return None;
@@ -952,47 +1245,118 @@ impl<'a> IcpEngine<'a> {
         Some(pinned)
     }
 
-    /// Bottom-up point evaluation of every node (`None` when a division by
-    /// zero is hit — the witness is undefined there).
-    fn evaluate_at(&self, pinned: &[Rational64]) -> Option<Vec<DI>> {
-        let mut vals: Vec<DI> = Vec::with_capacity(self.prob.nodes.len());
+    /// Whether the sub-DAG under `node` reads variable `slot`.
+    fn reads_node(&self, node: u32, slot: u32) -> bool {
+        let mut seen = vec![false; self.prob.nodes.len()];
+        reads_node_helper(&self.prob.nodes, node, slot, &mut seen)
+    }
+
+    /// Bottom-up EXACT rational evaluation of every node at the pinned
+    /// point (`None` on a division whose divisor interval contains 0, or
+    /// any enclosure blowup — the witness is then undefined and the
+    /// search continues).  Transcendentals contribute rigorous rational
+    /// brackets (`nixie_math::transcendental::*_rational`).
+    fn evaluate_at_exact(&self, pinned: &[Rational64]) -> Option<Vec<(BigRational, BigRational)>> {
+        use nixie_math::transcendental as tm;
+        let scale = |q: &Rational64| widen(q);
+        let mut vals: Vec<(BigRational, BigRational)> = Vec::with_capacity(self.prob.nodes.len());
         for node in &self.prob.nodes {
+            let point = |q: &BigRational| (q.clone(), q.clone());
             let v = match node {
-                Node::Const(c) => *c,
-                Node::Var(slot) => DI::from_rational64(&pinned[*slot as usize]),
-                Node::Neg(a) => vals[*a as usize].neg(),
+                Node::Const(c) => point(&widen(c)),
+                Node::Var(slot) => point(&scale(&pinned[*slot as usize])),
+                Node::Neg(a) => {
+                    let (l, h) = &vals[*a as usize];
+                    (-h.clone(), -l.clone())
+                }
                 Node::Add(args) => {
-                    let mut acc = DI::point(0.0);
+                    let mut lo = BigRational::zero();
+                    let mut hi = BigRational::zero();
                     for &a in args {
-                        acc = acc.add(&vals[a as usize]);
+                        let (l, h) = &vals[a as usize];
+                        lo += l;
+                        hi += h;
+                    }
+                    (lo, hi)
+                }
+                Node::Sub(a, b) => {
+                    let (la, ha) = &vals[*a as usize];
+                    let (lb, hb) = &vals[*b as usize];
+                    (la - hb, ha - lb)
+                }
+                Node::Mul(args) => {
+                    let mut acc = point(&BigRational::one());
+                    for &a in args {
+                        acc = mul_brackets(&acc, &vals[a as usize]);
                     }
                     acc
                 }
-                Node::Sub(a, b) => vals[*a as usize].sub(&vals[*b as usize]),
-                Node::Mul(args) => {
-                    if args.len() == 2 && args[0] == args[1] {
-                        vals[args[0] as usize].square()
-                    } else {
-                        let mut acc = DI::point(1.0);
-                        for &a in args {
-                            acc = acc.mul(&vals[a as usize]);
-                        }
-                        acc
-                    }
-                }
                 Node::Div(a, b) => {
-                    let d = vals[*b as usize];
-                    if d.contains_zero() {
+                    let (lb, hb) = &vals[*b as usize];
+                    if *lb <= BigRational::zero() && *hb >= BigRational::zero() {
                         return None;
                     }
-                    vals[*a as usize].div(&d)
+                    // Reciprocal bracket: for 0 < lb ≤ hb it is
+                    // (1/hb, 1/lb); for lb ≤ hb < 0 both reciprocals flip
+                    // to (1/lb, 1/hb).  The corner product below is
+                    // sign-correct either way.
+                    let inv = if *lb > BigRational::zero() {
+                        (BigRational::one() / hb, BigRational::one() / lb)
+                    } else {
+                        (BigRational::one() / lb, BigRational::one() / hb)
+                    };
+                    mul_brackets(&vals[*a as usize], &inv)
                 }
-                Node::Exp(a) => vals[*a as usize].exp(),
-                Node::Log(a) => vals[*a as usize].log(),
-                Node::Sin(a) => vals[*a as usize].sin(),
-                Node::Cos(a) => vals[*a as usize].cos(),
-                Node::Atan(a) => vals[*a as usize].atan(),
-                Node::Sqrt(a) => vals[*a as usize].sqrt(),
+                Node::Exp(a) => {
+                    // exp is strictly increasing, so the enclosure over
+                    // [la, ha] is the lower bracket at la joined with the
+                    // upper bracket at ha — one call per DISTINCT endpoint
+                    // (the previous four-call min/max dance was vacuous
+                    // for a monotone function, and point args paid double).
+                    let (la, ha) = &vals[*a as usize];
+                    if la == ha {
+                        tm::exp_rational(la)
+                    } else {
+                        (tm::exp_rational(la).0, tm::exp_rational(ha).1)
+                    }
+                }
+                Node::Log(a) => {
+                    let (la, ha) = &vals[*a as usize];
+                    if *ha <= BigRational::zero() {
+                        return None;
+                    }
+                    if *la <= BigRational::zero() {
+                        // Totalized log(≤0) = −∞: no finite value can
+                        // witness constraints that need a finite lower
+                        // bound; decline the point (undefined there).
+                        return None;
+                    }
+                    (tm::log_rational(la).0, tm::log_rational(ha).1)
+                }
+                Node::Sin(a) => sin_cos_exact(&vals[*a as usize], false),
+                Node::Cos(a) => sin_cos_exact(&vals[*a as usize], true),
+                Node::Atan(a) => {
+                    // atan is strictly increasing: lower bracket at la,
+                    // upper at ha (one call for a point arg).
+                    let (la, ha) = &vals[*a as usize];
+                    if la == ha {
+                        tm::atan_rational(la)
+                    } else {
+                        (tm::atan_rational(la).0, tm::atan_rational(ha).1)
+                    }
+                }
+                Node::Sqrt(a) => {
+                    let (la, ha) = &vals[*a as usize];
+                    if *ha < BigRational::zero() {
+                        return None;
+                    }
+                    let lo = if *la <= BigRational::zero() {
+                        BigRational::zero()
+                    } else {
+                        tm::sqrt_rational(la).0
+                    };
+                    (lo, tm::sqrt_rational(ha).1)
+                }
             };
             vals.push(v);
         }
@@ -1029,6 +1393,13 @@ impl<'a> IcpEngine<'a> {
             if !w.is_finite() {
                 return Some(node_idx);
             }
+            // A 1-ulp interval cannot be bisected with progress: the
+            // midpoint rounds to an endpoint, so the "second half" equals
+            // the parent and the dive loops forever (measured: 99,974
+            // identical witness attempts on t16).  Treat it as a point.
+            if nixie_math::transcendental::f64_next_up(iv.lo) >= iv.hi {
+                continue;
+            }
             let scale = iv.lo.abs().max(iv.hi.abs()).max(1.0);
             let rel = w / scale;
             if self.prob.feeds_compound(node_idx) {
@@ -1044,6 +1415,107 @@ impl<'a> IcpEngine<'a> {
         }
         best_compound.or(best_any).map(|(_, i)| i)
     }
+}
+
+/// `sin`/`cos` of the exact bracket `arg`, as a rigorous exact bracket.
+///
+/// A point argument (the overwhelmingly common case: every variable is
+/// pinned and transcendental args degenerate) evaluates once.  A
+/// NON-degenerate bracket (reachable when the argument itself contains a
+/// transcendental, e.g. `sin(exp(x))` — the inner enclosure has width,
+/// and nested `exp`s widen it multiplicatively) needs care: sin/cos are
+/// not monotone, so the hull of the two endpoint enclosures is NOT an
+/// enclosure.  Rigorous fallback: `|f″| ≤ 1` on ℝ for both, so the range
+/// over `[la, ha]` lies within the endpoint hull widened by
+/// `(ha − la)²/8` (the linear-interpolation remainder bound); the result
+/// is then intersected with `[-1, 1]` (intersecting an enclosure with a
+/// superset of the true range keeps it an enclosure).  For wide brackets
+/// the correction saturates to the full range — the honest answer.
+fn sin_cos_exact(arg: &(BigRational, BigRational), want_cos: bool) -> (BigRational, BigRational) {
+    use nixie_math::transcendental as tm;
+    let (la, ha) = arg;
+    if la == ha {
+        return tm::sin_cos_rational(la, want_cos);
+    }
+    let e1 = tm::sin_cos_rational(la, want_cos);
+    let e2 = tm::sin_cos_rational(ha, want_cos);
+    let hull_lo = e1.0.min(e2.0);
+    let hull_hi = e1.1.max(e2.1);
+    let w = ha - la;
+    let eighth = (&w * &w) / BigInt::from(8);
+    let lo = (hull_lo - &eighth).max(BigRational::from(BigInt::from(-1)));
+    let hi = (hull_hi + &eighth).min(BigRational::from(BigInt::from(1)));
+    (lo, hi)
+}
+
+/// A finite `f64` as an EXACT `BigRational` (mantissa·2^exp, no rounding
+/// step) — the disequality conflict rule compares box bounds against the
+/// exact δ-window and must not launder an f64 through a lossy conversion.
+fn f64_exact_rational(x: f64) -> Option<BigRational> {
+    if !x.is_finite() {
+        return None;
+    }
+    let bits = x.to_bits();
+    let neg = bits >> 63 == 1;
+    let abs = bits & !(1_u64 << 63);
+    let biased = ((abs >> 52) & 0x7ff) as i64;
+    let mantissa = if biased == 0 {
+        abs & ((1_u64 << 52) - 1)
+    } else {
+        (abs & ((1_u64 << 52) - 1)) | (1_u64 << 52)
+    };
+    let exp = if biased == 0 {
+        -1074
+    } else {
+        biased - 1023 - 52
+    };
+    let m = BigInt::from(mantissa);
+    let v = if exp >= 0 {
+        BigRational::from(m << exp as u64)
+    } else {
+        BigRational::new(m, BigInt::one() << (-exp) as u64)
+    };
+    Some(if neg { -v } else { v })
+}
+
+/// Periodic-aware split point for the branch variable's window `iv`.
+///
+/// When the variable DIRECTLY feeds a `Sin`/`Cos` node, the asin
+/// contraction only engages once the argument window is narrower than
+/// π/2 AND lies inside one monotone piece — plain midpoint bisection of a
+/// multi-period window (e.g. `sin x = 0.5` on `[90, 100]`, ~3 periods)
+/// spends its first splits blind: no contraction, no conflict, every
+/// level re-propagated from scratch.  Splitting at the multiple of π/2
+/// nearest the midpoint lands both halves on monotone-segment boundaries
+/// (consecutive multiples of π/2 bound the monotone pieces of BOTH sin
+/// and cos), so the contraction engages after at most a handful of
+/// splits instead of never.
+///
+/// This is pure search guidance: ANY split point strictly inside the
+/// window is sound, and the midpoint stays the fallback when the nearest
+/// multiple of π/2 rounds outside the window (both non-degeneracy of the
+/// halves — a split at an endpoint makes the "other half" equal its
+/// parent, the 1-ulp loop trap — and real critical position are
+/// required).
+fn branch_split_point(prob: &TransProblem, var: u32, iv: DI) -> f64 {
+    let feeds_periodic = prob.users[var as usize]
+        .iter()
+        .any(|&u| matches!(prob.nodes[u as usize], Node::Sin(_) | Node::Cos(_)));
+    if feeds_periodic {
+        let (_, pi2_hi) = nixie_math::transcendental::pi2_bracket();
+        let width = iv.width();
+        if width.is_finite() && width >= pi2_hi / 2.0 {
+            let mid = iv.midpoint();
+            // The multiple of π/2 nearest the midpoint.  Any k is sound;
+            // nearest keeps the halves balanced.
+            let k = (mid * (2.0 / core::f64::consts::PI)).round();
+            let m = k * core::f64::consts::FRAC_PI_2;
+            if m.is_finite() && m > iv.lo && m < iv.hi {
+                return m;
+            }
+        }
+    }
+    iv.midpoint()
 }
 
 /// Convert an f64 to the nearest `Rational64` (exact when it fits; the
@@ -1064,6 +1536,38 @@ fn rational64_from_f64(x: f64) -> Rational64 {
     }
 }
 
+#[cfg(feature = "std")]
+std::thread_local! {
+    static LAST_STATS: core::cell::RefCell<IcpStats> = const { core::cell::RefCell::new(IcpStats::new()) };
+}
+
+impl IcpStats {
+    /// The all-zero state (const-callable for the thread-local init).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            node_props: 0,
+            constraint_props: 0,
+            branches: 0,
+            conflicts: 0,
+            witness_tries: 0,
+        }
+    }
+}
+
+/// The stats of the most recent `solve_conjunction` call (diagnostics for
+/// `NIXIE_TRANS_STATS`).
+#[cfg(feature = "std")]
+#[must_use]
+pub fn last_stats() -> IcpStats {
+    LAST_STATS.with(|s| *s.borrow())
+}
+
+#[cfg(feature = "std")]
+fn publish_stats(stats: &IcpStats) {
+    LAST_STATS.with(|s| *s.borrow_mut() = *stats);
+}
+
 /// The top-level δ-decision over one conjunctive problem:
 /// branch-and-prune with snapshots.
 ///
@@ -1072,7 +1576,18 @@ fn rational64_from_f64(x: f64) -> Rational64 {
 /// * otherwise bisect the widest constrained variable;
 /// * all branches emptied → `Unsat` (δ-unsat ⟹ unsat);
 /// * budget or stuck → `Unknown`.
-pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutcome {
+pub fn solve_conjunction(prob: &mut TransProblem, opts: &TransOptions) -> TransOutcome {
+    let out = solve_conjunction_inner(prob, opts);
+    #[cfg(feature = "std")]
+    publish_stats(&out.1);
+    out.0
+}
+
+fn solve_conjunction_inner(
+    prob: &mut TransProblem,
+    opts: &TransOptions,
+) -> (TransOutcome, IcpStats) {
+    prob.prepare_search();
     struct Snapshot {
         iv: Vec<DI>,
         deps_lo: Vec<Deps>,
@@ -1096,6 +1611,12 @@ pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutco
 
     let mut nodes_left = opts.max_branch_nodes;
     let mut first_conflict: Option<Vec<u32>> = None;
+    // A stuck branch (no branchable variable, no verified witness) makes
+    // the eventual `Unsat` claim unavailable — but it must not ABORT the
+    // search: deferred sibling branches may still carry a δ-witness (the
+    // t16/t15 flounder: one dive hit an ulp-exhausted leaf and the whole
+    // solve conceded without exploring its siblings).
+    let mut saw_stuck = false;
     let mut root = IcpEngine::new(prob, opts);
 
     enum Task {
@@ -1110,7 +1631,7 @@ pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutco
     let mut tasks: Vec<Task> = vec![Task::Propagate];
     while let Some(task) = tasks.pop() {
         if nodes_left == 0 {
-            return TransOutcome::Unknown;
+            return (TransOutcome::Unknown, root.stats);
         }
         nodes_left -= 1;
         match task {
@@ -1134,6 +1655,7 @@ pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutco
             }
             Task::Propagate => {
                 if let Some(culprits) = root.propagate() {
+                    root.stats.conflicts += 1;
                     // This branch is empty.  Record provenance (for the
                     // blocking clause) and backtrack — NOT a global verdict
                     // unless every other branch empties too.
@@ -1143,21 +1665,23 @@ pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutco
                     continue;
                 }
                 if root.budget == 0 {
-                    return TransOutcome::Unknown;
+                    return (TransOutcome::Unknown, root.stats);
                 }
                 // The point witness is the acceptance route: it is what
                 // gets published, re-verified after rounding.  (A box that
                 // verifies universally makes its midpoint verify too, up to
                 // the rounding double-check built into the witness.)
+                root.stats.witness_tries += 1;
                 if let Some(w) = root.try_point_witness() {
-                    return TransOutcome::DeltaSat { values: w };
+                    return (TransOutcome::DeltaSat { values: w }, root.stats);
                 }
                 match root.pick_branch_var() {
                     Some(v) => {
+                        root.stats.branches += 1;
                         let iv = root.iv[v as usize];
-                        let m = iv.midpoint();
+                        let m = branch_split_point(root.prob, v, iv);
                         if !m.is_finite() {
-                            return TransOutcome::Unknown;
+                            return (TransOutcome::Unknown, root.stats);
                         }
                         // FINITE half first: a half-infinite ray only
                         // narrows exponentially under bisection and can
@@ -1188,19 +1712,23 @@ pub fn solve_conjunction(prob: &TransProblem, opts: &TransOptions) -> TransOutco
                     }
                     None => {
                         // No branchable variable left and not verified:
-                        // this branch is stuck — treat as unrefuted (the
-                        // honest global answer once the loop ends depends
-                        // on whether any branch was stuck: if so, Unknown).
-                        return TransOutcome::Unknown;
+                        // this branch is stuck (unrefuted).  Record and
+                        // keep exploring siblings.
+                        saw_stuck = true;
+                        continue;
                     }
                 }
             }
         }
     }
-    // Every branch was emptied (none was stuck, or the stuck ones returned
-    // Unknown above): δ-unsat, which implies unsat.
+    if saw_stuck {
+        // An unrefuted branch exists: the conjunction is not proved
+        // δ-empty, and no δ-witness was found either.  The honest verdict.
+        return (TransOutcome::Unknown, root.stats);
+    }
+    // Every branch was emptied: δ-unsat, which implies unsat.
     let culprits = first_conflict.unwrap_or_else(|| (0..prob.constraints.len() as u32).collect());
-    TransOutcome::Unsat { culprits }
+    (TransOutcome::Unsat { culprits }, root.stats)
 }
 
 #[cfg(test)]
@@ -1235,8 +1763,8 @@ mod tests {
         let mut m = manager();
         let x = m.mk_var("x", m.sorts.real_sort);
         let e = m.mk_exp(x);
-        let (prob, x) = one_var_problem(&mut m, x, e, Cmp::Eq, Rational64::from_integer(2));
-        let out = solve_conjunction(&prob, &TransOptions::default());
+        let (mut prob, x) = one_var_problem(&mut m, x, e, Cmp::Eq, Rational64::from_integer(2));
+        let out = solve_conjunction(&mut prob, &TransOptions::default());
         match out {
             TransOutcome::DeltaSat { values } => {
                 assert_eq!(values.len(), 1);
@@ -1259,7 +1787,7 @@ mod tests {
         let ex = prob.intern_term(m.mk_exp(x), &m, &mut cache).unwrap();
         prob.add_constraint(xv, Rational64::from_integer(1), Cmp::Ge, 0.001);
         prob.add_constraint(ex, Rational64::from_integer(1), Cmp::Le, 0.001);
-        match solve_conjunction(&prob, &TransOptions::default()) {
+        match solve_conjunction(&mut prob, &TransOptions::default()) {
             TransOutcome::Unsat { culprits } => {
                 assert!(!culprits.is_empty());
             }
@@ -1279,7 +1807,7 @@ mod tests {
         prob.add_constraint(sx, Rational64::from_integer(0), Cmp::Eq, 0.001);
         prob.add_constraint(xv, Rational64::new(3, 1), Cmp::Ge, 0.001);
         prob.add_constraint(xv, Rational64::new(35, 10), Cmp::Le, 0.001);
-        match solve_conjunction(&prob, &TransOptions::default()) {
+        match solve_conjunction(&mut prob, &TransOptions::default()) {
             TransOutcome::DeltaSat { values } => {
                 let v = values[0].to_f64().unwrap();
                 assert!((v - core::f64::consts::PI).abs() < 1e-2, "got {v}");
@@ -1299,7 +1827,7 @@ mod tests {
         let lx = prob.intern_term(m.mk_log(x), &m, &mut cache).unwrap();
         prob.add_constraint(lx, Rational64::from_integer(1), Cmp::Ge, 0.001);
         prob.add_constraint(xv, Rational64::from_integer(2), Cmp::Le, 0.001);
-        match solve_conjunction(&prob, &TransOptions::default()) {
+        match solve_conjunction(&mut prob, &TransOptions::default()) {
             TransOutcome::Unsat { .. } => {}
             other => panic!("expected Unsat, got {other:?}"),
         }
@@ -1315,7 +1843,7 @@ mod tests {
         let xv = prob.intern_term(x, &m, &mut cache).unwrap();
         let sx = prob.intern_term(m.mk_sqrt(x), &m, &mut cache).unwrap();
         prob.add_constraint(sx, Rational64::from_integer(2), Cmp::Eq, 0.001);
-        let out = solve_conjunction(&prob, &TransOptions::default());
+        let out = solve_conjunction(&mut prob, &TransOptions::default());
         match out {
             TransOutcome::DeltaSat { values } => {
                 let v = values[0].to_f64().unwrap();
@@ -1333,7 +1861,7 @@ mod tests {
             Cmp::Eq,
             0.001,
         );
-        match solve_conjunction(&prob, &TransOptions::default()) {
+        match solve_conjunction(&mut prob, &TransOptions::default()) {
             TransOutcome::DeltaSat { values } => {
                 let v = values[0].to_f64().unwrap();
                 assert!((v - 1.0).abs() < 1e-2, "got {v}");
@@ -1353,7 +1881,7 @@ mod tests {
         let mut cache = FxHashMap::default();
         let sum = prob.intern_term(m.mk_add([x, y]), &m, &mut cache).unwrap();
         prob.add_constraint(sum, Rational64::from_integer(5), Cmp::Le, 0.001);
-        match solve_conjunction(&prob, &TransOptions::default()) {
+        match solve_conjunction(&mut prob, &TransOptions::default()) {
             TransOutcome::DeltaSat { .. } => {}
             other => panic!("expected DeltaSat, got {other:?}"),
         }
@@ -1399,7 +1927,7 @@ mod trig_probe {
         let _ = sixv;
         prob.add_constraint(xv, Rational64::zero(), Cmp::Ge, 0.001);
         prob.add_constraint(xv, Rational64::from_integer(6), Cmp::Le, 0.001);
-        let out = solve_conjunction(&prob, &TransOptions::default());
+        let out = solve_conjunction(&mut prob, &TransOptions::default());
         assert!(
             matches!(out, TransOutcome::Unsat { .. }),
             "bounded sin^2 + cos^2 = 0 is refutable, got {out:?}"
@@ -1432,7 +1960,7 @@ mod trig_probe {
         prob.add_constraint(d1, z, Cmp::Eq, 0.001);
         prob.add_constraint(d2, z, Cmp::Eq, 0.001);
         prob.add_constraint(sum, z, Cmp::Eq, 0.001);
-        let out = solve_conjunction(&prob, &TransOptions::default());
+        let out = solve_conjunction(&mut prob, &TransOptions::default());
         assert!(
             matches!(out, TransOutcome::Unknown),
             "unbounded periodic identity must stay Unknown, got {out:?}"
@@ -1465,8 +1993,65 @@ mod d15_probe {
         prob.add_constraint(xv, Rational64::new(32, 10), Cmp::Ge, 0.15);
         prob.add_constraint(xv, Rational64::new(33, 10), Cmp::Le, 0.15);
         let _ = (lo32, hi33);
-        let out = solve_conjunction(&prob, &TransOptions::default());
+        let out = solve_conjunction(&mut prob, &TransOptions::default());
         eprintln!("[d15] {out:?}");
         assert!(matches!(out, TransOutcome::DeltaSat { .. }), "got {out:?}");
+    }
+}
+
+/// Regression pins for the exact-witness enclosure fix: `sin`/`cos` over a
+/// NON-degenerate bracket must widen the endpoint hull by the rigorous
+/// curvature remainder (the hull alone is not an enclosure once the
+/// bracket spans a monotonicity change — reachable in the witness through
+/// nested transcendental arguments such as `sin(exp(x))`, whose inner
+/// exact brackets have width).
+#[cfg(test)]
+mod sin_cos_exact_probe {
+    use super::*;
+    use num_traits::FromPrimitive;
+
+    fn rat(x: f64) -> BigRational {
+        BigRational::from_f64(x).unwrap_or_else(BigRational::zero)
+    }
+
+    #[test]
+    fn wide_bracket_encloses_the_peak() {
+        // sin over [0, π]: the endpoint hull is ≈ {0} but the true range
+        // reaches 1 at π/2 — the curvature remainder must cover it.
+        let arg = (rat(0.0), rat(core::f64::consts::PI));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        assert!(lo <= rat(1.0), "lo {lo} must enclose the peak 1");
+        assert!(hi >= rat(1.0), "hi {hi} must enclose the peak 1");
+        // cos over the same bracket reaches −1 at π.
+        let (clo, chi) = sin_cos_exact(&arg, true);
+        assert!(clo <= rat(-1.0), "cos lo {clo} must enclose the trough −1");
+        assert!(chi >= rat(-1.0) || chi >= rat(1.0), "cos hi {chi} sanity");
+    }
+
+    #[test]
+    fn narrow_bracket_stays_tight() {
+        // A 1e-3-wide bracket: the remainder (w²/8 = 1.25e-7) keeps the
+        // enclosure within ~2e-7 of the endpoint hull — no full-range
+        // blowup on the common nested-witness shape.
+        let arg = (rat(1.0), rat(1.001));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        let s1 = 1.0f64.sin();
+        let s2 = 1.001f64.sin();
+        let (hull_lo, hull_hi) = (s1.min(s2), s1.max(s2));
+        assert!(lo.to_f64().unwrap() <= hull_lo + 1e-7);
+        assert!(hi.to_f64().unwrap() >= hull_hi - 1e-7);
+        assert!(lo.to_f64().unwrap() >= hull_lo - 1e-6);
+        assert!(hi.to_f64().unwrap() <= hull_hi + 1e-6);
+    }
+
+    #[test]
+    fn point_bracket_is_the_point_enclosure() {
+        // Degenerate bracket: exactly the rigorous point enclosure (the
+        // one-call fast path).
+        let arg = (rat(0.3), rat(0.3));
+        let (lo, hi) = sin_cos_exact(&arg, false);
+        let (plo, phi) = nixie_math::transcendental::sin_cos_rational(&rat(0.3), false);
+        assert_eq!(lo, plo);
+        assert_eq!(hi, phi);
     }
 }
