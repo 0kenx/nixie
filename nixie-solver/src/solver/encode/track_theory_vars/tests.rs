@@ -638,3 +638,73 @@ fn survives_a_deep_chain_on_a_small_stack() {
         .join()
         .expect("the theory-variable walk must return on 128 KiB instead of overflowing it");
 }
+
+#[test]
+fn finite_field_shared_dag_tracking_is_memoized_and_scope_consistent() {
+    for binary in [false, true] {
+        let mut manager = TermManager::new();
+        let sort = if binary {
+            manager.sorts.binary_field(283u32.into()).unwrap()
+        } else {
+            manager.sorts.finite_field(257u32.into()).unwrap()
+        };
+        let field = manager.sorts.get(sort).unwrap().finite_field().unwrap();
+        let one = manager.mk_ff_const(field, 1.into()).unwrap();
+        let x = manager.mk_var("ff_shared", sort);
+        let mut root = x;
+        let mut compounds = Vec::new();
+        for _ in 0..96 {
+            root = manager.intern_term(TermKind::FfMul(smallvec::smallvec![root, root]), sort);
+            compounds.push(root);
+            root = manager.intern_term(TermKind::FfAdd(smallvec::smallvec![root, one]), sort);
+            compounds.push(root);
+            root = manager.intern_term(TermKind::FfNeg(root), sort);
+            compounds.push(root);
+            root = manager.intern_term(TermKind::FfBitsum(smallvec::smallvec![root, one]), sort);
+            compounds.push(root);
+        }
+        let mut solver = Solver::new();
+        for _ in 0..2 {
+            solver.push();
+            let before = solver.trail.len();
+            solver.track_theory_vars(root, &manager);
+            assert!(solver.ff_terms_unconstrained);
+            assert_eq!(solver.trail.len() - before, compounds.len());
+            assert!(
+                compounds
+                    .iter()
+                    .all(|t| solver.tracked_compound_terms.contains(t))
+            );
+            let after = solver.trail.len();
+            // Even an independently reset tripwire is re-armed on a memo hit.
+            solver.ff_terms_unconstrained = false;
+            solver.track_theory_vars(root, &manager);
+            assert!(solver.ff_terms_unconstrained);
+            assert_eq!(solver.trail.len(), after);
+            solver.pop();
+            assert!(!solver.ff_terms_unconstrained);
+            assert!(
+                compounds
+                    .iter()
+                    .all(|t| !solver.tracked_compound_terms.contains(t))
+            );
+        }
+    }
+}
+
+#[test]
+fn field_tracking_checks_opaque_results_and_arguments_independently() {
+    let mut manager = TermManager::new();
+    let field = manager.sorts.binary_field(7u32.into()).unwrap();
+    let integer = manager.mk_var("i", manager.sorts.int_sort);
+    let result = manager.mk_apply("f", [integer], field);
+    let predicate = manager.mk_apply("p", [result], manager.sorts.bool_sort);
+    for root in [result, predicate] {
+        let mut solver = Solver::new();
+        solver.push();
+        solver.track_theory_vars(root, &manager);
+        assert!(solver.ff_terms_unconstrained);
+        solver.pop();
+        assert!(!solver.ff_terms_unconstrained);
+    }
+}

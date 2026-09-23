@@ -1235,6 +1235,11 @@ impl Solver {
     /// `Solver::invalidate_results` (private) for the rule and for why the unsat
     /// core goes with it.
     pub fn assert(&mut self, term: TermId, manager: &mut TermManager) {
+        // Detect field-valued applications and fields inside container sorts
+        // before any early dispatch or preprocessing can hide their presence.
+        if !self.ff_terms_unconstrained && super::ff_presence::contains(&[term], manager) {
+            self.ff_terms_unconstrained = true;
+        }
         // A new assertion changes the parity-lemma basis; the derivation
         // re-runs at the next check (see `derive_parity_lemmas`).
         self.parity_generation = self.parity_generation.wrapping_add(1);

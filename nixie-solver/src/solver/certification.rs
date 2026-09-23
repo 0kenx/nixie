@@ -1287,6 +1287,45 @@ mod tests {
     }
 
     #[test]
+    fn finite_field_certificate_rejects_forged_compound_and_atom_values() {
+        for binary in [false, true] {
+            let mut manager = TermManager::new();
+            let sort = if binary {
+                manager.sorts.binary_field(7u32.into()).unwrap()
+            } else {
+                manager.sorts.finite_field(5u32.into()).unwrap()
+            };
+            let field = manager.sorts.get(sort).unwrap().finite_field().unwrap();
+            let x = manager.mk_var("x", sort);
+            let square = manager.mk_ff_mul([x, x]).unwrap();
+            let zero = manager.mk_ff_const(field, 0.into()).unwrap();
+            let one = manager.mk_ff_const(field, 1.into()).unwrap();
+            let equation = manager.mk_eq(square, one);
+            let truth = manager.mk_true();
+            let mut solver = certified_solver();
+            solver.assert(equation, &mut manager);
+            let mut forged = Model::new();
+            forged.set(x, zero);
+            forged.set(square, one);
+            forged.set(equation, truth);
+            solver.model = Some(forged);
+            // Check the validator directly: no dispatch/honesty gate may
+            // mask a validator that trusts interpreted-term assignments.
+            assert!(
+                solver
+                    .certify_sat(&mut manager)
+                    .unwrap_err()
+                    .contains("falsifies")
+            );
+            assert_eq!(
+                solver.certify_result(SolverResult::Sat, &mut manager),
+                SolverResult::Unknown
+            );
+            assert!(solver.model().is_none());
+        }
+    }
+
+    #[test]
     fn falsified_candidate_model_fails_closed() {
         let mut manager = TermManager::new();
         let a = manager.mk_var("a", manager.sorts.bool_sort);

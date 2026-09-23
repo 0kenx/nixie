@@ -4,6 +4,7 @@
 
 use super::*;
 use nixie_core::sort::binary_field::BinaryField;
+use num_traits::ToPrimitive;
 
 pub(super) fn check(
     manager: &TermManager,
@@ -90,6 +91,33 @@ pub(super) fn check(
 // Independently implemented multiplication: maintain a reduced running
 // multiple of a, and accumulate it for each set coefficient of b.
 fn multiply(f: &BinaryField, a: &BigUint, b: &BigUint, budget: &mut u64) -> Option<BigUint> {
+    // All enumerable fields fit here (the search space is at most 2^22).
+    // Keep the same shift/reduce algorithm and charge every coefficient,
+    // including zero coefficients: changing ticks would change exhaustion.
+    // Canonical inputs have <=32 bits; the monic polynomial and each
+    // unreduced shift have <=33 bits. Every conversion is checked.
+    if f.degree() <= 32 {
+        let mut shifted = u64::from(a.to_u32()?);
+        let multiplier = b.to_u32()?;
+        let polynomial = f.polynomial().to_u64()?;
+        let high_bit = 1u64 << f.degree();
+        let mut result = 0u64;
+        for i in 0..f.degree() {
+            *budget = budget.checked_sub(1)?;
+            if (multiplier >> i) & 1 != 0 {
+                result ^= shifted;
+            }
+            shifted <<= 1;
+            if shifted & high_bit != 0 {
+                shifted ^= polynomial;
+            }
+        }
+        return Some(BigUint::from(result));
+    }
+    multiply_big(f, a, b, budget)
+}
+
+fn multiply_big(f: &BinaryField, a: &BigUint, b: &BigUint, budget: &mut u64) -> Option<BigUint> {
     let mut shifted = a.clone();
     let mut result = BigUint::zero();
     for i in 0..f.degree() {
@@ -170,4 +198,72 @@ pub(super) fn eval(
         cache.insert(id, result);
     }
     cache.remove(&root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn word_products_match_independent_core_and_biguint() {
+        for polynomial in [7u32, 11, 13, 19, 37, 67, 131, 283] {
+            let f = BinaryField::new(polynomial.into()).unwrap();
+            let q = 1u32 << f.degree();
+            for a in 0..q {
+                for b in 0..q {
+                    let (a, b) = (BigUint::from(a), BigUint::from(b));
+                    let mut word_budget = u64::from(f.degree()) + 1;
+                    let mut big_budget = word_budget;
+                    let word = multiply(&f, &a, &b, &mut word_budget);
+                    assert_eq!(word, multiply_big(&f, &a, &b, &mut big_budget));
+                    assert_eq!(word, f.mul(&a, &b));
+                    assert_eq!(word_budget, big_budget);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn word_boundary_wide_fallback_and_exact_budget_exhaustion() {
+        // Find checked representations at both sides of the word boundary.
+        // The arithmetic oracle remains core's independent convolution/division.
+        let mut fields = Vec::new();
+        for degree in [2, 8, 31, 32, 33] {
+            let field = (1u32..4096)
+                .step_by(2)
+                .find_map(|low| {
+                    BinaryField::new((BigUint::one() << degree) | BigUint::from(low)).ok()
+                })
+                .expect("an irreducible polynomial in the finite search range");
+            assert_eq!(field.degree(), degree);
+            fields.push(field);
+        }
+        fields.push(BinaryField::new((BigUint::one() << 128) | BigUint::from(135u8)).unwrap());
+        for f in fields {
+            let values = [
+                BigUint::zero(),
+                BigUint::one(),
+                BigUint::from(2u8),
+                BigUint::one() << (f.degree() - 1),
+                f.order() - 1u8,
+            ];
+            for a in &values {
+                for b in &values {
+                    for budget in [0, 1, u64::from(f.degree()) - 1, u64::from(f.degree()), 1000] {
+                        let (mut small, mut big) = (budget, budget);
+                        let value = multiply(&f, a, b, &mut small);
+                        assert_eq!(value, multiply_big(&f, a, b, &mut big));
+                        assert_eq!(small, big);
+                        if budget >= u64::from(f.degree()) {
+                            assert_eq!(value, f.mul(a, b));
+                            assert_eq!(small, budget - u64::from(f.degree()));
+                        } else {
+                            assert!(value.is_none());
+                            assert_eq!(small, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -147,3 +147,136 @@ fn exhaustive_two_variable_systems_over_f4() {
         }
     }
 }
+
+#[test]
+fn deeply_shared_field_expression_reaches_the_solver() {
+    // Each square shares its operand, so this has O(depth) DAG nodes and
+    // 2^depth paths. The assert-time theory-variable walk must not unfold it.
+    let mut expression = "(let ((s0 x)) ".to_owned();
+    for i in 1..=64 {
+        expression.push_str(&format!(
+            "(let ((s{i} (ff.add (ff.mul s{} s{}) (as ff1 (_ BinaryField 7))))) ",
+            i - 1,
+            i - 1
+        ));
+    }
+    expression.push_str("s64");
+    expression.push_str(&")".repeat(65));
+    // Over F4, (a -> a^2+1) iterated 64 times is the identity.
+    let out = run(&format!(
+        "(set-logic QF_FF) (declare-const x (_ BinaryField 7))
+        (assert (= {expression} (as ff2 (_ BinaryField 7))))
+        (check-sat) (get-value (x)) (push 1)
+        (assert (not (= x (as ff2 (_ BinaryField 7))))) (check-sat)
+        (pop 1) (check-sat)"
+    ));
+    assert_eq!(out[0], "sat");
+    assert!(out[1].contains("(as ff2 (_ BinaryField 7))"));
+    assert_eq!(&out[2..], &["unsat", "sat"]);
+}
+
+#[test]
+fn field_dispatch_ownership_does_not_survive_a_mixed_goal() {
+    for sort in ["(_ BinaryField 7)", "(_ FiniteField 5)"] {
+        for structured in [false, true] {
+            for certified in [false, true] {
+                let equation = format!("(= (ff.mul x x) (as ff1 {sort}))");
+                let assertion = if structured {
+                    format!("(or {equation} (= (ff.mul x x) (as ff2 {sort})))")
+                } else {
+                    equation
+                };
+                let mut ctx = Context::new();
+                if certified {
+                    ctx.require_certified_mode();
+                }
+                let out = ctx
+                    .execute_script(&format!(
+                        "(set-logic ALL) (declare-const x {sort}) (declare-const i Int)
+                     (assert {assertion}) (check-sat) (check-sat)
+                     (push 1) (assert (= i 1))
+                     (check-sat) (check-sat) (pop 1) (check-sat)
+                     (push 1) (assert {assertion}) (check-sat)
+                     (assert (= i 2)) (check-sat) (pop 1) (check-sat)"
+                    ))
+                    .unwrap();
+                assert_eq!(
+                    out,
+                    [
+                        "sat", "sat", "unknown", "unknown", "sat", "sat", "unknown", "sat"
+                    ],
+                    "sort={sort}, structured={structured}, certified={certified}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn field_disjunction_must_not_drop_a_foreign_integer_equation() {
+    for sort in ["(_ BinaryField 7)", "(_ FiniteField 5)"] {
+        let out = run(&format!(
+            "(set-logic ALL) (declare-const x {sort}) (declare-const i Int)
+             (assert (or (= (ff.mul x x) (as ff1 {sort}))
+                         (= (ff.mul x x) (as ff2 {sort}))))
+             (assert (= (+ (* i i) 1) 0)) (check-sat)"
+        ));
+        // i²+1=0 has no integer solution. This mixed fragment may be
+        // refuted elsewhere or declined, but must never be declared SAT.
+        assert!(
+            matches!(out[0].as_str(), "unsat" | "unknown"),
+            "{sort}: {out:?}"
+        );
+    }
+}
+
+#[test]
+fn field_result_sorts_and_containers_cannot_escape_the_fragment_guard() {
+    for (sort, count) in [("(_ FiniteField 2)", 3), ("(_ BinaryField 7)", 5)] {
+        let declarations = (0..count)
+            .map(|i| format!("(declare-fun f{i} (Int) {sort})"))
+            .collect::<String>();
+        let applications = (0..count).map(|i| format!(" (f{i} i)")).collect::<String>();
+        let uf = format!("(declare-const i Int) {declarations} (assert (distinct {applications}))");
+        let datatype = format!("(declare-datatype Box ((box (value {sort}))))");
+        let boxes = (0..count)
+            .map(|i| format!("(declare-const b{i} Box)"))
+            .collect::<String>();
+        let names = (0..count).map(|i| format!(" b{i}")).collect::<String>();
+        let datatype = format!("{datatype} {boxes} (assert (distinct {names}))");
+        for body in [uf, datatype] {
+            for certified in [false, true] {
+                let mut ctx = Context::new();
+                if certified {
+                    ctx.require_certified_mode();
+                }
+                let out = ctx
+                    .execute_script(&format!("(set-logic ALL) {body} (check-sat)"))
+                    .unwrap();
+                assert_eq!(out, ["unknown"], "{body}, certified={certified}");
+            }
+        }
+    }
+    // There are exactly four functions Bool -> F2.
+    let out = run("(set-logic ALL)
+        (declare-const a (Array Bool (_ FiniteField 2)))
+        (declare-const b (Array Bool (_ FiniteField 2)))
+        (declare-const c (Array Bool (_ FiniteField 2)))
+        (declare-const d (Array Bool (_ FiniteField 2)))
+        (declare-const e (Array Bool (_ FiniteField 2)))
+        (assert (distinct a b c d e)) (check-sat)");
+    assert_eq!(out, ["unknown"]);
+}
+
+#[test]
+fn unsupported_field_presence_is_scoped_and_declarations_are_harmless() {
+    let out = run("(set-logic ALL)
+        (declare-fun f (Int) (_ BinaryField 7))
+        (declare-fun g (Int) (_ BinaryField 7))
+        (declare-const i Int) (assert (= i 0)) (check-sat)
+        (push 1) (assert (distinct (f i) (g i))) (check-sat)
+        (pop 1) (check-sat)
+        (push 1) (assert (distinct (f i) (g i))) (check-sat)
+        (pop 1) (check-sat)");
+    assert_eq!(out, ["sat", "unknown", "sat", "unknown", "sat"]);
+}

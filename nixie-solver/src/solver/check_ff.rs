@@ -26,7 +26,7 @@ const FF_BUDGET_STEPS: u64 = 1 << 24;
 impl Solver {
     /// Whether any assertion mentions finite-field structure.
     fn goal_uses_finite_fields(&self, manager: &TermManager) -> bool {
-        self.assertions.iter().any(|&a| term_uses_ff(a, manager))
+        super::ff_presence::contains(&self.assertions, manager)
     }
 
     /// The set of distinct fields the assertions mention (a mixed-field
@@ -127,7 +127,14 @@ impl Solver {
                     )
             );
             let _ = &term;
-            if !is_literal {
+            if is_literal {
+                // A top-level foreign equality is still a foreign leaf.
+                // Boolean structure in another assertion must not send it
+                // to DPLL(FF) as an unconstrained propositional atom.
+                if !is_ff_literal(a, manager) {
+                    return None;
+                }
+            } else {
                 has_structure = true;
                 // Structure is allowed only over FF atoms; verify the
                 // whole sub-DAG before committing (a mixed leaf under
@@ -318,33 +325,7 @@ fn into_bigint(v: &BigUint) -> num_bigint::BigInt {
 
 /// Whether a term's DAG contains finite-field structure (explicit stack).
 fn term_uses_ff(root: TermId, manager: &TermManager) -> bool {
-    let mut visited: FxHashSet<TermId> = FxHashSet::default();
-    let mut stack = vec![root];
-    while let Some(t) = stack.pop() {
-        if !visited.insert(t) {
-            continue;
-        }
-        let Some(term) = manager.get(t) else {
-            continue;
-        };
-        match &term.kind {
-            TermKind::FfConst { .. }
-            | TermKind::FfAdd(_)
-            | TermKind::FfMul(_)
-            | TermKind::FfNeg(_)
-            | TermKind::FfBitsum(_) => return true,
-            TermKind::Var(_) => {
-                if matches!(
-                    manager.sorts.get(term.sort).map(|s| &s.kind),
-                    Some(SortKind::FiniteField(_))
-                ) {
-                    return true;
-                }
-            }
-            _ => stack.extend(nixie_core::ast::get_children(&term.kind)),
-        }
-    }
-    false
+    super::ff_presence::contains(&[root], manager)
 }
 
 /// Whether a term is an FF literal: `=`, `not =`, `true`, `false` — the
@@ -654,7 +635,6 @@ impl Solver {
                         model.set(atom, manager.mk_bool(truth));
                     }
                     self.model = Some(model);
-                    self.ff_terms_unconstrained = false;
                     return Some(SolverResult::Sat);
                 }
             }
@@ -864,7 +844,13 @@ impl<'a> FfTseitin<'a> {
                     match &term.kind {
                         TermKind::True => results.push(Lit::pos(self.sat.new_var_forced_true())),
                         TermKind::False => results.push(Lit::neg(self.sat.new_var_forced_true())),
-                        TermKind::Eq(..) => {
+                        TermKind::Eq(a, b) => {
+                            // Check independently of the dispatch shape gate:
+                            // every atom must belong to an actual field slice.
+                            let field = ff_sort_field(manager, *a)?;
+                            if ff_sort_field(manager, *b) != Some(field) {
+                                return None;
+                            }
                             let var = self.atom_lit(x)?;
                             results.push(Lit::pos(var));
                         }
@@ -910,6 +896,15 @@ impl<'a> FfTseitin<'a> {
                             stack.push(Frame::Expand(*c));
                         }
                         TermKind::Distinct(args) => {
+                            if let Some(&first) = args.first() {
+                                let field = ff_sort_field(manager, first)?;
+                                if args
+                                    .iter()
+                                    .any(|&a| ff_sort_field(manager, a) != Some(field))
+                                {
+                                    return None;
+                                }
+                            }
                             // distinct(a0…an) = ∧_{i<j} ¬(ai = aj): encode
                             // pairwise, registering each pair's equality
                             // as a (lazily created) atom.
@@ -1291,7 +1286,6 @@ impl Solver {
                                 model_out.set(atom, manager.mk_bool(truth));
                             }
                             self.model = Some(model_out);
-                            self.ff_terms_unconstrained = false;
                             return Some(SolverResult::Sat);
                         }
                         UfffSearch::Refuted(hint) => {
@@ -2203,4 +2197,28 @@ fn ufff_complete(
         }
     }
     Some(model)
+}
+
+#[cfg(test)]
+mod fragment_tests {
+    use super::*;
+
+    #[test]
+    fn field_boolean_encoder_rejects_foreign_atoms_without_a_dispatch_guard() {
+        let mut manager = TermManager::new();
+        let i = manager.mk_var("i", manager.sorts.int_sort);
+        let one = manager.mk_int(1);
+        let foreign = manager.mk_eq(i, one);
+        let distinct = manager.mk_distinct([i, one]);
+        for root in [foreign, distinct] {
+            let mut sat = SatSolver::new();
+            let mut atoms = FxHashMap::default();
+            let mut encoder = FfTseitin {
+                sat: &mut sat,
+                atom_var: &mut atoms,
+            };
+            assert!(encoder.encode(root, &mut manager).is_none());
+            assert!(atoms.is_empty());
+        }
+    }
 }

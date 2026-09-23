@@ -25,7 +25,7 @@ never a solver policy. No quiet-machine wall-time claim is planned.
 planted witnesses (and set NIXIE_SAT_SEED); reserve 10..19 for confirmation.
 The matrix includes F4/F16/F256 square roots, both F8 representations,
 shared squaring DAGs, two-variable systems, no-root quadratics, an exhausted
-budget, certified SAT, and unaffected prime/wide-field controls. No Z3 FF
+budget, certified SAT, and unaffected prime/wide-field controls. No native Z3 FF
 reference exists. The harness independently evaluates binary arithmetic by
 coefficient convolution and polynomial long division. SAT models are checked
 against every generated equation; the UNSAT quadratic has its complete root
@@ -57,3 +57,62 @@ python3 bench/ff_extension_perf/report.py precompile BASE CAND
 Add `--first-seed 10` to each command for fresh-seed confirmation. The runner
 needs permission to use perf hardware counters. Raw SMT-LIB, stdout, perf
 stderr and manifests live beside the canonical benchstore records.
+
+## Z3 reference amendment (before reference cost collection)
+
+At the user's request, additionally compare the same fixed 13 cases and
+seeds 0..19 with installed Z3 4.16.0. Its upstream release tag is
+[`ddb49568`](https://github.com/Z3Prover/z3/releases/tag/z3-4.16.0);
+the binary path and hash pin the actual installed Nix package. No native Z3
+finite-field syntax is assumed. `z3_reference.py` emits exact QF_BV:
+addition is XOR, multiplication is coefficient convolution followed by
+monic polynomial long division, and squaring directly encodes the F2-linear
+Frobenius map. This last specialization avoids an artificially weak generic
+multiplier for the square-heavy workload. The prime control uses bounded
+integers with exact modular multiplication. Encoding generation is outside
+the measured invocation, as is Nixie's input generation; both include parsing,
+solving, and printing the complete generated input.
+
+Before collecting cost, the reference translation passed exhaustive product
+checks in F4, both F8 representations and F16, exhaustive square checks through
+F256, and functional checks on all 13 seed-zero cases. These are untimed
+checks, not repeated performance cells. Returned models are checked by the
+independent coefficient-array oracle. No-root UNSAT is checked exhaustively.
+The budget case has a planted solution: Nixie's Unknown is reported as
+unsolved, while the reference is allowed to solve it. The certified-SAT case
+has the same equations and an independently checked model; this comparison
+does not claim interchangeable proof formats or certified UNSAT support.
+
+Use the same CPU, instruction counter, coverage rule and 120-second cap.
+Set both Z3 `sat.random_seed` and `smt.random_seed` for each seed. Record
+reference cells once under suite `ff-extension-z3`, role `reference`, with
+translated input hashes and original logical-instance hashes for joining.
+Report per-case instruction distributions, Nixie/Z3 ratios on jointly solved
+cells, and solved/Unknown counts separately. No acceptance bar requires
+beating Z3; the original optimization bar remains unchanged. This comparison
+measures two complete solvers with different input representations, not a
+native-FF Z3 implementation or isolated arithmetic throughput.
+
+```
+python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --self-test
+python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --root precompile
+python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --root precompile --first-seed 10
+```
+
+The certified-SAT reference label reuses the identical shared-DAG reference
+cell. The runner updates its reuse index after every record; the report
+expands that alias without a second measurement. See the study for the
+archived duplicate attempts discovered in the initial runner.
+
+## Completed results and checks
+
+The [study](../../docs/studies/2026-09-22-ff-extension-perf.md) records the
+controlled optimization, fresh-seed confirmation, Z3 comparison, limitations
+and all verification attempts. Aggregate CSVs are committed beside it; raw
+cells remain in the per-machine result store. Rebuild reports without
+measuring any cell again:
+
+```
+python3 bench/ff_extension_perf/report_z3.py precompile NIXIE_SHA --csv reference.csv
+python3 -m unittest discover -s bench/ff_extension_perf -p 'test_*.py'
+```
