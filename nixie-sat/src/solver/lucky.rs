@@ -73,6 +73,10 @@ impl Solver {
     /// and no phases / activities have been perturbed (barring the rare
     /// root-discrepancy path, which learns sound implied units).
     pub(super) fn lucky_phases(&mut self) -> Option<SolverResult> {
+        self.lucky_phases_impl::<false>()
+    }
+
+    fn lucky_phases_impl<const FORCE_SNAPSHOT: bool>(&mut self) -> Option<SolverResult> {
         if self.trail.decision_level() != 0 || self.trivially_unsat || self.num_vars == 0 {
             return None;
         }
@@ -124,7 +128,14 @@ impl Solver {
         // to the small large-clause minority on binary-dense instances
         // (worker-class: 97% binaries -- the ~190 MB transient was almost
         // entirely no-op restore data).
-        let snap_watches = self.watches.packed_snapshot();
+        // A complete root trail cannot make a speculative assignment: every
+        // lucky strategy skips assigned variables, and failure backtracks to
+        // the same level zero. No watch or clause can move in that case.
+        // Keep the strategies, clause validation, counters and model path
+        // unchanged, but avoid copying the circuit solely to discard the copy.
+        // FORCE_SNAPSHOT keeps the original computation available to tests.
+        let needs_snapshot = FORCE_SNAPSHOT || self.trail.size() != self.num_vars;
+        let snap_watches = needs_snapshot.then(|| self.watches.packed_snapshot());
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_LUCKY_TRACE").is_ok() {
             eprintln!(
@@ -135,14 +146,16 @@ impl Solver {
         let mut snap_ids: Vec<ClauseId> = Vec::new();
         let mut snap_ends: Vec<u32> = Vec::new();
         let mut snap_buf: Vec<Lit> = Vec::new();
-        for id in self.clauses.iter_ids() {
-            if let Some(v) = self.clauses.get(id) {
-                if v.lits.len() < 3 {
-                    continue;
+        if needs_snapshot {
+            for id in self.clauses.iter_ids() {
+                if let Some(v) = self.clauses.get(id) {
+                    if v.lits.len() < 3 {
+                        continue;
+                    }
+                    snap_ids.push(id);
+                    snap_buf.extend_from_slice(v.lits);
+                    snap_ends.push(snap_buf.len() as u32);
                 }
-                snap_ids.push(id);
-                snap_buf.extend_from_slice(v.lits);
-                snap_ends.push(snap_buf.len() as u32);
             }
         }
         let snap_ticks = (
@@ -196,7 +209,9 @@ impl Solver {
             LuckyOutcome::Fail => {
                 // Restore the pre-lucky search state so the probe is fully
                 // transparent to the CDCL search.
-                self.watches.restore(snap_watches);
+                if let Some(snapshot) = snap_watches {
+                    self.watches.restore(snapshot);
+                }
                 let mut start = 0u32;
                 for (&id, &end) in snap_ids.iter().zip(snap_ends.iter()) {
                     // Watch-position swaps during the probe are undone by
@@ -448,6 +463,75 @@ impl Solver {
             Discrepancy::Ok
         } else {
             Discrepancy::BothConflict
+        }
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    fn compare(a: &mut Solver, b: &mut Solver) {
+        let result = a.lucky_phases_impl::<false>();
+        let control = b.lucky_phases_impl::<true>();
+        assert_eq!(result, control);
+        assert_eq!(a.export_problem_dimacs(), b.export_problem_dimacs());
+        assert_eq!(a.trail.assignments(), b.trail.assignments());
+        assert_eq!(a.trail.decision_level(), b.trail.decision_level());
+        assert_eq!(a.trivially_unsat, b.trivially_unsat);
+        assert_eq!(a.ticks_focused, b.ticks_focused);
+        assert_eq!(a.ticks_stable, b.ticks_stable);
+        assert_eq!(format!("{:?}", a.stats), format!("{:?}", b.stats));
+        assert_eq!(
+            format!("{:?}", a.watches.packed_snapshot()),
+            format!("{:?}", b.watches.packed_snapshot())
+        );
+        if result == Some(SolverResult::Sat) {
+            a.save_model();
+            b.save_model();
+            assert_eq!(a.model(), b.model());
+        }
+    }
+
+    #[test]
+    fn complete_and_partial_root_trails_match_forced_snapshot_across_scopes() {
+        for mask in 0..64 {
+            for fixed in [0, 3, 6] {
+                let mut a = Solver::new();
+                let mut b = Solver::new();
+                for s in [&mut a, &mut b] {
+                    s.new_vars_bulk(6);
+                    for i in 0..6 {
+                        // Long clauses exercise both snapshot buffers; the
+                        // chosen mask is a witness, even when some bits stay free.
+                        s.add_clause((0..3).map(|j| {
+                            let k = (i + j) % 6;
+                            if mask & (1 << k) != 0 {
+                                Lit::pos(Var::new(k))
+                            } else {
+                                Lit::neg(Var::new(k))
+                            }
+                        }));
+                    }
+                    for i in 0..fixed {
+                        s.add_clause([if mask & (1 << i) != 0 {
+                            Lit::pos(Var::new(i))
+                        } else {
+                            Lit::neg(Var::new(i))
+                        }]);
+                    }
+                }
+                compare(&mut a, &mut b);
+                for s in [&mut a, &mut b] {
+                    s.push();
+                    s.add_clause([Lit::pos(Var::new(0))]);
+                    s.add_clause([Lit::neg(Var::new(0))]);
+                }
+                compare(&mut a, &mut b);
+                a.pop();
+                b.pop();
+                compare(&mut a, &mut b);
+            }
         }
     }
 }
