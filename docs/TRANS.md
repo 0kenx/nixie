@@ -178,14 +178,18 @@ of aborting the whole solve with `unknown`.
 
 ### Corpus results (release build, this machine, Z3 4.16.0)
 
-20 goals, `bench/trans/corpus/`: nixie decides **20/20** (13 delta-sat
-witnesses, 7 refutations) in ≤ 303 ms each; Z3 decides **0/20** —
+25 goals, `bench/trans/corpus/`: nixie decides **25/25** (14 delta-sat
+witnesses, 11 refutations) in ≤ 131 ms each; Z3 decides **0/25** —
 `unknown` on every sin/cos/atan goal it accepts, and it has no
 `exp`/`log`/`sqrt` on Reals at all (parse error).  Full table:
 `precompile/<sha>/benchmark/trans/*.tsv`.  Headline moves from the
 optimization round: coupled `sin x + cos y = 1` 729 ms→17 ms *and*
-unknown→delta-sat; the decay envelope 554 ms→98 ms and unknown→
-delta-sat; bounded Pythagorean refutation 41 ms→19 ms.
+unknown→delta-sat; the decay envelope 554 ms→98 ms→35 ms and unknown→
+delta-sat; the far-window periodic root (`sin x = 0.5` on `[90,100]`)
+303 ms→53 ms via the periodic-aware first split; bounded Pythagorean
+refutation 41 ms→19 ms.  The fragment round (2026-09-23) added the
+UF-congruence, `distinct` and nested-trans goals (t21–t25) — classes
+that were honest-`unknown` before it.
 
 ## Options
 

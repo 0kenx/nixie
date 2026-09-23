@@ -1,7 +1,9 @@
 # Handoff: Transcendental theory (δ-ICP) — status after the fragment-widening round
 
 **Session:** 2026-09-23, continuing `docs/handovers/2026-09-23-trans-next-targets.md`.
-**Landed:** `970a2f4a` (this round; binary `precompile/970a2f4a/nixie`),
+**Landed:** `970a2f4a` (fragment + hot path) and `b32c2643` (nested-UF
+congruence fix; binary `precompile/b32c2643/nixie`, corpus results in
+`precompile/b32c2643/benchmark/trans/optimized.tsv` — 25/25 decided),
 on top of `8131ba44` (perf round) and `df8017a2` (the theory).
 Read `docs/TRANS.md` first — the "Semantic decisions" section is the contract.
 
@@ -94,7 +96,8 @@ new TermKind appears, that match must grow with it.
    dReal also punts; optional polish.
 5. **`Int`-sorted arguments in UF congruence atoms** still decline at
    `intern_term` (honest); an Int→Real widening of ground congruence
-   atoms would admit `f(Int)` in trans goals.
+   atoms would admit `f(Int)` in trans goals.  (Nested `f(f x)` now
+   decides — the congruence compares fresh variables, `b32c2643`.)
 
 ## Traps recorded (cumulative; do not re-learn)
 
@@ -112,6 +115,10 @@ new TermKind appears, that match must grow with it.
   re-derive from an engine-side δ (they drifted once).
 - **`Ne` pruning must use the EXACT window**, not the f64 `rhs_interval`
   (the ε-widening fires conflicts on boxes that are δ-outside).
+- **Ackermann congruence antecedents must compare SUBSTITUTED args**:
+  nested `f(f x)` has applications as arguments; referencing the raw
+  `Apply` terms re-introduces the construct every non-EUF downstream
+  consumer just eliminated (`b32c2643`).
 - **nextest deadlines flake under load**: the full suite must run on a
   quiet machine (137 s quiet vs flakes at load 30+; qfidl_qlock_11 and
   five slow tests are the usual suspects — pass solo).
@@ -120,10 +127,10 @@ new TermKind appears, that match must grow with it.
 
 ## Verification bar for any change here
 
-`cargo nextest run -p nixie-theories -E 'test(trans)'` (37) +
-`cargo nextest run -p nixie-solver --test trans_delta_icp` (27) are the
+`cargo nextest run -p nixie-theories -E 'test(trans)'` (34) +
+`cargo nextest run -p nixie-solver --test trans_delta_icp` (28) are the
 fast canaries.  Then the standard battery — workspace tests, clippy,
-fmt, doc — plus `./bench/trans/run_bench.sh precompile/970a2f4a/nixie`
-(24 goals; never re-run recorded cells, add files freely).  The z3
+fmt, doc — plus `./bench/trans/run_bench.sh precompile/b32c2643/nixie`
+(25 goals; never re-run recorded cells, add files freely).  The z3
 parity suite and the perf gate must stay clean whenever solver-wide
 walks change (`collect_structural_children` is on general paths).
