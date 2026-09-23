@@ -117,3 +117,22 @@ Z3 itself is identified by its actual version and binary hash. See the
 [study](../../docs/studies/2026-09-22-cp-scheduling-bounds.md) for limitations,
 model-check accounting and results. Run harness tests with
 `python3 -m unittest discover -s bench/cp_perf -p 'test_reference.py'`.
+
+## Larger-case investigation
+
+`reference.py run` and `report` accept repeatable `--shape TASKSxWIDTH` and
+`--family FAMILY` selectors. Defaults remain the original two shapes and all
+seven families. For the larger-case grid use:
+
+```sh
+--shape 8x32 --shape 16x16 --shape 16x32 --shape 32x16 \
+--family unknown --family present --family sparse --first-seed 10
+```
+
+The [larger-case study](../../docs/studies/2026-09-23-cp-larger-cases.md)
+records all source/binary identities, reused cells, profiles and per-seed data.
+For its baseline-only Z3 comparison, pass the same frozen Nixie revision as
+both `--baseline` and `--treatment` to the existing report command; the
+current/previous column is consequently 1 and is not an optimization result.
+The extended harness has a new content hash; do not rerun the existing small
+grid simply to refresh that hash.
