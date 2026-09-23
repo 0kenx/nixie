@@ -2,7 +2,7 @@
 
 The fresh-seed sparse 16x32 comparison uses **27.9% fewer instructions**
 than the current Nixie baseline, with identical transcripts and checking.
-Its ordinary **Nixie/Z3** ratio falls from **42.8871 to 30.9340**; the gap to
+Its ordinary **Nixie/Z3** ratio falls from **42.89 to 30.93**; the gap to
 Z3 remains large. The sparse 32x16 reduction is 18.1%. Short cases and
 all-present scheduling are neutral. This lands only the explanation-set
 optimization; timetable and callback/model-replay costs remain follow-ups.
@@ -158,3 +158,80 @@ Timetable redundancy recognition, snapshot/event reuse and shorter explanations
 remain separate follow-ups. Shortening explanations would change clauses and
 needs separate search controls. Variable durations/demands and stronger
 cumulative propagation remain unimplemented.
+
+## Integration protocol (before replay)
+
+While full release verification was compiling, main advanced to `84ff279f`
+with the independently verified complete-root lucky-snapshot optimization.
+Merge `098e9983` combines it with this change without conflicts. Rebuild both
+the new main baseline and merged candidate using the same frozen external
+CP driver and repeat the confirmation grid, seeds 20..29, before landing.
+This is an integration replay, not new independent confirmation or another
+selected configuration. Reuse Z3's existing confirmation cells; require the
+same transcript/coverage/regression checks and target-family acceptance bar.
+Keep the isolated experiment above as attribution evidence.
+
+Restart the unfinished full-suite compilation on the merged source using the
+repository's established test-only release link settings:
+`CARGO_PROFILE_RELEASE_LTO=false`, `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`,
+with optimization level 3 in a separate `target-verify`. No tests ran in the
+interrupted compilations. Normal release builds, Clippy, docs, doctests,
+parity and measured binaries retain their original profiles. The interrupted
+compile logs are preserved, not counted as completed verification.
+
+The pre-integration 150-second perf gate printed PASS with identical counters
+on eight nontrivial pairs, but one pair was jointly censored. Its candidate
+path was also inside the active Cargo output directory. Preserve this as a
+diagnostic only. The final integrated gate uses a frozen cached CLI and a
+600-second cap, with binary hashes checked before and after; only its complete
+result qualifies as landing evidence.
+
+## Integrated result
+
+The integrated candidate `098e9983` also passes the bar against the new main
+baseline `84ff279f`. On the replayed confirmation grid:
+
+| Mode / family / shape | Main baseline / Z3 | Integrated candidate / Z3 | Candidate / main baseline |
+|---|---:|---:|---:|
+| Ordinary sparse 16x32 | 42.8863 | 30.9348 | 0.7213 |
+| Certified sparse 16x32 | 43.0012 | 31.0348 | 0.7217 |
+| Ordinary sparse 32x16 | 6.1748 | 5.0588 | 0.8193 |
+| Certified sparse 32x16 | 6.1867 | 5.0716 | 0.8198 |
+| Ordinary present 16x32 | 16.9818 | 16.7898 | 0.9887 (neutral) |
+| Ordinary unknown 16x32 | 4.6514 | 4.4518 | 0.9571 (neutral) |
+
+All 400 integrated baseline/candidate pairs retain byte-identical transcripts,
+checked SAT and 100% counter coverage, with no censored cells. No family/shape
+regresses beyond the neutral band. The two CSVs include these rows as the
+`integrated` grid, separately from the 800 isolated comparisons. Z3 reference
+cells are reused, not resampled. Neither the integration replay nor its seeds
+are counted as additional independent confirmation.
+
+
+## Final verification and landing evidence
+
+The integrated source `098e9983` passes all required gates:
+
+- Full release Nextest: **12,384/12,384 passed**, 18 existing skips. This
+  includes the new exhaustive/order/watch/proof/scope regressions and the
+  optional scheduling oracles and complete checked CP proof tests.
+- **114 doctests passed**, with 31 existing ignored examples.
+- Normal all-features release build, all-target Clippy with warnings denied,
+  formatting, and documentation with warnings denied all pass. Documentation
+  uses the workspace's configured rustdoc flags, since Cargo does not accept
+  the `-- -D warnings` passthrough for `cargo doc`.
+- Installed **Z3 4.16.0** parity: **176 decisive matches, zero wrong answers,
+  one inconclusive** (`array_unique`: Z3 Unknown), no timeout/error.
+- Frozen default-feature CLI, 600-second perf gate: **12/12 decisive
+  agreements**, no censored or lost pair, and conflict/decision geometric
+  means **1.000** on nine nontrivial pairs. The three others are trivial.
+  Binary hashes before/after agree. Wall ratio 1.02 is diagnostic only;
+  no wall-clock speedup is claimed.
+- Five Python CP reference-harness tests pass. All new instruction records
+  and paired transcripts pass the independent audit; `git diff --check` is clean.
+
+The final documentation/data landing does not alter the verified Rust source.
+Frozen binaries and all build/profile/verification evidence are retained under
+its `precompile/<landing-sha>/benchmark/cp-reason-dedup/`; immutable per-cell
+records remain under their original measured source revisions. Temporary
+worktrees, branches and build artifacts are removed after landing.
