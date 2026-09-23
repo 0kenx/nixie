@@ -5,6 +5,19 @@ use crate::prelude::Vec;
 use nixie_core::ast::TermId;
 
 impl DomainStatement {
+    // The caller supplies an untrusted index from its current snapshot. Keep
+    // checking the exact conclusion and premises with the standalone checker.
+    pub(super) fn explain_fixed(
+        &self,
+        conclusion: TermId,
+        reasons: &[TermId],
+        fixed: usize,
+    ) -> Option<DomainCertificate> {
+        let certificate = DomainCertificate::new(self.clone(), DomainRule::Exclusion { fixed });
+        certificate.check(self, conclusion, reasons).ok()?;
+        Some(certificate)
+    }
+
     pub(super) fn explain(
         &self,
         conclusion: TermId,

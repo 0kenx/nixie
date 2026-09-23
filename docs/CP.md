@@ -91,7 +91,7 @@ they must occupy nonoverlapping windows; cancelling one removes its resource
 usage without restricting its start. Run it with:
 
 ```sh
-cargo run -p nixie-solver --example optional_resource_allocation
+cargo run --release -p nixie-solver --example optional_resource_allocation
 ```
 
 The API pattern is:
@@ -383,3 +383,11 @@ concrete Boolean evaluations are reused only within that model's validation.
 Every statement, certificate and consequence remains checked. The
 [Z3-reference study](studies/2026-09-22-cp-scheduling-bounds.md) reports explicit
 Nixie/Z3 instruction ratios separately from Nixie before/after measurements.
+
+Domain snapshots retain the premise position of a fixed value. Exactly-one
+exclusions use that position to produce the same witness, which still passes
+the independent domain checker. Unknown indicators need no repeated BigInt
+membership scan, and snapshot construction stops copying alternatives after
+a fixed value is found. This local reuse does not survive a callback or scope.
+The [exclusion study](studies/2026-09-22-cp-scheduling-exclusions.md) records
+the controlled Z3 comparison and unchanged explanation/proof checks.
