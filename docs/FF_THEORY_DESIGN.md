@@ -700,8 +700,9 @@ monic irreducible polynomial's coefficients. `(as ffN (_ BinaryField F))`
 is a canonical polynomial-basis element, not an integer residue. Different
 defining polynomials name different sorts even at equal cardinality.
 
-QF_FF Boolean combinations use exact, budgeted enumeration; prime algebra
-and prime QF_UFFF retain their existing paths. Extension UF combinations
+QF_FF Boolean combinations use affine F2 solving with exact, budgeted
+enumeration for the remaining polynomial cases; prime algebra and prime
+QF_UFFF retain their existing paths. Extension UF combinations
 and arithmetic UNSAT proof exports remain unsupported and decline honestly.
 See [representation, API, limits, independent audit and verification](studies/2026-09-22-binary-extension-fields.md)
 for the full supported fragment and characteristic/cardinality distinctions.
