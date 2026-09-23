@@ -567,10 +567,11 @@ struct Backward {
     target: usize,
     seen: Vec<bool>,
     witness: Vec<Option<u32>>,
-    /// Lazily materialized complement of `seen` (the cut witness), shared
-    /// by every `Cut` rule this memo emits while it survives — building it
-    /// per emission cost an O(vertices) scan per consequence.
-    closed: Option<Arc<[u32]>>,
+    /// Lazily materialized complement of `seen` as a packed membership
+    /// bitmap (the cut witness), shared by every `Cut` rule this memo
+    /// emits while it survives — building it per emission cost an
+    /// O(vertices) scan per consequence.
+    closed: Option<Arc<[u64]>>,
 }
 
 /// The ≥1-step forward closure of `source` over non-false edges: every
@@ -675,6 +676,20 @@ fn ge1_leaving_negations(
         }
     }
     reasons
+}
+
+/// Pack a membership bitmap of `members` over `vertices` bits (the
+/// NoCycleThrough emission path; `forward_ge1_set` yields distinct
+/// members, so no dedup is needed).
+fn bits_from_members(vertices: usize, members: &[u32]) -> Arc<[u64]> {
+    let mut bits = vec![0u64; vertices.div_ceil(64)];
+    for &v in members {
+        debug_assert!((v as usize) < vertices);
+        if (v as usize) < vertices {
+            bits[v as usize / 64] |= 1 << (v % 64);
+        }
+    }
+    bits.into()
 }
 
 fn backward_seen(
@@ -823,21 +838,30 @@ impl Backward {
     /// set of vertices that cannot reach the target through non-refuted
     /// edges. It contains the source, excludes the target, and every
     /// premise-refuted crossing edge is exactly an edge of the cut.
-    /// Materialized once per memo lifetime and shared (the emission rate
-    /// of cut rules over one closure made per-emission O(vertices)
-    /// collection measurable).
-    fn closed_set(&mut self, vertices: usize) -> Arc<[u32]> {
-        if let Some(closed) = &self.closed {
-            return Arc::clone(closed);
+    /// Carried as a packed membership bitmap and materialized once per
+    /// memo lifetime (the emission rate of cut rules over one closure
+    /// made per-emission O(vertices) collection measurable): the packing
+    /// walks `seen` once — no member scan, no per-check fill on the
+    /// certificate side.
+    fn cut_bits(&mut self) -> Arc<[u64]> {
+        if let Some(bits) = &self.closed {
+            return Arc::clone(bits);
         }
-        let closed: Arc<[u32]> = (0..vertices)
-            .filter(|v| !self.seen[*v])
-            .map(|v| v as u32)
-            .collect();
-        if self.closed.is_none() {
-            self.closed = Some(Arc::clone(&closed));
+        let words = self.seen.len().div_ceil(64);
+        let mut bits = Vec::with_capacity(words);
+        for w in 0..words {
+            let mut word: u64 = 0;
+            for b in 0..64 {
+                let i = w * 64 + b;
+                if i < self.seen.len() && !self.seen[i] {
+                    word |= 1 << b;
+                }
+            }
+            bits.push(word);
         }
-        closed
+        let bits: Arc<[u64]> = bits.into();
+        self.closed.get_or_insert_with(|| Arc::clone(&bits));
+        bits
     }
 
     /// Signed reasons that the source cannot reach the target through
@@ -1885,7 +1909,7 @@ impl GraphModel {
                             (
                                 GraphRule::NoCycleThrough {
                                     v: reach.from.0,
-                                    closed: t_set.into(),
+                                    closed: bits_from_members(vertices, &t_set),
                                 },
                                 reasons,
                             )
@@ -1894,7 +1918,7 @@ impl GraphModel {
                                 GraphRule::Cut {
                                     from: reach.from.0,
                                     to: reach.to.0,
-                                    closed: backward.closed_set(vertices),
+                                    closed: backward.cut_bits(),
                                 },
                                 backward.cut_negations(spec, values),
                             )
@@ -1953,7 +1977,7 @@ impl GraphModel {
                             (
                                 GraphRule::NoCycleThrough {
                                     v: reach.from.0,
-                                    closed: t_set.into(),
+                                    closed: bits_from_members(vertices, &t_set),
                                 },
                                 reasons,
                             )
@@ -1962,7 +1986,7 @@ impl GraphModel {
                                 GraphRule::Cut {
                                     from: reach.from.0,
                                     to: reach.to.0,
-                                    closed: backward.closed_set(vertices),
+                                    closed: backward.cut_bits(),
                                 },
                                 backward.cut_negations(spec, values),
                             )
@@ -2014,7 +2038,7 @@ impl GraphModel {
                     (
                         GraphRule::NoCycleThrough {
                             v: reach.from.0,
-                            closed: t_set.into(),
+                            closed: bits_from_members(vertices, &t_set),
                         },
                         reasons,
                     )
@@ -2023,7 +2047,7 @@ impl GraphModel {
                         GraphRule::Cut {
                             from: reach.from.0,
                             to: reach.to.0,
-                            closed: backward.closed_set(vertices),
+                            closed: backward.cut_bits(),
                         },
                         backward.cut_negations(spec, values),
                     )
