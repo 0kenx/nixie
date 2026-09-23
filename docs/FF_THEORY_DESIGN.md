@@ -712,3 +712,7 @@ DAG memoization. Field presence persists across checks; ownership belongs only
 to the current successful field dispatch. Every Boolean atom must belong to a
 field slice, including top-level literals beside structured assertions. Foreign
 theory equalities cannot be silently accepted as free Boolean atoms.
+
+Presence detection includes application result sorts and fields nested inside
+container/datatype definitions. Unsupported combinations cannot bypass the
+SAT honesty gate merely because no explicit field constant or variable occurs.

@@ -435,3 +435,54 @@ these gates completed. Its changes are confined to CP domain explanations,
 CP propagation, tests and documentation; the debug-probe cleanup removes a
 now-redundant expectation. Integrating it requires a new verification snapshot;
 the benchmark and passing results above retain their original source identity.
+
+
+### Typed presence audit and CP integration (2026-09-23)
+
+The `3616746d` integration passed all release gates: 12,375 tests (18
+skipped), 114 doctests (31 ignored), Clippy, formatting, rustdoc, and the
+ignored trajectory canary. Z3 4.16.0 parity retained 176 decisive matches,
+zero wrong answers and one inconclusive. The performance gate passed all
+12 verdicts with all nine counter ratios 1.000. The standard-LTO production
+build and LTO-off test profile retain the configurations documented above.
+Logs and command metadata are stored under that source's
+`benchmark/ff-extension-verification/` cache directory.
+
+Its 260 additional immutable benchmark cells preserve all outputs and pass
+both seed-set acceptance gates (non-control instruction ratios including
+fixed-budget work: 0.6824 and 0.6821). The [Z3 distributions](2026-09-22-ff-extension-z3-landing.csv)
+reuse the existing 240 unique reference cells: jointly solved extension
+ratio 0.3599, with the same two-variable and budget limitations. These
+results describe that source, before the additional guard below.
+
+A subsequent independent dispatch audit found a third false-SAT family.
+Presence detection recognized field variables and operators, but missed
+field-valued applications whose arguments were foreign sorts. It also
+missed fields nested inside container and datatype sorts. The cached binary
+accepted three distinct Int-to-F2 function results, five distinct Int-to-F4
+results, three distinct `Box(F2)` values, and five distinct `Array Bool F2`
+values. Their cardinalities are respectively 2, 4, 2 and 4; each is a
+pigeonhole contradiction. Z3 4.16.0 independently returns UNSAT for exact
+finite-domain encodings (F2 as Bool, F4 as BV2). Original inputs/outputs
+and reference inputs/outputs are retained beside the verification logs.
+
+The fix surveys result sorts and all term children, as well as array
+indices/ranges, sequence/set/bag elements, datatype selectors and parametric
+arguments. Both terms and sorts use visited sets and explicit heap stacks;
+recursive datatypes terminate, and a 20,000-deep sort has a focused test.
+The survey precedes assert-time preprocessing and also guards internal
+encodings independently. It reuses the existing scope snapshot; removing
+the last field assertion restores ordinary solving, while declarations
+alone do not trip the gate. With no fields declared, the field-table check
+returns immediately.
+
+The independent layers checked are dispatch recognition, pure/UF fragment
+shape validation, generic theory-variable tracking, assertion preprocessing,
+container/recursive sort traversal, scope restoration, field ownership and
+final SAT validation. Generic finite-domain cardinality reasoning does not
+supply a complete decision procedure for these field combinations. They
+therefore decline to Unknown; this change does not claim support for mixed
+integer/field functions or field containers. End-to-end prime/binary and
+certified-mode regressions, plus direct internal tracking tests, protect
+these separate entry points. The arithmetic and certificate replay layers
+remain unchanged by this guard.

@@ -26,7 +26,7 @@ const FF_BUDGET_STEPS: u64 = 1 << 24;
 impl Solver {
     /// Whether any assertion mentions finite-field structure.
     fn goal_uses_finite_fields(&self, manager: &TermManager) -> bool {
-        self.assertions.iter().any(|&a| term_uses_ff(a, manager))
+        super::ff_presence::contains(&self.assertions, manager)
     }
 
     /// The set of distinct fields the assertions mention (a mixed-field
@@ -325,33 +325,7 @@ fn into_bigint(v: &BigUint) -> num_bigint::BigInt {
 
 /// Whether a term's DAG contains finite-field structure (explicit stack).
 fn term_uses_ff(root: TermId, manager: &TermManager) -> bool {
-    let mut visited: FxHashSet<TermId> = FxHashSet::default();
-    let mut stack = vec![root];
-    while let Some(t) = stack.pop() {
-        if !visited.insert(t) {
-            continue;
-        }
-        let Some(term) = manager.get(t) else {
-            continue;
-        };
-        match &term.kind {
-            TermKind::FfConst { .. }
-            | TermKind::FfAdd(_)
-            | TermKind::FfMul(_)
-            | TermKind::FfNeg(_)
-            | TermKind::FfBitsum(_) => return true,
-            TermKind::Var(_) => {
-                if matches!(
-                    manager.sorts.get(term.sort).map(|s| &s.kind),
-                    Some(SortKind::FiniteField(_))
-                ) {
-                    return true;
-                }
-            }
-            _ => stack.extend(nixie_core::ast::get_children(&term.kind)),
-        }
-    }
-    false
+    super::ff_presence::contains(&[root], manager)
 }
 
 /// Whether a term is an FF literal: `=`, `not =`, `true`, `false` — the

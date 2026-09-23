@@ -229,3 +229,54 @@ fn field_disjunction_must_not_drop_a_foreign_integer_equation() {
         );
     }
 }
+
+#[test]
+fn field_result_sorts_and_containers_cannot_escape_the_fragment_guard() {
+    for (sort, count) in [("(_ FiniteField 2)", 3), ("(_ BinaryField 7)", 5)] {
+        let declarations = (0..count)
+            .map(|i| format!("(declare-fun f{i} (Int) {sort})"))
+            .collect::<String>();
+        let applications = (0..count).map(|i| format!(" (f{i} i)")).collect::<String>();
+        let uf = format!("(declare-const i Int) {declarations} (assert (distinct {applications}))");
+        let datatype = format!("(declare-datatype Box ((box (value {sort}))))");
+        let boxes = (0..count)
+            .map(|i| format!("(declare-const b{i} Box)"))
+            .collect::<String>();
+        let names = (0..count).map(|i| format!(" b{i}")).collect::<String>();
+        let datatype = format!("{datatype} {boxes} (assert (distinct {names}))");
+        for body in [uf, datatype] {
+            for certified in [false, true] {
+                let mut ctx = Context::new();
+                if certified {
+                    ctx.require_certified_mode();
+                }
+                let out = ctx
+                    .execute_script(&format!("(set-logic ALL) {body} (check-sat)"))
+                    .unwrap();
+                assert_eq!(out, ["unknown"], "{body}, certified={certified}");
+            }
+        }
+    }
+    // There are exactly four functions Bool -> F2.
+    let out = run("(set-logic ALL)
+        (declare-const a (Array Bool (_ FiniteField 2)))
+        (declare-const b (Array Bool (_ FiniteField 2)))
+        (declare-const c (Array Bool (_ FiniteField 2)))
+        (declare-const d (Array Bool (_ FiniteField 2)))
+        (declare-const e (Array Bool (_ FiniteField 2)))
+        (assert (distinct a b c d e)) (check-sat)");
+    assert_eq!(out, ["unknown"]);
+}
+
+#[test]
+fn unsupported_field_presence_is_scoped_and_declarations_are_harmless() {
+    let out = run("(set-logic ALL)
+        (declare-fun f (Int) (_ BinaryField 7))
+        (declare-fun g (Int) (_ BinaryField 7))
+        (declare-const i Int) (assert (= i 0)) (check-sat)
+        (push 1) (assert (distinct (f i) (g i))) (check-sat)
+        (pop 1) (check-sat)
+        (push 1) (assert (distinct (f i) (g i))) (check-sat)
+        (pop 1) (check-sat)");
+    assert_eq!(out, ["sat", "unknown", "sat", "unknown", "sat"]);
+}

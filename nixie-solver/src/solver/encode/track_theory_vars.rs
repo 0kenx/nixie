@@ -79,6 +79,12 @@ impl Solver {
     /// gap.  The variants that are deliberately *not* descended into are
     /// grouped in the final arm, which documents why each family is a no-op.
     pub(super) fn track_theory_vars(&mut self, term_id: TermId, manager: &TermManager) {
+        // Internal encodings can bypass assert(). Inspect the whole typed DAG,
+        // including arguments of applications this tracking walk treats atomically.
+        if !self.ff_terms_unconstrained && super::super::ff_presence::contains(&[term_id], manager)
+        {
+            self.ff_terms_unconstrained = true;
+        }
         let mut stack: Vec<TermId> = vec![term_id];
 
         while let Some(current) = stack.pop() {
@@ -91,17 +97,6 @@ impl Solver {
                     // Found a variable - check its sort and track appropriately
                     let is_int = term.sort == manager.sorts.int_sort;
                     let is_real = term.sort == manager.sorts.real_sort;
-                    // A field-sorted variable reaching here has no CDCL(T)
-                    // engine behind it (the FF procedure is an eager
-                    // dispatch): trip the sat honesty gate.
-                    if manager
-                        .sorts
-                        .get(term.sort)
-                        .is_some_and(|s| s.is_finite_field())
-                    {
-                        self.ff_terms_unconstrained = true;
-                    }
-
                     if is_int || is_real {
                         if !self.arith_terms.contains(&current) {
                             self.arith_terms.insert(current);

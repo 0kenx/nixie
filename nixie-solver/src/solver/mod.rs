@@ -1,4 +1,5 @@
 //! Main CDCL(T) SMT Solver module
+mod ff_presence;
 mod sequence;
 
 pub(super) mod arith_axioms;
@@ -724,7 +725,7 @@ pub struct Solver {
     /// the reverse — so the gate can only be conservative.
     pub(super) has_set_or_bag_terms: bool,
     /// Honesty gate (soundness) for finite fields: `true` once any FF-sorted
-    /// term reaches the Tseitin encoder. The FF decision procedure
+    /// term or a container of fields occurs in an assertion/encoding. The FF decision procedure
     /// (`check_ff.rs`) runs as an eager whole-problem dispatch; if an FF term
     /// still reached CDCL(T), no engine owns it, and a `Sat` would rest on an
     /// assignment no field satisfies. Degrades exactly that case to `Unknown`.

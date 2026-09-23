@@ -691,3 +691,20 @@ fn finite_field_shared_dag_tracking_is_memoized_and_scope_consistent() {
         }
     }
 }
+
+#[test]
+fn field_tracking_checks_opaque_results_and_arguments_independently() {
+    let mut manager = TermManager::new();
+    let field = manager.sorts.binary_field(7u32.into()).unwrap();
+    let integer = manager.mk_var("i", manager.sorts.int_sort);
+    let result = manager.mk_apply("f", [integer], field);
+    let predicate = manager.mk_apply("p", [result], manager.sorts.bool_sort);
+    for root in [result, predicate] {
+        let mut solver = Solver::new();
+        solver.push();
+        solver.track_theory_vars(root, &manager);
+        assert!(solver.ff_terms_unconstrained);
+        solver.pop();
+        assert!(!solver.ff_terms_unconstrained);
+    }
+}
