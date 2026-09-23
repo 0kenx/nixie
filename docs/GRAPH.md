@@ -178,12 +178,18 @@ default decisions are complete for this fragment.
   `register_graph` are **proved callbacks**. Every consequence carries a
   `GraphCertificate`: the identity of an immutable `GraphStatement`
   (vertices, every edge's pair and presence atom, the reified atoms),
-  retained by the solver at registration. Checking recomputes explicit
-  length-≥1 closures / Kahn acyclicity / cycle DFS over the statement —
-  a different algorithm from the propagator's incremental views — and
-  validates the exact implication (path lemmas over premise-true edges,
-  cut lemmas over non-refuted edges, cycle and acyclicity lemmas
-  likewise; foreign premises are weakening). Certified and
+  retained by the solver at registration. Checking is **linear in the
+  witness structure** the emitter's own search produced (a path walk, a
+  cut's successor-closed vertex set, an explicit cycle, a topological
+  order) — no closure recomputation on this hot path, which runs per
+  emitted consequence inside the CDCL loop. Recompute-based checking
+  (explicit length-≥1 closures / Kahn acyclicity / cycle DFS over the
+  statement, a different algorithm from the propagator's incremental
+  views) remains the **cold** proof-reconstruction boundary
+  (`GraphStatement::check_lemma`), where recorded lemmas arrive without
+  witnesses. Both validate the exact implication (path lemmas over
+  premise-true edges, cut lemmas over non-refuted edges, cycle and
+  acyclicity lemmas likewise; foreign premises are weakening). Certified and
   proof-producing modes therefore stand on the checked chain: models are
   re-validated against the closure oracle (`GraphStatement::check_model`)
   in both ordinary and certified runs, and unsat refutations are

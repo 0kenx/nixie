@@ -30,23 +30,27 @@ fn run_sat(script: &str) -> String {
 /// Extract the value of `x` from a `(get-value (x))` answer, as f64.
 fn x_value(script: &str) -> f64 {
     let r = run_last(script);
-    // Answer shape: ((x (/ n d)))
-    let start = r
-        .find("(/ ")
-        .map(|i| i + 3)
-        .or_else(|| r.find('(').map(|i| i + 1));
-    let Some(start) = start else {
-        return f64::NAN;
-    };
-    let end = r[start..]
-        .find([')', ' '])
-        .map(|i| start + i)
-        .unwrap_or(r.len());
-    let numer: i64 = r[start..end].trim().parse().unwrap_or(0);
-    let dstart = end;
-    let dend = r[dstart..].find(')').map(|i| dstart + i).unwrap_or(r.len());
-    let denom: i64 = r[dstart..dend].trim().parse().unwrap_or(1);
-    numer as f64 / denom as f64
+    // Answer shapes: ((x (/ n d))) or ((x 2.0)).
+    if let Some(i) = r.find("(/ ") {
+        let start = i + 3;
+        let end = r[start..]
+            .find([')', ' '])
+            .map(|j| start + j)
+            .unwrap_or(r.len());
+        let numer: f64 = r[start..end].trim().parse().unwrap_or(f64::NAN);
+        let dstart = end;
+        let dend = r[dstart..].find(')').map(|j| dstart + j).unwrap_or(r.len());
+        let denom: f64 = r[dstart..dend].trim().parse().unwrap_or(f64::NAN);
+        return numer / denom;
+    }
+    let inner = r.trim_matches(|c| c == '(' || c == ')');
+    inner
+        .rsplit(' ')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse()
+        .unwrap_or(f64::NAN)
 }
 
 // ======== δ-satisfiable goals (the answer must be delta-sat) ========
@@ -262,11 +266,15 @@ fn trig_identity_contradiction_unbounded_is_unknown() {
 // ======== honesty: declined fragments answer unknown, never guess ========
 
 #[test]
-fn uninterpreted_function_in_trans_arithmetic_is_unknown() {
-    // UF congruence is EUF semantics the ICP fragment does not carry: with
-    // x = y the congruence f(x) = f(y) makes the goal unsat, but treating
-    // f(x), f(y) as free arithmetic would δ-sat it.  The dispatcher must
-    // decline (the goal contains trans terms via the exp constraints).
+fn uninterpreted_function_in_trans_arithmetic_is_decided() {
+    // Ground UF over the reals is Ackermannized before the Boolean
+    // abstraction: each application becomes a fresh variable and the
+    // congruence `(x = y) ⇒ (f x = f y)` joins the skeleton as a clause.
+    // With x = y asserted, both exp atoms read the SAME value — one below
+    // 1, one above 2 — so every assignment is refuted: unsat, the EUF
+    // answer (the pre-Ackermann engine honestly declined this to
+    // `unknown`; the declined behavior is pinned below for quantifier-
+    // tainted applications, which must NOT be Ackermannized).
     let r = run_sat(
         r#"(set-logic QF_NRT)
         (declare-fun f (Real) Real)
@@ -277,7 +285,52 @@ fn uninterpreted_function_in_trans_arithmetic_is_unknown() {
         (assert (> (exp (f y)) 2.0))
         (check-sat)"#,
     );
-    assert_eq!(r, "unknown", "UF inside trans arithmetic must be declined");
+    assert_eq!(r, "unsat", "ground UF congruence must refute, got {r}");
+}
+
+#[test]
+fn ground_uf_trans_goal_can_be_delta_sat() {
+    // The satisfiable side of Ackermannized UF: x = y forces f(x) = f(y),
+    // and f(x) = ln 2 is expressible through exp.  δ-weakening makes the
+    // 0.693-approximation tolerable (|0.693 − ln 2| ≈ 0.00015 < δ).
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-fun f (Real) Real)
+        (declare-const x Real)
+        (declare-const y Real)
+        (declare-const t Real)
+        (assert (>= x 0.0))
+        (assert (<= x 1.0))
+        (assert (= x y))
+        (assert (= (exp (f x)) 2.0))
+        (assert (= (f y) 0.693))
+        (assert (= (sin t) 0.5))
+        (assert (>= t 0.0))
+        (assert (<= t 3.15))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "delta-sat", "Ackermannized δ-witness expected, got {r}");
+}
+
+#[test]
+fn ground_uf_congruence_unsat_tighter_than_delta() {
+    // The same shape tightened past δ: f(y) = 0.68 vs f(x) = ln 2 — the
+    // δ-windows (0.68 ± 0.00168 and ln2 ± 0.0015 ⇒ [0.67832, 0.68168] vs
+    // [0.69158, 0.69459]) are disjoint, so congruence refutes.
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-fun f (Real) Real)
+        (declare-const x Real)
+        (declare-const y Real)
+        (assert (= x y))
+        (assert (= (exp (f x)) 2.0))
+        (assert (= (f y) 0.68))
+        (check-sat)"#,
+    );
+    assert_eq!(
+        r, "unsat",
+        "congruence + δ-separated values refute, got {r}"
+    );
 }
 
 #[test]
@@ -360,4 +413,100 @@ fn delta_option_reaches_the_engine_config() {
         150_000_000,
         "the delta option must land in the config"
     );
+}
+
+// ======== distinct over the reals: pairwise negated equalities ========
+
+#[test]
+fn distinct_from_the_sin_root_refutes() {
+    // x is pinned to π (sin x = 0 on [3, 4]) and required distinct from a
+    // rational 3.14159 whose δ-window (±0.001·(1+3.14159) ≈ ±0.0041)
+    // swallows every δ-root of sin x = 0 (π ± ~0.001): the negated
+    // equality's box lies wholly inside the window, so the disequality
+    // conflict fires — unsat.
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-const x Real)
+        (assert (= (sin x) 0.0))
+        (assert (>= x 3.0))
+        (assert (<= x 4.0))
+        (assert (distinct x 3.14159))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "unsat", "distinct-from-the-only-root refutes, got {r}");
+}
+
+#[test]
+fn distinct_from_a_far_point_is_delta_sat() {
+    // Same, but distinct from 2.0: π is ~1.14 away, far outside every
+    // δ-window — the negated equality verifies pointwise.
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-const x Real)
+        (assert (= (sin x) 0.0))
+        (assert (>= x 3.0))
+        (assert (<= x 4.0))
+        (assert (distinct x 2.0))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "delta-sat", "far distinct is δ-satisfiable, got {r}");
+}
+
+#[test]
+fn three_way_distinct_over_reals_decides() {
+    // distinct(x, y, 0.0) under y = −x and x = sin-root-sized bounds: the
+    // pairwise atoms x≠y (holds unless both 0), x≠0, y≠0.  sin(x)=0 with
+    // x ∈ [3,4] pins x=π ≠ 0; y = −x ≠ 0; x ≠ y unless π = −π.  All three
+    // verify — delta-sat.
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-const x Real)
+        (declare-const y Real)
+        (assert (= (sin x) 0.0))
+        (assert (>= x 3.0))
+        (assert (<= x 4.0))
+        (assert (= y (- x)))
+        (assert (distinct x y 0.0))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "delta-sat", "3-way distinct verifies, got {r}");
+}
+
+#[test]
+fn distinct_of_size_two_is_negated_equality() {
+    // (distinct x y) ≡ x ≠ y; with x = y asserted the negated equality's
+    // box collapses onto the window and refutes.
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-const x Real)
+        (declare-const y Real)
+        (assert (= (sin x) 0.5))
+        (assert (>= x 0.0))
+        (assert (<= x 1.6))
+        (assert (= x y))
+        (assert (distinct x y))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "unsat", "distinct x y with x = y refutes, got {r}");
+}
+
+#[test]
+fn nested_uninterpreted_applications_decide() {
+    // f(f(x)) with x = y: the congruence chain is two implications deep
+    // (x=y ⇒ f x = f y ⇒ f(f x) = f(f y)), and the inner applications
+    // appear as congruence ARGUMENTS — the Ackermannization must compare
+    // them through their fresh variables, not the raw `Apply` terms (the
+    // raw terms declined the trans fragment and the goal floundered to
+    // `unknown`).
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-fun f (Real) Real)
+        (declare-const x Real)
+        (declare-const y Real)
+        (assert (= x y))
+        (assert (= (exp (f (f x))) 2.0))
+        (assert (= (f (f y)) 0.68))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "unsat", "nested congruence must refute, got {r}");
 }

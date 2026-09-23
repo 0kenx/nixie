@@ -1168,6 +1168,22 @@ impl Context {
                     self.solver.set_config(config);
                 }
             }
+            "trans-max-branches" | "trans_max_branches" => {
+                // The transcendental theory's branch-node budget: trading
+                // time for decisions (exhaustion is an honest `unknown`).
+                if let Ok(n) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.trans_max_branches = n;
+                    self.solver.set_config(config);
+                }
+            }
+            "trans-max-propagations" | "trans_max_propagations" => {
+                if let Ok(n) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.trans_max_propagations = n;
+                    self.solver.set_config(config);
+                }
+            }
             "random-seed" | "random_seed" => {
                 // Thread the seed into the SAT engine's phase-randomization PRNG.
                 // Only enforce a well-formed non-negative integer; a malformed
@@ -1228,6 +1244,9 @@ impl Context {
                     // :print-success true)` is issued, the `Some(val)` branch
                     // above reports the real `true`.
                     "print-success" => "false".to_string(),
+                    "delta" => "0.001".to_string(),
+                    "trans-max-branches" => "100000".to_string(),
+                    "trans-max-propagations" => "8000000".to_string(),
                     _ => "unsupported".to_string(),
                 }
             }

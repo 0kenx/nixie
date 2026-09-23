@@ -21,13 +21,22 @@ solver); dReal users should feel at home.
 
 Ground, quantifier-free goals whose arithmetic (over `Real`) is built from
 `+ − * /`, the six transcendental functions, numeric `ite`, and
-`≤ < > ≥ = ≠`, under arbitrary Boolean structure (`and or not => xor ite`).
-Variables are `Real`-sorted. Set the logic to `QF_NRT` (or leave it
+`≤ < > ≥ = ≠ distinct`, under arbitrary Boolean structure (`and or not =>
+xor ite`). Variables are `Real`-sorted. Set the logic to `QF_NRT` (or leave it
 unset/`ALL`).
 
+**Ground uninterpreted functions over the reals** are admitted via
+Ackermannization before the Boolean abstraction: every application `f(t…)`
+becomes a fresh Real variable and the functional-consistency implications
+`(t1 = t1' ∧ …) ⇒ v = v'` join the Boolean skeleton, so the dPLL loop
+carries exactly the ground congruence semantics EUF would (applications
+whose arguments are quantifier-bound are never Ackermannized — those goals
+stay declined). A `distinct` expands to its pairwise negated equalities
+(arity ≤ 16; beyond that the goal is declined rather than atom-bombed).
+
 Everything outside the fragment is **declined with `unknown`**, not
-approximated: quantifiers, uninterpreted functions inside the arithmetic,
-arrays, strings, FP, datatypes, integer-sorted variables, `distinct`. The
+approximated: quantifiers, uninterpreted functions with non-ground
+occurrences, arrays, strings, FP, datatypes, integer-sorted variables. The
 reasoning is always the same: an encoding that *drops* the semantics of a
 construct solves a weaker problem than the one asked, which yields false
 `sat`s. (A closed logic like `QF_LRA` rejects a transcendental atom at the
@@ -123,16 +132,74 @@ unsatisfiability after finitely many such lemmas is a proof.
   (bounded variants refute quickly). dReal has the same shape.
 * **Budgets**: branch nodes (100k default) and propagation steps are
   bounded; exhaustion is `unknown`.
-* `≠` never prunes (removing a point from an interval is disjunctive); it
-  verifies pointwise only.
+* `≠` prunes only in its whole-box form: a disequality conflicts when the
+  root interval lies entirely inside the δ-window (no point of the box can
+  δ-satisfy it); otherwise it verifies pointwise. Splitting a box to
+  exclude a single point is disjunctive and not attempted.
 * Deep `let`/`ite` chains or huge coefficients may hit the encoder gates
   before the ICP runs.
+
+## Semantic decisions (2026-09 optimization round)
+
+Three defects found by benchmarking (`bench/trans`, 20-goal corpus) and
+fixed — each pinned by a test or visible in the table below:
+
+1. **Transcendentals stay INLINE (no `$p` purification proxies).**  The
+   grammar-driven arith purifier used to replace `(exp (- t))` with a
+   fresh `$p0` plus a definition atom.  Since δ-weakening applies per
+   atom, a purified definition *chain* doubles the effective δ: the
+   published point satisfied the purified form exactly on its δ-edges
+   while the original formula was 2δ off (`sin x + cos y = 1` converged
+   to `sin(x)−s = −0.001`, `s+cos(y)−c = +0.001`, … — a witness of the
+   rewritten problem only).  Transcendental nodes are now arithmetic
+   constructors (`purify_arith::is_arith_constructor`), dReal-style:
+   one atom stays one atom.
+2. **The publication check is EXACT rational arithmetic.**  The witness
+   evaluates the published `Rational64` point with exact
+   `BigRational` brackets (the `*_rational` enclosures in
+   `nixie-math::transcendental`), against the exact weakened bounds
+   stored per constraint.  The previous f64 check lost by one ulp at
+   boxes that converged exactly onto a δ-edge (measured: 99,974
+   identical failed witnesses on the decay-envelope goal).
+   Definition-shaped equalities additionally get a point-repair sweep
+   that snaps proxy variables to their defining expression, so the full
+   δ budget lands on the real constraints.
+3. **Pruning bounds carry a few ulps of slack** beyond the exact
+   admissible bound (δ+ε pruning).  This is sound for `unsat` — the
+   ε-larger weakened problem contains the δ-weakened one, so emptying
+   the larger still empties the smaller — while the exact witness keeps
+   demanding the true δ.
+
+Also fixed on the way: a 1-ulp interval can no longer be branched on
+(the bisect midpoint rounds to an endpoint, so the "other half" equals
+the parent — an infinite dive), and a branch that runs out of
+branchable variables now backtracks into its deferred sibling instead
+of aborting the whole solve with `unknown`.
+
+### Corpus results (release build, this machine, Z3 4.16.0)
+
+25 goals, `bench/trans/corpus/`: nixie decides **25/25** (14 delta-sat
+witnesses, 11 refutations) in ≤ 131 ms each; Z3 decides **0/25** —
+`unknown` on every sin/cos/atan goal it accepts, and it has no
+`exp`/`log`/`sqrt` on Reals at all (parse error).  Full table:
+`precompile/<sha>/benchmark/trans/*.tsv`.  Headline moves from the
+optimization round: coupled `sin x + cos y = 1` 729 ms→17 ms *and*
+unknown→delta-sat; the decay envelope 554 ms→98 ms→35 ms and unknown→
+delta-sat; the far-window periodic root (`sin x = 0.5` on `[90,100]`)
+303 ms→53 ms via the periodic-aware first split; bounded Pythagorean
+refutation 41 ms→19 ms.  The fragment round (2026-09-23) added the
+UF-congruence, `distinct` and nested-trans goals (t21–t25) — classes
+that were honest-`unknown` before it.
 
 ## Options
 
 * `(set-option :delta <rational>)` — the δ (default `0.001`, dReal's).
   A larger δ widens what counts as δ-satisfiable; `unsat` answers are
   sound for every δ ≥ 0.
+* `(set-option :trans-max-branches <uint>)` — branch-node budget
+  (default `100000`). Exhaustion answers `unknown`, never a guess.
+* `(set-option :trans-max-propagations <uint>)` — propagation-step budget
+  (default `8000000`).
 
 ## Numeric hygiene
 
