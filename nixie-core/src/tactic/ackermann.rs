@@ -355,9 +355,27 @@ impl<'a> AckermannizeTactic<'a> {
                     }
 
                     // Build: (a1 = b1) ∧ (a2 = b2) ∧ ... => (var_i = var_j)
+                    //
+                    // The arguments are compared as the terms the
+                    // SUBSTITUTION leaves behind: a nested application
+                    // (`f(f x)`) has applications as arguments, and the
+                    // goal's assertions no longer contain them — the
+                    // congruence must speak about their fresh variables
+                    // (the raw `Apply` terms here made every downstream
+                    // consumer that had eliminated applications see a
+                    // foreign construct; found by the trans dispatcher,
+                    // where `(= (f x) (f y))` declined the fragment).
                     let mut arg_eqs: Vec<TermId> = Vec::new();
                     for k in 0..app_i.args.len() {
-                        let eq = self.manager.mk_eq(app_i.args[k], app_j.args[k]);
+                        let a = term_to_var
+                            .get(&app_i.args[k])
+                            .copied()
+                            .unwrap_or(app_i.args[k]);
+                        let b = term_to_var
+                            .get(&app_j.args[k])
+                            .copied()
+                            .unwrap_or(app_j.args[k]);
+                        let eq = self.manager.mk_eq(a, b);
                         arg_eqs.push(eq);
                     }
 
