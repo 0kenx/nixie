@@ -195,3 +195,22 @@ Subsequent main updates merged through `842a1548` contain only CP benchmark
 scripts and documentation. Solver source is unchanged; their five Python
 tests and this harness's three tests pass. Final landing adds the report,
 reproduction instructions and the equivalent Clippy spelling in the example.
+
+Before fast-forwarding, the concurrent finite-field landing reached main as
+`34285f11`. Integration `ad94482e` changes no SAT source but includes its
+solver/theory changes. A fresh full release run (the same test-only link
+settings) passes **12,382/12,382 tests**, with 18 existing skips unchanged;
+the ordinary all-features release build, Clippy, formatting, documentation
+and all 114 doc tests also pass. Z3 4.16.0 parity remains 176 decisive
+matches, zero wrong answers, one inconclusive, with no timeout/error.
+The newly merged finite-field Python harness passes both tests.
+The new frozen default CLI has SHA-256
+`935aabbb9aab7165f20e7fca8cc08b949228cab7e6c852c94be0340f71ffbbc7`;
+its 600-second gate passes with 12/12 decisive agreements, no censored case,
+and conflict/decision geomeans 1.000 on nine nontrivial pairs. The wall
+geomean is 1.19, diagnostic only and within the gate's 1.25 pass band; no
+wall-time speedup is claimed. Hashes are unchanged after the run. Both normal
+and all-features CLIs, complete verification logs, parity results and gate
+metadata are cached under
+`precompile/ad94482e7b9b5aa6b3e3184579dcccd1fd1a76c2/`. The last merged
+main commit `52644cef` adds only a separate experiment's preregistration.
