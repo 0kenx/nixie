@@ -290,12 +290,20 @@ fn decode_at(
             collect_set(dv, dom, model, tm, depth, &mut points)?;
             // What the query decided about the graph is the `select` terms it
             // built, exactly as what it decided about a set is the membership
-            // atoms. They are gathered first, because a `select` built here
-            // would be a term the model has never seen: `Model::eval` has no
-            // case for the array theory, so a fresh one evaluates to itself
-            // and every point would look unconstrained.
+            // atoms. They are gathered first: these are terms the model
+            // (and the array theory's own lemmas) already decided, so reading
+            // them is reading the search's own conclusions.
             let mut graph = BTreeMap::new();
             let dbg = std::env::var_os("NIXIE_TRACE_DEBUG").is_some();
+            if dbg {
+                let assigned = model.eval(term, tm);
+                eprintln!(
+                    "[trace] decoding array#{:?} assignment -> #{:?} = {}",
+                    term.0,
+                    assigned.0,
+                    nixie_core::smtlib::Printer::new(tm).print_term(assigned)
+                );
+            }
             for (idx_v, at) in selects_of(term, dom, model, tm, depth)? {
                 if !points.contains(&idx_v) {
                     if dbg {
@@ -319,19 +327,29 @@ fn decode_at(
                 }
                 let idx = encode_index(&p, dom, tm)?;
                 let at = tm.mk_select(term, idx);
-                // A point the query never selected at is genuinely
-                // unconstrained: the formula says nothing about `f[p]`, so
-                // *every* value there extends the model. Completing it with
-                // the sort's default is what turns a partial model into a
-                // whole state — the same thing the solver's own `build_model`
-                // does for an unconstrained constant — and it is the only way
-                // a function-valued variable becomes a TLA+ value at all,
-                // since TLA+ has no partial functions.
+                // A point the query never selected at is completed FROM THE
+                // MODEL, not invented: `decode_at` runs the minted select
+                // through `Model::eval`, whose `select_in` walk follows the
+                // variable's assigned store chain and its aliases, evaluating
+                // the chain's indices and values under this same model — so
+                // the completion agrees with whatever branch update the SAT
+                // model committed (a taken `x' = store(x, i, v)` writes `v` at
+                // `i`; an UNCHANGED `x' = x` reads through to the earlier
+                // state). Completing independently of the branch — the sort's
+                // default, which is what this used to do unconditionally —
+                // produced traces no disjunct of `Next` satisfied, and the
+                // replay rightly rejected them.
                 //
-                // This is the one place the decoder supplies something the
-                // model did not say, and it is safe for a specific reason: the
-                // trace is replayed. A completion that was not good enough
-                // fails there, and the checker answers `Unknown` instead of
+                // The sort default remains the LAST resort for a point not
+                // even the chains reach (a genuinely unconstrained point —
+                // the formula says nothing about `f[p]`, so *every* value
+                // there extends the model; it is the same completion the
+                // solver's own `build_model` makes for an unconstrained
+                // constant, and TLA+ has no partial functions). That is the
+                // one place the decoder may supply something the model did
+                // not say, and it is safe for a specific reason: the trace is
+                // replayed. A completion that was not good enough fails
+                // there, and the checker answers `Unknown` instead of
                 // reporting a counterexample it cannot stand behind.
                 let value = match decode_at(at, range, None, model, tm, depth + 1) {
                     Ok(v) => v,
@@ -576,11 +594,12 @@ fn default_at(sort: SortId, tm: &mut TermManager, depth: usize) -> Option<Value>
     }
 }
 
-/// The graph points the query actually asked about, as (index, `select` term).
+/// The graph points something already asked about, as (index, `select` term).
 ///
-/// `Model::eval` has no case for `select`, so the value at a point can only be
-/// read from a `select` term the query itself built and the model therefore
-/// decided. Gathering them is the array-theory counterpart of
+/// That "something" is the query, the array theory's own lemmas (read-over
+/// -write instances, the stores' self-reads), and any earlier decode — all
+/// terms the model has therefore decided. Reading them is reading the
+/// search's conclusions; gathering them is the array-theory counterpart of
 /// [`membership_of`], and for the same reason: a model determines a value
 /// exactly where something asked for one.
 fn selects_of(

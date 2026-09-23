@@ -75,9 +75,10 @@ unchanged (the output is ordinary TLA+). Smoke results on our translations:
   written.
 - DiningPhilosophers (NP = 2): `--inv=ExclusiveAccess --length=4` →
   `NoViolationWithin` — the Chandy/Misra mutual-exclusion property holds
-  within the bound on the handover's named classic. (An 8-step search for
-  a liveness-shaped violation exceeds the smoke timeout; depth 5 stays
-  clean.) Note: this spec's `ASSUME NP \in Nat \ {0}` cannot be evaluated
+  within the bound on the handover's named classic. (Depths 5–6 stay clean
+  and complete — 6 in minutes on the 2026-09-23 solver; a 7–8-step search
+  for a liveness-shaped violation exceeds the smoke timeout.) Note: this
+  spec's `ASSUME NP \in Nat \ {0}` cannot be evaluated
   by the trace replayer (`Nat` is free to it), so a *violation* replay on
   this spec would report `replayed: no` for that reason — the Simple
   replay above is the clean demonstration.
@@ -86,10 +87,18 @@ Walls, each checked differentially (the oracle's own translation run
 through the same checker):
 
 - **Two function-valued state variables updated in the same step** (the
-  standard `x[self] := …` multiprocess shape): the satisfying assignment
-  needs set atoms the native set encoding cannot certify, so the verdict is
-  an honest `Unknown` — never a false clean. Getting here *found a solver
-  soundness bug* (below).
+  standard `x[self] := …` multiprocess shape): CLOSED 2026-09-23, in three
+  stacked steps — the set-pair budget (named cap at 256), the equality-only
+  array false-`sat` fix (eager axiom-1 self-reads; see
+  `docs/studies/2026-09-23-equality-only-array-false-sat.md`), and
+  branch-consistent don't-care completion in the trace decoder (the model's
+  store chains and aliases are walked before any default). The shape now
+  answers `Violation { step: 4 }` with a **replayed** counterexample —
+  pinned by `a_two_array_pluscal_spec_never_answers_a_false_clean` across
+  all its eras (false clean → honest `Unknown` → unverified violation →
+  replayed violation). Getting here *found two solver soundness bugs*
+  (the conditional-alias false clean below, and the equality-only false
+  `sat` above).
 
 - QueensPluscal: `Next` hits the enumerable-domain wall (a symbolic `todo`
   set with no candidate list) — identical on the oracle's translation.
