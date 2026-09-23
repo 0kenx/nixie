@@ -729,6 +729,11 @@ pub struct Solver {
     /// still reached CDCL(T), no engine owns it, and a `Sat` would rest on an
     /// assignment no field satisfies. Degrades exactly that case to `Unknown`.
     pub(super) ff_terms_unconstrained: bool,
+    /// The current check's complete goal was solved and model-validated by
+    /// the FF dispatcher. Reset for every core check, never scope-restored.
+    /// This must not clear the persistent, scope-trailed FF presence flag:
+    /// a later assertion can move the goal outside the supported fragment.
+    pub(super) ff_dispatch_answered: bool,
     /// Set to `true` when any array `select`/`store` operation is encoded.  Gates
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
@@ -1344,6 +1349,7 @@ impl Solver {
             set_terms_unconstrained: false,
             has_set_or_bag_terms: false,
             ff_terms_unconstrained: false,
+            ff_dispatch_answered: false,
             has_array_ops: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
@@ -1662,7 +1668,8 @@ impl Solver {
         }
         // Honesty gate (soundness): see `ff_terms_unconstrained`. An FF term
         // that reached the CDCL(T) layer has no engine behind it.
-        if result == SolverResult::Sat && self.ff_terms_unconstrained {
+        if result == SolverResult::Sat && self.ff_terms_unconstrained && !self.ff_dispatch_answered
+        {
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -2541,6 +2548,7 @@ impl Solver {
     fn check_core_solving(&mut self, manager: &mut TermManager) -> SolverResult {
         // Per-check: the flag describes THIS check's verdict only.
         self.nl_dispatch_answered = false;
+        self.ff_dispatch_answered = false;
         self.array_axioms_saturated = false;
         self.array_witness_mints = 0;
         self.array_witness_budget_exhausted = false;
@@ -2757,12 +2765,9 @@ impl Solver {
             match ff_result {
                 SolverResult::Sat => {
                     self.nl_dispatch_answered = true;
-                    // The FF engine owns the field terms now: its model was
-                    // validated exactly (Step 5) before this `Sat`, so the
-                    // assert-time `ff_terms_unconstrained` tripwire no
-                    // longer applies — clearing it is what lets the honest
-                    // answer through instead of degrading to `unknown`.
-                    self.ff_terms_unconstrained = false;
+                    // Ownership belongs to this check only. The persistent
+                    // presence flag must survive later mixed-theory assertions.
+                    self.ff_dispatch_answered = true;
                     return SolverResult::Sat;
                 }
                 SolverResult::Unsat => return SolverResult::Unsat,

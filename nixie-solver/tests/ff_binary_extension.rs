@@ -174,3 +174,58 @@ fn deeply_shared_field_expression_reaches_the_solver() {
     assert!(out[1].contains("(as ff2 (_ BinaryField 7))"));
     assert_eq!(&out[2..], &["unsat", "sat"]);
 }
+
+#[test]
+fn field_dispatch_ownership_does_not_survive_a_mixed_goal() {
+    for sort in ["(_ BinaryField 7)", "(_ FiniteField 5)"] {
+        for structured in [false, true] {
+            for certified in [false, true] {
+                let equation = format!("(= (ff.mul x x) (as ff1 {sort}))");
+                let assertion = if structured {
+                    format!("(or {equation} (= (ff.mul x x) (as ff2 {sort})))")
+                } else {
+                    equation
+                };
+                let mut ctx = Context::new();
+                if certified {
+                    ctx.require_certified_mode();
+                }
+                let out = ctx
+                    .execute_script(&format!(
+                        "(set-logic ALL) (declare-const x {sort}) (declare-const i Int)
+                     (assert {assertion}) (check-sat) (check-sat)
+                     (push 1) (assert (= i 1))
+                     (check-sat) (check-sat) (pop 1) (check-sat)
+                     (push 1) (assert {assertion}) (check-sat)
+                     (assert (= i 2)) (check-sat) (pop 1) (check-sat)"
+                    ))
+                    .unwrap();
+                assert_eq!(
+                    out,
+                    [
+                        "sat", "sat", "unknown", "unknown", "sat", "sat", "unknown", "sat"
+                    ],
+                    "sort={sort}, structured={structured}, certified={certified}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn field_disjunction_must_not_drop_a_foreign_integer_equation() {
+    for sort in ["(_ BinaryField 7)", "(_ FiniteField 5)"] {
+        let out = run(&format!(
+            "(set-logic ALL) (declare-const x {sort}) (declare-const i Int)
+             (assert (or (= (ff.mul x x) (as ff1 {sort}))
+                         (= (ff.mul x x) (as ff2 {sort}))))
+             (assert (= (+ (* i i) 1) 0)) (check-sat)"
+        ));
+        // i²+1=0 has no integer solution. This mixed fragment may be
+        // refuted elsewhere or declined, but must never be declared SAT.
+        assert!(
+            matches!(out[0].as_str(), "unsat" | "unknown"),
+            "{sort}: {out:?}"
+        );
+    }
+}

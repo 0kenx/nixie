@@ -676,8 +676,7 @@ fn finite_field_shared_dag_tracking_is_memoized_and_scope_consistent() {
                     .all(|t| solver.tracked_compound_terms.contains(t))
             );
             let after = solver.trail.len();
-            // Successful eager FF dispatch may clear the fallback honesty
-            // flag. A subsequently tracked FF node must set it even on a hit.
+            // Even an independently reset tripwire is re-armed on a memo hit.
             solver.ff_terms_unconstrained = false;
             solver.track_theory_vars(root, &manager);
             assert!(solver.ff_terms_unconstrained);

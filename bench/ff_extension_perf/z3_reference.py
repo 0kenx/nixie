@@ -236,6 +236,9 @@ def main():
             json.dump(rec, f)
             f.flush()
             store.cmd_record(argparse.Namespace(record=f.name, root=a.root))
+        # Different labels can translate to the same input (certified SAT
+        # has no extra Z3 option). Reuse that cell even within this invocation.
+        existing.append((None, rec))
         print(f'{case["name"]} seed={seed} {expected["answer"]} instructions={instructions}', flush=True)
 
 

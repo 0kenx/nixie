@@ -372,6 +372,7 @@ impl super::Solver {
             array_witness_budget_exhausted: _, // recomputed (per-check flag)
             arith_purify: _,                   // rebuilt from assertions each check
             arith_defined_terms: _,            // TRAIL: ArithDefinedTermAdded
+            ff_dispatch_answered: _,           // NOT trailed: per-check ownership
             nl_dispatch_answered: _,           // NOT trailed: per-check flag,
             trans_dispatch_answered: _,        // NOT trailed: per-check flag,
             trans_delta_sat: _,                // NOT trailed: per-check flag

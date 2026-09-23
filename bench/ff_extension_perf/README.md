@@ -25,7 +25,7 @@ never a solver policy. No quiet-machine wall-time claim is planned.
 planted witnesses (and set NIXIE_SAT_SEED); reserve 10..19 for confirmation.
 The matrix includes F4/F16/F256 square roots, both F8 representations,
 shared squaring DAGs, two-variable systems, no-root quadratics, an exhausted
-budget, certified SAT, and unaffected prime/wide-field controls. No Z3 FF
+budget, certified SAT, and unaffected prime/wide-field controls. No native Z3 FF
 reference exists. The harness independently evaluates binary arithmetic by
 coefficient convolution and polynomial long division. SAT models are checked
 against every generated equation; the UNSAT quadratic has its complete root
@@ -97,4 +97,22 @@ native-FF Z3 implementation or isolated arithmetic throughput.
 python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --self-test
 python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --root precompile
 python3 bench/ff_extension_perf/z3_reference.py /path/to/z3 --root precompile --first-seed 10
+```
+
+The certified-SAT reference label reuses the identical shared-DAG reference
+cell. The runner updates its reuse index after every record; the report
+expands that alias without a second measurement. See the study for the
+archived duplicate attempts discovered in the initial runner.
+
+## Completed results and checks
+
+The [study](../../docs/studies/2026-09-22-ff-extension-perf.md) records the
+controlled optimization, fresh-seed confirmation, Z3 comparison, limitations
+and all verification attempts. Aggregate CSVs are committed beside it; raw
+cells remain in the per-machine result store. Rebuild reports without
+measuring any cell again:
+
+```
+python3 bench/ff_extension_perf/report_z3.py precompile NIXIE_SHA --csv reference.csv
+python3 -m unittest discover -s bench/ff_extension_perf -p 'test_*.py'
 ```
