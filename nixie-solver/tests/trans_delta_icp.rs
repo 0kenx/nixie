@@ -489,3 +489,24 @@ fn distinct_of_size_two_is_negated_equality() {
     );
     assert_eq!(r, "unsat", "distinct x y with x = y refutes, got {r}");
 }
+
+#[test]
+fn nested_uninterpreted_applications_decide() {
+    // f(f(x)) with x = y: the congruence chain is two implications deep
+    // (x=y ⇒ f x = f y ⇒ f(f x) = f(f y)), and the inner applications
+    // appear as congruence ARGUMENTS — the Ackermannization must compare
+    // them through their fresh variables, not the raw `Apply` terms (the
+    // raw terms declined the trans fragment and the goal floundered to
+    // `unknown`).
+    let r = run_sat(
+        r#"(set-logic QF_NRT)
+        (declare-fun f (Real) Real)
+        (declare-const x Real)
+        (declare-const y Real)
+        (assert (= x y))
+        (assert (= (exp (f (f x))) 2.0))
+        (assert (= (f (f y)) 0.68))
+        (check-sat)"#,
+    );
+    assert_eq!(r, "unsat", "nested congruence must refute, got {r}");
+}
