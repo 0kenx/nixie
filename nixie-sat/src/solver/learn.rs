@@ -3,6 +3,36 @@
 use super::*;
 use smallvec::SmallVec;
 
+/// Materialize `(propagated_lit ∨ ¬r0 ∨ …)` in first-occurrence order.
+/// Membership is by variable, including the propagated variable. Never iterate
+/// the set: literal order feeds watch selection, conflict analysis and proofs.
+pub(super) fn theory_reason_literals(
+    reason_lits: &[Lit],
+    propagated_lit: Lit,
+) -> SmallVec<[Lit; 8]> {
+    let mut clause_lits = SmallVec::new();
+    clause_lits.push(propagated_lit);
+    if reason_lits.len() <= 8 {
+        // Short explanations retain the allocation-free linear scan.
+        for &lit in reason_lits {
+            if !clause_lits.iter().any(|l: &Lit| l.var() == lit.var()) {
+                clause_lits.push(lit.negate());
+            }
+        }
+    } else {
+        // Local scratch only: no marks can leak across calls or push/pop.
+        let mut seen = rustc_hash::FxHashSet::default();
+        seen.reserve(reason_lits.len());
+        seen.insert(propagated_lit.var());
+        for &lit in reason_lits {
+            if seen.insert(lit.var()) {
+                clause_lits.push(lit.negate());
+            }
+        }
+    }
+    clause_lits
+}
+
 /// How many materialized theory-reason clauses mark a "propagation storm"
 /// workload, after which further theory propagations keep lazy explanations
 /// (see [`Solver::theory_lazy_reasons_enabled`]).  Calibrated against the QF_UF
@@ -892,21 +922,7 @@ impl Solver {
         );
 
         // Build the explanation clause: (propagated_lit ∨ ¬r0 ∨ …).
-        let mut clause_lits: SmallVec<[Lit; 8]> = SmallVec::new();
-        clause_lits.push(propagated_lit);
-        for &lit in reason_lits {
-            let neg = lit.negate();
-            // Dedup by variable (keep first occurrence so propagated_lit stays
-            // at index 0) and skip a degenerate self-negation that would make
-            // the clause a tautology (`propagated_lit ∨ ¬propagated_lit`).
-            if neg.var() == propagated_lit.var() {
-                continue;
-            }
-            if clause_lits.iter().any(|&l| l.var() == neg.var()) {
-                continue;
-            }
-            clause_lits.push(neg);
-        }
+        let mut clause_lits = theory_reason_literals(reason_lits, propagated_lit);
 
         // After dedup at least propagated_lit + one distinct reason remain.
         let n = clause_lits.len();

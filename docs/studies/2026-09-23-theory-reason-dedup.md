@@ -41,3 +41,30 @@ do not measure this scan's cost; the instruction experiment does. All Rust
 builds and checks use release mode. The existing complete CP proof chain and
 push/pop oracles must still pass. No variable-duration/demand or stronger
 cumulative propagation feature is part of this change.
+
+## Implementation and audit
+
+The long path uses a fresh `FxHashSet<Var>` solely for membership, seeded with
+the propagated variable. It appends each negated first occurrence immediately
+in input order. The short path has the same first-occurrence contract without
+allocating a set. Neither path sorts, iterates the set, truncates variable IDs,
+shortens the original callback premise list or caches state between calls.
+
+The read-only Z3 user-propagator reference constructs explained consequences
+from current signed premises and replays scoped clauses. Its generic SAT
+clause simplifier sorts literals; adopting that ordering here would change
+Nixie's watch ties and search, so this change preserves Nixie's existing order.
+Audited Nixie layers: callback certificate/premise validation; both SAT
+materialization callers and the unchanged lazy-reason path; watch ranking;
+LBD/subsumption marks; clause ownership and pop; proof lemma emission; and
+independent CP model replay and canonical proof reconstruction. The full
+unshortened lemma is still recorded before SAT materialization. The optimized
+vector feeds the same subsequent operations with identical contents.
+
+The new exhaustive test compares both paths with the old ordered scan for
+all sequences of length zero through six over six signed literals, including
+self premises and widely separated IDs, and repeats the sequences to force
+the long path. Additional cases reach 1,024 distinct variables. A separate
+integration regression compares proof transcripts with and without duplicate
+premises, checks latest-falsified watch selection and repropagation after
+backtracking, and repeats clause creation/removal across push/pop.
