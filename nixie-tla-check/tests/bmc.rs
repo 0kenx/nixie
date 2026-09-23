@@ -689,8 +689,7 @@ DoneBound == done <= 2
 /// soundness bug visible: the transition relation's disjunction puts every
 /// `pc' = [pc EXCEPT ![self] = …]` inside an `or`, and the fabricated
 /// unguarded alias lemmas killed the satisfiable interleavings, answering
-/// `NoViolationWithin` for a property TLC refutes in four steps. The pin
-/// asserts the honest current verdict: `Unknown`, never a false clean.
+/// `NoViolationWithin` for a property TLC refutes in four steps.
 const RING_TWO_ARRAYS: &str = r"
 ---- MODULE RingPcal2 ----
 EXTENDS Integers
@@ -742,21 +741,28 @@ fn a_pluscal_spec_checks_through_the_whole_pipeline() {
 
 #[test]
 fn a_two_array_pluscal_spec_never_answers_a_false_clean() {
-    // Two eras of this shape, both pinned by the one invariant that matters:
-    // NEVER `NoViolationWithin` — that was the fabricated-lemma false clean
-    // the conditional-alias bug produced here.
+    // Three eras of this shape, all pinned by the two invariants that
+    // matter: NEVER `NoViolationWithin` (the fabricated-lemma false clean
+    // the conditional-alias bug produced) and never an *unverified*
+    // violation.
     //
     // * Before the alias fix: false `NoViolationWithin`.
     // * After it, before the set-pair budget: honest `Unknown` (the `$dom`
-    //   equality atoms tripped the set honesty gate at depth 4).
-    // * Now: a 4-step `Violation` whose decoded trace the independent
-    //   replay REJECTS — the model leaves never-read array points
-    //   unconstrained (`x` is written at `self` but nothing reads `x[1]`),
-    //   the per-point decoder completes those don't-cares independently of
-    //   the taken branch, and the completed trace satisfies no branch. That
-    //   is the §4 spurious-violation asymmetry with a concrete face, and
-    //   the replay catching it is the system working: the verdict is a
-    //   *candidate*, surfaced with `NotReplayed`, never trusted.
+    //      equality atoms tripped the set honesty gate at depth 4).
+    // * After the budget, before the don't-care completion fix: a 4-step
+    //   `Violation` whose decoded trace the replay REJECTED — never-read
+    //   array points were completed independently of the taken branch.
+    // * Now: a 4-step `Violation` that REPLAYS. The root cause turned out
+    //   to sit one layer below the decoder: the array theory accepted
+    //   committed-true equality sets that are jointly contradictory (two
+    //   branch-update atoms simultaneously true through no-op writes,
+    //   with no select ever distinguishing them — a false `sat` class,
+    //   pinned in `nixie-solver`), the model builder then propagated one
+    //   class-representative chain to every member, and the decoder had
+    //   no consistent chain to read. With the theory refusing
+    //   contradictory arrangements and the store-chain walk following
+    //   aliases, the don't-care points complete from the model and the
+    //   trace satisfies `Init`/`Next`/`¬Inv` end to end.
     let (out, verdict) = pcal_check_verified(RING_TWO_ARRAYS, "Underdone", 10);
     assert!(
         !matches!(out, Outcome::NoViolationWithin(_)),
@@ -765,7 +771,7 @@ fn a_two_array_pluscal_spec_never_answers_a_false_clean() {
     assert_eq!(out, Outcome::Violation { step: 4 });
     assert!(matches!(
         verdict,
-        Some(nixie_tla_check::bmc::Verification::NotReplayed(_))
+        Some(nixie_tla_check::bmc::Verification::Replayed)
     ));
 }
 
