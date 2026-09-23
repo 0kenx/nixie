@@ -382,6 +382,56 @@ The prime UF entry already checked every assertion with
 Certified validation independently rejected the forged compound/atom model;
 no evaluator defect was found in that path.
 
-Final verification and performance confirmation for these fixes are recorded
-below when complete. Earlier measurements are retained with their exact source
-identities; no old cell is overwritten or rerun.
+## Final integrated confirmation
+
+Revision **`799b3a5d`** includes both soundness fixes and main through
+`10d37a7d`. The debug-probe merge keeps main's more precise
+`all(feature = "std", debug_assertions)` guard. The standard-LTO all-feature
+and default release builds pass. Direct probes against the new production
+binary now return `sat` then `unknown` with no model for both field types;
+the mixed false-SAT counterexample returns `unsat`. The diagnostic wrapper
+initially demanded Unknown even for that impossible formula; validation of
+the retained output corrected that overly narrow expectation without rerunning
+the solver. The checked-in regression accepts sound Unsat or Unknown.
+
+All **260 new benchmark cells** complete, with exact baseline output matches:
+220 SAT, 20 UNSAT and 20 Unknown. Both the initial and fresh seed sets pass
+the original acceptance bar. The non-control ratios including fixed-budget
+work are **0.6845 / 0.6834**; the solved-only extension ratios are
+**0.7251 / 0.7238** (**27.5% / 27.6% fewer instructions**). Shared F256 ratios
+are 0.3366 / 0.3363. Prime and wide controls stay within 0.5% of baseline.
+The [final distribution CSV](2026-09-22-ff-extension-final.csv) contains
+both seed sets. The original isolated comparison remains the attribution
+experiment; this integrated confirmation includes unrelated main changes.
+
+The [final Z3 comparison](2026-09-22-ff-extension-z3-final.csv) reuses the
+240 existing reference cells, including the 20 certified-label aliases.
+The jointly solved extension instruction ratio is **0.3609**. The
+F256 two-variable case remains **13.136×** Z3 (median 243.84M versus 18.72M
+instructions). All 20 Nixie budget Unknowns remain unsolved while Z3 solves
+them. No reference cells were rerun, and no Unknown was counted as agreement
+or solved. All **1,800 canonical records** now pass schema, identity, path
+and uniqueness validation; the 20 duplicate reference attempts remain
+separately archived and excluded.
+
+Z3 **4.16.0** differential parity passes: **176 decisive matches, zero
+wrong answers, one inconclusive** (`array_unique.smt2`: Nixie UNSAT,
+Z3 Unknown). Verification commands, exact binary hashes, runner configuration,
+failed focused checks and successful production probe outputs are under
+`precompile/799b3a5dd50e996e55ded7a96d9c499eb8937be4/benchmark/ff-extension-verification/`.
+The integrated release suite passes **12,372 tests** (18 skipped,
+499.662 seconds), plus **114 doctests** (31 ignored). Release Clippy with
+warnings denied, formatting, and warning-free rustdoc pass. As documented
+above, the full test/lint/doc target disables LTO; production builds, parity,
+and the performance gate use the standard release profile. The isolated
+five-test soundness/memo regression selection passes as well. The ignored
+trajectory canary passes (41.207 seconds). The performance landing gate
+passes: all 12 verdicts match and all nine conflict/decision pairs are exactly
+1.000. Its external wrapper cap was fixed at 600 seconds for both arms
+before the run; solver budgets and inputs are unchanged.
+
+Main subsequently landed the independent CP optimization `7ab18362`, after
+these gates completed. Its changes are confined to CP domain explanations,
+CP propagation, tests and documentation; the debug-probe cleanup removes a
+now-redundant expectation. Integrating it requires a new verification snapshot;
+the benchmark and passing results above retain their original source identity.

@@ -705,3 +705,10 @@ and prime QF_UFFF retain their existing paths. Extension UF combinations
 and arithmetic UNSAT proof exports remain unsupported and decline honestly.
 See [representation, API, limits, independent audit and verification](studies/2026-09-22-binary-extension-fields.md)
 for the full supported fragment and characteristic/cardinality distinctions.
+
+The [performance and dispatch audit](studies/2026-09-22-ff-extension-perf.md)
+records the Z3 reference comparison, checked word arithmetic, and scope-trailed
+DAG memoization. Field presence persists across checks; ownership belongs only
+to the current successful field dispatch. Every Boolean atom must belong to a
+field slice, including top-level literals beside structured assertions. Foreign
+theory equalities cannot be silently accepted as free Boolean atoms.
