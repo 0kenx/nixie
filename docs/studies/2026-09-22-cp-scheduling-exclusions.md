@@ -5,10 +5,13 @@ removing repeated work in its finite-domain callback. It adds no propagation
 rule, task feature, search policy or proof shortcut. The external performance
 reference is installed Z3 4.16.0; Nixie before/after comparisons are separate.
 
-Integrated candidate `afb4e85b` passes the pre-registered performance bar. On confirmation
-seeds its ordinary/certified **Nixie/Z3 instruction ratios are 0.4778/0.5086**.
-Against the preceding Nixie baseline, ratios are 0.8951/0.8984 (about 10% fewer
-instructions). These are paired geometric means, not wall-clock speedups.
+The CP-only candidate `afb4e85b` reduces instructions by about 10%. After
+integrating main through `10d37a7d`, candidate `f43db048` retains an 8.5–8.7%
+reduction against the preceding Nixie baseline. Its confirmation
+**Nixie/Z3 instruction ratios are 0.4871/0.5178** for ordinary/certified solving.
+These are paired geometric means, not wall-clock speedups. Both candidates
+pass the pre-registered performance bar; the integration delta is separate
+from the CP optimization's effect.
 
 ## Protocol and ablation
 
@@ -49,7 +52,7 @@ inside the measured process; Z3's extracted models are checked independently
 in Python outside Z3's measured process. Unknowns are never counted as solves.
 Callback-only diagnostics have no directly comparable Z3 API.
 
-## Confirmation results
+## CP-only confirmation results
 
 | Mode and shape | Previous Nixie / Z3 | Current Nixie / Z3 | Current / previous Nixie |
 |---|---:|---:|---:|
@@ -79,7 +82,7 @@ a newly frozen binary, retaining every transcript and the same finding.
 This is integration replay, not additional independent selection data.
 
 The [paired CSV](2026-09-22-cp-scheduling-exclusions.csv) retains all 280
-confirmation comparisons and each ten-seed baseline distribution. Each seed
+final merged confirmation comparisons and each ten-seed baseline distribution. Each seed
 grid has 280/280 decisive checked Nixie SAT cells per arm and 140/140 checked
 Z3 SAT cells, with no lost, censored or invalid-model cells. All paired Nixie
 transcripts agree byte for byte, including search counters. The same Z3 cells
@@ -123,9 +126,9 @@ constraint and exactly-one semantics exclude the same value. Existing optional
 scheduling and exported-proof oracles remain
 part of the full verification suite.
 
-## Verification setup
+## Verification setup and retained attempts
 
-All Cargo compilation uses release mode. Full workspace tests use local
+All Cargo compilation uses release mode. Nextest workspace tests use local
 `CARGO_PROFILE_RELEASE_LTO=false` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`
 in a separate verification target directory; optimization level remains 3.
 The first full-LTO test build and a queued refresh were interrupted before
@@ -153,3 +156,78 @@ the fixed-input F4/Buchberger comparison and was stopped; the complete run
 used a local 600-second allowance for that test and it passed. These attempts
 are preserved, not counted as a clean full-suite pass. Final integration
 verification is recorded separately below.
+
+## September 23 integration
+
+Merged main through `10d37a7d` into `f43db048`. The only source conflict was
+the independently fixed debug-only SAT diagnostic: keep the outer caller-matched
+configuration guard and remove the redundant dead-code expectation. Main also
+changed array model construction, transcendental handling and graph callbacks,
+including boxing drained entries in the shared user-propagator journal. The
+CP declarations, snapshot producer and independent certificate checkers were
+unchanged by that merge. The journal still restores the exact consequence in
+reverse operation order; boxing changes ownership representation only.
+
+Rebuilt the unchanged driver/profile and replayed the same confirmation grid
+once under the new source/binary identity. All 280 transcripts remain identical
+to the original Nixie baseline, with all models checked and no lost cells.
+The merged result includes the intervening main changes and must not be credited
+entirely to this CP patch:
+
+| Mode and shape | Previous Nixie / Z3 | Merged Nixie / Z3 | Merged / previous Nixie |
+|---|---:|---:|---:|
+| Ordinary, all | 0.5338 | 0.4871 | 0.9126 |
+| Ordinary, 4x4 | 0.1860 | 0.1835 | 0.9867 |
+| Ordinary, 8x16 | 1.5321 | 1.2931 | 0.8440 |
+| Certified, all | 0.5661 | 0.5178 | 0.9147 |
+| Certified, 4x4 | 0.2049 | 0.2023 | 0.9875 |
+| Certified, 8x16 | 1.5640 | 1.3250 | 0.8472 |
+
+No family exceeds the 5% regression band. The large sparse cases still cost
+6.8371/6.9078 times Z3, and large all-present cases cost 2.3328/2.3657 times
+Z3. The final 8.5–8.7% improvement versus old Nixie does not establish a general
+scheduling advantage over Z3. Cached counter stderr across the baseline,
+CP-only candidates and reference has 100% coverage; all runs were CPU-pinned.
+
+Merged callback diagnostics retain 280/280 exact transcripts. The callback
+geomean is 0.9742 of old Nixie (neutral); all-present is 1.0470, still inside
+the pre-registered per-family 5% band. Its 32x16 size does regress to 1.0765
+(the 8x8 size is 1.0184), so the aggregate must not hide that component cost.
+This appears only after integrating the intervening main changes; the CP-only
+all-present family was 0.9748. No causal attribution among those main changes
+was measured. The cached reports retain every size and baseline distribution.
+
+The merged release build, release Clippy (`--all-targets`, warnings denied),
+rustdoc (warnings denied via `.cargo/config.toml`), formatting and three Python
+harness tests passed. The separately enabled arrangement canary
+`pete_cxs_bp_is_unsat_on_every_trajectory` passed. The final perf landing gate
+uses the frozen all-features CLI against canonical `28e82c65` with external
+`GATE_CAP=600`: 12/12 decisive matching verdicts; the nine nontrivial pairs
+have conflict and decision geomeans exactly 1.000. The earlier 150-second
+attempt on `44f30970` had eleven solved matches and one shared cap; that
+censored attempt is retained. Wall times are diagnostic, not optimization
+evidence.
+
+The complete merged Nextest run passed **12,367/12,367 tests**, with the suite's
+18 existing skips unchanged; the arrangement canary above was run separately.
+The local configuration retained all repository overrides and gave only the
+fixed-input F4/Buchberger and 150-case odd-width identity tests a bounded
+600-second allowance. Both passed (190.553 s and 290.432 s); the existing
+600-repetition scope convergence test passed in 450.582 s. No test case, seed,
+assertion or solver budget was removed or relaxed. Normal workspace release
+profiles are used for doctests, CLI build, Clippy, docs and parity; only the
+Nextest binaries use the test-link overrides stated above.
+
+Release workspace doctests passed: **114 passed, 31 ignored**, with no failures.
+The installed Z3 comparator remains 4.16.0, binary SHA-256
+`e01bc8bcd4d487be9666873545532ff4cd705ad4cd746f616290fac756f12c46`;
+this is the same executable as the reused CP reference cells.
+
+Final Z3 differential parity: **176 decisive matches, 0 disagreements,
+1 inconclusive, 0 timeouts/errors** out of 177 cases. The inconclusive case
+is `array_unique.smt2` (Nixie Unsat, Z3 Unknown); it is not counted as a match.
+All source verification and final measurements use `f43db048`; the subsequent
+landing commit changes only this report and its paired CSV. Frozen ordinary
+and all-features CLIs, the measurement binary, manifests, counter records,
+profiles, complete verification logs and both local Nextest configurations
+are retained in `precompile/` under their source/landing revisions.
