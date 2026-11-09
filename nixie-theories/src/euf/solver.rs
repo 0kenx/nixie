@@ -1051,6 +1051,25 @@ impl EufSolver {
         out
     }
 
+    /// Application arguments excluding function symbols owned by quantified models.
+    pub fn app_argument_terms_excluding_funcs(
+        &self,
+        forbidden_funcs: &FxHashSet<u32>,
+    ) -> FxHashSet<TermId> {
+        let mut out: FxHashSet<TermId> = FxHashSet::default();
+        for node in &self.nodes {
+            if !node.is_app() || forbidden_funcs.contains(&node.func) {
+                continue;
+            }
+            for &arg in &node.args {
+                if let Some(term) = self.node_term(arg) {
+                    out.insert(term);
+                }
+            }
+        }
+        out
+    }
+
     /// Get the function symbol of a node (if it is a function application)
     pub fn node_func(&self, idx: u32) -> Option<u32> {
         self.nodes

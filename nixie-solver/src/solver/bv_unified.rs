@@ -230,15 +230,8 @@ impl Solver {
             // Operands first: `encode_bool_node` on an atom requires its
             // operands' bits to exist.
             for &t in &bv_sorted {
-                let width = manager
-                    .get(t)
-                    .and_then(|td| manager.sorts.get(td.sort))
-                    .and_then(|s| s.bitvec_width());
-                let Some(width) = width else { continue };
                 if !encode_bv_term_recursive(bv, t, manager, &mut encoded) {
-                    // Free-vector fallback (UF results, exotic shapes): the
-                    // atom circuits still constrain these bits.
-                    bv.new_bv(t, width);
+                    return;
                 }
             }
             for atom in &bv_atoms {
@@ -522,13 +515,8 @@ impl Solver {
         self.bv.build_with(&mut self.sat, |bv| {
             let mut encoded: FxHashSet<TermId> = FxHashSet::default();
             for &t in &bv_sorted {
-                let width = manager
-                    .get(t)
-                    .and_then(|td| manager.sorts.get(td.sort))
-                    .and_then(|s| s.bitvec_width());
-                let Some(width) = width else { continue };
                 if !encode_bv_term_recursive(bv, t, manager, &mut encoded) {
-                    bv.new_bv(t, width);
+                    return;
                 }
             }
             for atom in &bv_atoms {
@@ -819,11 +807,11 @@ impl Solver {
                 let mut inputs: Vec<smallvec::SmallVec<[nixie_sat::Var; 32]>> = Vec::new();
                 for &wire in &spec.wires {
                     if !encode_bv_term_recursive(bv, wire, manager, &mut encoded) {
-                        bv.new_bv(wire, spec.width);
+                        break;
                     }
                     match bv.bv_bits(wire) {
-                        Some(bits) => inputs.push(bits),
-                        None => break,
+                        Some(bits) if bits.len() == spec.width as usize => inputs.push(bits),
+                        _ => break,
                     }
                 }
                 if inputs.len() == spec.wires.len()

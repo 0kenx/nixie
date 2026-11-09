@@ -611,13 +611,16 @@ impl Solver {
         // `String`-sorted variables are still unassigned at this point; recover
         // them from the ground string decision procedure, which hands back only
         // assignments it has verified against every assertion.
+        // Pull every fully determined blasted term from the checked snapshot,
+        // including BV arguments reached only through UF applications. They
+        // need not be in the assertion-time `bv_terms` registry.
         // Unified BV generation: pull every *fully determined* blasted term
         // into the model, not just the `bv_terms` leaves.  The dispatch's
         // model builder does the same via `model_bv_values`; without it a
         // compound like `(bvurem x #x7)` has no model entry and `get-value`
         // echoes the term instead of folding it (the adopted main-core
         // snapshot is the value source – see `BvSolver::read_model_bit`).
-        if self.bv.is_unified() {
+        if self.bv.has_circuits() {
             for (term, value) in self.bv.model_bv_values() {
                 if model.get(term).is_some() {
                     continue;

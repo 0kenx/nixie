@@ -12,7 +12,7 @@ use num_rational::Rational64;
 use num_traits::ToPrimitive;
 use smallvec::SmallVec;
 
-use super::theory_bv_encode::{debug_verify_bv_circuits, encode_bv_term_recursive};
+use super::theory_bv_encode::debug_verify_bv_circuits;
 use super::types::{
     ArithConstraintType, Constraint, ParsedArithConstraint, Statistics, TheoryMode,
 };
@@ -72,6 +72,7 @@ pub(crate) enum BoundPropMode {
     Tighten,
 }
 
+mod bv_bridge;
 mod bv_budget;
 mod conflict_clause;
 #[cfg(debug_assertions)]
@@ -493,6 +494,10 @@ pub(crate) struct TheoryManager<'a> {
     /// set, answers `Unknown` instead of trusting the `Sat` – so a dropped
     /// conflict never turns into a fabricated satisfiability result.
     resource_exhausted: bool,
+    bv_atom_unmodelled: bool,
+    bv_relevant: bool,
+    bv_euf_undecided: bool,
+    quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
     bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
     /// manager could not account for, so that no conflict clause could be built
@@ -649,6 +654,7 @@ impl<'a> TheoryManager<'a> {
         max_bv_embedded_checks: u64,
         has_bv_arith_ops: bool,
         has_array_ops: bool,
+        quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
         deadline: Option<nixie_time::Instant>,
         logic: Option<&str>,
         pure_dl: bool,
@@ -658,6 +664,25 @@ impl<'a> TheoryManager<'a> {
     ) -> Self {
         #[cfg(not(feature = "std"))]
         let _ = deadline;
+        let bv_relevant = !bv_terms.is_empty()
+            || bv.has_circuits()
+            || var_to_constraint.values().any(|constraint| {
+                let pair = match *constraint {
+                    Constraint::Eq(a, b)
+                    | Constraint::Diseq(a, b)
+                    | Constraint::Lt(a, b)
+                    | Constraint::Le(a, b)
+                    | Constraint::Gt(a, b)
+                    | Constraint::Ge(a, b) => [a, b],
+                    Constraint::BoolApp(_) => return false,
+                };
+                pair.into_iter().any(|term| {
+                    manager
+                        .get(term)
+                        .and_then(|term| manager.sorts.get(term.sort))
+                        .is_some_and(|sort| sort.is_bitvec())
+                })
+            });
         let mut this = Self {
             has_injective_distinct,
             injective_specs,
@@ -709,6 +734,10 @@ impl<'a> TheoryManager<'a> {
             bool_true_node: None,
             bool_false_node: None,
             resource_exhausted: false,
+            bv_atom_unmodelled: false,
+            bv_relevant,
+            bv_euf_undecided: false,
+            quantifier_uf_funcs,
             bv_embedded_check_ceiling: bv_budget::effective_bv_embedded_check_ceiling(
                 max_bv_embedded_checks,
             ),
@@ -904,7 +933,7 @@ impl<'a> TheoryManager<'a> {
     /// treat any subsequent `Sat` as `Unknown`: the dropped conflict means the
     /// current assignment is not a verified model.
     pub(crate) fn resource_exhausted(&self) -> bool {
-        self.resource_exhausted
+        self.resource_exhausted || self.bv_atom_unmodelled || self.bv_euf_undecided
     }
 
     /// Returns `true` if the exhaustion was recorded at the arith-ABSTENTION
@@ -3283,38 +3312,6 @@ impl<'a> TheoryManager<'a> {
         }
     }
 
-    /// Look up the BV bit-width of a term from its sort, if it has a BV sort.
-    fn bv_width_of(&self, term: TermId, manager: &TermManager) -> Option<u32> {
-        manager
-            .get(term)
-            .and_then(|t| manager.sorts.get(t.sort))
-            .and_then(|s| s.bitvec_width())
-    }
-
-    /// Bit-blast both operands of a BV constraint into the embedded SAT solver.
-    ///
-    /// Each side is encoded recursively; a bare leaf that the recursive encoder
-    /// cannot handle falls back to a fresh BV variable of the operand's width.
-    /// Returns `true` if both operands are BV-sorted with equal width (so that
-    /// `assert_eq` / `assert_neq` may be called safely), `false` otherwise.
-    fn bit_blast_bv_pair(&mut self, lhs: TermId, rhs: TermId, manager: &TermManager) -> bool {
-        let (lw, rw) = match (
-            self.bv_width_of(lhs, manager),
-            self.bv_width_of(rhs, manager),
-        ) {
-            (Some(lw), Some(rw)) if lw == rw => (lw, rw),
-            _ => return false,
-        };
-        let mut encoded: FxHashSet<TermId> = FxHashSet::default();
-        if !encode_bv_term_recursive(self.bv, lhs, manager, &mut encoded) {
-            self.bv.new_bv(lhs, lw);
-        }
-        if !encode_bv_term_recursive(self.bv, rhs, manager, &mut encoded) {
-            self.bv.new_bv(rhs, rw);
-        }
-        true
-    }
-
     /// Run the embedded BV SAT check after the caller has asserted a constraint.
     ///
     /// Records `constraint_term` so the conflict clause is non-empty, then
@@ -3332,7 +3329,12 @@ impl<'a> TheoryManager<'a> {
         constraint_term: TermId,
         operands: (TermId, TermId),
         manager: &TermManager,
+        asserted: bool,
     ) -> Option<TheoryCheckResult> {
+        if !asserted {
+            self.bv_atom_unmodelled = true;
+            return None;
+        }
         use nixie_theories::Theory;
         use nixie_theories::TheoryCheckResult as TheoryCheckResultEnum;
         self.bv.record_constraint_term(constraint_term);
@@ -3384,8 +3386,8 @@ impl<'a> TheoryManager<'a> {
         if !self.bit_blast_bv_pair(lhs, rhs, manager) {
             return None;
         }
-        self.bv.assert_neq(lhs, rhs);
-        self.bv_run_check(constraint_term, (lhs, rhs), manager)
+        let asserted = self.bv.assert_neq(lhs, rhs);
+        self.bv_run_check(constraint_term, (lhs, rhs), manager, asserted)
     }
 
     /// Bit-blast `lhs`/`rhs`, assert `lhs = b` at the bit level, and check.
@@ -3410,8 +3412,8 @@ impl<'a> TheoryManager<'a> {
         if !self.bit_blast_bv_pair(lhs, rhs, manager) {
             return None;
         }
-        self.bv.assert_eq(lhs, rhs);
-        self.bv_run_check(constraint_term, (lhs, rhs), manager)
+        let asserted = self.bv.assert_eq(lhs, rhs);
+        self.bv_run_check(constraint_term, (lhs, rhs), manager, asserted)
     }
 
     /// Process a theory constraint
@@ -3712,42 +3714,9 @@ impl<'a> TheoryManager<'a> {
                             .get(tid)
                             .and_then(|t| manager.sorts.get(t.sort).and_then(|s| s.bitvec_width()))
                     };
-                    let width = match (bv_width_of(lhs), bv_width_of(rhs)) {
-                        (Some(lw), Some(rw)) if lw == rw => Some(lw),
-                        _ => None,
-                    };
-
-                    if let Some(width) = width
-                        && !bv_unified
-                    {
-                        // Bit-blast both operands *with constant bits pinned*.
-                        //
-                        // `new_bv` alone allocates a fresh, completely
-                        // unconstrained bit-vector for whatever term it is
-                        // handed – including `BitVecConst` operands.  A
-                        // comparison such as `(bvult x #b00000000)` then reads
-                        // as `x <u c` for an arbitrary `c`, which is trivially
-                        // satisfiable, so the BV solver could never refute the
-                        // always-false strict comparisons (`t <u 0`,
-                        // `t <s INT_MIN`, `MAX <u t`, ...).  Reference: Z3's
-                        // bv_rewriter.cpp folds those atoms to `false`; here the
-                        // equivalent refutation comes from the bit-blasted
-                        // circuit, which only works once the literal operand is
-                        // pinned to its concrete bits.
-                        //
-                        // `encode_bv_term_recursive` pins `BitVecConst` leaves
-                        // and bit-blasts compound BV structure (`bvadd`,
-                        // `bvand`, extract, ...) that appears under a
-                        // comparison; `new_bv` remains the fallback for term
-                        // shapes it does not model (e.g. an `Apply` of an
-                        // uninterpreted function returning a bit-vector), where
-                        // a free bit-vector is the correct abstraction.
-                        let mut bv_encoded: FxHashSet<TermId> = FxHashSet::default();
-                        if !encode_bv_term_recursive(self.bv, lhs, manager, &mut bv_encoded) {
-                            self.bv.new_bv(lhs, width);
-                        }
-                        if !encode_bv_term_recursive(self.bv, rhs, manager, &mut bv_encoded) {
-                            self.bv.new_bv(rhs, width);
+                    if (bv_width_of(lhs).is_some() || bv_width_of(rhs).is_some()) && !bv_unified {
+                        if !self.bit_blast_bv_pair(lhs, rhs, manager) {
+                            return TheoryCheckResult::Sat;
                         }
 
                         // Derive signedness from the original TermKind stored for
@@ -3760,56 +3729,24 @@ impl<'a> TheoryManager<'a> {
                             matches!(t.kind, TermKind::BvSlt(_, _) | TermKind::BvSle(_, _))
                         });
 
-                        if is_positive {
-                            // Positive assignment: constraint holds
-                            match constraint {
-                                Constraint::Lt(a, b) => {
-                                    if is_signed {
-                                        self.bv.assert_slt(a, b);
-                                    } else {
-                                        self.bv.assert_ult(a, b);
-                                    }
-                                }
-                                Constraint::Le(a, b) if is_signed => {
-                                    self.bv.assert_sle(a, b);
-                                }
-                                Constraint::Le(a, b) => {
-                                    // Unsigned a <= b ≡ NOT(b <u a).
-                                    self.bv.assert_ule(a, b);
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            // Negated assignment: the negation of the comparator
-                            // holds.  By totality of BV orders the negation is the
-                            // swapped non-strict / strict comparator:
-                            //   ¬(a <u  b) ≡ b <=u a   ¬(a <=u b) ≡ b <u  a
-                            //   ¬(a <s  b) ≡ b <=s a   ¬(a <=s b) ≡ b <s  a
-                            match constraint {
-                                Constraint::Lt(a, b) => {
-                                    if is_signed {
-                                        self.bv.assert_sle(b, a);
-                                    } else {
-                                        self.bv.assert_ule(b, a);
-                                    }
-                                }
-                                Constraint::Le(a, b) => {
-                                    if is_signed {
-                                        self.bv.assert_slt(b, a);
-                                    } else {
-                                        self.bv.assert_ult(b, a);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
+                        let asserted = match (constraint, is_positive, is_signed) {
+                            (Constraint::Lt(a, b), true, true) => self.bv.assert_slt(a, b),
+                            (Constraint::Lt(a, b), true, false) => self.bv.assert_ult(a, b),
+                            (Constraint::Le(a, b), true, true) => self.bv.assert_sle(a, b),
+                            (Constraint::Le(a, b), true, false) => self.bv.assert_ule(a, b),
+                            (Constraint::Lt(a, b), false, true) => self.bv.assert_sle(b, a),
+                            (Constraint::Lt(a, b), false, false) => self.bv.assert_ule(b, a),
+                            (Constraint::Le(a, b), false, true) => self.bv.assert_slt(b, a),
+                            (Constraint::Le(a, b), false, false) => self.bv.assert_ult(b, a),
+                            _ => false,
+                        };
 
                         // Check BV solver for conflicts.  Routed through
                         // `bv_run_check` so the comparison path shares the
                         // (dis)equality path's debug-only model-validity net.
                         let constraint_term = self.term_for_var(var);
                         if let Some(result) =
-                            self.bv_run_check(constraint_term, (lhs, rhs), manager)
+                            self.bv_run_check(constraint_term, (lhs, rhs), manager, asserted)
                         {
                             return result;
                         }
@@ -4013,316 +3950,8 @@ impl<'a> TheoryManager<'a> {
     }
 }
 
-impl TheoryCallback for TheoryManager<'_> {
-    /// A real theory is attached: inprocessing must skip its pure-literal pass
-    /// (see `TheoryCallback::is_real_theory` in nixie-sat for the soundness
-    /// argument).
-    fn is_real_theory(&self) -> bool {
-        true
-    }
-
-    /// Record a candidate theory lemma. Recordable atoms: `Eq` over
-    /// non-Bool operands, and **Bool-sorted applications** `f(x…)` (a
-    /// `(S…)->Bool` function's atom is the equality `f(x…) = true/false`, so
-    /// congruence closure verifies it against the Boolean constants — the
-    /// eq_diamond/NEQ family is built on them). Anything else (arithmetic
-    /// comparisons, Boolean iff, unknown atoms) poisons the log: the gate
-    /// then declines to use it (fail closed to the skeleton-only path).
-    fn record_lemma(&mut self, clause: &[Lit]) {
-        if clause.is_empty() {
-            return;
-        }
-        let bool_sort = self.manager.sorts.bool_sort;
-        let mut entry: Vec<(TermId, bool)> = Vec::with_capacity(clause.len());
-        for &lit in clause {
-            let Some(&term) = self.var_to_term.get(lit.var().index()) else {
-                #[cfg(feature = "std")]
-                if std::env::var("NIXIE_CERT_DEBUG").is_ok() {
-                    eprintln!(
-                        "[lemma-poison] unassigned var {} in clause of {} literals",
-                        lit.var().index(),
-                        clause.len()
-                    );
-                }
-                self.derived_reasons.lemma_log_poisoned = true;
-                return;
-            };
-            let int_sort = self.manager.sorts.int_sort;
-            let real_sort = self.manager.sorts.real_sort;
-            let atom_ok = self.manager.get(term).is_some_and(|t| match &t.kind {
-                TermKind::Eq(lhs, rhs) => {
-                    self.manager.get(*lhs).is_some_and(|l| l.sort != bool_sort)
-                        && self.manager.get(*rhs).is_some_and(|r| r.sort != bool_sort)
-                }
-                // Linear (in)equalities over Int/Real — verified by the
-                // certified gate's independent LP check
-                // (`verify_lia_lemma`): rational infeasibility only,
-                // integer-only conflicts fail closed.
-                TermKind::Lt(a, b)
-                | TermKind::Le(a, b)
-                | TermKind::Gt(a, b)
-                | TermKind::Ge(a, b) => {
-                    self.manager
-                        .get(*a)
-                        .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
-                        && self
-                            .manager
-                            .get(*b)
-                            .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
-                }
-                TermKind::Apply { .. } => t.sort == bool_sort,
-                _ => false,
-            });
-            if !atom_ok {
-                #[cfg(feature = "std")]
-                if std::env::var("NIXIE_CERT_DEBUG").is_ok() {
-                    eprintln!(
-                        "[lemma-poison] literal {} maps to non-recordable atom {:?}",
-                        lit.to_dimacs(),
-                        self.manager.get(term).map(|t| &t.kind)
-                    );
-                }
-                self.derived_reasons.lemma_log_poisoned = true;
-                return;
-            }
-            entry.push((term, !lit.is_neg()));
-        }
-        self.derived_reasons.push_theory_lemma(entry);
-    }
-
-    fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
-        let var = lit.var();
-        let is_positive = !lit.is_neg();
-
-        if self.timed_out() || self.bv_embedded_budget_spent() {
-            self.resource_exhausted = true;
-            return TheoryCheckResult::Sat;
-        }
-
-        // Stamp polarity/level for EVERY assigned var, BEFORE the
-        // theory-constraint early return.  The stamp is pure bookkeeping
-        // (direct-indexed, generation-stamped), and gating it on
-        // `var_to_constraint` made `assigned_pol_of` return `None` forever
-        // for plain-Boolean atoms — notably the injective-distinct
-        // encoding's asserted result literal, whose polarity gate
-        // (`any_result_true` in `nelson_oppen_combine`) then held the
-        // co-located split machinery dead on every top-level asserted
-        // `distinct` (found via the memory-alias arc; see
-        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
-        self.set_assigned_polarity(var, is_positive);
-        self.set_assigned_level(var, self.current_level);
-
-        if !self.bv_terms.is_empty()
-            && let Some(term) = self.var_to_term.get(var.index()).copied()
-        {
-            self.bv.assert_bool_value(term, is_positive);
-        }
-
-        if !self.var_to_constraint.contains_key(&var) {
-            // Plain Boolean selectors also constrain BV circuits. Retain them
-            // in the shadow trail so a lazy replay restores their exact scope.
-            if !self.bv_terms.is_empty()
-                && !self.bv.is_unified()
-                && self.var_to_term.get(var.index()).is_some()
-            {
-                let atom = TrailAtom {
-                    var,
-                    is_positive,
-                    level: self.current_level,
-                };
-                match self.trail_idx_of(var) {
-                    Some(index) => self.assignment_trail[index] = atom,
-                    None => {
-                        let index = self.assignment_trail.len();
-                        self.assignment_trail.push(atom);
-                        self.trail_idx_set(var, index);
-                    }
-                }
-            }
-            return TheoryCheckResult::Sat;
-        }
-
-        // Track propagation
-        self.statistics.propagations += 1;
-
-        // Lazy mode keeps a deduplicated, level-stamped shadow of the complete
-        // SAT trail and rebuilds the theory solvers from it in `final_check`.
-        // Merely queueing atoms and asserting them at the *current* (deepest)
-        // scope is unsound: after a theory conflict, a backtrack pops that
-        // scope and loses even the queued facts whose SAT assignments survived
-        // at lower levels.  The next candidate can then be accepted against a
-        // strict subset of its theory atoms (the array-incompleteness false-SAT
-        // was one such case).
-        if self.theory_mode == TheoryMode::Lazy {
-            match self.trail_idx_of(var) {
-                Some(idx) => {
-                    self.assignment_trail[idx] = TrailAtom {
-                        var,
-                        is_positive,
-                        level: self.current_level,
-                    };
-                }
-                None => {
-                    let idx = self.assignment_trail.len();
-                    self.assignment_trail.push(TrailAtom {
-                        var,
-                        is_positive,
-                        level: self.current_level,
-                    });
-                    self.trail_idx_set(var, idx);
-                }
-            }
-            return TheoryCheckResult::Sat;
-        }
-
-        // Eager mode: process immediately
-        // Check if this variable has a theory constraint
-        let Some(constraint) = self.var_to_constraint.get(&var).cloned() else {
-            return TheoryCheckResult::Sat;
-        };
-
-        // Shadow-trail bookkeeping + in-place-flip detection.
-        //
-        // If the SAT core has assigned this variable before (and not yet
-        // backtracked past it) with the OPPOSITE polarity, it has overwritten
-        // its own trail – a wrong assertion-level bug in conflict analysis.  The
-        // incremental theory state still holds the old polarity's assertions and
-        // cannot be surgically undone, so we replace the trail entry and rebuild
-        // theory state from the corrected trail.  A re-assignment with the SAME
-        // polarity is an idempotent re-send after a backtrack; it falls through
-        // to the normal (re)processing path, preserving pre-existing behaviour.
-        match self.trail_idx_of(var) {
-            // In-place polarity flip by the SAT core (a wrong assertion-level
-            // result from its conflict analysis).  Rebuild theory state from the
-            // corrected, deduplicated trail so no stale over-constraint from the
-            // old polarity manufactures a spurious conflict (the wrong-UNSAT on
-            // satisfiable disjunctive LIA chains).  Any residual unsoundness the
-            // corrupted SAT trail could still produce (a full assignment
-            // violating a Boolean clause the theory cannot see) is caught
-            // downstream by the model-verification gate in `Solver::check`.
-            //
-            // Scope: the rebuild covers the EUF and arithmetic solvers, so we
-            // engage it only when the problem has no bit-vector content.  The BV
-            // solver's bit-blasted circuits are rebuilt from scratch on every
-            // `check` (see `mod.rs`) and its incremental push/pop already handles
-            // flips soundly; resetting and replaying it mid-search would instead
-            // corrupt its embedded SAT state.  BV problems therefore retain the
-            // existing (correct) incremental behaviour.
-            Some(idx)
-                if self.assignment_trail[idx].is_positive != is_positive
-                    && self.bv_terms.is_empty() =>
-            {
-                self.assignment_trail[idx] = TrailAtom {
-                    var,
-                    is_positive,
-                    level: self.current_level,
-                };
-                self.processed_count += 1;
-                self.statistics.theory_propagations += 1;
-
-                // Process the flipped literal against the current (stale) state
-                // first.  If it stays consistent, keep that result – the extra
-                // over-constraint from the not-yet-popped old polarity is
-                // harmless here and preserves the existing search trajectory.
-                // Only when it manufactures a conflict do we pay for a full
-                // rebuild from the corrected, deduplicated trail: that conflict
-                // may be spurious (a stale artefact of the SAT core's wrong
-                // backtrack level, the wrong-UNSAT cause) so we must re-derive
-                // the authoritative verdict – `Conflict` if genuinely
-                // inconsistent, `Sat` if the stale state fabricated it.
-                let direct = if self.dl_pure {
-                    // The dense closure cannot surgically remove the flipped
-                    // literal's old edges (it retracts by scope pops only), so
-                    // processing the flip directly would leave BOTH
-                    // polarities asserted and over-constrain it into bogus
-                    // conflicts.  Rebuild from the corrected trail first.
-                    self.resync_theory_state()
-                } else {
-                    let d = self.process_constraint(var, constraint, is_positive, self.manager);
-                    if matches!(d, TheoryCheckResult::Conflict(_)) {
-                        self.resync_theory_state()
-                    } else {
-                        d
-                    }
-                };
-                let result = direct;
-                if matches!(result, TheoryCheckResult::Conflict(_)) {
-                    self.statistics.theory_conflicts += 1;
-                    self.statistics.conflicts += 1;
-                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
-                        self.resource_exhausted = true;
-                        return TheoryCheckResult::Sat;
-                    }
-                }
-                return result;
-            }
-            Some(_) => {
-                // Either an idempotent same-polarity re-send after a backtrack,
-                // or a flip in a problem that contains bit-vector terms (handled
-                // by the BV solver's own incremental push/pop).  Both fall
-                // through to normal processing, preserving pre-existing behaviour.
-            }
-            None => {
-                let idx = self.assignment_trail.len();
-                self.assignment_trail.push(TrailAtom {
-                    var,
-                    is_positive,
-                    level: self.current_level,
-                });
-                self.trail_idx_set(var, idx);
-            }
-        }
-
-        self.processed_count += 1;
-        self.statistics.theory_propagations += 1;
-
-        let result = self.process_constraint(var, constraint, is_positive, self.manager);
-
-        // Track theory conflicts
-        if matches!(result, TheoryCheckResult::Conflict(_)) {
-            self.statistics.theory_conflicts += 1;
-            self.statistics.conflicts += 1;
-
-            // Check conflict limit
-            if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
-                // Resource exhaustion: we are dropping a real conflict to stop
-                // the search.  Flag it so the solver answers Unknown, not Sat.
-                self.resource_exhausted = true;
-                return TheoryCheckResult::Sat; // Return Sat to signal resource exhaustion
-            }
-        }
-
-        // Incremental arithmetic bound propagation (the z3 `:arith-bound-prop`
-        // analogue).  Env-gated (`NIXIE_BOUND_PROP`); validated sound before
-        // default-enabling.  Fires after a successful arith assertion so that
-        // asserting `(= x k)` (which pins `x ∈ [k,k]`) immediately forces every
-        // `x ◦ c` ite condition at the current decision level – the mechanism
-        // that shallows conflicts on finite-domain QF_UFIDL from ~96 to ~2.
-        #[cfg(feature = "std")]
-        if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
-            let mode = arith_bound_prop_mode();
-            if mode != BoundPropMode::Off
-                && self.is_dl_family
-                && let Some(props) =
-                    self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
-            {
-                self.statistics.theory_propagations += props.len() as u64;
-                return TheoryCheckResult::Propagated(props);
-            }
-        }
-
-        if matches!(result, TheoryCheckResult::Sat)
-            && self.eq_atom_watches
-            && let Some(props) = self.drain_forced_eq_atoms()
-        {
-            self.statistics.theory_propagations += props.len() as u64;
-            return TheoryCheckResult::Propagated(props);
-        }
-
-        result
-    }
-
-    fn final_check(&mut self) -> TheoryCheckResult {
+impl TheoryManager<'_> {
+    fn final_check_before_bv_exchange(&mut self) -> TheoryCheckResult {
         if self.timed_out() || self.bv_embedded_budget_spent() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
@@ -4636,6 +4265,334 @@ impl TheoryCallback for TheoryManager<'_> {
         // honestly rather than accept it.
         self.resource_exhausted = true;
         TheoryCheckResult::Sat
+    }
+}
+
+impl TheoryCallback for TheoryManager<'_> {
+    /// A real theory is attached: inprocessing must skip its pure-literal pass
+    /// (see `TheoryCallback::is_real_theory` in nixie-sat for the soundness
+    /// argument).
+    fn is_real_theory(&self) -> bool {
+        true
+    }
+
+    /// Record a candidate theory lemma. Recordable atoms: `Eq` over
+    /// non-Bool operands, and **Bool-sorted applications** `f(x…)` (a
+    /// `(S…)->Bool` function's atom is the equality `f(x…) = true/false`, so
+    /// congruence closure verifies it against the Boolean constants — the
+    /// eq_diamond/NEQ family is built on them). Anything else (arithmetic
+    /// comparisons, Boolean iff, unknown atoms) poisons the log: the gate
+    /// then declines to use it (fail closed to the skeleton-only path).
+    fn record_lemma(&mut self, clause: &[Lit]) {
+        if clause.is_empty() {
+            return;
+        }
+        let bool_sort = self.manager.sorts.bool_sort;
+        let mut entry: Vec<(TermId, bool)> = Vec::with_capacity(clause.len());
+        for &lit in clause {
+            let Some(&term) = self.var_to_term.get(lit.var().index()) else {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_CERT_DEBUG").is_ok() {
+                    eprintln!(
+                        "[lemma-poison] unassigned var {} in clause of {} literals",
+                        lit.var().index(),
+                        clause.len()
+                    );
+                }
+                self.derived_reasons.lemma_log_poisoned = true;
+                return;
+            };
+            let int_sort = self.manager.sorts.int_sort;
+            let real_sort = self.manager.sorts.real_sort;
+            let atom_ok = self.manager.get(term).is_some_and(|t| match &t.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    self.manager.get(*lhs).is_some_and(|l| l.sort != bool_sort)
+                        && self.manager.get(*rhs).is_some_and(|r| r.sort != bool_sort)
+                }
+                // Linear (in)equalities over Int/Real — verified by the
+                // certified gate's independent LP check
+                // (`verify_lia_lemma`): rational infeasibility only,
+                // integer-only conflicts fail closed.
+                TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b) => {
+                    self.manager
+                        .get(*a)
+                        .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
+                        && self
+                            .manager
+                            .get(*b)
+                            .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
+                }
+                TermKind::Apply { .. } => t.sort == bool_sort,
+                _ => false,
+            });
+            if !atom_ok {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_CERT_DEBUG").is_ok() {
+                    eprintln!(
+                        "[lemma-poison] literal {} maps to non-recordable atom {:?}",
+                        lit.to_dimacs(),
+                        self.manager.get(term).map(|t| &t.kind)
+                    );
+                }
+                self.derived_reasons.lemma_log_poisoned = true;
+                return;
+            }
+            entry.push((term, !lit.is_neg()));
+        }
+        self.derived_reasons.push_theory_lemma(entry);
+    }
+
+    fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
+        let var = lit.var();
+        let is_positive = !lit.is_neg();
+
+        if self.timed_out() || self.bv_embedded_budget_spent() {
+            self.resource_exhausted = true;
+            return TheoryCheckResult::Sat;
+        }
+
+        // Stamp polarity/level for EVERY assigned var, BEFORE the
+        // theory-constraint early return.  The stamp is pure bookkeeping
+        // (direct-indexed, generation-stamped), and gating it on
+        // `var_to_constraint` made `assigned_pol_of` return `None` forever
+        // for plain-Boolean atoms — notably the injective-distinct
+        // encoding's asserted result literal, whose polarity gate
+        // (`any_result_true` in `nelson_oppen_combine`) then held the
+        // co-located split machinery dead on every top-level asserted
+        // `distinct` (found via the memory-alias arc; see
+        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+        self.set_assigned_polarity(var, is_positive);
+        self.set_assigned_level(var, self.current_level);
+
+        if self.bv_relevant
+            && let Some(term) = self.var_to_term.get(var.index()).copied()
+        {
+            self.bv.assert_bool_value(term, is_positive);
+        }
+
+        if !self.var_to_constraint.contains_key(&var) {
+            // Plain Boolean selectors also constrain BV circuits. Retain them
+            // in the shadow trail so a lazy replay restores their exact scope.
+            if self.bv_relevant
+                && !self.bv.is_unified()
+                && self.var_to_term.get(var.index()).is_some()
+            {
+                let atom = TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                };
+                match self.trail_idx_of(var) {
+                    Some(index) => self.assignment_trail[index] = atom,
+                    None => {
+                        let index = self.assignment_trail.len();
+                        self.assignment_trail.push(atom);
+                        self.trail_idx_set(var, index);
+                    }
+                }
+            }
+            return TheoryCheckResult::Sat;
+        }
+
+        // Track propagation
+        self.statistics.propagations += 1;
+
+        // Lazy mode keeps a deduplicated, level-stamped shadow of the complete
+        // SAT trail and rebuilds the theory solvers from it in `final_check`.
+        // Merely queueing atoms and asserting them at the *current* (deepest)
+        // scope is unsound: after a theory conflict, a backtrack pops that
+        // scope and loses even the queued facts whose SAT assignments survived
+        // at lower levels.  The next candidate can then be accepted against a
+        // strict subset of its theory atoms (the array-incompleteness false-SAT
+        // was one such case).
+        if self.theory_mode == TheoryMode::Lazy {
+            match self.trail_idx_of(var) {
+                Some(idx) => {
+                    self.assignment_trail[idx] = TrailAtom {
+                        var,
+                        is_positive,
+                        level: self.current_level,
+                    };
+                }
+                None => {
+                    let idx = self.assignment_trail.len();
+                    self.assignment_trail.push(TrailAtom {
+                        var,
+                        is_positive,
+                        level: self.current_level,
+                    });
+                    self.trail_idx_set(var, idx);
+                }
+            }
+            return TheoryCheckResult::Sat;
+        }
+
+        // Eager mode: process immediately
+        // Check if this variable has a theory constraint
+        let Some(constraint) = self.var_to_constraint.get(&var).cloned() else {
+            return TheoryCheckResult::Sat;
+        };
+
+        // Shadow-trail bookkeeping + in-place-flip detection.
+        //
+        // If the SAT core has assigned this variable before (and not yet
+        // backtracked past it) with the OPPOSITE polarity, it has overwritten
+        // its own trail – a wrong assertion-level bug in conflict analysis.  The
+        // incremental theory state still holds the old polarity's assertions and
+        // cannot be surgically undone, so we replace the trail entry and rebuild
+        // theory state from the corrected trail.  A re-assignment with the SAME
+        // polarity is an idempotent re-send after a backtrack; it falls through
+        // to the normal (re)processing path, preserving pre-existing behaviour.
+        match self.trail_idx_of(var) {
+            // In-place polarity flip by the SAT core (a wrong assertion-level
+            // result from its conflict analysis).  Rebuild theory state from the
+            // corrected, deduplicated trail so no stale over-constraint from the
+            // old polarity manufactures a spurious conflict (the wrong-UNSAT on
+            // satisfiable disjunctive LIA chains).  Any residual unsoundness the
+            // corrupted SAT trail could still produce (a full assignment
+            // violating a Boolean clause the theory cannot see) is caught
+            // downstream by the model-verification gate in `Solver::check`.
+            //
+            // Scope: the rebuild covers the EUF and arithmetic solvers, so we
+            // engage it only when the problem has no bit-vector content.  The BV
+            // solver's bit-blasted circuits are rebuilt from scratch on every
+            // `check` (see `mod.rs`) and its incremental push/pop already handles
+            // flips soundly; resetting and replaying it mid-search would instead
+            // corrupt its embedded SAT state.  BV problems therefore retain the
+            // existing (correct) incremental behaviour.
+            Some(idx)
+                if self.assignment_trail[idx].is_positive != is_positive
+                    && self.bv_terms.is_empty() =>
+            {
+                self.assignment_trail[idx] = TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                };
+                self.processed_count += 1;
+                self.statistics.theory_propagations += 1;
+
+                // Process the flipped literal against the current (stale) state
+                // first.  If it stays consistent, keep that result – the extra
+                // over-constraint from the not-yet-popped old polarity is
+                // harmless here and preserves the existing search trajectory.
+                // Only when it manufactures a conflict do we pay for a full
+                // rebuild from the corrected, deduplicated trail: that conflict
+                // may be spurious (a stale artefact of the SAT core's wrong
+                // backtrack level, the wrong-UNSAT cause) so we must re-derive
+                // the authoritative verdict – `Conflict` if genuinely
+                // inconsistent, `Sat` if the stale state fabricated it.
+                let direct = if self.dl_pure {
+                    // The dense closure cannot surgically remove the flipped
+                    // literal's old edges (it retracts by scope pops only), so
+                    // processing the flip directly would leave BOTH
+                    // polarities asserted and over-constrain it into bogus
+                    // conflicts.  Rebuild from the corrected trail first.
+                    self.resync_theory_state()
+                } else {
+                    let d = self.process_constraint(var, constraint, is_positive, self.manager);
+                    if matches!(d, TheoryCheckResult::Conflict(_)) {
+                        self.resync_theory_state()
+                    } else {
+                        d
+                    }
+                };
+                let result = direct;
+                if matches!(result, TheoryCheckResult::Conflict(_)) {
+                    self.statistics.theory_conflicts += 1;
+                    self.statistics.conflicts += 1;
+                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                        self.resource_exhausted = true;
+                        return TheoryCheckResult::Sat;
+                    }
+                }
+                return result;
+            }
+            Some(_) => {
+                // Either an idempotent same-polarity re-send after a backtrack,
+                // or a flip in a problem that contains bit-vector terms (handled
+                // by the BV solver's own incremental push/pop).  Both fall
+                // through to normal processing, preserving pre-existing behaviour.
+            }
+            None => {
+                let idx = self.assignment_trail.len();
+                self.assignment_trail.push(TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                });
+                self.trail_idx_set(var, idx);
+            }
+        }
+
+        self.processed_count += 1;
+        self.statistics.theory_propagations += 1;
+
+        let result = self.process_constraint(var, constraint, is_positive, self.manager);
+
+        // Track theory conflicts
+        if matches!(result, TheoryCheckResult::Conflict(_)) {
+            self.statistics.theory_conflicts += 1;
+            self.statistics.conflicts += 1;
+
+            // Check conflict limit
+            if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
+                // Resource exhaustion: we are dropping a real conflict to stop
+                // the search.  Flag it so the solver answers Unknown, not Sat.
+                self.resource_exhausted = true;
+                return TheoryCheckResult::Sat; // Return Sat to signal resource exhaustion
+            }
+        }
+
+        // Incremental arithmetic bound propagation (the z3 `:arith-bound-prop`
+        // analogue).  Env-gated (`NIXIE_BOUND_PROP`); validated sound before
+        // default-enabling.  Fires after a successful arith assertion so that
+        // asserting `(= x k)` (which pins `x ∈ [k,k]`) immediately forces every
+        // `x ◦ c` ite condition at the current decision level – the mechanism
+        // that shallows conflicts on finite-domain QF_UFIDL from ~96 to ~2.
+        #[cfg(feature = "std")]
+        if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
+            let mode = arith_bound_prop_mode();
+            if mode != BoundPropMode::Off
+                && self.is_dl_family
+                && let Some(props) =
+                    self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
+            {
+                self.statistics.theory_propagations += props.len() as u64;
+                return TheoryCheckResult::Propagated(props);
+            }
+        }
+
+        if matches!(result, TheoryCheckResult::Sat)
+            && self.eq_atom_watches
+            && let Some(props) = self.drain_forced_eq_atoms()
+        {
+            self.statistics.theory_propagations += props.len() as u64;
+            return TheoryCheckResult::Propagated(props);
+        }
+
+        result
+    }
+
+    fn final_check(&mut self) -> TheoryCheckResult {
+        let result = self.final_check_before_bv_exchange();
+        // Array propagation and arithmetic combination can add EUF equalities.
+        // Validate the BV partition only after those checks have completed.
+        if matches!(result, TheoryCheckResult::Sat)
+            && !self.resource_exhausted()
+            && !self.bv.is_unified()
+            && self.bv.has_circuits()
+        {
+            let manager = self.manager;
+            self.intern_opaque_leaves(manager);
+            if let Some(result) = self.combine_bv_with_euf(manager) {
+                return result;
+            }
+        }
+        result
     }
 
     fn on_new_level(&mut self, level: u32) {

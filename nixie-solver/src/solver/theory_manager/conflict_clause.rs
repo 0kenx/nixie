@@ -343,6 +343,7 @@ mod tests {
                 false,
                 false,
                 None,
+                None,
                 Some("QF_UFIDL"),
                 false,
                 true,

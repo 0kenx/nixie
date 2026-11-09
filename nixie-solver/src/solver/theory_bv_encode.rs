@@ -24,81 +24,25 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Post-order, memoised BV term encoding.
-///
-/// Bit-blast every BV-sorted operand reachable through a boolean condition
-/// `cond` (the kind that appears as an `ite` selector). Walks the boolean
-/// connective/comparison structure and bit-blasts the BV terms underneath the
-/// `Eq`/comparison leaves, so that `BvSolver::encode_bool_node` can look them
-/// up. Returns `false` if any BV operand fails to encode.
-///
-/// Iterative (explicit work stack), so the boolean nesting of the condition is
-/// bounded by memory rather than by the native call stack.  The walk is a pure
-/// conjunction over the condition's boolean structure, and the traversal order
-/// and the short-circuit are preserved exactly: children are pushed in reverse
-/// so they are processed left to right, and the first failing sub-term returns
-/// `false` immediately without blasting anything further.  `done` skips a
-/// boolean sub-term that already succeeded, so a shared sub-condition of the
-/// hash-consed DAG is blasted once instead of once per path.
-/// Bit-blast the two operands of a BV comparison, giving each a free bit
-/// vector when its circuit cannot be built (the comparison still constrains
-/// those bits through its own encoding).
-///
-/// Returns `false` only when an operand is not bit-vector sorted at all.
-fn blast_comparison_operands(
-    bv: &mut BvSolver,
-    lhs: TermId,
-    rhs: TermId,
-    mgr: &TermManager,
-) -> bool {
-    let mut encoded: FxHashSet<TermId> = FxHashSet::default();
-    let mut blast_one = |bv: &mut BvSolver, t: TermId| -> bool {
-        if encode_bv_term_recursive(bv, t, mgr, &mut encoded) {
-            return true;
-        }
-        if let Some(w) = mgr
-            .get(t)
-            .and_then(|td| mgr.sorts.get(td.sort))
-            .and_then(|s| s.bitvec_width())
-        {
-            bv.new_bv(t, w);
-            true
-        } else {
-            false
-        }
-    };
-    blast_one(bv, lhs) && blast_one(bv, rhs)
-}
-
-fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -> bool {
-    // A bit-vector-sorted *root* is malformed SMT-LIB (an `ite` condition is
-    // Bool), and "supporting" it would be unsound: `bv_ite` encodes the
-    // selector through `encode_bool_node`, which has no Boolean reading of a
-    // bit-vector term and would silently skip the mux, leaving the result as
-    // free bits.  Refuse up front; the dispatch then falls back.
-    if bv_width(mgr, cond).is_some() {
-        return false;
-    }
-    let mut done: FxHashSet<TermId> = FxHashSet::default();
-    let mut stack: Vec<TermId> = vec![cond];
-    while let Some(cond) = stack.pop() {
-        if !done.insert(cond) {
+/// Collect BV operands of a supported Boolean selector without entering their
+/// circuits. The caller schedules them on its existing postorder stack, so
+/// alternating BV ITEs and Boolean comparisons cannot recurse natively.
+fn condition_bv_operands(cond: TermId, mgr: &TermManager) -> Option<Vec<TermId>> {
+    let mut roots = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut stack = vec![cond];
+    while let Some(term_id) = stack.pop() {
+        if !seen.insert(term_id) {
             continue;
         }
-        let Some(term) = mgr.get(cond) else {
-            return false;
-        };
+        let term = mgr.get(term_id)?;
+        if term.sort != mgr.sorts.bool_sort {
+            return None;
+        }
         match &term.kind {
-            // Boolean structure: descend into the operands.
-            TermKind::Not(inner) => stack.push(*inner),
-            TermKind::And(args) | TermKind::Or(args) => {
-                stack.extend(args.iter().rev().copied());
-            }
-            // The remaining boolean connectives the eager QF_BV path accepts
-            // (`Xor`, `Implies`, bool-`ite`, `distinct`): descend like the
-            // ones above so an `ite` condition built from them (ubiquitous in
-            // `2018-Mann`-style encodings: `(ite (xor p (=> q r)) #b1 #b0)`)
-            // does not silently abort the blast.
+            TermKind::True | TermKind::False | TermKind::Var(_) => {}
+            TermKind::Not(a) => stack.push(*a),
+            TermKind::And(args) | TermKind::Or(args) => stack.extend(args.iter().rev().copied()),
             TermKind::Xor(a, b) | TermKind::Implies(a, b) => {
                 stack.push(*b);
                 stack.push(*a);
@@ -108,51 +52,53 @@ fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -
                 stack.push(*t);
                 stack.push(*c);
             }
+            TermKind::Eq(a, b) if mgr.get(*a)?.sort == mgr.sorts.bool_sort => {
+                stack.push(*b);
+                stack.push(*a);
+            }
+            TermKind::Eq(a, b)
+            | TermKind::BvUlt(a, b)
+            | TermKind::BvUle(a, b)
+            | TermKind::BvSlt(a, b)
+            | TermKind::BvSle(a, b) => {
+                let width = bv_width(mgr, *a)?;
+                if bv_width(mgr, *b) != Some(width) {
+                    return None;
+                }
+                roots.extend([*a, *b]);
+            }
             TermKind::Distinct(args) => {
-                stack.extend(args.iter().rev().copied());
-            }
-            // Comparison/equality leaves: their operands are BV terms.
-            // A Bool-sorted `=` has no BV operands – it is a leaf here (its
-            // truth value is encoded by `encode_bool_node`, not by bits).
-            TermKind::Eq(lhs, rhs) => {
-                let lhs_is_bool = mgr.get(*lhs).is_some_and(|t| t.sort == mgr.sorts.bool_sort);
-                if lhs_is_bool {
-                    stack.push(*lhs);
-                    stack.push(*rhs);
-                } else if !blast_comparison_operands(bv, *lhs, *rhs, mgr) {
-                    return false;
+                if let Some(&first) = args.first() {
+                    let sort = mgr.get(first)?.sort;
+                    if args
+                        .iter()
+                        .any(|&arg| mgr.get(arg).is_none_or(|term| term.sort != sort))
+                    {
+                        return None;
+                    }
+                    if sort == mgr.sorts.bool_sort {
+                        stack.extend(args.iter().rev().copied());
+                    } else {
+                        bv_width(mgr, first)?;
+                        roots.extend(args.iter().copied());
+                    }
                 }
             }
-            TermKind::BvUlt(lhs, rhs)
-            | TermKind::BvUle(lhs, rhs)
-            | TermKind::BvSlt(lhs, rhs)
-            | TermKind::BvSle(lhs, rhs) => {
-                if !blast_comparison_operands(bv, *lhs, *rhs, mgr) {
-                    return false;
-                }
-            }
-            // A bare boolean variable / constant has no BV operands to blast.
-            TermKind::Var(_) | TermKind::True | TermKind::False => {}
-            // A bit-vector-sorted *leaf* of the Boolean condition structure
-            // (e.g. an operand of `distinct`, or a comparison operand this
-            // walk reached through mixed shapes): blast its bits so the
-            // condition's own `encode_bool_node` encoding (which reads those
-            // bits through its comparison/equality encoders) is complete.
-            // The root-cond case is refused above, so this arm only ever
-            // sees operands, never the selector itself.
-            _ if bv_width(mgr, cond).is_some() => {
-                let mut encoded: FxHashSet<TermId> = FxHashSet::default();
-                if !encode_bv_term_recursive(bv, cond, mgr, &mut encoded)
-                    && let Some(w) = bv_width(mgr, cond)
-                {
-                    bv.new_bv(cond, w);
-                }
-            }
-            // Anything else is outside the supported condition fragment.
-            _ => return false,
+            _ => return None,
         }
     }
-    true
+    Some(roots)
+}
+
+#[cfg(test)]
+fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -> bool {
+    let Some(roots) = condition_bv_operands(cond, mgr) else {
+        return false;
+    };
+    let mut encoded = FxHashSet::default();
+    roots
+        .into_iter()
+        .all(|root| encode_bv_term_recursive(bv, root, mgr, &mut encoded))
 }
 
 /// Declared bit-width of `tid`, or `None` when it is not bit-vector sorted.
@@ -301,7 +247,11 @@ pub(super) fn encode_bv_term_recursive(
                 }
                 // ITE over BV: bit-blast both branches; the condition's BV
                 // operands are bit-blasted separately just before encoding.
-                TermKind::Ite(_cond, then_t, else_t) => {
+                TermKind::Ite(cond, then_t, else_t) => {
+                    let Some(roots) = condition_bv_operands(*cond, mgr) else {
+                        return false;
+                    };
+                    stack.extend(roots.into_iter().rev().map(|root| (root, false)));
                     if !encoded.contains(then_t) {
                         stack.push((*then_t, false));
                     }
@@ -310,7 +260,10 @@ pub(super) fn encode_bv_term_recursive(
                     }
                 }
                 // Leaves: Var, BitVecConst – no children to push
-                TermKind::Var(_) | TermKind::BitVecConst { .. } => {}
+                TermKind::Var(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::Apply { .. }
+                | TermKind::Select(_, _) => {}
                 // Unknown term kind – cannot encode, abort
                 _ => return false,
             }
@@ -475,9 +428,6 @@ pub(super) fn encode_bv_term_recursive(
                     if !operands_have_width(mgr, &[*then_t, *else_t], width) {
                         return false;
                     }
-                    if !bit_blast_cond_operands(bv, *cond, mgr) {
-                        return false;
-                    }
                     if !bv.bv_ite(tid, *cond, *then_t, *else_t, mgr) {
                         return false;
                     }
@@ -537,6 +487,9 @@ pub(super) fn encode_bv_term_recursive(
                     if !bv.bv_srem(tid, *a, *b) {
                         return false;
                     }
+                }
+                TermKind::Apply { .. } | TermKind::Select(_, _) => {
+                    bv.new_opaque_leaf(tid, width);
                 }
                 TermKind::Var(_) => {
                     // Leaf variable: just ensure a BV variable exists.
@@ -889,6 +842,28 @@ mod s8_iterative_tests {
 
     /// Worker stack for the deep-nesting tests; see [`DEEP`].
     const SMALL_STACK: usize = 1 << 17;
+
+    #[test]
+    fn alternating_bv_ite_and_boolean_comparison_uses_one_heap_stack() {
+        let handle = std::thread::Builder::new()
+            .stack_size(SMALL_STACK)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let sort = tm.sorts.bitvec(2);
+                let x = tm.mk_var("x", sort);
+                let y = tm.mk_var("y", sort);
+                let mut root = x;
+                for _ in 0..2_000 {
+                    let condition = tm.mk_bv_ult(root, y);
+                    root = tm.mk_ite(condition, x, y);
+                }
+                let mut bv = BvSolver::new();
+                let mut encoded = FxHashSet::default();
+                encode_bv_term_recursive(&mut bv, root, &tm, &mut encoded)
+            })
+            .unwrap();
+        assert!(handle.join().unwrap());
+    }
 
     #[test]
     fn s8_bit_blast_cond_operands_deep_not_chain_returns() {
