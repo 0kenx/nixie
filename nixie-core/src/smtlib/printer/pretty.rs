@@ -168,7 +168,7 @@ impl<'a> PrettyPrinter<'a> {
                 let _ = write!(w, "{}", super::format_string_literal(s));
             }
             TermKind::Var(spur) => {
-                let name = self.manager.resolve_str(*spur);
+                let name = super::format_symbol(self.manager.resolve_str(*spur));
                 let _ = write!(w, "{name}");
             }
             TermKind::Not(arg) => {
@@ -479,21 +479,33 @@ impl<'a> PrettyPrinter<'a> {
             }
             TermKind::BagMap { func, bag, .. } => {
                 let _ = write!(w, "(bag.map ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*func))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *bag, indent, depth + 1);
                 let _ = write!(w, ")");
             }
             TermKind::BagFilter { pred, bag } => {
                 let _ = write!(w, "(bag.filter ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*pred));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*pred))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *bag, indent, depth + 1);
                 let _ = write!(w, ")");
             }
             TermKind::BagFold { func, init, bag } => {
                 let _ = write!(w, "(bag.fold ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*func))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *init, indent, depth + 1);
                 let _ = write!(w, " ");
@@ -722,7 +734,11 @@ impl<'a> PrettyPrinter<'a> {
                 }
             }
             TermKind::Apply { func, args } => {
-                let name = self.manager.resolve_str(*func);
+                if self.manager.resolve_str(*func) == crate::reserved::CONST_ARRAY_FUNC {
+                    super::Printer::new(self.manager).write_term(w, term_id);
+                    return;
+                }
+                let name = super::format_symbol(self.manager.resolve_str(*func));
                 if break_here && !args.is_empty() {
                     let inner_indent = indent + self.config.indent_width;
                     let _ = write!(w, "({name}");
@@ -777,7 +793,7 @@ impl<'a> PrettyPrinter<'a> {
                                 )
                             );
                         }
-                        let name_str = self.manager.resolve_str(*name);
+                        let name_str = super::format_symbol(self.manager.resolve_str(*name));
                         let _ = write!(w, "({name_str} ");
                         self.write_term(
                             w,
@@ -800,7 +816,7 @@ impl<'a> PrettyPrinter<'a> {
                         if i > 0 {
                             let _ = write!(w, " ");
                         }
-                        let name_str = self.manager.resolve_str(*name);
+                        let name_str = super::format_symbol(self.manager.resolve_str(*name));
                         let _ = write!(w, "({name_str} ");
                         self.write_term(w, *term, indent, depth + 1);
                         let _ = write!(w, ")");
@@ -1070,7 +1086,12 @@ impl<'a> PrettyPrinter<'a> {
             // not a term the grammar accepts, so a model printed with it could
             // not be fed back to a solver.
             TermKind::DtConstructor { constructor, args } => {
-                let name = self.manager.resolve_str(*constructor);
+                let raw_name = self.manager.resolve_str(*constructor);
+                let name = if raw_name.starts_with("@tuple{") {
+                    "tuple".to_string()
+                } else {
+                    super::format_symbol(raw_name)
+                };
                 if args.is_empty() {
                     let _ = write!(w, "{name}");
                 } else {
@@ -1083,13 +1104,13 @@ impl<'a> PrettyPrinter<'a> {
                 }
             }
             TermKind::DtTester { constructor, arg } => {
-                let name = self.manager.resolve_str(*constructor);
-                let _ = write!(w, "(is-{name} ");
+                let name = super::format_symbol(self.manager.resolve_str(*constructor));
+                let _ = write!(w, "((_ is {name}) ");
                 self.write_term(w, *arg, indent, depth + 1);
                 let _ = write!(w, ")");
             }
             TermKind::DtSelector { selector, arg } => {
-                let name = self.manager.resolve_str(*selector);
+                let name = super::format_symbol(self.manager.resolve_str(*selector));
                 // A tuple component selector prints in the SMT-LIB tuple
                 // surface (`@t3` is `(_ tuple.select 2)`), so a printed
                 // term re-reads as itself.
@@ -1116,19 +1137,21 @@ impl<'a> PrettyPrinter<'a> {
                     }
                     let _ = write!(w, "(");
                     if let Some(ctor) = case.constructor {
-                        let ctor_name = self.manager.resolve_str(ctor);
+                        let ctor_name = super::format_symbol(self.manager.resolve_str(ctor));
                         if case.bindings.is_empty() {
                             let _ = write!(w, "{ctor_name}");
                         } else {
                             let _ = write!(w, "({ctor_name}");
                             for binding in &case.bindings {
-                                let binding_name = self.manager.resolve_str(*binding);
+                                let binding_name =
+                                    super::format_symbol(self.manager.resolve_str(*binding));
                                 let _ = write!(w, " {binding_name}");
                             }
                             let _ = write!(w, ")");
                         }
                     } else if let Some(first_binding) = case.bindings.first() {
-                        let binding_name = self.manager.resolve_str(*first_binding);
+                        let binding_name =
+                            super::format_symbol(self.manager.resolve_str(*first_binding));
                         let _ = write!(w, "{binding_name}");
                     }
                     let _ = write!(w, " ");
@@ -1265,7 +1288,7 @@ impl<'a> PrettyPrinter<'a> {
                 if i > 0 {
                     let _ = write!(w, " ");
                 }
-                let name_str = self.manager.resolve_str(*name);
+                let name_str = super::format_symbol(self.manager.resolve_str(*name));
                 let _ = write!(w, "({name_str} ");
                 self.write_sort(w, *sort);
                 let _ = write!(w, ")");
@@ -1304,7 +1327,7 @@ impl<'a> PrettyPrinter<'a> {
                 if i > 0 {
                     let _ = write!(w, " ");
                 }
-                let name_str = self.manager.resolve_str(*name);
+                let name_str = super::format_symbol(self.manager.resolve_str(*name));
                 let _ = write!(w, "({name_str} ");
                 self.write_sort(w, *sort);
                 let _ = write!(w, ")");

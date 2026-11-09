@@ -36,7 +36,7 @@ pub use basic::Printer;
 ///   four; any other width must use the `#b` form with exactly `width` binary
 ///   digits.  Emitting `#x` with `width.div_ceil(4)` digits (as the printers
 ///   previously did) silently widens e.g. a 5-bit value to 8 bits.
-pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> String {
+pub fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> String {
     // Width 0 is not a legal SMT-LIB bit-vector sort; there is no literal
     // syntax for it, so fall back to the shortest well-formed binary literal
     // rather than emit a zero-digit `#x`/`#b` token that no parser accepts.
@@ -1490,6 +1490,61 @@ mod tests {
         assert!(
             output.contains(&format!(":name {expected_literal}")),
             "expected {expected_literal} in {output}"
+        );
+    }
+}
+
+/// Whether a name has the lexical form of an SMT-LIB simple symbol.
+#[must_use]
+pub fn is_simple_symbol(name: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || "~!@$%^&*_-+=<>.?/".contains(c);
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| !c.is_ascii_digit() && allowed(c))
+        && chars.all(allowed)
+}
+
+/// Render a user symbol, adding bars when its spelling requires quoting.
+/// Internal names containing a backslash, and API names containing a bar,
+/// have no SMT-LIB spelling and remain verbatim diagnostic text. Constant
+/// arrays are rendered specially by the term printers before reaching here.
+#[must_use]
+pub fn format_symbol(name: &str) -> String {
+    let reserved_token = matches!(
+        name,
+        "!" | "_" | "as" | "let" | "forall" | "exists" | "match" | "par"
+    );
+    if (is_simple_symbol(name) && !reserved_token) || name.contains(['|', '\\']) {
+        name.to_string()
+    } else {
+        format!("|{name}|")
+    }
+}
+
+#[cfg(test)]
+mod symbol_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_lexical_and_reserved_tokens() {
+        for name in ["", "a b", "12", "1x", "a(b)", "é", "let", "_", "!"] {
+            assert_eq!(format_symbol(name), format!("|{name}|"));
+        }
+        for name in ["x", "x!0", "+", "a-b", "@model"] {
+            assert_eq!(format_symbol(name), name);
+        }
+    }
+
+    #[test]
+    fn datatype_testers_quote_the_constructor_inside_the_index() {
+        let mut manager = crate::ast::TermManager::new();
+        let sort = manager.sorts.mk_datatype_sort("D");
+        let arg = manager.mk_var("v x", sort);
+        let tester = manager.mk_dt_tester("C x", arg);
+        assert_eq!(
+            Printer::new(&manager).print_term(tester),
+            "((_ is |C x|) |v x|)"
         );
     }
 }

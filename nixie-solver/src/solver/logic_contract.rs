@@ -454,6 +454,14 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
     ),
     // --- Arrays ---
     (
+        "QF_AUF",
+        LogicSpec {
+            arrays: true,
+            uf: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
         "QF_AX",
         LogicSpec {
             arrays: true,

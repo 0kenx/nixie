@@ -109,8 +109,6 @@ pub(super) struct RecDef {
     name: String,
     /// `(name, sort-string)` per formal parameter, for `(get-model)` output.
     params: Vec<(String, String)>,
-    /// The declared return sort, stringified, for `(get-model)` output.
-    ret_sort_name: String,
     /// Each formal parameter's interned `Var`, in declaration order — the only
     /// sound substitution keys for `body` (see `RecFunDecl::formal_vars`).
     formal_vars: Vec<TermId>,
@@ -266,7 +264,6 @@ impl Context {
             self.recfun.defs.push(RecDef {
                 name: decl.name.clone(),
                 params: decl.params,
-                ret_sort_name: decl.ret_sort,
                 formal_vars: decl.formal_vars,
                 body: decl.body,
                 ret_sort,
@@ -786,13 +783,15 @@ impl Context {
                 let params: Vec<String> = def
                     .params
                     .iter()
-                    .map(|(name, sort)| format!("({name} {sort})"))
+                    .map(|(name, sort)| {
+                        format!("({} {sort})", nixie_core::smtlib::format_symbol(name))
+                    })
                     .collect();
                 format!(
                     "  (define-fun-rec {} ({}) {} {})",
-                    def.name,
+                    nixie_core::smtlib::format_symbol(&def.name),
                     params.join(" "),
-                    def.ret_sort_name,
+                    printer.print_sort(def.ret_sort),
                     printer.print_term(def.body)
                 )
             })
@@ -812,7 +811,6 @@ mod tests {
         let def = |name: &str| RecDef {
             name: name.to_string(),
             params: Vec::new(),
-            ret_sort_name: "Int".to_string(),
             formal_vars: Vec::new(),
             body: TermId::new(0),
             ret_sort: SortId::new(0),
@@ -836,7 +834,6 @@ mod tests {
         let def = |name: &str| RecDef {
             name: name.to_string(),
             params: Vec::new(),
-            ret_sort_name: "Int".to_string(),
             formal_vars: Vec::new(),
             body: TermId::new(0),
             ret_sort: SortId::new(0),

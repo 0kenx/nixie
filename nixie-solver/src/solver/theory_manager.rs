@@ -2988,6 +2988,13 @@ impl<'a> TheoryManager<'a> {
                 Self::SELECT_FUNC_ID,
                 SmallVec::from_slice(&[*array, *index]),
             )),
+            // Built-in array operators share reserved function id zero.
+            // Signature arity distinguishes ternary store from binary select;
+            // user function symbols are nonzero interner keys.
+            Some(TermKind::Store(array, index, value)) => Some((
+                Self::SELECT_FUNC_ID,
+                SmallVec::from_slice(&[*array, *index, *value]),
+            )),
             // Floating-point operations as congruence applications: the
             // function symbol encodes (op, rounding mode) so that
             // operand-class merges propagate through every fp operation,

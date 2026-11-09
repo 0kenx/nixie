@@ -708,6 +708,7 @@ impl<'a> Parser<'a> {
             "get-value" => {
                 self.expect_lparen()?;
                 let mut terms = Vec::new();
+                let mut keys = Vec::new();
                 loop {
                     if let Some(t) = self.lexer.peek()
                         && matches!(t.kind, TokenKind::RParen)
@@ -715,10 +716,23 @@ impl<'a> Parser<'a> {
                         self.lexer.next_token();
                         break;
                     }
+                    let start = self
+                        .lexer
+                        .peek()
+                        .map(|t| t.start)
+                        .unwrap_or(self.lexer.position());
                     terms.push(self.parse_term()?);
+                    let key = self
+                        .lexer
+                        .slice(start, self.lexer.position())
+                        .ok_or_else(|| NixieError::ParseError {
+                            position: start,
+                            message: "invalid get-value source span".into(),
+                        })?;
+                    keys.push(key.trim().to_string());
                 }
                 self.expect_rparen()?;
-                Command::GetValue(terms)
+                Command::GetValue { terms, keys }
             }
             "push" => {
                 let n = self.parse_optional_numeral(1)?;

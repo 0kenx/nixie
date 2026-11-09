@@ -91,6 +91,7 @@ pub mod literal;
 pub mod lockfree;
 #[cfg(feature = "profiling")]
 pub mod profiling;
+pub mod reserved;
 pub mod rewrite;
 pub mod simplification;
 pub mod sort;

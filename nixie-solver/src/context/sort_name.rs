@@ -81,9 +81,15 @@ impl Context {
     fn split_sort_tokens(s: &str) -> Vec<String> {
         let mut tokens = Vec::new();
         let mut depth = 0i32;
+        let mut quoted = false;
         let mut current = String::new();
         for c in s.chars() {
             match c {
+                '|' => {
+                    quoted = !quoted;
+                    current.push(c);
+                }
+                c if quoted => current.push(c),
                 '(' => {
                     depth += 1;
                     current.push(c);
@@ -310,6 +316,13 @@ impl Context {
         {
             return Ok(SortExprStep::Resolved(self.terms.sorts.bitvec(width)));
         }
+
+        // A quoted atomic symbol denotes its unquoted name. Do this after
+        // builtin/compound recognition so |(Array Int Int)| stays atomic.
+        let name = name
+            .strip_prefix('|')
+            .and_then(|s| s.strip_suffix('|'))
+            .unwrap_or(name);
 
         // A previously-declared datatype resolves to its own sort.
         if self.terms.sorts.is_datatype_declared(name) {

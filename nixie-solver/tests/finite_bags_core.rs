@@ -1278,9 +1278,8 @@ fn subbag_queries_fold_from_values() {
         joined.contains("((bag.subbag (bag 3 1) b) false)"),
         "{joined}"
     );
-    // `(bag.subbag b b)` folds to `true` in the builder at parse, so the
-    // query term *is* `true` and prints as itself.
-    assert!(joined.contains("(true true)"), "{joined}");
+    // The builder folds the term, while the response preserves its query key.
+    assert!(joined.contains("((bag.subbag b b) true)"), "{joined}");
 }
 
 // ===== bag.map / bag.filter =====
@@ -1552,19 +1551,21 @@ fn all_and_some_lower_through_the_filter() {
         )
         .expect("script executes");
     let joined = out.join("\n");
-    // The queries echo their lowered spelling (the lowering is parse-time,
-    // like any macro) but fold to their truth.
+    // Query keys retain their source spelling even when parse-time lowering
+    // changes the evaluated term.
     assert!(
-        joined.contains("(bag.filter p (bag.union_disjoint (bag 2 1) (bag 3 1)))) true)"),
+        joined.contains("((bag.all p (bag.union_disjoint (bag 2 1) (bag 3 1))) true)"),
         "{joined}"
     );
     assert!(
-        joined.contains("(bag.filter p (bag.union_disjoint (bag 2 1) (bag 1 1)))) false)"),
+        joined.contains("((bag.all p (bag.union_disjoint (bag 2 1) (bag 1 1))) false)"),
         "{joined}"
     );
-    // `some p empty` folds entirely at parse, so the query echoes
-    // `(false false)`; some over {1, 0:2} folds to false.
-    assert!(joined.contains("(false false)"), "{joined}");
+    // `some p empty` folds entirely at parse, but its original query survives.
+    assert!(
+        joined.contains("((bag.some p (as bag.empty (Bag Int))) false)"),
+        "{joined}"
+    );
 
     // The verdict directions.
     assert_eq!(

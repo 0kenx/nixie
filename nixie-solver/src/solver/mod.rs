@@ -1956,7 +1956,7 @@ impl Solver {
                 continue;
             }
             let eq_term = manager.mk_eq(pair.0, pair.1);
-            let eq_lit = self.encode_depth(eq_term, manager, 0);
+            let eq_lit = self.encode(eq_term, manager);
             // cvc5 parity: prefer trying the merge first — a true polarity
             // feeds the merge to EUF, where either congruence fires usefully
             // or the diseq side of the pair's context refutes it.

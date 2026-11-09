@@ -457,7 +457,7 @@ impl Solver {
             for k in &vals {
                 let k_term = manager.mk_int(*k);
                 let eq = manager.mk_eq(rep, k_term);
-                let lit = self.encode_depth(eq, manager, 0);
+                let lit = self.encode(eq, manager);
                 pairs.push((*k, lit));
                 lits.push(lit);
             }
@@ -540,8 +540,8 @@ impl Solver {
             }
             let eq0 = manager.mk_eq(r, zero);
             let eq1 = manager.mk_eq(r, one);
-            let lit0 = self.encode_depth(eq0, manager, 0);
-            let lit1 = self.encode_depth(eq1, manager, 0);
+            let lit0 = self.encode(eq0, manager);
+            let lit1 = self.encode(eq1, manager);
             // Exactly one of r=0, r=1.
             self.sat.add_clause([lit0, lit1]);
             self.sat.add_clause([lit0.negate(), lit1.negate()]);
@@ -568,7 +568,7 @@ impl Solver {
         for &(k, lit_rep) in rep_pairs {
             let k_term = manager.mk_int(k);
             let eq_idx = manager.mk_eq(idx, k_term);
-            let lit_idx = self.encode_depth(eq_idx, manager, 0);
+            let lit_idx = self.encode(eq_idx, manager);
             self.sat.add_clause([lit_rep.negate(), lit_idx]);
             self.sat.add_clause([lit_idx.negate(), lit_rep]);
             idx_pairs.push((k, lit_idx));

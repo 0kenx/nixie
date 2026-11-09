@@ -194,7 +194,7 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, ")");
             }
             TermKind::Var(spur) => {
-                let name = self.manager.resolve_str(*spur);
+                let name = super::format_symbol(self.manager.resolve_str(*spur));
                 let _ = write!(w, "{name}");
             }
             TermKind::Not(arg) => {
@@ -511,21 +511,33 @@ impl<'a> Printer<'a> {
             }
             TermKind::BagMap { func, bag, .. } => {
                 let _ = write!(w, "(bag.map ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*func))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *bag);
                 let _ = write!(w, ")");
             }
             TermKind::BagFilter { pred, bag } => {
                 let _ = write!(w, "(bag.filter ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*pred));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*pred))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *bag);
                 let _ = write!(w, ")");
             }
             TermKind::BagFold { func, init, bag } => {
                 let _ = write!(w, "(bag.fold ");
-                let _ = write!(w, "{}", self.manager.resolve_str(*func));
+                let _ = write!(
+                    w,
+                    "{}",
+                    super::format_symbol(self.manager.resolve_str(*func))
+                );
                 let _ = write!(w, " ");
                 self.write_term(w, *init);
                 let _ = write!(w, " ");
@@ -689,7 +701,18 @@ impl<'a> Printer<'a> {
                 let _ = write!(w, ")");
             }
             TermKind::Apply { func, args } => {
-                let name = self.manager.resolve_str(*func);
+                if self.manager.resolve_str(*func) == crate::reserved::CONST_ARRAY_FUNC {
+                    let _ = write!(w, "((as const ");
+                    self.write_sort(w, term.sort);
+                    let _ = write!(w, ")");
+                    for &arg in args {
+                        let _ = write!(w, " ");
+                        self.write_term(w, arg);
+                    }
+                    let _ = write!(w, ")");
+                    return;
+                }
+                let name = super::format_symbol(self.manager.resolve_str(*func));
                 let _ = write!(w, "({name}");
                 for arg in args {
                     let _ = write!(w, " ");
@@ -707,7 +730,7 @@ impl<'a> Printer<'a> {
                     if i > 0 {
                         let _ = write!(w, " ");
                     }
-                    let name_str = self.manager.resolve_str(*name);
+                    let name_str = super::format_symbol(self.manager.resolve_str(*name));
                     let _ = write!(w, "({name_str} ");
                     self.write_sort(w, *sort);
                     let _ = write!(w, ")");
@@ -742,7 +765,7 @@ impl<'a> Printer<'a> {
                     if i > 0 {
                         let _ = write!(w, " ");
                     }
-                    let name_str = self.manager.resolve_str(*name);
+                    let name_str = super::format_symbol(self.manager.resolve_str(*name));
                     let _ = write!(w, "({name_str} ");
                     self.write_sort(w, *sort);
                     let _ = write!(w, ")");
@@ -773,7 +796,7 @@ impl<'a> Printer<'a> {
                     if i > 0 {
                         let _ = write!(w, " ");
                     }
-                    let name_str = self.manager.resolve_str(*name);
+                    let name_str = super::format_symbol(self.manager.resolve_str(*name));
                     let _ = write!(w, "({name_str} ");
                     self.write_term(w, *term);
                     let _ = write!(w, ")");
@@ -1177,10 +1200,14 @@ impl<'a> Printer<'a> {
             // not a term the grammar accepts, so a model printed with it could
             // not be fed back to a solver.
             TermKind::DtConstructor { constructor, args } => {
-                let name = self.manager.resolve_str(*constructor);
+                let name = super::format_symbol(self.manager.resolve_str(*constructor));
                 // A tuple datatype's constructor prints in the SMT-LIB
                 // tuple surface, so a printed model re-reads as itself.
-                if name.starts_with("@tuple{") {
+                if self
+                    .manager
+                    .resolve_str(*constructor)
+                    .starts_with("@tuple{")
+                {
                     let _ = write!(w, "(tuple");
                     for arg in args {
                         let _ = write!(w, " ");
@@ -1201,13 +1228,13 @@ impl<'a> Printer<'a> {
                 }
             }
             TermKind::DtTester { constructor, arg } => {
-                let name = self.manager.resolve_str(*constructor);
-                let _ = write!(w, "(is-{name} ");
+                let name = super::format_symbol(self.manager.resolve_str(*constructor));
+                let _ = write!(w, "((_ is {name}) ");
                 self.write_term(w, *arg);
                 let _ = write!(w, ")");
             }
             TermKind::DtSelector { selector, arg } => {
-                let name = self.manager.resolve_str(*selector);
+                let name = super::format_symbol(self.manager.resolve_str(*selector));
                 // A tuple component selector prints in the SMT-LIB tuple
                 // surface (`@t3` is `(_ tuple.select 2)`), so a printed
                 // term re-reads as itself.
@@ -1237,10 +1264,11 @@ impl<'a> Printer<'a> {
                     let _ = write!(w, "(");
                     if let Some(constructor) = case.constructor {
                         let _ = write!(w, "(");
-                        let name = self.manager.resolve_str(constructor);
+                        let name = super::format_symbol(self.manager.resolve_str(constructor));
                         let _ = write!(w, "{name}");
                         for binding in &case.bindings {
-                            let binding_name = self.manager.resolve_str(*binding);
+                            let binding_name =
+                                super::format_symbol(self.manager.resolve_str(*binding));
                             let _ = write!(w, " {binding_name}");
                         }
                         let _ = write!(w, ")");
@@ -1352,7 +1380,7 @@ impl<'a> Printer<'a> {
                 // `declare-sort` names and `TermManager::reglan_sort`) call
                 // `TermManager::intern_str`.
                 SortKind::Uninterpreted(spur) => {
-                    let name = self.manager.resolve_str(*spur);
+                    let name = super::format_symbol(self.manager.resolve_str(*spur));
                     let _ = write!(w, "{name}");
                 }
                 // A sort *parameter*'s name, by contrast, is interned by the
@@ -1361,7 +1389,7 @@ impl<'a> Printer<'a> {
                 // `instantiate_parametric_sort`'s `SortKind::Parameter`) both
                 // go through `SortManager::interner`.
                 SortKind::Parameter(spur) => {
-                    let name = self.manager.sorts.resolve_spur(*spur);
+                    let name = super::format_symbol(self.manager.sorts.resolve_spur(*spur));
                     let _ = write!(w, "{name}");
                 }
                 // A parametric sort's head name is interned by `SortManager`
@@ -1372,7 +1400,7 @@ impl<'a> Printer<'a> {
                 // other yields an unrelated string or indexes out of range and
                 // panics. Mirrors `Parser::sort_id_to_string`.
                 SortKind::Parametric { name, args } => {
-                    let name_str = self.manager.sorts.resolve_spur(*name);
+                    let name_str = super::format_symbol(self.manager.sorts.resolve_spur(*name));
                     let _ = write!(w, "({name_str}");
                     stack.push(Step::Text(")"));
                     for arg in args.iter().rev() {
@@ -1383,7 +1411,7 @@ impl<'a> Printer<'a> {
                 // Likewise a datatype sort's name: `mk_datatype_sort` and
                 // `declare_datatype` intern it in the sort manager's interner.
                 SortKind::Datatype(spur) => {
-                    let name = self.manager.sorts.resolve_spur(*spur);
+                    let name = super::format_symbol(self.manager.sorts.resolve_spur(*spur));
                     let _ = write!(w, "{name}");
                 }
             }

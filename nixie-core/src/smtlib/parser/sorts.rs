@@ -773,14 +773,18 @@ impl<'a> Parser<'a> {
                             stack.push(Step::Sort(*domain));
                         }
                         SortKind::Uninterpreted(spur) => {
-                            out.push_str(self.manager.resolve_str(*spur));
+                            out.push_str(&crate::smtlib::format_symbol(
+                                self.manager.resolve_str(*spur),
+                            ));
                         }
                         // A sort parameter's name is interned by `SortManager`
                         // itself (`mk_sort_parameter` /
                         // `define_parametric_sort`), so it resolves through
                         // the sort manager's interner, like `Datatype` below.
                         SortKind::Parameter(spur) => {
-                            out.push_str(self.manager.sorts.resolve_spur(*spur));
+                            out.push_str(&crate::smtlib::format_symbol(
+                                self.manager.sorts.resolve_spur(*spur),
+                            ));
                         }
                         // A datatype sort's name is interned by `SortManager`
                         // itself (`mk_datatype_sort` / `declare_datatype`), not
@@ -790,11 +794,15 @@ impl<'a> Parser<'a> {
                         // string or an out-of-range key. Same for a parametric
                         // sort's head name (`declare_parametric_sort`).
                         SortKind::Datatype(spur) => {
-                            out.push_str(self.manager.sorts.resolve_spur(*spur));
+                            out.push_str(&crate::smtlib::format_symbol(
+                                self.manager.sorts.resolve_spur(*spur),
+                            ));
                         }
                         SortKind::Parametric { name, args } => {
                             out.push('(');
-                            out.push_str(self.manager.sorts.resolve_spur(*name));
+                            out.push_str(&crate::smtlib::format_symbol(
+                                self.manager.sorts.resolve_spur(*name),
+                            ));
                             stack.push(Step::Text(")"));
                             for arg in args.iter().rev() {
                                 stack.push(Step::Sort(*arg));

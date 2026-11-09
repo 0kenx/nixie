@@ -133,7 +133,12 @@ pub enum Command {
     /// Get model
     GetModel,
     /// Get value
-    GetValue(Vec<TermId>),
+    GetValue {
+        /// Parsed query terms, including definition expansion.
+        terms: Vec<TermId>,
+        /// Original query spellings, in the same order as `terms`.
+        keys: Vec<String>,
+    },
     /// Get unsat core
     GetUnsatCore,
     /// Get unsat assumptions (the failed subset of the assumptions passed to

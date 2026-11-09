@@ -71,10 +71,9 @@ fn test_pr27_divmod_positive_dividend_positive_divisor() {
         (get-value ((div 7 2) (mod 7 2)))
     "#);
     assert_eq!(output[0], "sat");
-    // The builder folds a two-literal div/mod at construction now, so the
-    // echoed query term IS its value: `(3 3)`, `(1 1)`.
-    assert!(output[1].contains("(3 3)"), "{}", output[1]);
-    assert!(output[1].contains("(1 1)"), "{}", output[1]);
+    // Constant folding must not replace the original query spelling.
+    assert!(output[1].contains("((div 7 2) 3)"), "{}", output[1]);
+    assert!(output[1].contains("((mod 7 2) 1)"), "{}", output[1]);
 }
 
 /// Positive dividend, negative divisor: `(div 7 (- 2))=-3`, `(mod 7 (- 2))=1`.
@@ -87,8 +86,8 @@ fn test_pr27_divmod_positive_dividend_negative_divisor() {
         (get-value ((div 7 (- 2)) (mod 7 (- 2))))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(-3 -3)"), "{}", output[1]);
-    assert!(output[1].contains("(1 1)"), "{}", output[1]);
+    assert!(output[1].contains("((div 7 (- 2)) -3)"), "{}", output[1]);
+    assert!(output[1].contains("((mod 7 (- 2)) 1)"), "{}", output[1]);
 }
 
 /// Negative dividend, positive divisor: `(div (- 7) 2)=-4`, `(mod (- 7) 2)=1`.
@@ -103,8 +102,8 @@ fn test_pr27_divmod_negative_dividend_positive_divisor() {
         (get-value ((div (- 7) 2) (mod (- 7) 2)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(-4 -4)"), "{}", output[1]);
-    assert!(output[1].contains("(1 1)"), "{}", output[1]);
+    assert!(output[1].contains("((div (- 7) 2) -4)"), "{}", output[1]);
+    assert!(output[1].contains("((mod (- 7) 2) 1)"), "{}", output[1]);
 }
 
 /// Negative dividend, negative divisor: `(div (- 7) (- 2))=4`,
@@ -117,8 +116,8 @@ fn test_pr27_divmod_negative_dividend_negative_divisor() {
         (get-value ((div (- 7) (- 2)) (mod (- 7) (- 2))))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(4 4)"), "{}", output[1]);
-    assert!(output[1].contains("(1 1)"), "{}", output[1]);
+    assert!(output[1].contains("((div (- 7) (- 2)) 4)"), "{}", output[1]);
+    assert!(output[1].contains("((mod (- 7) (- 2)) 1)"), "{}", output[1]);
 }
 
 /// Boundary: exact division, remainder `0`.
@@ -130,8 +129,8 @@ fn test_pr27_divmod_boundary_remainder_zero() {
         (get-value ((div 8 2) (mod 8 2)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(4 4)"), "{}", output[1]);
-    assert!(output[1].contains("(0 0)"), "{}", output[1]);
+    assert!(output[1].contains("((div 8 2) 4)"), "{}", output[1]);
+    assert!(output[1].contains("((mod 8 2) 0)"), "{}", output[1]);
 }
 
 /// Boundary: remainder at its maximum, `|n|-1`. `-1 = 7*(-1) + 6`.
@@ -143,8 +142,8 @@ fn test_pr27_divmod_boundary_remainder_at_upper_bound() {
         (get-value ((div (- 1) 7) (mod (- 1) 7)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(-1 -1)"), "{}", output[1]);
-    assert!(output[1].contains("(6 6)"), "{}", output[1]);
+    assert!(output[1].contains("((div (- 1) 7) -1)"), "{}", output[1]);
+    assert!(output[1].contains("((mod (- 1) 7) 6)"), "{}", output[1]);
 }
 
 /// A variable dividend, pinned indirectly: `x = -7` forces

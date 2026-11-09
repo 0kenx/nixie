@@ -104,6 +104,36 @@ pub(super) struct WitnessBudget {
 }
 
 impl Solver {
+    /// Discover arrays below every ground operator, including opaque UF and BV
+    /// applications. The encoder's Boolean spine does not visit their operands.
+    /// Use the same binder boundary as the axiom collector: bound reads only
+    /// acquire ground semantics when their instances are encoded.
+    pub(super) fn mark_array_ops(&mut self, root: TermId, manager: &TermManager) {
+        if self.has_array_ops {
+            return;
+        }
+        let mut stack = vec![root];
+        let mut seen = FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term) {
+                continue;
+            }
+            let Some(data) = manager.get(term) else {
+                continue;
+            };
+            if matches!(data.kind, TermKind::Select(..) | TermKind::Store(..))
+                || is_array_sorted(term, manager)
+            {
+                // Restored from the push snapshot together with the roots.
+                self.has_array_ops = true;
+                return;
+            }
+            if !matches!(data.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                stack.extend(get_children(&data.kind));
+            }
+        }
+    }
+
     /// One round of lazy array-axiom instantiation against the current candidate
     /// model.  Returns `true` when at least one new ground array lemma was
     /// asserted to the SAT core – in which case the caller must re-solve – and
@@ -790,7 +820,7 @@ fn collect_array_structure_with_asserted(
                 // (QF_ANIA avg40: `F ∧ (= ret5 162)` stayed `sat` against a
                 // z3-unsat because the whole heap model read as const-arrays
                 // never forced a single stored value).
-                if manager.resolve_str(*func) == "(as const)"
+                if manager.resolve_str(*func) == nixie_core::reserved::CONST_ARRAY_FUNC
                     && args.len() == 1
                     && is_array_sorted(term, manager)
                 {
@@ -1960,7 +1990,10 @@ fn extensionality_witness(
         (b.raw(), a.raw())
     };
     // The `!nixie!ext!` prefix cannot collide with an SMT-LIB source symbol.
-    let name = format!("!nixie!ext!{lo}!{hi}");
+    let name = format!(
+        "{}{lo}!{hi}",
+        nixie_core::reserved::ARRAY_EXT_WITNESS_PREFIX
+    );
     manager.mk_var(&name, domain)
 }
 

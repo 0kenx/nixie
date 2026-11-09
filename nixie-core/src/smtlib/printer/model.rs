@@ -24,7 +24,7 @@ impl<'a> Printer<'a> {
             if let Some(term) = self.manager.get(*term_id)
                 && let crate::ast::TermKind::Var(name_spur) = term.kind
             {
-                let var_name = self.manager.resolve_str(name_spur);
+                let var_name = super::format_symbol(self.manager.resolve_str(name_spur));
                 let _ = write!(w, "  (define-fun {} () ", var_name);
                 self.write_sort(w, term.sort);
                 let _ = write!(w, " ");
@@ -60,6 +60,7 @@ impl<'a> Printer<'a> {
         func_name: &str,
         func_interp: &crate::ast::model::FunctionInterpretation,
     ) {
+        let func_name = super::format_symbol(func_name);
         let arity = func_interp
             .table()
             .first()

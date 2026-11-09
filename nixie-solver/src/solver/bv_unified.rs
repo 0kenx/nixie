@@ -879,7 +879,7 @@ impl Solver {
             for i in 0..args.len() {
                 for j in (i + 1)..args.len() {
                     let eq = manager.mk_eq(args[i], args[j]);
-                    diseq_lits.push(self.encode_depth(eq, manager, 0).negate());
+                    diseq_lits.push(self.encode(eq, manager).negate());
                 }
             }
             for &diseq in &diseq_lits {

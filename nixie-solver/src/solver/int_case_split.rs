@@ -192,7 +192,7 @@ impl Solver {
             for k in lo..=hi {
                 let int_k = manager.mk_int(k);
                 let eq = manager.mk_eq(term, int_k);
-                let lit = self.encode_depth(eq, manager, 0);
+                let lit = self.encode(eq, manager);
                 self.sat.set_preferred_phase(lit.var(), true);
                 lits.push(lit);
             }
@@ -307,7 +307,7 @@ impl Solver {
             for k in lo..=hi {
                 let int_k = manager.mk_int(k);
                 let eq = manager.mk_eq(term, int_k);
-                let lit = self.encode_depth(eq, manager, 0);
+                let lit = self.encode(eq, manager);
                 // cvc5 B&B `preferPhase(literal, true)` parity: try the
                 // pinning polarity first so the re-solve walks arrangements
                 // immediately instead of skipping every enumeration atom.
@@ -523,7 +523,7 @@ impl Solver {
             if !self.lia_branch_atoms.insert(atom) {
                 continue;
             }
-            let lit = self.encode_depth(atom, manager, 0);
+            let lit = self.encode(atom, manager);
             self.sat.set_preferred_phase(lit.var(), true);
             minted += 1;
             #[cfg(feature = "std")]

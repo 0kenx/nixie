@@ -1801,9 +1801,9 @@ impl Solver {
                 let eq_term = manager.mk_eq(t, c_term);
                 let le_term = manager.mk_le(t, c_term);
                 let ge_term = manager.mk_ge(t, c_term);
-                let eq_lit = self.encode_depth(eq_term, manager, 0);
-                let le_lit = self.encode_depth(le_term, manager, 0);
-                let ge_lit = self.encode_depth(ge_term, manager, 0);
+                let eq_lit = self.encode(eq_term, manager);
+                let le_lit = self.encode(le_term, manager);
+                let ge_lit = self.encode(ge_term, manager);
                 // (t = c) -> (t <= c)
                 self.sat.add_clause([eq_lit.negate(), le_lit]);
                 // (t = c) -> (t >= c)
@@ -1914,7 +1914,7 @@ impl Solver {
                 }
                 // ensureLiteral: create the equality atom so CDCL can decide it.
                 let eq_term = manager.mk_eq(a, b);
-                let eq_lit = self.encode_depth(eq_term, manager, 0);
+                let eq_lit = self.encode(eq_term, manager);
                 // cvc5 prefers the positive phase (try `a = b` first).
                 self.sat.set_preferred_phase(eq_lit.var(), true);
                 self.trail.push(TrailOp::CareSplitAdded {
@@ -2874,6 +2874,7 @@ impl Solver {
     /// depth 0.  The depth counter guards against native-stack overflow on
     /// adversarially deep formulas (see [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT)).
     pub(super) fn encode(&mut self, term: TermId, manager: &mut TermManager) -> Lit {
+        self.mark_array_ops(term, manager);
         self.encode_depth(term, manager, 0)
     }
 
@@ -3942,7 +3943,13 @@ impl Solver {
                         } else {
                             (rhs.raw(), lhs.raw())
                         };
-                        let k = manager.mk_var(&format!("!nixie!ext!{lo}!{hi}"), domain);
+                        let k = manager.mk_var(
+                            &format!(
+                                "{}{lo}!{hi}",
+                                nixie_core::reserved::ARRAY_EXT_WITNESS_PREFIX
+                            ),
+                            domain,
+                        );
                         let sa = manager.mk_select(*lhs, k);
                         let sb = manager.mk_select(*rhs, k);
                         self.array_theory.add_ext_witness(*lhs, *rhs, k, sa, sb);

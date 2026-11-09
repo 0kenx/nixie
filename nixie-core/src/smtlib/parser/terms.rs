@@ -888,6 +888,28 @@ impl Parser<'_> {
                 {
                     return Ok(self.manager.mk_bag_empty_at(sort));
                 }
+                if name == "const" {
+                    let Some(crate::sort::SortKind::Array { range, .. }) =
+                        self.manager.sorts.get(sort).map(|s| &s.kind)
+                    else {
+                        return Err(NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: "const requires an array result sort".into(),
+                        });
+                    };
+                    if args.len() != 1 || self.manager.get(args[0]).is_none_or(|t| t.sort != *range)
+                    {
+                        return Err(NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: "const requires one value of the array element sort".into(),
+                        });
+                    }
+                    return Ok(self.manager.mk_apply(
+                        crate::reserved::CONST_ARRAY_FUNC,
+                        args.iter().copied(),
+                        sort,
+                    ));
+                }
                 // For known forms like `(as const (Array D R))` we represent the
                 // qualified application as an `Apply` node whose function name
                 // records the qualifier and whose sort is the annotated one.

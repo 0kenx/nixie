@@ -23,3 +23,11 @@ pub use printer::Printer;
 // metadata in `nixie-core::smtlib::printer::proof`, so a `"` or control
 // character in user-supplied text cannot break the surrounding syntax.
 pub use printer::format_string_literal;
+
+// Also available without the std-only SMT-LIB parser.
+pub use crate::reserved::{
+    ARRAY_EXT_WITNESS_PREFIX, ARRAY_OFF_CHAIN_PREFIX, CONST_ARRAY_FUNC, RESERVED_PREFIX,
+    is_reserved_tag, reserved_name,
+};
+
+pub use printer::{format_bitvec_literal, format_symbol, is_simple_symbol};

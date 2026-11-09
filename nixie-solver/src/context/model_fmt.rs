@@ -200,6 +200,17 @@ enum SortNameFrame {
 }
 
 impl Context {
+    /// Quote the entire witness symbol, rather than embedding a quoted sort
+    /// token inside a simple symbol.
+    fn format_uninterpreted_witness(&self, sort: SortId, index: usize) -> String {
+        let rendered = self.format_sort_name(sort);
+        let name = rendered
+            .strip_prefix('|')
+            .and_then(|s| s.strip_suffix('|'))
+            .unwrap_or(&rendered);
+        nixie_core::smtlib::format_symbol(&format!("@uc_{name}_{index}"))
+    }
+
     /// Get the model (if SAT)
     /// Returns a list of (name, sort, value) tuples
     pub fn get_model(&self) -> Option<Vec<(String, String, String)>> {
@@ -302,7 +313,7 @@ impl Context {
                     class_witness.insert((decl.sort, class_key), i);
                     i
                 };
-                format!("@uc_{}_{}", self.format_sort_name(decl.sort), idx)
+                self.format_uninterpreted_witness(decl.sort, idx)
             } else if decl.sort == self.terms.sorts.int_sort
                 && self.solver.euf_app_argument(decl.term)
             {
@@ -647,7 +658,9 @@ impl Context {
                     // and `TermManager::reglan_sort` both call
                     // `TermManager::intern_str`), so it resolves through
                     // `self.terms`.
-                    SortKind::Uninterpreted(spur) => self.terms.resolve_str(*spur).to_string(),
+                    SortKind::Uninterpreted(spur) => {
+                        nixie_core::smtlib::format_symbol(self.terms.resolve_str(*spur))
+                    }
                     // A datatype/parameter/parametric name, by contrast, is
                     // interned by the *sort* manager's own `Rodeo`
                     // (`mk_datatype_sort` / `declare_datatype`,
@@ -662,11 +675,17 @@ impl Context {
                     // documented.
                     SortKind::Datatype(spur) => {
                         self.terms.sorts.datatype_name(current).map_or_else(
-                            || self.terms.sorts.resolve_spur(*spur).to_string(),
-                            ToString::to_string,
+                            || {
+                                nixie_core::smtlib::format_symbol(
+                                    self.terms.sorts.resolve_spur(*spur),
+                                )
+                            },
+                            nixie_core::smtlib::format_symbol,
                         )
                     }
-                    SortKind::Parameter(spur) => self.terms.sorts.resolve_spur(*spur).to_string(),
+                    SortKind::Parameter(spur) => {
+                        nixie_core::smtlib::format_symbol(self.terms.sorts.resolve_spur(*spur))
+                    }
                     // Rendered exactly as the printer spells it: `(Name
                     // arg...)`, arguments rendered through this same walk.
                     // Printing every parametric sort as the single literal
@@ -674,7 +693,8 @@ impl Context {
                     // Int)` and a bare parameter `T` alike -- onto one
                     // meaningless name in `(get-model)` output.
                     SortKind::Parametric { name, args } => {
-                        let head = self.terms.sorts.resolve_spur(*name).to_string();
+                        let head =
+                            nixie_core::smtlib::format_symbol(self.terms.sorts.resolve_spur(*name));
                         let args: Vec<SortId> = args.iter().copied().collect();
                         match args.first().copied() {
                             // A nullary application has no arguments to walk:
@@ -864,7 +884,7 @@ impl Context {
                     .get(term)
                     .is_some_and(|t| t.sort == self.terms.sorts.rounding_mode_sort) =>
             {
-                self.terms.resolve_str(*spur).to_string()
+                nixie_core::smtlib::format_symbol(self.terms.resolve_str(*spur))
             }
             _ => "?".to_string(),
         }
@@ -984,7 +1004,9 @@ impl Context {
                         let Some(constructor) = def.constructors.get(index) else {
                             break "?".to_string();
                         };
-                        let name = self.terms.resolve_str(constructor.name).to_string();
+                        let name = nixie_core::smtlib::format_symbol(
+                            self.terms.resolve_str(constructor.name),
+                        );
                         let fields: Vec<SortId> = constructor
                             .selectors
                             .iter()
@@ -1015,7 +1037,7 @@ impl Context {
                     // a standalone fallback emit the zero-th witness for
                     // the sort.
                     SortKind::Uninterpreted(_) => {
-                        break format!("@uc_{}_0", self.format_sort_name(sort));
+                        break self.format_uninterpreted_witness(sort, 0);
                     }
                     // Sort parameters and unapplied parametric sorts have
                     // no ground values.
@@ -1104,7 +1126,10 @@ impl Context {
     /// unconstrained declared constants – otherwise `Model::eval` returns an
     /// unassigned constant unchanged and `(get-value (x))` answered `((x x))`,
     /// echoing the term instead of producing a value.
-    pub(super) fn format_get_value(&mut self, terms: &[TermId]) -> String {
+    pub(super) fn format_get_value(&mut self, terms: &[TermId], keys: &[String]) -> String {
+        if terms.len() != keys.len() {
+            return "(error \"get-value query spellings do not match its terms\")".into();
+        }
         const NO_MODEL: &str = "(error \"No model available\")";
         if self.last_result != Some(SolverResult::Sat) {
             return NO_MODEL.to_string();
@@ -1261,7 +1286,7 @@ impl Context {
         }
 
         let mut values = Vec::with_capacity(terms.len());
-        for &term in terms {
+        for (&term, term_str) in terms.iter().zip(keys) {
             let value_str = if let Some(value) = self.unassigned_const_value(term, &model) {
                 // A bare unconstrained constant: report exactly what
                 // `(get-model)` reports for it, witnesses included.
@@ -1310,7 +1335,6 @@ impl Context {
                 };
                 nixie_core::smtlib::Printer::new(&self.terms).print_term(value)
             };
-            let term_str = nixie_core::smtlib::Printer::new(&self.terms).print_term(term);
             values.push(format!("({} {})", term_str, value_str));
         }
         format!("({})", values.join("\n "))
@@ -1446,7 +1470,12 @@ impl Context {
             Some(model) => {
                 let mut lines = vec!["(model".to_string()];
                 for (name, sort, value) in model {
-                    lines.push(format!("  (define-fun {} () {} {})", name, sort, value));
+                    lines.push(format!(
+                        "  (define-fun {} () {} {})",
+                        nixie_core::smtlib::format_symbol(&name),
+                        sort,
+                        value
+                    ));
                 }
                 // The `define-fun-rec` definitions in scope: a model that
                 // omits them leaves every `(f x)` the assertions mention

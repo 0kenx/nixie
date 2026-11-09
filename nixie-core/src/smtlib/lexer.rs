@@ -161,6 +161,12 @@ impl<'a> Lexer<'a> {
         self.pos
     }
 
+    /// Source between byte offsets, or `None` for an invalid UTF-8 range.
+    #[must_use]
+    pub fn slice(&self, start: usize, end: usize) -> Option<&'a str> {
+        self.input.get(start..end)
+    }
+
     /// Lexical errors accumulated so far (unterminated string/quoted-symbol
     /// literals, bare `#` tokens, ...). Empty for well-formed input.
     #[must_use]
@@ -448,6 +454,14 @@ impl<'a> Lexer<'a> {
         let start = self.pos;
         while self.pos < self.input.len() {
             if let Some(c) = self.input[self.pos..].chars().next() {
+                if c == '\\' {
+                    self.errors.push(LexError {
+                        message:
+                            "a quoted symbol may not contain a backslash (SMT-LIB 2.6 section 3.1)"
+                                .into(),
+                        pos: self.pos,
+                    });
+                }
                 self.pos += c.len_utf8();
                 if c == '|' {
                     return self.input[start..self.pos - 1].to_string();
