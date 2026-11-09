@@ -211,8 +211,11 @@ impl FiniteModelFinder {
 
         // Verify against quantifiers
         for quantifier in quantifiers {
-            if let Some(false) = finite_model.satisfies(quantifier, manager) {
-                return Err(FinderError::UnsatAtBound);
+            match finite_model.satisfies(quantifier, manager) {
+                Some(true) => {}
+                // A rejected candidate does not prove that every model at
+                // this size fails, and an unevaluated candidate proves nothing.
+                Some(false) | None => return Err(FinderError::Uncertified),
             }
         }
 
@@ -578,6 +581,8 @@ pub enum CheckResult {
 /// Error during finite model finding
 #[derive(Debug, Clone)]
 pub enum FinderError {
+    /// No concrete interpretation was verified against every quantifier.
+    Uncertified,
     /// Unsatisfiable at the current bound
     UnsatAtBound,
     /// Exceeded maximum universe size bound
@@ -591,6 +596,7 @@ pub enum FinderError {
 impl fmt::Display for FinderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Uncertified => write!(f, "No verified finite interpretation"),
             Self::UnsatAtBound => write!(f, "Unsatisfiable at current bound"),
             Self::ExceededMaxBound => write!(f, "Exceeded maximum universe size"),
             Self::ResourceLimit => write!(f, "Resource limit exceeded"),
@@ -622,6 +628,16 @@ pub struct SymmetryStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unevaluated_quantifier_is_not_a_model() {
+        let mut manager = TermManager::new();
+        let body = manager.mk_false();
+        let quantifier = QuantifiedFormula::new(body, smallvec::SmallVec::new(), body, true);
+        let result =
+            FiniteModelFinder::new().find_model(&[quantifier], &FxHashMap::default(), &mut manager);
+        assert!(matches!(result, Err(FinderError::Uncertified)));
+    }
 
     #[test]
     fn test_universe_size_creation() {

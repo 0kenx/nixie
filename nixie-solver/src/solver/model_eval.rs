@@ -76,7 +76,7 @@ pub(super) enum ModelRefutation {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum EvalOutcome {
+pub(crate) enum EvalOutcome {
     /// A concrete value the model determines.
     Value(EvalVal),
     /// The model does not determine this term's value: an unconstrained
@@ -126,7 +126,7 @@ impl EvalOutcome {
     }
 
     /// The value this outcome carries, if any.
-    fn value_owned(self) -> Option<EvalVal> {
+    pub(crate) fn value_owned(self) -> Option<EvalVal> {
         match self {
             EvalOutcome::Value(v) => Some(v),
             _ => None,

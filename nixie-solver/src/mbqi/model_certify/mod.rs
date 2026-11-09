@@ -65,8 +65,8 @@
 
 mod eval;
 mod harvest;
-mod real;
-mod value;
+pub(crate) mod real;
+pub(crate) mod value;
 
 #[cfg(test)]
 mod tests;
@@ -103,18 +103,26 @@ pub(crate) fn certify(
     assignments: &FxHashMap<TermId, TermId>,
     manager: &TermManager,
 ) -> bool {
-    // The real engine ([`real`]) declines a goal that mentions an
-    // integer-sorted symbol and the integer engine below declines one that
-    // mentions a real, so exactly one of them can ever certify a given goal –
-    // and each does so under the completeness argument written for its own
-    // domain.
-    if real::certify(assertions, assignments, manager) {
-        return true;
+    certified_interpretation(assertions, assignments, manager).is_some()
+}
+
+/// The concrete total interpretation verified by the certificate.
+#[derive(Clone, Debug)]
+pub(crate) enum CertifiedInterpretation {
+    Discrete(Interpretation),
+    Real(real::interp::RealInterp),
+}
+
+pub(crate) fn certified_interpretation(
+    assertions: &[TermId],
+    assignments: &FxHashMap<TermId, TermId>,
+    manager: &TermManager,
+) -> Option<CertifiedInterpretation> {
+    if let Some(real) = real::certified_interpretation(assertions, assignments, manager) {
+        return Some(CertifiedInterpretation::Real(real));
     }
 
-    let Some(facts) = prepare(assertions, assignments, manager) else {
-        return false;
-    };
+    let facts = prepare(assertions, assignments, manager)?;
     let Preparation {
         model,
         symbols,
@@ -129,11 +137,11 @@ pub(crate) fn certify(
     let mut combinations: usize = 1;
     for list in &candidates {
         if list.is_empty() {
-            return false;
+            return None;
         }
         match combinations.checked_mul(list.len()) {
             Some(total) if total <= MAX_COMBINATIONS => combinations = total,
-            _ => return false,
+            _ => return None,
         }
     }
 
@@ -143,16 +151,16 @@ pub(crate) fn certify(
         let interpretation = build_interpretation(&symbols, &candidates, &odometer, &model);
         let critical = critical_set(&base_ints, &interpretation);
         match verify(assertions, &interpretation, manager, &critical, &mut budget) {
-            Ok(true) => return true,
+            Ok(true) => return Some(CertifiedInterpretation::Discrete(interpretation)),
             Ok(false) => {}
-            Err(EvalError::Exhausted) => return false,
-            Err(EvalError::Unsupported) => return false,
+            Err(EvalError::Exhausted) => return None,
+            Err(EvalError::Unsupported) => return None,
         }
         if !advance(&mut odometer, &candidates) {
             break;
         }
     }
-    false
+    None
 }
 
 /// The inputs the default search iterates over.

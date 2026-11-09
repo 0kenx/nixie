@@ -45,7 +45,10 @@ impl Solver {
             // bag value here can claim faithfulness.
             return;
         }
-        let survey = bag_model_survey(&self.assertions, manager);
+        let mut roots = self.assertions.clone();
+        roots.extend(self.certificate_assertions.iter().copied());
+        let survey = bag_model_survey(&roots, manager);
+
         if survey.bags.is_empty() {
             return;
         }
@@ -63,35 +66,9 @@ impl Solver {
         for &(b, es) in &survey.bags {
             collect_bag_support(b, es, &mut by_sort, manager);
         }
-        // The map images join the codomain lists — the same collection the
-        // reduction performs, so the model's element universe matches the
-        // identities' and every count readback the reduction constrained
-        // resolves here.
-        for &(_, func, ret, d) in &survey.maps {
-            let Some(des) = bag_element_of(d, manager) else {
-                continue;
-            };
-            let Some(domain) = by_sort.get(&des).cloned() else {
-                continue;
-            };
-            for x in domain {
-                let image = if let Some(def) = self.bag_fun_defs.get(&func)
-                    && def.params.len() == 1
-                {
-                    let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
-                    subst.insert(def.params[0], x);
-                    let sub = manager.substitute(def.body, &subst);
-                    manager.simplify(sub)
-                } else {
-                    let name = manager.resolve_str(func).to_string();
-                    manager.mk_apply(&name, [x], ret)
-                };
-                let list = by_sort.entry(ret).or_default();
-                if !list.contains(&image) {
-                    list.push(image);
-                }
-            }
-        }
+        // The rewritten roots already contain the reduction's image and
+        // preimage count terms. Reapplying the image expansion here creates
+        // a fresh f(f(...)) layer whose counts the search never constrained.
 
         let int_entry = |t: TermId, manager: &TermManager| -> Option<i64> {
             match manager.get(t).map(|d| &d.kind) {
@@ -114,17 +91,20 @@ impl Solver {
             if let Some(TermKind::IntConst(n)) = manager.get(c).map(|d| &d.kind) {
                 return num_traits::ToPrimitive::to_i64(n);
             }
-            let mut v: Option<i64> = arith.value(c).map_or_else(
-                || model.get(c).and_then(|t| int_entry(t, manager)),
-                |r| Some(r.to_integer()),
-            );
+            let exact_integer = |term| {
+                arith.value_exact(term).and_then(|r| {
+                    r.is_integer()
+                        .then(|| r.to_integer())
+                        .and_then(|n| num_traits::ToPrimitive::to_i64(&n))
+                })
+            };
+            let mut v: Option<i64> =
+                exact_integer(c).or_else(|| model.get(c).and_then(|t| int_entry(t, manager)));
             if v.is_none()
                 && let Some(proxy) = purify.proxy_of(c)
             {
-                v = arith.value(proxy).map_or_else(
-                    || model.get(proxy).and_then(|t| int_entry(t, manager)),
-                    |r| Some(r.to_integer()),
-                );
+                v = exact_integer(proxy)
+                    .or_else(|| model.get(proxy).and_then(|t| int_entry(t, manager)));
             }
             v
         };
@@ -351,6 +331,7 @@ impl Solver {
                 let make = manager.mk_bag_make(v, n_term);
                 acc = manager.mk_bag_union_disjoint(acc, make);
             }
+
             model.set(b, acc);
             installed_bags.push(b);
         }
@@ -361,7 +342,15 @@ impl Solver {
         // word. A mismatch rolls the *bag* entries of that sort back; the
         // count readbacks stay (they are the arithmetic solver's own
         // values, correct or not on their own terms).
+        let original_cards: FxHashSet<_> = bag_model_survey(&self.certificate_assertions, manager)
+            .cards
+            .into_iter()
+            .map(|(card, _)| card)
+            .collect();
         for &(card, b) in &survey.cards {
+            if !original_cards.contains(&card) {
+                continue;
+            }
             if !installed_bags.contains(&b) {
                 continue;
             }
@@ -377,32 +366,71 @@ impl Solver {
             let Some(es) = bag_element_of(b, manager) else {
                 continue;
             };
-            let mut assembled: i64 = 0;
             let Some(value) = model.get(b) else {
                 continue;
             };
-            let mut cur = value;
-            loop {
-                match manager.get(cur).map(|d| d.kind.clone()) {
-                    Some(TermKind::BagEmpty(_)) => break,
-                    Some(TermKind::BagUnionDisjoint(a, make)) => {
-                        let Some(TermKind::BagMake(_, n)) =
-                            manager.get(make).map(|d| d.kind.clone())
-                        else {
-                            break;
-                        };
-                        if let Some(TermKind::IntConst(v)) = manager.get(n).map(|d| &d.kind) {
-                            assembled += num_traits::ToPrimitive::to_i64(v).unwrap_or(0);
-                        }
-                        cur = a;
+            let mut pending = vec![value];
+            let mut total = Some(0i64);
+            while let Some(term) = pending.pop() {
+                match manager.get(term).map(|d| &d.kind) {
+                    Some(TermKind::BagEmpty(_)) => {}
+                    Some(TermKind::BagUnionDisjoint(a, b)) => {
+                        pending.push(*a);
+                        pending.push(*b);
                     }
                     Some(TermKind::BagMake(_, n)) => {
-                        if let Some(TermKind::IntConst(v)) = manager.get(n).map(|d| &d.kind) {
-                            assembled += num_traits::ToPrimitive::to_i64(v).unwrap_or(0);
-                        }
+                        let count = manager.get(*n).and_then(|d| match &d.kind {
+                            TermKind::IntConst(n) => num_traits::ToPrimitive::to_i64(n),
+                            _ => None,
+                        });
+                        total = total
+                            .zip(count)
+                            .and_then(|(sum, n)| (n >= 0).then(|| sum.checked_add(n)).flatten());
+                    }
+                    _ => {
+                        total = None;
                         break;
                     }
-                    _ => break,
+                }
+            }
+            let Some(mut assembled) = total else {
+                model.remove(b);
+                installed_bags.retain(|&t| t != b);
+                continue;
+            };
+            // An opaque integer bag's cardinality slack denotes unnamed
+            // support. Exhibit it at a fresh integer, distinct from every
+            // observed element (including observations with count zero).
+            if assembled < want
+                && es == manager.sorts.int_sort
+                && manager
+                    .get(b)
+                    .is_some_and(|d| matches!(d.kind, TermKind::Var(_)))
+            {
+                let mut avoid = FxHashSet::default();
+                let mut resolved = true;
+                for &element in by_sort.get(&es).into_iter().flatten() {
+                    let Some(value) = self.element_value_term(element, model, manager) else {
+                        resolved = false;
+                        break;
+                    };
+                    let Some(TermKind::IntConst(n)) = manager.get(value).map(|d| &d.kind) else {
+                        resolved = false;
+                        break;
+                    };
+                    avoid.insert(n.clone());
+                }
+                if resolved {
+                    let mut fresh = num_bigint::BigInt::from(0);
+                    while avoid.contains(&fresh) {
+                        fresh += 1u8;
+                    }
+                    let element = manager.mk_int(fresh);
+                    let count = manager.mk_int(num_bigint::BigInt::from(want - assembled));
+                    let extra = manager.mk_bag_make(element, count);
+                    let completed = manager.mk_bag_union_disjoint(value, extra);
+                    model.set(b, completed);
+                    assembled = want;
                 }
             }
             if assembled != want {
@@ -674,7 +702,7 @@ enum ElementValue {
     /// A printable term as-is.
     Term(TermId),
     /// An exact integer (numeric leaves the tableau valued).
-    Int(i64),
+    Number(num_rational::BigRational),
 }
 
 /// An element's **value**: itself when ground, the arithmetic solver's
@@ -709,11 +737,17 @@ fn element_value_term_of(
             // The value as an exact integer; the term is built by the
             // caller (which holds the manager mutably) from the returned
             // number.
+            if let Some(value) = model.get(e)
+                && manager.get(value).is_some_and(|t| {
+                    matches!(t.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
+                })
+            {
+                return Some(ElementValue::Term(value));
+            }
             let r = arith
-                .value(e)
-                .or_else(|| purify.proxy_of(e).and_then(|p| arith.value(p)))?;
-            let int = r.to_integer();
-            Some(ElementValue::Int(int))
+                .value_exact(e)
+                .or_else(|| purify.proxy_of(e).and_then(|p| arith.value_exact(p)))?;
+            Some(ElementValue::Number(r))
         }
         _ => model.get(e).filter(|&v| v != e).map(ElementValue::Term),
     }
@@ -730,7 +764,15 @@ impl Solver {
     ) -> Option<TermId> {
         match element_value_term_of(e, model, &self.arith, &self.arith_purify, manager)? {
             ElementValue::Term(t) => Some(t),
-            ElementValue::Int(n) => Some(manager.mk_int(num_bigint::BigInt::from(n))),
+            ElementValue::Number(n) => {
+                if manager.get(e)?.sort == manager.sorts.int_sort {
+                    n.is_integer().then(|| manager.mk_int(n.to_integer()))
+                } else {
+                    let numerator = manager.mk_int(n.numer().clone());
+                    let denominator = manager.mk_int(n.denom().clone());
+                    Some(manager.mk_rdiv(numerator, denominator))
+                }
+            }
         }
     }
 }

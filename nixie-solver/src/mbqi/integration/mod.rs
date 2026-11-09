@@ -97,6 +97,7 @@ pub trait SolverCallback: fmt::Debug {
 pub struct MBQIIntegration {
     /// Model completer
     model_completer: ModelCompleter,
+    pub(crate) publication_candidate: Option<CompletedModel>,
     /// Instantiation engine
     instantiation_engine: InstantiationEngine,
     /// Lazy instantiator
@@ -193,6 +194,7 @@ impl MBQIIntegration {
     pub fn new() -> Self {
         Self {
             model_completer: ModelCompleter::new(),
+            publication_candidate: None,
             instantiation_engine: InstantiationEngine::new(),
             lazy_instantiator: LazyInstantiator::new(),
             finite_model_finder: FiniteModelFinder::new(),
@@ -1079,6 +1081,7 @@ impl MBQIIntegration {
         // sampler alone cannot certify because the bound variable ranges over
         // the infinite Int domain.
         if self.all_quantifiers_trivially_valid(&quantifiers, manager) {
+            self.publication_candidate = Some(completed_model.clone());
             let result = MBQIResult::Satisfied;
             callback.on_round_end(self.current_round, &result);
             self.update_final_stats();
@@ -1129,6 +1132,9 @@ impl MBQIIntegration {
             && let Some(result) =
                 self.certify_or_refine(insts, &quantifiers, &completed_model, manager, callback)
         {
+            if matches!(result, MBQIResult::Satisfied) {
+                self.publication_candidate = Some(completed_model.clone());
+            }
             callback.on_round_end(self.current_round, &result);
             self.update_final_stats();
             return result;
@@ -1353,6 +1359,7 @@ impl MBQIIntegration {
                 // (e.g. Bool, or a small uninterpreted-sort universe).  Only
                 // then does the completed model provably satisfy all
                 // quantifiers, so `Satisfied` (sat) is sound.
+                self.publication_candidate = Some(completed_model.clone());
                 let result = MBQIResult::Satisfied;
                 callback.on_round_end(self.current_round, &result);
                 self.update_final_stats();
@@ -1673,6 +1680,7 @@ impl MBQIIntegration {
 
     /// Drop quantifiers added after the `len`-th plus their dedup cache (see `Solver::pop`).
     pub fn truncate_quantifiers(&mut self, len: usize) {
+        self.publication_candidate = None;
         self.quantifiers.truncate(len);
         self.clear_dedup_cache();
         self.blind_attempted = false;
@@ -1728,6 +1736,7 @@ impl MBQIIntegration {
 
     /// Clear all state
     pub fn clear(&mut self) {
+        self.publication_candidate = None;
         self.quantifiers.clear();
         self.generated_instantiations.clear();
         self.extra_candidates.clear();

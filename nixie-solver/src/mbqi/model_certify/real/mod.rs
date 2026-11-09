@@ -2,7 +2,7 @@
 //!
 //! # What this module claims
 //!
-//! [`certify`] answers `true` only after it has built a concrete, *total*
+//! [`certified_interpretation`] answers `true` only after it has built a concrete, *total*
 //! interpretation of every symbol a real goal mentions and checked that every
 //! assertion – ground and quantified alike – is true under it.  That is a model
 //! in the ordinary semantic sense, so `sat` follows without appealing to the
@@ -56,7 +56,7 @@
 mod affine;
 mod eval;
 mod harvest;
-mod interp;
+pub(crate) mod interp;
 mod synth;
 
 use nixie_core::ast::{TermId, TermManager};
@@ -80,17 +80,24 @@ const MAX_COMBINATIONS: usize = 512;
 /// Declines immediately – before any search – on a goal outside the real
 /// fragment, so the integer certifier and this one never share a goal and each
 /// verdict rests on the completeness argument written for its own domain.
-pub(crate) fn certify(
+#[cfg(test)]
+fn certify(
     assertions: &[TermId],
     assignments: &FxHashMap<TermId, TermId>,
     manager: &TermManager,
 ) -> bool {
-    let Some(harvested) = harvest::harvest(assertions, manager) else {
-        return false;
-    };
+    certified_interpretation(assertions, assignments, manager).is_some()
+}
+
+pub(super) fn certified_interpretation(
+    assertions: &[TermId],
+    assignments: &FxHashMap<TermId, TermId>,
+    manager: &TermManager,
+) -> Option<RealInterp> {
+    let harvested = harvest::harvest(assertions, manager)?;
     // A goal with no quantifier is the ground solver's business.
     if !harvested.has_quantifier {
-        return false;
+        return None;
     }
 
     let facts = collect_facts(assertions, assignments, manager, &harvested);
@@ -104,7 +111,7 @@ pub(crate) fn certify(
             ValueSort::Int => false,
         };
         if !known {
-            return false;
+            return None;
         }
     }
 
@@ -138,32 +145,30 @@ pub(crate) fn certify(
     let mut combinations: usize = 1;
     for list in &candidates {
         if list.is_empty() {
-            return false;
+            return None;
         }
         match combinations.checked_mul(list.len()) {
             Some(total) if total <= MAX_COMBINATIONS => combinations = total,
-            _ => return false,
+            _ => return None,
         }
     }
 
     let mut odometer = vec![0usize; candidates.len()];
     for _ in 0..combinations {
-        let Some(interpretation) = build(&symbols, &candidates, &odometer, &facts) else {
-            return false;
-        };
+        let interpretation = build(&symbols, &candidates, &odometer, &facts)?;
         match verify(assertions, &interpretation, manager) {
-            Ok(true) => return true,
+            Ok(true) => return Some(interpretation),
             Ok(false) => {}
             // An unsupported construct is a property of the *goal*, not of the
             // candidate default, so no later combination can do better.
-            Err(RealEvalError::Unsupported) => return false,
-            Err(RealEvalError::Exhausted) => return false,
+            Err(RealEvalError::Unsupported) => return None,
+            Err(RealEvalError::Exhausted) => return None,
         }
         if !advance(&mut odometer, &candidates) {
             break;
         }
     }
-    false
+    None
 }
 
 /// Assemble the interpretation the current odometer position describes.

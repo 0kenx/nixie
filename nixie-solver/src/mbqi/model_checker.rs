@@ -381,21 +381,6 @@ impl ModelChecker {
         match self.aux_refute(body_completed, &skolem_terms, model, logic, manager) {
             Ok(SolverResult::Unsat) => false,
             Ok(_) => {
-                // Parity with the escalation's else-search: the closed-world
-                // completion (Bool-valued else forced false) is an equally
-                // legitimate total interpretation, and a goal certified
-                // under it is genuinely satisfied — clear the veto.
-                let closed_else = closed_world_else_table(model, manager);
-                if let Ok(body_closed) =
-                    CompletionEval::run(q.body, model, &bound_names, &closed_else, manager)
-                    && body_closed != body_completed
-                    && matches!(
-                        self.aux_refute(body_closed, &skolem_terms, model, logic, manager),
-                        Ok(SolverResult::Unsat)
-                    )
-                {
-                    return false;
-                }
                 self.mark_falsified(q.term, signature);
                 true
             }
@@ -670,56 +655,10 @@ impl ModelChecker {
 
         // Refute the completed interpretation (primary else choice).
         let result = self.aux_refute(body_completed, &skolem_terms, model, logic, manager);
-        // Else-search (Z3 `smt_model_finder`'s default search, bounded to
-        // one candidate): when the primary completion admits a falsifier,
-        // retry with every *Bool-valued* function's else forced to `false`
-        // — the closed-world completion under which membership-style axioms
-        // are vacuously satisfied off their entry tables.  Both are total
-        // extensions of the same entries, so an `unsat` under either is a
-        // sound satisfaction proof; the search only affects which
-        // completions we can certify.
-        let result = if result.as_ref().is_ok_and(|r| *r == SolverResult::Sat) {
-            let closed_else = closed_world_else_table(model, manager);
-            let body_closed =
-                CompletionEval::run(q.body, model, &bound_names, &closed_else, manager)
-                    .ok()
-                    .filter(|body| *body != body_completed);
-            if let Some(body_closed) = body_closed {
-                let retry = self.aux_refute(body_closed, &skolem_terms, model, logic, manager);
-                if retry.as_ref().is_ok_and(|r| *r == SolverResult::Unsat) {
-                    if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-                        eprintln!("[mc] aux verdict (closed-world else): satisfied");
-                    }
-                    self.certified_at.entry(q.term).or_default().push(signature);
-                    // A certification is productive: refund the total (see
-                    // `mark_productive`; table mode only).
-                    if self.table_mode
-                        && let Some(count) = self.total_checks_of.get_mut(&q.term)
-                    {
-                        *count = count.saturating_sub(1);
-                    }
-                    self.checks_of.insert(q.term, 0);
-                    self.last_decline = None;
-                    return ModelCheckOutcome::Satisfied;
-                }
-            }
-            result
-        } else {
-            result
-        };
-        // NOTE: a bounded per-function else-revision search (Z3's
-        // `smt_model_finder` "search, verify, revise" for non-Bool
-        // constructors) lived here and was removed: its certifications
-        // could rest on *different* one-shot interpretations for
-        // different quantifiers (q1 needing `union`'s else to be `b`, q2
-        // needing `a` — no single model of the conjunction exhibited), it
-        // demonstrated no win anywhere (set16's violating points are
-        // entry-shaped, not default-shaped), and making it globally
-        // consistent (one accepted revision merged into every later
-        // check) quadrupled the convergence pins' cost by reshaping every
-        // subsequent aux goal.  The entry-table search that would
-        // actually close the set family is recorded as its own project in
-        // docs/studies/2026-09-14-uflra-handoff-executed.md.
+        // Certification is for this one completed interpretation. Revising a
+        // function's default for one quantifier cannot certify a conjunction:
+        // another quantifier may require the original default. Alternative
+        // interpretations belong in whole-goal candidate search.
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
             eprintln!("[mc] aux verdict q={:?}: {:?}", q.term, result);
         }
@@ -1415,6 +1354,18 @@ pub(crate) fn eval_completed_ground(
     CompletionEval::run(term, model, &bound, else_table, manager)
 }
 
+/// Materialize a function's total interpretation with its formal parameters
+/// left symbolic. Publication independently verifies the rendered result.
+pub(crate) fn completed_function_body(
+    term: TermId,
+    parameters: &FxHashSet<Spur>,
+    model: &CompletedModel,
+    else_table: &FxHashMap<Spur, TermId>,
+    manager: &mut TermManager,
+) -> Result<TermId, &'static str> {
+    CompletionEval::run(term, model, parameters, else_table, manager)
+}
+
 /// Evaluate a *ground* term under the completed model **structurally**
 /// (see `CompletionEval::structural_only`): composite terms fold through
 /// the interpretation; only application atoms and bare constants may
@@ -1528,25 +1479,6 @@ fn completed_model_signature(model: &CompletedModel) -> u64 {
     // assigns a fresh serial to every rebuild, preserving the old
     // "a rebuilt model is always new content" semantics bit-for-bit.
     model.version
-}
-
-/// The closed-world else table: every *Bool-valued* function's else forced
-/// to `false`, everything else as [`choose_else_table`] picks.  A candidate
-/// completion for the else-search — legitimate (a total extension of the
-/// same entries) and verified by the nested refutation before anything is
-/// concluded from it.
-fn closed_world_else_table(
-    model: &CompletedModel,
-    manager: &mut TermManager,
-) -> FxHashMap<Spur, TermId> {
-    let mut table = choose_else_table(model, manager);
-    let false_term = manager.mk_false();
-    for (&func, interp) in &model.function_interps {
-        if interp.range == manager.sorts.bool_sort {
-            table.insert(func, false_term);
-        }
-    }
-    table
 }
 
 /// One function's else value:
@@ -3397,4 +3329,58 @@ pub(crate) fn args_match(
         }
     }
     true
+}
+
+#[cfg(test)]
+mod publication_domain_regressions {
+    use super::*;
+
+    #[test]
+    fn certification_never_replaces_a_boolean_default_per_quantifier() {
+        let mut manager = TermManager::new();
+        let sort = manager.sorts.int_sort;
+        let x = manager.mk_var("x", sort);
+        let name = manager.intern_str("x");
+        let symbol = manager.intern_str("p");
+        let app = manager.mk_apply("p", vec![x], manager.sorts.bool_sort);
+        let body = manager.mk_not(app);
+        let q = QuantifiedFormula::new(body, smallvec::smallvec![(name, sort)], body, true);
+        let mut model = CompletedModel::new();
+        let mut interp =
+            FunctionInterpretation::new(symbol, smallvec::smallvec![sort], manager.sorts.bool_sort);
+        interp.else_value = Some(manager.mk_true());
+        model.function_interps.insert(symbol, interp);
+        let mut checker = ModelChecker::new();
+        assert!(!matches!(
+            checker.check(&q, &model, Some("QF_LIA"), &mut manager),
+            ModelCheckOutcome::Satisfied
+        ));
+        assert!(ModelChecker::new().check_veto(&q, &model, Some("QF_LIA"), &mut manager));
+    }
+
+    #[test]
+    fn repeated_domain_points_cannot_certify_a_false_body() {
+        let mut manager = TermManager::new();
+        let name = manager.intern_str("PublicationDomain");
+        let sort = manager.sorts.intern(SortKind::Uninterpreted(name));
+        let a = manager.mk_var("a", sort);
+        let b = manager.mk_var("b", sort);
+        let sk = manager.mk_var("sk", sort);
+        let name = manager.intern_str("x");
+        let mut model = CompletedModel::new();
+        model.table_domains.insert(sort, vec![a, b, a]);
+        assert_eq!(model.table_domain(sort, &manager), Some(vec![a, b]));
+        let body = manager.mk_false();
+        let mut checker = ModelChecker::new();
+        assert!(matches!(
+            checker.aux_refute(
+                body,
+                &[(name, sort, sk)],
+                &model,
+                Some("QF_UF"),
+                &mut manager
+            ),
+            Ok(SolverResult::Sat)
+        ));
+    }
 }

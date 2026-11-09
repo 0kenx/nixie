@@ -16,7 +16,74 @@ use super::types::{Model, UnsatCore};
 /// (ordered by term id), and the adjacency of the ones it made *true*.
 type DecidedEqualities = (Vec<(TermId, TermId)>, FxHashMap<TermId, Vec<TermId>>);
 
+mod opaque_leaves;
+
 impl Solver {
+    /// Restore ground definitions eliminated before a specialized arithmetic
+    /// engine built its scalar witness. Only asserted conjunction equalities
+    /// supply definitions, and only concretely evaluable right-hand sides are
+    /// installed. Conditional equalities and cyclic aliases remain untouched.
+    pub(super) fn recover_ground_model_definitions(&mut self, manager: &mut TermManager) {
+        let Some(mut model) = self.model.take() else {
+            return;
+        };
+        let mut definitions = Vec::new();
+        let mut stack = self.certificate_assertions.clone();
+        let mut seen = FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term) {
+                continue;
+            }
+            match manager.get(term).map(|t| &t.kind) {
+                Some(TermKind::And(args)) => stack.extend(args.iter().copied()),
+                Some(TermKind::Eq(a, b)) => {
+                    for (variable, value) in [(*a, *b), (*b, *a)] {
+                        if manager
+                            .get(variable)
+                            .is_some_and(|t| matches!(t.kind, TermKind::Var(_)))
+                        {
+                            definitions.push((variable, value));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for _ in 0..definitions.len() {
+            let mut changed = false;
+            for &(variable, rhs) in &definitions {
+                if model.get(variable).is_some() {
+                    continue;
+                }
+                let value = self.model_value_in(rhs, &model, manager).or_else(|| {
+                    let free = manager.free_vars_including_patterns(rhs);
+                    if free.contains(&variable) {
+                        return None;
+                    }
+                    let replacements: Option<FxHashMap<_, _>> = free
+                        .into_iter()
+                        .map(|var| model.get(var).map(|value| (var, value)))
+                        .collect();
+                    let rhs = manager.substitute(rhs, &replacements?);
+                    super::array_completion_certify::is_array_value(rhs, manager).then_some(rhs)
+                });
+                if let Some(value) = value
+                    && manager
+                        .get(variable)
+                        .zip(manager.get(value))
+                        .is_some_and(|(a, b)| a.sort == b.sort)
+                {
+                    model.set(variable, value);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        self.model = Some(model);
+    }
+
     /// Distinct default for an unconstrained integer-sorted UF argument:
     /// the first non-negative value not already used by a pinned entry,
     /// reusing an EUF-merged partner's value when one is already pinned
@@ -380,7 +447,7 @@ impl Solver {
                 } else {
                     manager.mk_real(num_rational::Rational64::from_integer(0))
                 };
-                model.set(term, value_term);
+                model.set_default(term, value_term);
             }
         }
 
@@ -573,6 +640,7 @@ impl Solver {
             // huge constant.
             let bv_value = self.bv.get_value_big(term);
             let arith_value = self.arith.value(term);
+            let defaulted = bv_value.is_none() && arith_value.is_none();
 
             let raw_value = if bv_authoritative {
                 // BV theory owns the model: prefer its bit-blasted witness, then
@@ -604,7 +672,11 @@ impl Solver {
             // prescribes – before interning the constant.
             let value_term =
                 manager.mk_bitvec(nixie_core::ast::bv_wrap_unsigned(&raw_value, width), width);
-            model.set(term, value_term);
+            if defaulted {
+                model.set_default(term, value_term);
+            } else {
+                model.set(term, value_term);
+            }
         }
 
         // String values.  No string theory participates in the CDCL(T) loop, so
@@ -637,6 +709,13 @@ impl Solver {
                     width,
                 );
                 model.set(term, value_term);
+            }
+        }
+        // Boolean leaves used only as conditions in the BV circuit need
+        // publication just as in the pure-BV dispatch.
+        for (term, value) in self.bv.model_bool_values() {
+            if model.get(term).is_none() {
+                model.set(term, manager.mk_bool(value));
             }
         }
         self.extract_string_model(&mut model, manager);
@@ -739,6 +818,7 @@ impl Solver {
         // also what makes `bag.count` queries answer with numbers.
         self.extract_bag_model(&mut model, manager);
 
+        self.publish_array_reads(&mut model, manager);
         dereference_array_aliases(&mut model, manager);
         self.model = Some(model);
     }
@@ -2134,17 +2214,38 @@ impl Solver {
         if let Some(value) = model.get(term)
             && is_value_term(value, manager)
         {
-            return Some(value);
+            if manager.get(value).is_some_and(|node| node.sort == sort) {
+                return Some(value);
+            }
+            if sort == manager.sorts.int_sort || sort == manager.sorts.real_sort {
+                let number = super::array_completion_certify::evaluate_closed_value_pure(
+                    self, value, manager,
+                )?
+                .to_big()?;
+                if sort == manager.sorts.int_sort {
+                    return number
+                        .is_integer()
+                        .then(|| manager.mk_int(number.to_integer()));
+                }
+                let numerator = manager.mk_int(number.numer().clone());
+                let denominator = manager.mk_int(number.denom().clone());
+                return Some(manager.mk_rdiv(numerator, denominator));
+            }
+            return None;
         }
         // An accessor introduced by the reconstruction axiom may carry a theory
         // value without ever having been registered for model extraction.
         if sort == manager.sorts.int_sort {
-            let value = self.arith.value(term)?;
-            return Some(manager.mk_int(*value.numer()));
+            let value = self.arith.value_exact(term)?;
+            return value
+                .is_integer()
+                .then(|| manager.mk_int(value.to_integer()));
         }
         if sort == manager.sorts.real_sort {
-            let value = self.arith.value(term)?;
-            return Some(manager.mk_real(value));
+            let value = self.arith.value_exact(term)?;
+            let numerator = manager.mk_int(value.numer().clone());
+            let denominator = manager.mk_int(value.denom().clone());
+            return Some(manager.mk_rdiv(numerator, denominator));
         }
         let width = manager
             .sorts
@@ -2250,16 +2351,10 @@ impl Solver {
     /// treated as distinct.  Model output uses this to give uninterpreted-sort
     /// constants proven equal a *shared* abstract witness while keeping
     /// distinct constants distinct.
-    /// Whether `term` is an argument of some uninterpreted application
-    /// interned in the EUF solver (used by the model completion to keep
-    /// free UF arguments pairwise-distinct).
-    pub(crate) fn euf_app_argument(&self, term: TermId) -> bool {
-        self.euf.app_argument_terms().contains(&term)
-    }
-
     pub(crate) fn euf_class_representative(&self, term: TermId) -> Option<u32> {
-        let node = self.euf.term_to_node(term)?;
-        Some(self.euf.find_immutable(node))
+        let euf = self.model_euf();
+        let node = euf.term_to_node(term)?;
+        Some(euf.find_immutable(node))
     }
 
     /// Build unsat core for trivial conflicts (assertion of false)
@@ -2984,4 +3079,39 @@ fn occurs_in(manager: &TermManager, needle: TermId, haystack: TermId) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod publication_field_regressions {
+    use super::*;
+    use num_rational::Rational64;
+
+    #[test]
+    fn scalar_fields_preserve_integrality_and_declared_sorts() {
+        let solver = Solver::new();
+        let mut manager = TermManager::new();
+        let sort = manager.sorts.int_sort;
+        let field = manager.mk_var("field", sort);
+        let mut model = Model::new();
+        let fraction = manager.mk_real(Rational64::new(1, 2));
+        model.set(field, fraction);
+        assert!(
+            solver
+                .scalar_value(field, sort, &model, &mut manager)
+                .is_none()
+        );
+        let integer = manager.mk_real(Rational64::from_integer(3));
+        model.set(field, integer);
+        let expected = manager.mk_int(3);
+        assert_eq!(
+            solver.scalar_value(field, sort, &model, &mut manager),
+            Some(expected)
+        );
+        model.set(field, manager.true_id);
+        assert!(
+            solver
+                .scalar_value(field, sort, &model, &mut manager)
+                .is_none()
+        );
+    }
 }

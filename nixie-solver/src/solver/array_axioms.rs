@@ -755,6 +755,39 @@ fn collect_array_structure_with_asserted(
                     from_input,
                 });
             }
+            TermKind::Distinct(args) => {
+                // The encoder expands distinct into pairwise disequalities,
+                // but those equality atoms need not occur in the input DAG.
+                // Discover them here as well so separated arrays receive an
+                // extensional witness. Negative/conditional occurrences only
+                // register pairs; their separation is read from the model.
+                for (i, &lhs) in args.iter().enumerate() {
+                    if !is_array_sorted(lhs, manager) {
+                        continue;
+                    }
+                    for &rhs in &args[i + 1..] {
+                        if lhs == rhs || !is_array_sorted(rhs, manager) {
+                            continue;
+                        }
+                        out.eq_pairs.push((lhs, rhs));
+                        let key = unordered_pair(lhs, rhs);
+                        if from_input {
+                            out.input_eq_pairs.insert(key);
+                        }
+                        if asserted && positive {
+                            out.asserted_diseq_pairs.insert(key);
+                        }
+                    }
+                }
+                for &term in args.iter().rev() {
+                    stack.push(WalkFrame {
+                        term,
+                        positive,
+                        asserted: false,
+                        from_input,
+                    });
+                }
+            }
             TermKind::Eq(lhs, rhs) => {
                 // Record an array-sorted equality atom (either polarity: the
                 // extensionality / congruence lemmas are valid regardless).
@@ -2038,7 +2071,7 @@ fn extensionality_witness(
 /// at such an index is a SYNTHETIC read: no input constraint mentions the
 /// index, so its read-over-write content is instantiated model-based (see
 /// the routing in [`build_read_over_write`]).
-fn is_extensionality_witness(term: TermId, manager: &TermManager) -> bool {
+pub(crate) fn is_extensionality_witness(term: TermId, manager: &TermManager) -> bool {
     match manager.get(term).map(|t| &t.kind) {
         Some(TermKind::Var(name)) => {
             nixie_core::reserved::is_reserved_tag(manager.resolve_str(*name), "ext")
@@ -2407,6 +2440,26 @@ mod s8_iterative_tests {
 
     /// Worker stack for the deep-nesting test; see [`DEEP`].
     const SMALL_STACK: usize = 1 << 17;
+
+    #[test]
+    fn distinct_array_pairs_are_discovered_without_promoting_conditional_separation() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.bool_sort, tm.sorts.bool_sort);
+        let a = tm.mk_var("a", sort);
+        let b = tm.mk_var("b", sort);
+        let c = tm.mk_var("c", sort);
+        let distinct = tm.mk_distinct([a, b, c]);
+        let p = tm.mk_var("p", tm.sorts.bool_sort);
+        let conditional = tm.mk_or([p, distinct]);
+        let negative = tm.mk_not(distinct);
+        for (root, separated) in [(distinct, 3), (conditional, 0), (negative, 0)] {
+            let mut out = ArrayStructure::default();
+            collect_array_structure(root, true, &tm, &mut FxHashSet::default(), &mut out);
+            assert_eq!(out.eq_pairs.len(), 3);
+            assert_eq!(out.input_eq_pairs.len(), 3);
+            assert_eq!(out.asserted_diseq_pairs.len(), separated);
+        }
+    }
 
     /// Build `store(store(...store(a, i, v)..., i, v), i, v)`, `depth` levels.
     fn deep_store_chain(tm: &mut TermManager, depth: usize) -> (TermId, TermId) {

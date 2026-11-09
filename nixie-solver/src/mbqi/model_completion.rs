@@ -218,10 +218,17 @@ impl CompletedModel {
     /// table domain when one exists (see `ModelCompleter::frozen_table_domains`),
     /// else the plain ground universe.
     pub fn table_domain(&self, sort: SortId, manager: &TermManager) -> Option<Vec<TermId>> {
-        if let Some(frozen) = self.table_domains.get(&sort) {
-            return Some(frozen.clone());
-        }
-        self.ground_universe(sort, manager)
+        let mut domain = if let Some(frozen) = self.table_domains.get(&sort) {
+            frozen.clone()
+        } else {
+            self.ground_universe(sort, manager)?
+        };
+        // A universe is a set. Repeated constructor mints must not turn
+        // the auxiliary distinctness axiom into `distinct(a, a)` and make
+        // every model check vacuously unsatisfiable.
+        domain.sort_unstable();
+        domain.dedup();
+        Some(domain)
     }
 
     /// Normalize a domain element through the computed constructor tables

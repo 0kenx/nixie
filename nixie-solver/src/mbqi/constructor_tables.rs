@@ -1342,7 +1342,10 @@ fn mint_fresh_row_element(
     // Grow the frozen and table domains: the completed structure's own
     // domain now contains the new element (the aux restriction, the
     // mining odometer and the enumerative engines all read it).
-    frozen.entry(qm.func_range).or_default().push(fresh);
+    let domain = frozen.entry(qm.func_range).or_default();
+    if !domain.contains(&fresh) {
+        domain.push(fresh);
+    }
     match model.table_domains.entry(qm.func_range) {
         std::collections::hash_map::Entry::Occupied(mut occ) => {
             if !occ.get().contains(&fresh) {

@@ -14,10 +14,10 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{ToPrimitive, Zero};
+use num_traits::ToPrimitive;
 use std::collections::{HashMap, HashSet};
 
-/// Soft cap on visited leaves (full assignments tried). Pruning usually keeps
+/// Soft cap on visited partial assignments. Pruning usually keeps
 /// real work far below this for constrained formulas.
 const MAX_LEAVES: u64 = 5_000_000;
 
@@ -114,9 +114,9 @@ pub fn try_decide_ground_ania(
     // Prefer smaller domains first for stronger early pruning.  The tiebreak
     // on `TermId` makes the order total: a stable sort over a randomly
     // ordered input would otherwise keep per-process `HashSet` order on ties.
-    domains.sort_by_key(|&(v, lo, hi)| (hi - lo, v.0));
+    domains.sort_by_key(|&(v, lo, hi)| (i128::from(hi) - i128::from(lo), v.0));
 
-    // Recursive search with early pruning: once enough vars are bound to
+    // Heap-stack search with early pruning: once enough vars are bound to
     // evaluate an atom, reject partial assignments immediately (critical when
     // e.g. `(select A i) = c` with sparse table values kills most of 1..N).
     let mut env = HashMap::new();
@@ -135,6 +135,10 @@ pub fn try_decide_ground_ania(
         &mut leaves,
     ) {
         Some(true) => {
+            let interp = interpretation(assertions, manager, &arrays, &env)?;
+            if !crate::nl_eval::holds_under(assertions, manager, &interp) {
+                return None;
+            }
             let mut assignments = HashMap::new();
             for (term, val) in env {
                 assignments.insert(term, BigRational::from_integer(val));
@@ -291,7 +295,7 @@ pub fn try_decide_finite_domain_nia(
         if hi < lo {
             return Some(NlDispatchResult::Unsat);
         }
-        let size = (hi - lo + 1) as u64;
+        let size = u64::try_from(i128::from(hi) - i128::from(lo) + 1).ok()?;
         total = total.checked_mul(size)?;
         if total > MAX_LEAVES {
             return None;
@@ -300,7 +304,7 @@ pub fn try_decide_finite_domain_nia(
     }
     // Smaller domains first → stronger early pruning (total order – see
     // [`try_decide_ground_ania`]).
-    domains.sort_by_key(|&(v, lo, hi)| (hi - lo, v.0));
+    domains.sort_by_key(|&(v, lo, hi)| (i128::from(hi) - i128::from(lo), v.0));
 
     let mut env = HashMap::new();
     let mut leaves = 0u64;
@@ -318,6 +322,10 @@ pub fn try_decide_finite_domain_nia(
         &mut leaves,
     ) {
         Some(true) => {
+            let interp = interpretation(assertions, manager, &arrays, &env)?;
+            if !crate::nl_eval::holds_under(assertions, manager, &interp) {
+                return None;
+            }
             let mut assignments = HashMap::new();
             for (term, val) in env {
                 assignments.insert(term, BigRational::from_integer(val));
@@ -337,78 +345,49 @@ fn realize_interfaces(
     env: &mut HashMap<TermId, BigInt>,
 ) -> bool {
     for iface in interfaces {
-        let Some(idx_val) = eval_int(iface.index, manager, arrays, env) else {
-            continue; // index not yet bound – skip for now
+        let Some(index) = eval_int(iface.index, manager, arrays, env) else {
+            continue;
         };
-        let Some(i64v) = idx_val.to_i64() else {
-            return false;
+        let Some(array) = arrays.get(&iface.array) else {
+            continue;
         };
-        let Some(interp) = arrays.get(&iface.array) else {
-            return false;
-        };
-        // Read-over-write: a written index resolves; an unwritten index on an
-        // unknown base (default = None) does not, so leave the interface
-        // unbound and let a later round / the search retry – never fabricate.
-        if let Some(sel) = interp
-            .entries
-            .get(&i64v)
-            .cloned()
-            .or_else(|| interp.default.clone())
-        {
-            env.insert(iface.const_var, sel);
+        let value = index
+            .to_i64()
+            .and_then(|i| array.entries.get(&i).cloned())
+            .or_else(|| array.default.clone());
+        if let Some(value) = value {
+            if env.get(&iface.const_var).is_some_and(|old| *old != value) {
+                return false;
+            }
+            env.insert(iface.const_var, value);
         }
     }
-    // Definitional eqs from nullary define-fun: `P = (* (select A i) …)`.
-    // Evaluate rhs once its free vars are bound; bind lhs.
-    for &(lhs, rhs) in definitions {
-        if env.contains_key(&lhs) {
-            continue;
+    for &(variable, body) in definitions {
+        if let Some(value) = eval_int(body, manager, arrays, env) {
+            if env.get(&variable).is_some_and(|old| *old != value) {
+                return false;
+            }
+            env.insert(variable, value);
         }
-        if !term_fully_bound(rhs, manager, env, arrays) {
-            continue;
-        }
-        let Some(v) = eval_int(rhs, manager, arrays, env) else {
-            return false;
-        };
-        env.insert(lhs, v);
     }
     true
 }
 
-/// Resolve conditional definitions `(premise, var, body)` (encoder-lifted
-/// `ite` fresh constants) into `env` to a fixpoint. A guard whose variables are
-/// all bound and that evaluates `true` pins `var := eval(body)`. Returns `false`
-/// if two fired guards disagree on a variable (the assignment is inconsistent).
 fn realize_cond_defs(
-    cond_defs: &[(TermId, TermId, TermId)],
+    definitions: &[(TermId, TermId, TermId)],
     arrays: &HashMap<TermId, ArrayInterp>,
     manager: &TermManager,
     env: &mut HashMap<TermId, BigInt>,
 ) -> bool {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &(premise, var, body) in cond_defs {
-            if env.contains_key(&var) {
-                continue;
-            }
-            if !term_fully_bound(premise, manager, env, arrays) {
-                continue;
-            }
-            // Guard did not fire → skip (the variable may be pinned by another
-            // guard, or stay unbound if no `ite` branch matches).
-            match eval_bool(premise, manager, arrays, env) {
-                Some(true) => {}
-                _ => continue,
-            }
-            if !term_fully_bound(body, manager, env, arrays) {
-                continue;
-            }
-            let Some(v) = eval_int(body, manager, arrays, env) else {
+    for &(guard, variable, body) in definitions {
+        if eval_bool(guard, manager, arrays, env) != Some(true) {
+            continue;
+        }
+        if let Some(value) = eval_int(body, manager, arrays, env) {
+            if env.get(&variable).is_some_and(|old| *old != value) {
                 return false;
-            };
-            env.insert(var, v);
-            changed = true;
+            }
+            env.insert(variable, value);
         }
     }
     true
@@ -420,88 +399,23 @@ fn partial_atoms_ok(
     arrays: &HashMap<TermId, ArrayInterp>,
     manager: &TermManager,
     env: &HashMap<TermId, BigInt>,
-) -> bool {
+) -> Option<bool> {
+    let mut complete = true;
     for atom in atoms {
-        // Only check atoms whose free vars are all bound.
-        if !term_fully_bound(atom.lhs, manager, env, arrays) {
-            continue;
-        }
-        if !term_fully_bound(atom.rhs, manager, env, arrays) {
-            continue;
-        }
-        if !eval_atom(atom, manager, arrays, env) {
-            return false;
-        }
-    }
-    for &b in bool_atoms {
-        if !term_fully_bound(b, manager, env, arrays) {
-            continue;
-        }
-        match eval_bool(b, manager, arrays, env) {
+        match eval_atom(atom, manager, arrays, env) {
+            Some(false) => return Some(false),
             Some(true) => {}
-            _ => return false,
+            None => complete = false,
         }
     }
-    true
-}
-
-fn term_fully_bound(
-    term: TermId,
-    manager: &TermManager,
-    env: &HashMap<TermId, BigInt>,
-    arrays: &HashMap<TermId, ArrayInterp>,
-) -> bool {
-    let mut stack = vec![term];
-    let mut seen = HashSet::new();
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        if env.contains_key(&id) {
-            continue;
-        }
-        let Some(n) = manager.get(id) else {
-            return false;
-        };
-        match &n.kind {
-            TermKind::IntConst(_) | TermKind::True | TermKind::False => {}
-            TermKind::Var(_) => return false,
-            TermKind::Select(arr, idx) => {
-                if !arrays.contains_key(arr) {
-                    return false;
-                }
-                stack.push(*idx);
-            }
-            TermKind::Add(xs) | TermKind::Mul(xs) | TermKind::And(xs) | TermKind::Or(xs) => {
-                stack.extend(xs.iter().copied())
-            }
-            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
-            TermKind::Sub(a, b)
-            | TermKind::Div(a, b)
-            | TermKind::Mod(a, b)
-            | TermKind::Eq(a, b)
-            | TermKind::Le(a, b)
-            | TermKind::Lt(a, b)
-            | TermKind::Ge(a, b)
-            | TermKind::Gt(a, b) => {
-                stack.push(*a);
-                stack.push(*b);
-            }
-            TermKind::Ite(c, a, b) => {
-                stack.push(*c);
-                stack.push(*a);
-                stack.push(*b);
-            }
-            TermKind::Let { bindings, body } => {
-                for &(_, v) in bindings.iter() {
-                    stack.push(v);
-                }
-                stack.push(*body);
-            }
-            _ => return false,
+    for &term in bool_atoms {
+        match eval_bool(term, manager, arrays, env) {
+            Some(false) => return Some(false),
+            Some(true) => {}
+            None => complete = false,
         }
     }
-    true
+    complete.then_some(true)
 }
 
 /// `Some(true)` sat, `Some(false)` unsat (subtree exhausted), `None` budget.
@@ -519,53 +433,115 @@ fn search_rec(
     env: &mut HashMap<TermId, BigInt>,
     leaves: &mut u64,
 ) -> Option<bool> {
-    if !realize_interfaces(interfaces, definitions, arrays, manager, env) {
-        return Some(false);
+    enum Frame {
+        Visit(usize, HashMap<TermId, BigInt>),
+        Next {
+            position: usize,
+            base: HashMap<TermId, BigInt>,
+            value: i64,
+            last: i64,
+        },
     }
-    // Derive conditionally-defined integer variables (encoder-lifted `ite`
-    // fresh constants) to a fixpoint: a guard `p` whose variables are all
-    // bound and that evaluates `true` pins its variable. Two guards firing
-    // with disagreeing values make this assignment inconsistent.
-    if !realize_cond_defs(cond_defs, arrays, manager, env) {
-        return Some(false);
-    }
-    if !partial_atoms_ok(atoms, bool_atoms, arrays, manager, env) {
-        return Some(false);
-    }
-    if pos == domains.len() {
-        *leaves += 1;
+    let mut stack = vec![Frame::Visit(pos, env.clone())];
+    let mut incomplete = false;
+    while let Some(frame) = stack.pop() {
+        let (position, mut candidate) = match frame {
+            Frame::Next {
+                position,
+                base,
+                value,
+                last,
+            } => {
+                let mut candidate = base.clone();
+                candidate.insert(domains.get(position)?.0, BigInt::from(value));
+                if value < last {
+                    stack.push(Frame::Next {
+                        position,
+                        base,
+                        value: value.checked_add(1)?,
+                        last,
+                    });
+                }
+                stack.push(Frame::Visit(position + 1, candidate));
+                continue;
+            }
+            Frame::Visit(position, candidate) => (position, candidate),
+        };
+        *leaves = leaves.checked_add(1)?;
         if *leaves > MAX_LEAVES {
             return None;
         }
-        // Full assignment – atoms already checked when fully bound.
-        return Some(true);
-    }
-    let (var, lo, hi) = domains[pos];
-    for v in lo..=hi {
-        env.insert(var, BigInt::from(v));
-        match search_rec(
-            pos + 1,
-            domains,
-            interfaces,
-            definitions,
-            cond_defs,
-            atoms,
-            bool_atoms,
-            arrays,
-            manager,
-            env,
-            leaves,
-        ) {
-            Some(true) => return Some(true),
-            Some(false) => {}
-            None => return None,
+        let mut consistent = true;
+        loop {
+            let before = candidate.len();
+            if !realize_interfaces(interfaces, definitions, arrays, manager, &mut candidate)
+                || !realize_cond_defs(cond_defs, arrays, manager, &mut candidate)
+            {
+                consistent = false;
+                break;
+            }
+            if candidate.len() == before {
+                break;
+            }
         }
-        env.remove(&var);
+        if !consistent {
+            continue;
+        }
+        let truth = partial_atoms_ok(atoms, bool_atoms, arrays, manager, &candidate);
+        if truth == Some(false) {
+            continue;
+        }
+        if position == domains.len() {
+            // Every collected definition must be interpreted too. An unresolved
+            // leaf is neither a model nor evidence that this box is unsatisfiable.
+            let definitions_complete = definitions.iter().all(|&(v, b)| {
+                eval_int(b, manager, arrays, &candidate)
+                    .zip(candidate.get(&v))
+                    .is_some_and(|(x, y)| x == *y)
+            }) && interfaces.iter().all(|i| {
+                let Some(index) = eval_int(i.index, manager, arrays, &candidate) else {
+                    return false;
+                };
+                let Some(array) = arrays.get(&i.array) else {
+                    return false;
+                };
+                let value = index
+                    .to_i64()
+                    .and_then(|index| array.entries.get(&index))
+                    .or(array.default.as_ref());
+                value
+                    .zip(candidate.get(&i.const_var))
+                    .is_some_and(|(a, b)| a == b)
+            }) && cond_defs.iter().all(
+                |&(guard, v, b)| match eval_bool(guard, manager, arrays, &candidate) {
+                    Some(false) => true,
+                    Some(true) => eval_int(b, manager, arrays, &candidate)
+                        .zip(candidate.get(&v))
+                        .is_some_and(|(x, y)| x == *y),
+                    None => false,
+                },
+            );
+            if truth == Some(true) && definitions_complete {
+                *env = candidate;
+                return Some(true);
+            }
+            incomplete = true;
+            continue;
+        }
+        let &(_, lo, hi) = domains.get(position)?;
+        if lo <= hi {
+            stack.push(Frame::Next {
+                position,
+                base: candidate,
+                value: lo,
+                last: hi,
+            });
+        }
     }
-    Some(false)
+    if incomplete { None } else { Some(false) }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ArrayInterp {
     /// `None` = unknown base (a declared array variable the interpretation
     /// does not constrain). Reads of unwritten indices then have no value,
@@ -614,25 +590,47 @@ fn collect_assertion(
     free_ints: &mut HashSet<TermId>,
     cond_defs: &mut Vec<(TermId, TermId, TermId)>,
 ) -> Option<()> {
+    let mut stack = vec![term];
+    let mut seen = HashSet::new();
+    while let Some(term) = stack.pop() {
+        if !seen.insert(term) {
+            continue;
+        }
+        if let TermKind::And(args) = &manager.get(term)?.kind {
+            stack.extend(args.iter().rev().copied());
+        } else {
+            collect_atom(
+                term,
+                manager,
+                arrays,
+                interfaces,
+                definitions,
+                bounds,
+                atoms,
+                bool_atoms,
+                free_ints,
+                cond_defs,
+            )?;
+        }
+    }
+    Some(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_atom(
+    term: TermId,
+    manager: &TermManager,
+    arrays: &mut HashMap<TermId, ArrayInterp>,
+    interfaces: &mut Vec<Interface>,
+    definitions: &mut Vec<(TermId, TermId)>,
+    bounds: &mut HashMap<TermId, (Option<i64>, Option<i64>)>,
+    atoms: &mut Vec<Atom>,
+    bool_atoms: &mut Vec<TermId>,
+    free_ints: &mut HashSet<TermId>,
+    cond_defs: &mut Vec<(TermId, TermId, TermId)>,
+) -> Option<()> {
     let t = manager.get(term)?;
     match &t.kind {
-        TermKind::And(args) => {
-            for &a in args {
-                collect_assertion(
-                    a,
-                    manager,
-                    arrays,
-                    interfaces,
-                    definitions,
-                    bounds,
-                    atoms,
-                    bool_atoms,
-                    free_ints,
-                    cond_defs,
-                )?;
-            }
-            Some(())
-        }
         TermKind::True => Some(()),
         TermKind::Not(_) | TermKind::Or(_) | TermKind::Implies(_, _) => {
             // A conditional definition `Implies(p, (= v body))` with `v` a free
@@ -664,7 +662,11 @@ fn collect_assertion(
                 } else {
                     return None;
                 };
-                arrays.insert(var, eval_array_def(def, manager)?);
+                let value = eval_array_def(def, manager)?;
+                if arrays.get(&var).is_some_and(|old| old != &value) {
+                    return None;
+                }
+                arrays.insert(var, value);
                 return Some(());
             }
             if let Some(iface) = parse_interface(manager, *lhs, *rhs) {
@@ -817,115 +819,67 @@ fn ensure_selects_defined(
     Some(())
 }
 
-/// Evaluate integer or boolean term under env + arrays.
+/// Build the shared exact, heap-stack evaluator's interpretation. Constant
+/// arrays are recognized by the reserved constructor, never by a name substring.
+fn interpretation(
+    terms: &[TermId],
+    manager: &TermManager,
+    arrays: &HashMap<TermId, ArrayInterp>,
+    env: &HashMap<TermId, BigInt>,
+) -> Option<crate::nl_eval::Interpretation> {
+    use crate::nl_eval::{Interpretation, Value};
+    let mut result = Interpretation::empty();
+    for (&term, value) in env {
+        result.pin_int(term, value.clone());
+    }
+    for (&root, array) in arrays {
+        for (&index, value) in &array.entries {
+            result.pin_cell(
+                root,
+                BigRational::from_integer(index.into()),
+                Value::Num(BigRational::from_integer(value.clone())),
+            );
+        }
+        if let Some(value) = &array.default {
+            result.pin_fallback(root, Value::Num(BigRational::from_integer(value.clone())));
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut stack: Vec<_> = terms.iter().copied().map(|term| (term, false)).collect();
+    while let Some((id, finish)) = stack.pop() {
+        let node = manager.get(id)?;
+        if finish {
+            if let TermKind::Apply { func, args } = &node.kind
+                && manager.resolve_str(*func) == nixie_core::reserved::CONST_ARRAY_FUNC
+            {
+                let [value] = args.as_slice() else {
+                    return None;
+                };
+                let value = crate::nl_eval::evaluate(*value, manager, &result)?;
+                result.pin_fallback(id, value);
+            }
+        } else if seen.insert(id) {
+            stack.push((id, true));
+            stack.extend(
+                nixie_core::ast::traversal::get_children(&node.kind)
+                    .into_iter()
+                    .map(|child| (child, false)),
+            );
+        }
+    }
+    Some(result)
+}
+
 pub(crate) fn eval_int(
     term: TermId,
     manager: &TermManager,
     arrays: &HashMap<TermId, ArrayInterp>,
     env: &HashMap<TermId, BigInt>,
 ) -> Option<BigInt> {
-    if let Some(v) = env.get(&term) {
-        return Some(v.clone());
-    }
-    let n = manager.get(term)?;
-    match &n.kind {
-        TermKind::IntConst(k) => Some(k.clone()),
-        TermKind::Var(_) => None, // unbound
-        TermKind::Neg(a) => Some(-eval_int(*a, manager, arrays, env)?),
-        TermKind::Add(xs) => {
-            let mut s = BigInt::zero();
-            for &x in xs {
-                s += eval_int(x, manager, arrays, env)?;
-            }
-            Some(s)
-        }
-        TermKind::Mul(xs) => {
-            let mut p = BigInt::from(1);
-            for &x in xs {
-                p *= eval_int(x, manager, arrays, env)?;
-            }
-            Some(p)
-        }
-        TermKind::Sub(a, b) => {
-            Some(eval_int(*a, manager, arrays, env)? - eval_int(*b, manager, arrays, env)?)
-        }
-        TermKind::Div(a, b) | TermKind::Mod(a, b) => {
-            // SMT-LIB Ints semantics: Euclidean division – the remainder is
-            // always non-negative (`r = a − b·(a div b)`, `0 ≤ r < |b|`).
-            let (a, b) = (
-                eval_int(*a, manager, arrays, env)?,
-                eval_int(*b, manager, arrays, env)?,
-            );
-            if b.is_zero() {
-                return None; // division by zero is uninterpreted
-            }
-            let (q, r) = (a.clone() / &b, a % &b);
-            let (q, r) = if r.sign() == num_bigint::Sign::Minus {
-                if b.sign() == num_bigint::Sign::Plus {
-                    (q - 1u32, r + b.clone())
-                } else {
-                    (q + 1u32, r - b.clone())
-                }
-            } else {
-                (q, r)
-            };
-            if matches!(n.kind, TermKind::Div(_, _)) {
-                Some(q)
-            } else {
-                Some(r)
-            }
-        }
-        TermKind::Select(arr, idx) => {
-            let i = eval_int(*idx, manager, arrays, env)?;
-            let i64v = i.to_i64()?;
-            // A `store` tower is evaluated structurally first: the read of
-            // `(store A k v)` at `k` is `v`, otherwise it recurses into `A`.
-            // Only when the array term is an opaque variable does the
-            // interpretation table get consulted (written index -> its
-            // value; else the base default, `None` for an unknown array –
-            // defer, Sat-only).
-            let mut array_term = *arr;
-            loop {
-                let a_kind = manager.get(array_term).map(|t| t.kind.clone());
-                match a_kind {
-                    Some(TermKind::Store(base, k, v)) => {
-                        let kval = eval_int(k, manager, arrays, env)?;
-                        if kval == i {
-                            return eval_int(v, manager, arrays, env);
-                        }
-                        array_term = base;
-                    }
-                    _ => break,
-                }
-            }
-            let interp = arrays.get(&array_term)?;
-            interp
-                .entries
-                .get(&i64v)
-                .cloned()
-                .or_else(|| interp.default.clone())
-        }
-        TermKind::Ite(c, a, b) => {
-            if eval_bool(*c, manager, arrays, env)? {
-                eval_int(*a, manager, arrays, env)
-            } else {
-                eval_int(*b, manager, arrays, env)
-            }
-        }
-        TermKind::Let { bindings, body } => {
-            // Parser inlines let-names into the body via the binding table while
-            // parsing, so `body` already contains the bound values as subterms.
-            // Still evaluate binding values first (in case substitute left name
-            // vars), then body. Bindings are `(name_spur, value_term)`.
-            let local = env.clone();
-            for &(_name, val_term) in bindings {
-                // Force evaluation of binding values (side-effect free).
-                let _ = eval_int(val_term, manager, arrays, &local)?;
-            }
-            eval_int(*body, manager, arrays, &local)
-        }
-        _ => None,
-    }
+    let interp = interpretation(&[term], manager, arrays, env)?;
+    let value = crate::nl_eval::evaluate(term, manager, &interp)?;
+    let number = value.as_num()?;
+    number.is_integer().then(|| number.to_integer())
 }
 
 pub(crate) fn eval_bool(
@@ -934,74 +888,8 @@ pub(crate) fn eval_bool(
     arrays: &HashMap<TermId, ArrayInterp>,
     env: &HashMap<TermId, BigInt>,
 ) -> Option<bool> {
-    let n = manager.get(term)?;
-    match &n.kind {
-        TermKind::True => Some(true),
-        TermKind::False => Some(false),
-        TermKind::Not(a) => Some(!eval_bool(*a, manager, arrays, env)?),
-        TermKind::And(xs) => {
-            for &x in xs {
-                if !eval_bool(x, manager, arrays, env)? {
-                    return Some(false);
-                }
-            }
-            Some(true)
-        }
-        TermKind::Or(xs) => {
-            for &x in xs {
-                if eval_bool(x, manager, arrays, env)? {
-                    return Some(true);
-                }
-            }
-            Some(false)
-        }
-        TermKind::Eq(a, b) => {
-            // Could be int or bool eq
-            if manager
-                .get(*a)
-                .is_some_and(|t| t.sort == manager.sorts.bool_sort)
-            {
-                Some(eval_bool(*a, manager, arrays, env)? == eval_bool(*b, manager, arrays, env)?)
-            } else {
-                Some(eval_int(*a, manager, arrays, env)? == eval_int(*b, manager, arrays, env)?)
-            }
-        }
-        TermKind::Le(a, b) => {
-            Some(eval_int(*a, manager, arrays, env)? <= eval_int(*b, manager, arrays, env)?)
-        }
-        TermKind::Lt(a, b) => {
-            Some(eval_int(*a, manager, arrays, env)? < eval_int(*b, manager, arrays, env)?)
-        }
-        TermKind::Ge(a, b) => {
-            Some(eval_int(*a, manager, arrays, env)? >= eval_int(*b, manager, arrays, env)?)
-        }
-        TermKind::Gt(a, b) => {
-            Some(eval_int(*a, manager, arrays, env)? > eval_int(*b, manager, arrays, env)?)
-        }
-        TermKind::Ite(c, a, b) => {
-            if eval_bool(*c, manager, arrays, env)? {
-                eval_bool(*a, manager, arrays, env)
-            } else {
-                eval_bool(*b, manager, arrays, env)
-            }
-        }
-        TermKind::Implies(a, b) => {
-            Some(!eval_bool(*a, manager, arrays, env)? || eval_bool(*b, manager, arrays, env)?)
-        }
-        TermKind::Distinct(args) => {
-            // All pairwise-distinct over evaluable int terms.
-            let mut seen: Vec<BigInt> = Vec::with_capacity(args.len());
-            for &x in args {
-                let v = eval_int(x, manager, arrays, env)?;
-                if seen.contains(&v) {
-                    return Some(false);
-                }
-                seen.push(v);
-            }
-            Some(true)
-        }
-        _ => None,
-    }
+    let interp = interpretation(&[term], manager, arrays, env)?;
+    crate::nl_eval::evaluate(term, manager, &interp)?.as_truth()
 }
 
 fn eval_atom(
@@ -1009,20 +897,16 @@ fn eval_atom(
     manager: &TermManager,
     arrays: &HashMap<TermId, ArrayInterp>,
     env: &HashMap<TermId, BigInt>,
-) -> bool {
-    let Some(l) = eval_int(atom.lhs, manager, arrays, env) else {
-        return false;
-    };
-    let Some(r) = eval_int(atom.rhs, manager, arrays, env) else {
-        return false;
-    };
-    match atom.kind {
+) -> Option<bool> {
+    let l = eval_int(atom.lhs, manager, arrays, env)?;
+    let r = eval_int(atom.rhs, manager, arrays, env)?;
+    Some(match atom.kind {
         CmpKind::Eq => l == r,
         CmpKind::Le => l <= r,
         CmpKind::Lt => l < r,
         CmpKind::Ge => l >= r,
         CmpKind::Gt => l > r,
-    }
+    })
 }
 
 fn parse_interface(manager: &TermManager, a: TermId, b: TermId) -> Option<Interface> {
@@ -1209,20 +1093,20 @@ pub(crate) fn eval_array_def(term: TermId, manager: &TermManager) -> Option<Arra
         match &n.kind {
             TermKind::Store(arr, idx, val) => {
                 let i = eval_ground_int(*idx, manager)?;
-                let v = eval_ground_int(*val, manager)?;
-                entries_rev.push((i, BigInt::from(v)));
+                let v = eval_int(*val, manager, &HashMap::new(), &HashMap::new())?;
+                entries_rev.push((i, v));
                 cur = *arr;
             }
             TermKind::Apply { func, args } => {
                 let name = manager.resolve_str(*func);
-                if name.contains("const") && args.len() == 1 {
-                    let d = eval_ground_int(args[0], manager)?;
+                if name == nixie_core::reserved::CONST_ARRAY_FUNC && args.len() == 1 {
+                    let d = eval_int(args[0], manager, &HashMap::new(), &HashMap::new())?;
                     let mut entries = HashMap::new();
                     for (i, v) in entries_rev.into_iter().rev() {
                         entries.insert(i, v);
                     }
                     return Some(ArrayInterp {
-                        default: Some(BigInt::from(d)),
+                        default: Some(d),
                         entries,
                     });
                 }
@@ -1269,29 +1153,7 @@ pub(crate) fn eval_select_term(select: TermId, manager: &TermManager) -> Option<
 }
 
 pub(crate) fn eval_ground_int(term: TermId, manager: &TermManager) -> Option<i64> {
-    let n = manager.get(term)?;
-    match &n.kind {
-        TermKind::IntConst(k) => k.to_i64(),
-        TermKind::Neg(inner) => Some(-eval_ground_int(*inner, manager)?),
-        TermKind::Add(terms) => {
-            let mut sum = 0_i64;
-            for t in terms {
-                sum = sum.checked_add(eval_ground_int(*t, manager)?)?;
-            }
-            Some(sum)
-        }
-        TermKind::Sub(a, b) => {
-            Some(eval_ground_int(*a, manager)?.checked_sub(eval_ground_int(*b, manager)?)?)
-        }
-        TermKind::Mul(terms) => {
-            let mut prod = 1_i64;
-            for t in terms {
-                prod = prod.checked_mul(eval_ground_int(*t, manager)?)?;
-            }
-            Some(prod)
-        }
-        _ => None,
-    }
+    eval_int(term, manager, &HashMap::new(), &HashMap::new())?.to_i64()
 }
 
 fn parse_bound_eq(
@@ -1321,7 +1183,7 @@ fn parse_bound_cmp(
         }
         TermKind::Gt(a, b) => {
             if let (Some(v), Some(k)) = (as_var(manager, *a), eval_ground_int(*b, manager)) {
-                return Some((v, Some(k + 1), None));
+                return Some((v, Some(k.checked_add(1)?), None));
             }
         }
         TermKind::Le(a, b) => {
@@ -1331,7 +1193,7 @@ fn parse_bound_cmp(
         }
         TermKind::Lt(a, b) => {
             if let (Some(v), Some(k)) = (as_var(manager, *a), eval_ground_int(*b, manager)) {
-                return Some((v, None, Some(k - 1)));
+                return Some((v, None, Some(k.checked_sub(1)?)));
             }
         }
         _ => {}
@@ -1500,4 +1362,215 @@ pub fn eval_assertions_true(
     assertions
         .iter()
         .all(|&a| eval_bool(a, manager, &arrays, env).unwrap_or(false))
+}
+
+#[cfg(test)]
+mod publication_regressions {
+    use super::*;
+
+    #[allow(clippy::too_many_arguments)]
+    fn search(
+        manager: &TermManager,
+        domains: &[(TermId, i64, i64)],
+        interfaces: &[Interface],
+        definitions: &[(TermId, TermId)],
+        conditional: &[(TermId, TermId, TermId)],
+        atoms: &[Atom],
+        arrays: &HashMap<TermId, ArrayInterp>,
+    ) -> (Option<bool>, HashMap<TermId, BigInt>) {
+        let mut env = HashMap::new();
+        let answer = search_rec(
+            0,
+            domains,
+            interfaces,
+            definitions,
+            conditional,
+            atoms,
+            &[],
+            arrays,
+            manager,
+            &mut env,
+            &mut 0,
+        );
+        (answer, env)
+    }
+
+    #[test]
+    fn sibling_assignments_recompute_derived_values() {
+        let mut tm = TermManager::new();
+        let x = tm.mk_var("x", tm.sorts.int_sort);
+        let y = tm.mk_var("y", tm.sorts.int_sort);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let next = tm.mk_add(vec![x, one]);
+        let (answer, env) = search(
+            &tm,
+            &[(x, 0, 1)],
+            &[],
+            &[(y, next)],
+            &[],
+            &[Atom {
+                kind: CmpKind::Eq,
+                lhs: y,
+                rhs: two,
+            }],
+            &HashMap::new(),
+        );
+        assert_eq!(answer, Some(true));
+        assert_eq!(env.get(&x), Some(&BigInt::from(1)));
+        assert_eq!(env.get(&y), Some(&BigInt::from(2)));
+    }
+
+    #[test]
+    fn unresolved_atoms_and_zero_division_are_not_verdicts() {
+        let mut tm = TermManager::new();
+        let y = tm.mk_var("y", tm.sorts.int_sort);
+        let zero = tm.mk_int(0);
+        let one = tm.mk_int(1);
+        let guard = tm.mk_false();
+        let atom = Atom {
+            kind: CmpKind::Eq,
+            lhs: y,
+            rhs: one,
+        };
+        assert_eq!(
+            search(
+                &tm,
+                &[],
+                &[],
+                &[],
+                &[(guard, y, zero)],
+                &[atom],
+                &HashMap::new()
+            )
+            .0,
+            None
+        );
+        let division = tm.mk_div(one, zero);
+        let atom = Atom {
+            kind: CmpKind::Ge,
+            lhs: division,
+            rhs: zero,
+        };
+        assert_eq!(
+            search(&tm, &[], &[], &[], &[], &[atom], &HashMap::new()).0,
+            None
+        );
+    }
+
+    #[test]
+    fn conflicting_definitions_and_interfaces_are_checked() {
+        let mut tm = TermManager::new();
+        let y = tm.mk_var("y", tm.sorts.int_sort);
+        let zero = tm.mk_int(0);
+        let one = tm.mk_int(1);
+        let yes = tm.mk_true();
+        assert_eq!(
+            search(
+                &tm,
+                &[],
+                &[],
+                &[(y, zero), (y, one)],
+                &[],
+                &[],
+                &HashMap::new()
+            )
+            .0,
+            Some(false)
+        );
+        assert_eq!(
+            search(
+                &tm,
+                &[],
+                &[],
+                &[],
+                &[(yes, y, zero), (yes, y, one)],
+                &[],
+                &HashMap::new()
+            )
+            .0,
+            Some(false)
+        );
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let array = tm.mk_var("a", sort);
+        let arrays = HashMap::from([(
+            array,
+            ArrayInterp {
+                default: Some(1.into()),
+                entries: HashMap::new(),
+            },
+        )]);
+        let interface = Interface {
+            const_var: y,
+            array,
+            index: zero,
+        };
+        assert_eq!(
+            search(&tm, &[], &[interface], &[(y, zero)], &[], &[], &arrays).0,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn array_definitions_do_not_overwrite_or_guess_constructor_names() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let array = tm.mk_var("a", sort);
+        let zero = tm.mk_int(0);
+        let one = tm.mk_int(1);
+        let a0 = tm.mk_apply(nixie_core::reserved::CONST_ARRAY_FUNC, vec![zero], sort);
+        let a1 = tm.mk_apply(nixie_core::reserved::CONST_ARRAY_FUNC, vec![one], sort);
+        let first = tm.mk_eq(array, a0);
+        let second = tm.mk_eq(array, a1);
+        let read = tm.mk_select(array, zero);
+        let atom = tm.mk_eq(read, one);
+        assert!(try_decide_ground_ania(&[first, second, atom], &tm).is_none());
+        let fake = tm.mk_apply("user_constant", vec![one], sort);
+        assert!(eval_array_def(fake, &tm).is_none());
+    }
+
+    #[test]
+    fn exact_values_and_large_indices_survive_array_evaluation() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let big: BigInt = BigInt::from(1) << 130;
+        let value = tm.mk_int(big.clone());
+        let array = tm.mk_apply(nixie_core::reserved::CONST_ARRAY_FUNC, vec![value], sort);
+        let read = tm.mk_select(array, value);
+        assert_eq!(
+            eval_int(read, &tm, &HashMap::new(), &HashMap::new()),
+            Some(big.clone())
+        );
+        assert_eq!(
+            eval_array_def(array, &tm).and_then(|a| a.default),
+            Some(big)
+        );
+        let high = tm.mk_int(i64::MAX);
+        let x = tm.mk_var("x", tm.sorts.int_sort);
+        let above = tm.mk_gt(x, high);
+        assert!(parse_bound_cmp(&tm, above).is_none());
+        let low = tm.mk_int(i64::MIN);
+        let below = tm.mk_lt(x, low);
+        assert!(parse_bound_cmp(&tm, below).is_none());
+    }
+
+    #[test]
+    fn deep_integer_evaluation_uses_the_heap() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let mut tm = TermManager::new();
+                let x = tm.mk_var("x", tm.sorts.int_sort);
+                let one = tm.mk_int(1);
+                let mut term = x;
+                for _ in 0..20_000 {
+                    term = tm.mk_sub(term, one);
+                }
+                let env = HashMap::from([(x, BigInt::from(20_000))]);
+                assert_eq!(eval_int(term, &tm, &HashMap::new(), &env), Some(0.into()));
+            })
+            .expect("thread")
+            .join()
+            .expect("heap evaluation");
+    }
 }

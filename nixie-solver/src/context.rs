@@ -60,6 +60,8 @@ struct DeclaredConst {
 /// A declared function
 #[derive(Debug, Clone)]
 struct DeclaredFun {
+    /// Constructor, selector, or defined macro rather than an uninterpreted function.
+    interpreted: bool,
     /// The function name
     name: String,
     /// Argument sorts
@@ -182,6 +184,7 @@ pub struct Context {
     alias_model_values: crate::prelude::FxHashMap<TermId, TermId>,
     /// Declared functions
     declared_funs: Vec<DeclaredFun>,
+    published: model_fmt::PublishedModel,
     /// Declared functions stack for push/pop
     fun_stack: Vec<usize>,
     /// Mapping from function names to indices
@@ -267,6 +270,7 @@ impl Context {
             define_fun_aliases: Vec::new(),
             alias_model_values: crate::prelude::FxHashMap::default(),
             declared_funs: Vec::new(),
+            published: model_fmt::PublishedModel::default(),
             fun_stack: Vec::new(),
             fun_name_to_index: crate::prelude::HashMap::new(),
             last_result: None,
@@ -342,6 +346,7 @@ impl Context {
         // `declare-const` command is processed"): without it, a trigger-free
         // quantifier has no in-scope constant to instantiate with.
         self.solver.register_declared_const(term, sort);
+        self.refresh_declared_model();
         term
     }
 
@@ -350,13 +355,39 @@ impl Context {
     /// Registers a function signature in the context. For nullary functions (constants),
     /// use `declare_const` instead.
     pub fn declare_fun(&mut self, name: &str, arg_sorts: Vec<SortId>, ret_sort: SortId) {
+        self.register_function_signature(name, arg_sorts, ret_sort, false);
+    }
+
+    fn declare_interpreted_fun(&mut self, name: &str, args: Vec<SortId>, result: SortId) {
+        self.register_function_signature(name, args, result, true);
+    }
+
+    fn register_function_signature(
+        &mut self,
+        name: &str,
+        arg_sorts: Vec<SortId>,
+        ret_sort: SortId,
+        interpreted: bool,
+    ) {
         let index = self.declared_funs.len();
         self.declared_funs.push(DeclaredFun {
+            interpreted,
             name: name.to_string(),
             arg_sorts,
             ret_sort,
         });
         self.fun_name_to_index.insert(name.to_string(), index);
+        self.refresh_declared_model();
+    }
+
+    fn refresh_declared_model(&mut self) {
+        if self.last_result == Some(SolverResult::Sat) {
+            // Declarations extend a model, but may capture a printed witness
+            // name or enlarge a chosen finite domain. Rebuild and certify the
+            // same assertions before exposing the extended interpretation.
+            let result = self.settle_published_model(SolverResult::Sat);
+            self.last_result = Some(result);
+        }
     }
 
     /// Register the free symbols of a DAG imported by the Z3 facade.
@@ -500,6 +531,7 @@ impl Context {
     /// "not available" error instead of reporting a model, core or proof that
     /// belongs to a superseded assertion stack.
     pub(crate) fn invalidate_last_check(&mut self) {
+        self.published = model_fmt::PublishedModel::default();
         self.last_result = None;
         self.last_assumptions.clear();
     }
@@ -589,6 +621,7 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
+            && !self.solver.model_already_certified()
         {
             if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: array atoms need theory");
@@ -777,6 +810,7 @@ impl Context {
         // report stale assumptions.
         self.last_assumptions.clear();
         self.last_result = Some(result);
+        let result = self.settle_published_model(result);
 
         // Write a binary proof log if a path is configured (std-only).
         #[cfg(feature = "std")]
@@ -1346,20 +1380,7 @@ impl Context {
             "version" => format!("(:version \"{}\")", env!("CARGO_PKG_VERSION")),
             "authors" => "(:authors \"COOLJAPAN OU (Team Kitasan)\")".to_string(),
             "error-behavior" => "(:error-behavior continued-execution)".to_string(),
-            "reason-unknown" => {
-                // Report why the last check returned `unknown`, or `unsupported`
-                // when the last result was decided (sat/unsat) or absent.
-                match self.last_result {
-                    Some(SolverResult::Unknown) => match self.certification_failure() {
-                        Some(reason) => format!(
-                            "(:reason-unknown {})",
-                            nixie_core::smtlib::format_string_literal(reason)
-                        ),
-                        None => "(:reason-unknown incomplete)".to_string(),
-                    },
-                    _ => "(:reason-unknown \"not applicable\")".to_string(),
-                }
-            }
+            "reason-unknown" => self.reason_unknown_info(),
             _ => format!(
                 "(error {})",
                 nixie_core::smtlib::format_string_literal(&format!(
@@ -1589,13 +1610,14 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
+            && !self.solver.model_already_certified()
         {
             result = SolverResult::Unknown;
         }
         self.resolve_define_fun_aliases(result);
         self.last_assumptions = assumptions.to_vec();
         self.last_result = Some(result);
-        result
+        self.settle_published_model(result)
     }
 
     /// Return the unsat core from the last check (crate-internal use only).
@@ -1693,6 +1715,9 @@ impl Context {
         // `(get-model)` then served a stale or absent interpretation while the
         // session claimed `sat`.  Report the restore verdict honestly instead.
         let restore = self.check_with_assumptions_raw(assumptions);
+        self.last_result = Some(restore);
+        self.last_assumptions = assumptions.to_vec();
+        let restore = self.settle_published_model(restore);
         let (status, cached) = consequences_restore_state(restore);
         match cached {
             Some(result) => {
@@ -2016,6 +2041,7 @@ impl Context {
                     if result == SolverResult::Sat
                         && self.solver.array_atoms_need_theory(&self.terms)
                         && !self.solver.array_axioms_saturated
+                        && !self.solver.model_already_certified()
                     {
                         result = SolverResult::Unknown;
                     }
@@ -2023,6 +2049,7 @@ impl Context {
                     // models serve `get-model` identically).
                     self.resolve_define_fun_aliases(result);
                     self.last_result = Some(result);
+                    let result = self.settle_published_model(result);
                     output.push(match result {
                         SolverResult::Sat => {
                             // A delta-ICP witness is reported as dReal
@@ -2209,7 +2236,7 @@ impl Context {
                             .iter()
                             .map(|(_, sort_name)| self.parse_sort_name(sort_name))
                             .collect::<Result<_>>()?;
-                        self.declare_fun(&name, arg_sorts, sort);
+                        self.declare_interpreted_fun(&name, arg_sorts, sort);
                         // A definition is also recorded for the bag fun
                         // operators (`bag.map`/`bag.filter` need unary,
                         // `bag.fold` binary): the reduction inlines the
@@ -2272,10 +2299,10 @@ impl Context {
                             let ctor_name = self.terms.sorts.resolve_spur(ctor.name).to_string();
                             let selector_sorts: Vec<SortId> =
                                 ctor.selectors.iter().map(|&(_, sort)| sort).collect();
-                            self.declare_fun(&ctor_name, selector_sorts, dt_sort);
+                            self.declare_interpreted_fun(&ctor_name, selector_sorts, dt_sort);
                             for &(sel_spur, sel_sort) in &ctor.selectors {
                                 let sel_name = self.terms.sorts.resolve_spur(sel_spur).to_string();
-                                self.declare_fun(&sel_name, vec![dt_sort], sel_sort);
+                                self.declare_interpreted_fun(&sel_name, vec![dt_sort], sel_sort);
                             }
                         }
                     }

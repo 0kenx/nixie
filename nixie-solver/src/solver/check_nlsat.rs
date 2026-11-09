@@ -20,7 +20,6 @@ use nixie_theories::nlsat::{
     NlDispatchResult, NlSatModel, dispatch_nia_constraints, dispatch_nra_constraints,
     term_is_nonlinear,
 };
-use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{One, ToPrimitive, Zero};
 use smallvec::SmallVec;
@@ -122,13 +121,38 @@ impl Solver {
             return Some(verdict);
         }
 
+        // Store-backed searches must see the original ITEs and definitions:
+        // the encoded proxies are not independent arithmetic inputs. For
+        // opaque reads, retain purification so their scalar witnesses remain
+        // connected to the array renderer's ownership tables.
+        let original_stores = nixie_theories::ania_ground::assertions_contain_store(
+            &self.certificate_assertions,
+            manager,
+        );
         let result = match backend {
-            NlBackend::Nia => dispatch_nia_constraints(
-                &self.assertions,
-                manager,
-                true,
-                self.config.nonlinear_model_search,
-            ),
+            NlBackend::Nia => {
+                let roots = if original_stores {
+                    &self.certificate_assertions
+                } else {
+                    &self.assertions
+                };
+                let result = dispatch_nia_constraints(
+                    roots,
+                    manager,
+                    true,
+                    self.config.nonlinear_model_search,
+                );
+                if result.is_none() && original_stores {
+                    dispatch_nia_constraints(
+                        &self.assertions,
+                        manager,
+                        true,
+                        self.config.nonlinear_model_search,
+                    )
+                } else {
+                    result
+                }
+            }
             NlBackend::Nra => dispatch_nra_constraints(&self.assertions, manager),
         }?;
 
@@ -147,7 +171,9 @@ impl Solver {
                      for one Sat; they are alternatives, not layers"
                 );
                 if nl_model.algebraic.is_empty() {
-                    self.install_nl_model(nl_model, manager);
+                    if !self.install_nl_model(nl_model, manager) {
+                        return None;
+                    }
                 } else {
                     self.nl_algebraic_values = nl_model.algebraic;
                 }
@@ -217,15 +243,21 @@ impl Solver {
     }
 
     /// Install an NL-dispatch model into `self.model` for `(get-model)`.
-    fn install_nl_model(&mut self, nl_model: NlSatModel, manager: &mut TermManager) {
+    fn install_nl_model(&mut self, nl_model: NlSatModel, manager: &mut TermManager) -> bool {
         let mut model = Model::new();
         let mut interpretation = nixie_theories::nl_eval::Interpretation::empty();
         for (term, value) in nl_model.assignments {
-            let is_int = manager
-                .get(term)
-                .map(|t| t.sort == manager.sorts.int_sort)
-                .unwrap_or(true);
+            let Some(node) = manager.get(term) else {
+                return false;
+            };
+            let is_int = node.sort == manager.sorts.int_sort;
+            if !is_int && node.sort != manager.sorts.real_sort {
+                return false;
+            }
             let value_term = if is_int {
+                if !value.is_integer() {
+                    return false;
+                }
                 manager.mk_int(value.to_integer())
             } else {
                 big_rational_to_real_term(manager, &value)
@@ -240,6 +272,12 @@ impl Solver {
         // abstaining on unpinned Booleans — a mis-derived truth pin is
         // caught here and the whole witness declined.
         for (term, value) in nl_model.truths {
+            if !manager
+                .get(term)
+                .is_some_and(|node| node.sort == manager.sorts.bool_sort)
+            {
+                return false;
+            }
             let value_term = if value {
                 manager.mk_true()
             } else {
@@ -259,9 +297,23 @@ impl Solver {
         // resolve) does not veto: the fork's nonlinear model searches verify
         // their goals their own way, and abstention is not refutation.
         if nixie_theories::nl_eval::refuted_under(&self.assertions, manager, &interpretation) {
-            return;
+            return false;
         }
-        self.model = Some(model);
+        let previous = self.model.replace(model);
+        self.recover_ground_model_definitions(manager);
+        if self.model.as_ref().is_some_and(|model| {
+            self.certificate_assertions.iter().any(|&term| {
+                matches!(
+                    self.eval_under_interpretation(term, model, manager)
+                        .value_owned(),
+                    Some(super::EvalVal::Bool(false))
+                )
+            })
+        }) {
+            self.model = previous;
+            return false;
+        }
+        true
     }
 
     /// Check nonlinear arithmetic constraints for early UNSAT detection.
@@ -941,24 +993,14 @@ fn assertions_have_int_arith(manager: &TermManager, assertions: &[TermId]) -> bo
 
 /// Convert a `BigRational` into a Real-sorted constant term.
 ///
-/// Prefers an exact `Rational64` when both numerator and denominator fit in
-/// `i64`; otherwise falls back to an integer approximation of the floor
-/// (still a valid Real constant, just less precise for huge values).
+/// Use a compact literal when it fits; otherwise keep the exact rational DAG.
 fn big_rational_to_real_term(manager: &mut TermManager, value: &BigRational) -> TermId {
-    let n = value.numer();
-    let d = value.denom();
-    if let (Some(ni), Some(di)) = (n.to_i64(), d.to_i64()) {
-        if di != 0 {
-            return manager.mk_real(Rational64::new(ni, di));
-        }
+    if let (Some(n), Some(d)) = (value.numer().to_i64(), value.denom().to_i64()) {
+        return manager.mk_real(Rational64::new(n, d));
     }
-    // Fallback: integer part only.
-    let approx: BigInt = value.to_integer();
-    if let Some(v) = approx.to_i64() {
-        manager.mk_real(Rational64::from_integer(v))
-    } else {
-        manager.mk_real(Rational64::from_integer(0))
-    }
+    let numerator = manager.mk_int(value.numer().clone());
+    let denominator = manager.mk_int(value.denom().clone());
+    manager.mk_rdiv(numerator, denominator)
 }
 
 /// Comparison operator (strict or non-strict greater-than).
@@ -1005,5 +1047,48 @@ mod tests {
         assert!(!is_perfect_square(6));
         assert!(!is_perfect_square(7));
         assert!(!is_perfect_square(8));
+    }
+}
+
+#[cfg(test)]
+mod publication_numeric_regressions {
+    use super::*;
+    use num_bigint::BigInt;
+
+    #[test]
+    fn wide_real_witnesses_are_never_rounded_or_defaulted() {
+        let mut manager = TermManager::new();
+        let solver = Solver::new();
+        for value in [
+            BigRational::new(BigInt::from(1) << 130usize, BigInt::from(3)),
+            BigRational::new(BigInt::from(1), BigInt::from(1) << 130usize),
+            BigRational::new(-(BigInt::from(1) << 130usize), BigInt::from(7)),
+        ] {
+            let term = big_rational_to_real_term(&mut manager, &value);
+            assert_eq!(
+                manager.get(term).map(|n| n.sort),
+                Some(manager.sorts.real_sort)
+            );
+            let read = super::super::array_completion_certify::evaluate_closed_value_pure(
+                &solver, term, &manager,
+            );
+            assert_eq!(read.and_then(|v| v.to_big()), Some(value));
+        }
+    }
+
+    #[test]
+    fn fractional_integer_witnesses_are_rejected_before_installation() {
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let mut solver = Solver::new();
+        let witness = NlSatModel {
+            assignments: std::collections::HashMap::from([(
+                x,
+                BigRational::new(1.into(), 2.into()),
+            )]),
+            ..NlSatModel::default()
+        };
+        assert!(!solver.install_nl_model(witness, &mut manager));
+        assert!(solver.model.is_none());
     }
 }

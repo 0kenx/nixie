@@ -21,6 +21,9 @@ use super::{EvalVal, Solver, SolverResult};
 use nixie_core::reserved::CONST_ARRAY_FUNC;
 
 mod array_values;
+mod candidate;
+mod printed;
+pub(crate) use candidate::ReplacedCandidate;
 mod declined;
 mod groups;
 mod infinite;
@@ -64,10 +67,33 @@ const MAX_CERTIFICATE_QUERIES: usize = 96;
 /// property of the tree and not of the machine (decision (9)).  A query that
 /// runs out answers `Unknown`, which this module reads as "not certified".
 const CERTIFICATE_CONFLICT_BUDGET: u64 = 20_000;
+/// Decisions are bounded too: a long satisfiable search may learn few conflicts.
+const CERTIFICATE_DECISION_BUDGET: u64 = 100_000;
+
+/// Work charged across completion, publication, repair, and explanations of one check.
+#[derive(Debug, Default)]
+pub(super) struct CompletionWork {
+    pub(super) cached: bool,
+    queries: core::sync::atomic::AtomicUsize,
+    conflicts: core::sync::atomic::AtomicU64,
+    decisions: core::sync::atomic::AtomicU64,
+}
+
+impl CompletionWork {
+    pub(super) fn cached_query() -> Self {
+        Self {
+            cached: true,
+            ..Self::default()
+        }
+    }
+}
 
 /// One budget shared by every proposal stage and independent array group.
 struct QueryBudget {
     used: usize,
+    shared: std::sync::Arc<CompletionWork>,
+    charged_conflicts: u64,
+    charged_decisions: u64,
     deadline: Option<nixie_time::Instant>,
     conflicts: Option<u64>,
     decisions: Option<u64>,
@@ -75,6 +101,9 @@ struct QueryBudget {
 impl QueryBudget {
     fn for_solver(solver: &Solver) -> Self {
         let conflicts = (solver.config.max_conflicts > 0).then(|| {
+            if solver.completion_work.cached {
+                return solver.config.max_conflicts;
+            }
             let sat = solver
                 .sat
                 .max_conflicts()
@@ -89,15 +118,25 @@ impl QueryBudget {
                 .saturating_sub(solver.bv.conflicts_spent());
             sat.min(theory).min(bv)
         });
-        let decisions = solver
-            .sat
-            .max_decisions()
-            .map(|limit| limit.saturating_sub(solver.sat.stats().decisions));
+        let decisions = if solver.completion_work.cached {
+            (solver.config.max_decisions > 0).then_some(solver.config.max_decisions)
+        } else {
+            solver
+                .sat
+                .max_decisions()
+                .map(|limit| limit.saturating_sub(solver.sat.stats().decisions))
+        };
+        let shared = solver.completion_work.clone();
+        let charged_conflicts = shared.conflicts.load(core::sync::atomic::Ordering::Relaxed);
+        let charged_decisions = shared.decisions.load(core::sync::atomic::Ordering::Relaxed);
         Self {
-            used: 0,
+            used: shared.queries.load(core::sync::atomic::Ordering::Relaxed),
+            shared,
+            charged_conflicts,
+            charged_decisions,
             deadline: solver.check_deadline,
-            conflicts,
-            decisions,
+            conflicts: conflicts.map(|n| n.saturating_sub(charged_conflicts)),
+            decisions: decisions.map(|n| n.saturating_sub(charged_decisions)),
         }
     }
     fn start(
@@ -106,6 +145,26 @@ impl QueryBudget {
         manager: &TermManager,
         logic: Option<&str>,
     ) -> Option<Solver> {
+        self.used = self
+            .shared
+            .queries
+            .load(core::sync::atomic::Ordering::Relaxed);
+        let conflicts = self
+            .shared
+            .conflicts
+            .load(core::sync::atomic::Ordering::Relaxed);
+        let decisions = self
+            .shared
+            .decisions
+            .load(core::sync::atomic::Ordering::Relaxed);
+        self.conflicts = self
+            .conflicts
+            .map(|n| n.saturating_sub(conflicts.saturating_sub(self.charged_conflicts)));
+        self.decisions = self
+            .decisions
+            .map(|n| n.saturating_sub(decisions.saturating_sub(self.charged_decisions)));
+        self.charged_conflicts = conflicts;
+        self.charged_decisions = decisions;
         if self.used >= MAX_CERTIFICATE_QUERIES
             || self.conflicts == Some(0)
             || self.decisions == Some(0)
@@ -122,7 +181,10 @@ impl QueryBudget {
             .conflicts
             .unwrap_or(CERTIFICATE_CONFLICT_BUDGET)
             .min(CERTIFICATE_CONFLICT_BUDGET);
-        solver.config.max_decisions = self.decisions.unwrap_or(0);
+        solver.config.max_decisions = self
+            .decisions
+            .unwrap_or(CERTIFICATE_DECISION_BUDGET)
+            .min(CERTIFICATE_DECISION_BUDGET);
         if let Some(deadline) = self.deadline {
             let remaining = deadline.checked_duration_since(nixie_time::Instant::now())?;
             let millis = u64::try_from(remaining.as_millis()).ok()?;
@@ -132,21 +194,31 @@ impl QueryBudget {
             solver.config.timeout_ms = millis;
         }
         self.used += 1;
+        self.shared
+            .queries
+            .store(self.used, core::sync::atomic::Ordering::Relaxed);
         Some(solver)
     }
     fn finish(&mut self, solver: &Solver) {
-        if let Some(left) = self.conflicts.as_mut() {
-            let spent = solver
-                .sat
-                .stats()
-                .conflicts
-                .saturating_add(solver.statistics.conflicts)
-                .saturating_add(solver.bv.conflicts_spent());
-            *left = left.saturating_sub(spent);
-        }
-        if let Some(left) = self.decisions.as_mut() {
-            *left = left.saturating_sub(solver.sat.stats().decisions);
-        }
+        let conflicts = solver
+            .sat
+            .stats()
+            .conflicts
+            .saturating_add(solver.statistics.conflicts)
+            .saturating_add(solver.bv.conflicts_spent());
+        let decisions = solver.sat.stats().decisions;
+        let _ = self.shared.conflicts.fetch_update(
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+            |n| Some(n.saturating_add(conflicts)),
+        );
+        let _ = self.shared.decisions.fetch_update(
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+            |n| Some(n.saturating_add(decisions)),
+        );
+        // start() charges the shared delta, including this query, before
+        // issuing another. Separate attempts see it in for_solver().
     }
 }
 
@@ -177,6 +249,42 @@ struct Goal {
     /// model, that its uninterpreted-sort witnesses are pairwise distinct
     /// (`printed`); empty for the completion's own searches.
     hypotheses: Vec<TermId>,
+}
+
+impl Solver {
+    /// Search for one concrete publication candidate, charging the same
+    /// query budget as validity checks. Failure never proves unsatisfiability
+    /// of the original, unbounded problem.
+    pub(crate) fn publication_candidate_query(
+        &self,
+        goal: TermId,
+        manager: &mut TermManager,
+    ) -> Option<Solver> {
+        let mut budget = QueryBudget::for_solver(self);
+        let mut query = budget.start(goal, manager, Some("QF_UF"))?;
+        query.assert(goal, manager);
+        let result = query.check(manager);
+        budget.finish(&query);
+        (result == SolverResult::Sat).then_some(query)
+    }
+
+    /// A publication check shares the original check's deadline and work budget.
+    pub(crate) fn check_publication_query(
+        &self,
+        goal: TermId,
+        manager: &mut TermManager,
+        conflict_limit: u64,
+    ) -> SolverResult {
+        let mut budget = QueryBudget::for_solver(self);
+        let Some(mut query) = budget.start(goal, manager, Some("ALL")) else {
+            return SolverResult::Unknown;
+        };
+        query.config.max_conflicts = query.config.max_conflicts.min(conflict_limit);
+        query.assert(goal, manager);
+        let result = query.check(manager);
+        budget.finish(&query);
+        result
+    }
 }
 
 impl Solver {
@@ -781,6 +889,38 @@ fn undetermined(manager: &mut TermManager, kind: &str, position: usize) -> TermI
         &reserved_name("qunk", &format!("{kind}{position}")),
         bool_sort,
     )
+}
+
+/// The value of a closed term, read exactly (every `select` over its
+/// `store` chain): what `(get-value)` prints for a term of the printed model
+/// (`context::model_fmt::printed_check`).  `None` when the evaluator cannot
+/// fold it.
+pub(crate) fn evaluate_closed_value(
+    solver: &Solver,
+    term: TermId,
+    manager: &mut TermManager,
+) -> Option<crate::solver::EvalVal> {
+    let term = array_values::fold_array_value_equalities(term, manager);
+    match solver.eval_under_interpretation(term, &Model::new(), manager) {
+        EvalOutcome::Value(value) => Some(value),
+        _ => None,
+    }
+}
+
+/// [`evaluate_closed_value`] without the array-value fold: the term read
+/// exactly, through a shared borrow, so it interns nothing.  The printed-model
+/// net's value reading (`context::model_fmt::printed_eval::ground_values`)
+/// calls it on every scalar sub-term of a check's assertions, and the term
+/// arena a later check's search reads must not move for it.
+pub(crate) fn evaluate_closed_value_pure(
+    solver: &Solver,
+    term: TermId,
+    manager: &TermManager,
+) -> Option<crate::solver::EvalVal> {
+    match solver.eval_under_interpretation(term, &Model::new(), manager) {
+        EvalOutcome::Value(value) => Some(value),
+        _ => None,
+    }
 }
 
 /// The exact value of a closed Boolean term, or `None` when the evaluator

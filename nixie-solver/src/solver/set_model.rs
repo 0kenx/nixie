@@ -706,7 +706,9 @@ impl Solver {
         if self.assertions.is_empty() {
             return;
         }
-        let survey = super::set_theory::survey_for_model(&self.assertions, manager);
+        let mut roots = self.assertions.clone();
+        roots.extend(self.certificate_assertions.iter().copied());
+        let survey = super::set_theory::survey_for_model(&roots, manager);
         if survey.sets.is_empty() {
             return;
         }
@@ -932,24 +934,9 @@ impl Solver {
                 else {
                     continue;
                 };
-                // Skip only when an existing entry is already fully
-                // resolved. A constructor term's *self-entry* (its own
-                // spelling, which the datatype reconstruction installs)
-                // still carries unresolved components — a selector of a
-                // witness, a skolem — and must be re-resolved, not
-                // trusted: the join's verification compared exactly such
-                // a spelling against the synthesized values and failed.
-                if let Some(existing) = model.get(e)
-                    && is_value_term(existing, manager)
-                    && match manager.get(existing).map(|d| d.kind.clone()) {
-                        Some(TermKind::DtConstructor { args: cargs, .. }) => {
-                            cargs.iter().all(|&c| is_value_term(c, manager))
-                        }
-                        _ => true,
-                    }
-                {
-                    continue;
-                }
+                // Reconstruct compound terms from their current fields. A
+                // previous datatype entry can predate the witness assignments
+                // above, and cannot override a constructor's fixed fields.
                 let mut resolved: Vec<TermId> = Vec::with_capacity(args.len());
                 let mut all = true;
                 for &arg in &args {
@@ -995,6 +982,7 @@ impl Solver {
                             if nixie_core::reserved::is_reserved_tag(manager.resolve_str(*n), "set-join")
                     ) && self.skolem_pinned_to(arg, manager).is_none()
                         && !minted.contains(&arg);
+
                     let value =
                         if is_join_skolem {
                             if let Some(old) = model.get(arg) {
@@ -1017,6 +1005,14 @@ impl Solver {
                             }
                         } else {
                             match model.get(arg) {
+                                _ if is_value_term(arg, manager)
+                                    && !matches!(
+                                        manager.get(arg).map(|d| &d.kind),
+                                        Some(TermKind::DtConstructor { .. })
+                                    ) =>
+                                {
+                                    arg
+                                }
                                 Some(v) if is_value_term(v, manager) => v,
                                 _ if is_value_term(arg, manager) => arg,
                                 // An unvalued component (an unconstrained
@@ -1101,6 +1097,7 @@ impl Solver {
                 // dissenters (it excluded) re-mint.
                 group.sort_by_key(|&e| !self.element_value_is_pinned(e, manager));
                 let anchor = group[0];
+
                 let reference = membership
                     .get(&anchor)
                     .cloned()
@@ -1143,8 +1140,26 @@ impl Solver {
 
         // ---- cardinality targets (the arithmetic solver's word) ----
         let mut target: FxHashMap<TermId, i64> = FxHashMap::default();
+        let mut original_cards = FxHashSet::default();
+        let mut pending = self.certificate_assertions.clone();
+        let mut visited = FxHashSet::default();
+        while let Some(term) = pending.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(node) = manager.get(term) else {
+                continue;
+            };
+            if matches!(node.kind, TermKind::SetCard(_)) {
+                original_cards.insert(term);
+            }
+            pending.extend(nixie_core::ast::traversal::get_children(&node.kind));
+        }
         for &set in sets {
             let card = manager.mk_set_card(set);
+            if !original_cards.contains(&card) {
+                continue;
+            }
             // The arithmetic solver's value first; the model entry the
             // arith pass recorded (an `IntConst`) second — the counting
             // equations reach the tableau through the conjoined axioms,
@@ -1160,17 +1175,27 @@ impl Solver {
             // encoder: it is purified to a `$p*` proxy whose arithmetic
             // value IS the target. Resolution order: the tableau, the
             // model entry the arith pass recorded, then the proxy's.
-            let mut v: Option<i64> = self.arith.value(card).map_or_else(
-                || model.get(card).and_then(int_entry),
-                |r| Some(r.to_integer()),
-            );
+            let mut v: Option<i64> = self
+                .arith
+                .value_exact(card)
+                .and_then(|r| {
+                    r.is_integer()
+                        .then(|| r.to_integer())
+                        .and_then(|n| num_traits::ToPrimitive::to_i64(&n))
+                })
+                .or_else(|| model.get(card).and_then(int_entry));
             if v.is_none()
                 && let Some(proxy) = self.arith_purify.proxy_of(card)
             {
-                v = self.arith.value(proxy).map_or_else(
-                    || model.get(proxy).and_then(int_entry),
-                    |r| Some(r.to_integer()),
-                );
+                v = self
+                    .arith
+                    .value_exact(proxy)
+                    .and_then(|r| {
+                        r.is_integer()
+                            .then(|| r.to_integer())
+                            .and_then(|n| num_traits::ToPrimitive::to_i64(&n))
+                    })
+                    .or_else(|| model.get(proxy).and_then(int_entry));
             }
             if let Some(value) = v {
                 target.insert(set, value);
@@ -1338,38 +1363,6 @@ impl Solver {
             }
         }
 
-        // ---- choose elements: a member of their set, now that the
-        // members exist ----
-        for &(choose, set) in &survey.chooses {
-            if !sets.contains(&set) || elem_values.get(&choose).is_some_and(Option::is_some) {
-                continue;
-            }
-            let member_atom = manager.mk_set_member(choose, set);
-            let committed = self.committed_bool_model(member_atom, model, manager);
-            let value = match (committed, values.get(&set).cloned().flatten()) {
-                // Nonempty and a member: any element of the value (the
-                // model's choice; the choose axioms only demand membership
-                // and congruence, and class-equal sets share values, so
-                // congruent chooses agree).
-                (Some(true), Some(members)) => members.first().copied(),
-                // Not a member (the set is empty) or no value: any fresh
-                // element of the sort — `choose` of an empty set is
-                // underspecified, and an unset set makes the query
-                // undetermined anyway.
-                _ => self.mint_element_value(elem_sort, &mut used, manager),
-            };
-            match value {
-                Some(v) => {
-                    used.insert(v);
-                    elem_values.insert(choose, Some(v));
-                    model.set(choose, v);
-                }
-                None => {
-                    return;
-                }
-            }
-        }
-
         // ---- the term DAG, operands first ----
         // Relation compounds are skipped here: their operands live in
         // other element sorts, so their values come from the cross-sort
@@ -1499,6 +1492,39 @@ impl Solver {
             }
         }
 
+        // ---- choose elements: a member of their set, now that the
+        // members exist ----
+        for &(choose, set) in &survey.chooses {
+            if !sets.contains(&set) || elem_values.get(&choose).is_some_and(Option::is_some) {
+                continue;
+            }
+            let member_atom = manager.mk_set_member(choose, set);
+            let committed = self.committed_bool_model(member_atom, model, manager);
+
+            let value = match (committed, values.get(&set).cloned().flatten()) {
+                // Nonempty and a member: any element of the value (the
+                // model's choice; the choose axioms only demand membership
+                // and congruence, and class-equal sets share values, so
+                // congruent chooses agree).
+                (Some(true), Some(members)) => members.first().copied(),
+                // Not a member (the set is empty) or no value: any fresh
+                // element of the sort — `choose` of an empty set is
+                // underspecified, and an unset set makes the query
+                // undetermined anyway.
+                _ => self.mint_element_value(elem_sort, &mut used, manager),
+            };
+            match value {
+                Some(v) => {
+                    used.insert(v);
+                    elem_values.insert(choose, Some(v));
+                    model.set(choose, v);
+                }
+                None => {
+                    return;
+                }
+            }
+        }
+
         // ---- publish: opaque terms only (compounds fold structurally) ----
         let mut installed: Vec<TermId> = Vec::new();
         for &t in sets {
@@ -1530,6 +1556,7 @@ impl Solver {
                     let singleton = manager.mk_set_singleton(e);
                     acc = manager.mk_set_union(acc, singleton);
                 }
+
                 model.set(t, acc);
                 installed.push(t);
             }
@@ -2406,4 +2433,44 @@ fn sort_nesting_depth(sort: SortId, manager: &TermManager) -> u32 {
         }
     }
     depth
+}
+
+impl Solver {
+    /// Recompute query predicates from the installed sets, including entries
+    /// previously assigned to unconstrained internal cardinality terms.
+    pub(crate) fn complete_set_query(
+        &self,
+        roots: &[TermId],
+        model: &mut Model,
+        manager: &mut TermManager,
+    ) {
+        let mut stack = roots.to_vec();
+        let mut seen = FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term) {
+                continue;
+            }
+            let Some(kind) = manager.get(term).map(|n| n.kind.clone()) else {
+                continue;
+            };
+            stack.extend(nixie_core::ast::traversal::get_children(&kind));
+            let mut view = SetView::new(model, manager);
+            let value = match kind {
+                TermKind::SetCard(set) => view.card(set).map(|n| (false, n)),
+                TermKind::SetMember(element, set) => {
+                    view.member(element, set).map(|b| (true, i64::from(b)))
+                }
+                TermKind::SetSubset(a, b) => view.subset(a, b).map(|v| (true, i64::from(v))),
+                _ => None,
+            };
+            if let Some((boolean, value)) = value {
+                let value = if boolean {
+                    manager.mk_bool(value != 0)
+                } else {
+                    manager.mk_int(num_bigint::BigInt::from(value))
+                };
+                model.set(term, value);
+            }
+        }
+    }
 }

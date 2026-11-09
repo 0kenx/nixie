@@ -178,6 +178,7 @@ pub struct Solver {
     pub(super) branch_priority: branch_priority::PriorityQueue,
     /// EUF theory solver
     pub(super) euf: EufSolver,
+    model_euf_snapshot: Option<Box<EufSolver>>,
     /// Arithmetic theory solver
     pub(super) arith: ArithSolver,
     /// Bitvector theory solver
@@ -741,6 +742,9 @@ pub struct Solver {
     pub(super) has_array_ops: bool,
     /// Exact assignment snapshot certified by array completion.
     pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
+    completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
+    replaced_candidate: Option<array_completion_certify::ReplacedCandidate>,
+    candidate_certified_as_printed: bool,
     /// Incremental array-theory bookkeeping (Stage 1 of
     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
     /// internalised by the encoder, recorded as `(select_term, array, index)`.
@@ -1229,6 +1233,7 @@ impl Solver {
             },
             branch_priority,
             euf: EufSolver::new(),
+            model_euf_snapshot: None,
             // Default arithmetic is MIXED-INTEGER (Z3's `theory_mi_arith`, the
             // mode an unset / `ALL` logic gets): `Int`-sorted terms are
             // integer variables, `Real`-sorted terms continuous, per variable.
@@ -1354,6 +1359,9 @@ impl Solver {
             ff_dispatch_answered: false,
             has_array_ops: false,
             certified_array_model: None,
+            completion_work: std::sync::Arc::default(),
+            replaced_candidate: None,
+            candidate_certified_as_printed: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
             array_theory: array_theory::ArrayTheory::new(),
@@ -1585,10 +1593,25 @@ impl Solver {
         }
         let fingerprint = self.goal_fingerprint();
         if let Some(cached) = self.cached_verdict(&fingerprint) {
+            // A cached solve spends no search work, but its publication is a
+            // new query and must not inherit an expired certificate budget.
+            self.completion_work =
+                std::sync::Arc::new(array_completion_certify::CompletionWork::cached_query());
+            self.check_deadline = (self.config.timeout_ms > 0)
+                .then(|| {
+                    nixie_time::Instant::now()
+                        .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
+                })
+                .flatten();
             return cached;
         }
 
         self.certified_array_model = None;
+        self.model_euf_snapshot = None;
+        self.mbqi.publication_candidate = None;
+        self.completion_work = std::sync::Arc::default();
+        self.replaced_candidate = None;
+        self.candidate_certified_as_printed = false;
         self.begin_check_budget();
         self.certification_failure = None;
         #[cfg(feature = "std")]
@@ -1604,7 +1627,15 @@ impl Solver {
         self.seed_quantifier_domains(manager);
         let mbqi_checkpoint = self.mbqi.search_checkpoint();
         let mut raw_result = self.check_with_arith_refinement(manager);
+        if raw_result == SolverResult::Sat {
+            self.recover_ground_model_definitions(manager);
+        }
+        let original_candidate = (raw_result == SolverResult::Sat)
+            .then(|| self.model.clone())
+            .flatten();
         if raw_result != SolverResult::Unsat && self.certify_sat_by_array_completion(manager) {
+            self.replaced_candidate = original_candidate
+                .map(|model| array_completion_certify::ReplacedCandidate { model });
             raw_result = SolverResult::Sat;
         }
         if self.user_state.active() {
@@ -4676,6 +4707,12 @@ impl Solver {
     /// against every assertion, quantifiers included, over the whole of their
     /// domain.  A `false` answer claims nothing and leaves the caller's
     /// existing behaviour – ultimately `unknown` – in place.
+    pub(crate) fn completed_publication_candidate(
+        &self,
+    ) -> Option<&crate::mbqi::model_completion::CompletedModel> {
+        self.mbqi.publication_candidate.as_ref()
+    }
+
     fn certify_quantified_sat(&mut self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
@@ -4887,7 +4924,28 @@ impl Solver {
         &self,
         func_id: u32,
     ) -> Vec<nixie_theories::euf::FuncAppEntry> {
-        self.euf.function_application_entries(func_id)
+        self.model_euf().function_application_entries(func_id)
+    }
+
+    fn model_euf(&self) -> &EufSolver {
+        self.model_euf_snapshot.as_deref().unwrap_or(&self.euf)
+    }
+
+    pub(crate) fn euf_class_terms(&self, term: TermId) -> Vec<TermId> {
+        let euf = self.model_euf();
+        let Some(node) = euf.term_to_node(term) else {
+            return vec![term];
+        };
+        euf.class_members(euf.find_immutable(node))
+            .into_iter()
+            .filter_map(|node| euf.node_term(node))
+            .collect()
+    }
+    pub(crate) fn euf_interned_terms(&self) -> Vec<TermId> {
+        let euf = self.model_euf();
+        euf.all_node_indices()
+            .filter_map(|node| euf.node_term(node))
+            .collect()
     }
 
     /// Check satisfiability with resource limits.

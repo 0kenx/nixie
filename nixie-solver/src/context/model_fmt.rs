@@ -17,6 +17,21 @@ use num_bigint::BigInt;
 use num_traits::{One, Signed, Zero};
 
 use super::{Context, RawFuncInterp};
+mod array_model;
+mod candidate_model;
+mod certified_numeric;
+mod class_values;
+mod completed_candidate;
+mod datatype_completion;
+mod finite_uninterpreted;
+mod get_value;
+mod mint;
+mod printed_check;
+mod printed_eval;
+mod projected_functions;
+mod published;
+mod underspecified;
+pub(super) use published::PublishedModel;
 
 /// Render a nonlinear-real exact value as SMT-LIB2 text.
 ///
@@ -199,21 +214,261 @@ enum SortNameFrame {
     },
 }
 
+fn render_eval_value(
+    value: &crate::solver::EvalVal,
+    term: TermId,
+    manager: &nixie_core::ast::TermManager,
+) -> Option<String> {
+    let sort_kind = manager
+        .get(term)
+        .and_then(|t| manager.sorts.get(t.sort))
+        .map(|s| &s.kind);
+    match value {
+        crate::solver::EvalVal::Bool(flag) => {
+            matches!(sort_kind, Some(SortKind::Bool)).then(|| flag.to_string())
+        }
+        crate::solver::EvalVal::Bv { value, width } => match sort_kind {
+            Some(SortKind::BitVec(sort_width)) if sort_width == width => {
+                Some(nixie_core::smtlib::format_bitvec_literal(value, *width))
+            }
+            _ => None,
+        },
+        crate::solver::EvalVal::NumBig(rational) => match sort_kind {
+            Some(SortKind::Int) if rational.is_integer() => Some(rational.to_integer().to_string()),
+            Some(SortKind::Real) => Some(if rational.is_integer() {
+                format!("{}.0", rational.numer())
+            } else {
+                format!("(/ {} {})", rational.numer(), rational.denom())
+            }),
+            _ => None,
+        },
+        crate::solver::EvalVal::Num(rational) => match sort_kind {
+            Some(SortKind::Int) if *rational.denom() == 1 => Some(rational.numer().to_string()),
+            Some(SortKind::Real) => Some(if *rational.denom() == 1 {
+                format!("{}.0", rational.numer())
+            } else {
+                format!("(/ {} {})", rational.numer(), rational.denom())
+            }),
+            _ => None,
+        },
+    }
+}
+
 impl Context {
-    /// Quote the entire witness symbol, rather than embedding a quoted sort
-    /// token inside a simple symbol.
-    fn format_uninterpreted_witness(&self, sort: SortId, index: usize) -> String {
-        let rendered = self.format_sort_name(sort);
-        let name = rendered
-            .strip_prefix('|')
-            .and_then(|s| s.strip_suffix('|'))
-            .unwrap_or(&rendered);
-        nixie_core::smtlib::format_symbol(&format!("@uc_{name}_{index}"))
+    pub(super) fn func_interp_reading(
+        &self,
+        func_name: &str,
+        solver_model: &crate::solver::Model,
+        class_values: &class_values::ClassValues,
+        assert_function: bool,
+    ) -> Option<(RawFuncInterp, bool)> {
+        let mut is_function = true;
+        // Find the declared function so we know its arity and default sort.
+        let decl = self.declared_funs.iter().find(|d| d.name == func_name)?;
+        let arity = decl.arg_sorts.len();
+        if let Some(table) = self.published.function_overrides.get(func_name) {
+            return Some((table.clone(), true));
+        }
+        let default_else = self.default_value(decl.ret_sort);
+
+        // Resolve `func_name` to the EUF function-symbol id.  For an `Apply`
+        // term the EUF id is the underlying value of the function-name `Spur`,
+        // so we recover it from any matching application term (read-only — no
+        // mutable interner access required).
+        let mut func_id: Option<u32> = None;
+        for idx in 0..(self.terms.len() as u32) {
+            let tid = TermId(idx);
+            let Some(term) = self.terms.get(tid) else {
+                continue;
+            };
+            if let TermKind::Apply {
+                func: func_spur, ..
+            } = &term.kind
+                && self.terms.resolve_str(*func_spur) == func_name
+            {
+                func_id = Some(func_spur.into_inner().get());
+                break;
+            }
+        }
+
+        // No application of this function exists in the E-graph: the function is
+        // declared but never applied, so its interpretation is purely the default.
+        let Some(func_id) = func_id else {
+            return Some(((Vec::new(), default_else, arity), true));
+        };
+
+        // Pull congruence-closed application entries from the EUF solver.  Each
+        // entry already has its argument and result classes canonicalized, so
+        // congruence (e.g. f(a) == f(b) when a == b) is applied for us.
+        let mut euf_entries = self.solver.euf_function_entries(func_id);
+        // Specialized solvers (notably finite fields) can own an application
+        // without interning it into EUF. Its checked model entry is equally
+        // part of the function's interpretation.
+        let mut applications: Vec<_> = solver_model.assignments().keys().copied().collect();
+        applications.sort_unstable();
+        for term in applications {
+            let Some(TermKind::Apply { func, args }) = self.terms.get(term).map(|t| &t.kind) else {
+                continue;
+            };
+            if self.terms.resolve_str(*func) != func_name
+                || euf_entries
+                    .iter()
+                    .any(|entry| entry.result_class_terms.contains(&term))
+            {
+                continue;
+            }
+            euf_entries.push(nixie_theories::euf::FuncAppEntry {
+                arg_reps: args
+                    .iter()
+                    .map(|&arg| {
+                        self.solver
+                            .euf_class_representative(arg)
+                            .unwrap_or(arg.raw())
+                    })
+                    .collect(),
+                arg_class_terms: args
+                    .iter()
+                    .map(|&arg| self.solver.euf_class_terms(arg))
+                    .collect(),
+                result_rep: self
+                    .solver
+                    .euf_class_representative(term)
+                    .unwrap_or(term.raw()),
+                result_class_terms: vec![term],
+            });
+        }
+
+        // Deduplicate on the canonical argument-class representative tuple so
+        // congruent applications produce exactly one entry.  Because congruence
+        // forces congruent applications into the same result class, the values
+        // agree in a consistent model.
+        // Keyed by the *evaluated* argument tuple, not by the class
+        // representatives: two argument classes with no concrete value of
+        // their own render as the same fallback, and keying on the
+        // representatives let both through — `(p a)` and `(not (p b))` over an
+        // uninterpreted sort printed `(ite (= x!0 @uc_U_0) true (ite (= x!0
+        // @uc_U_0) false true))`, one guard twice with contradicting answers
+        // (`#P2b-34`).  With every argument resolved through the canonical map
+        // the collision is gone, and keying on what is printed is what makes
+        // that structural rather than incidental.
+        // Keyed by the rendered tuple, carrying the tuple's *class* keys so a
+        // violation names them.  Two entries with the same rendered arguments
+        // and different values cannot both be right, whether they come from
+        // one class (a contradiction in the canonical map) or from two (a
+        // model in which two arguments the solver kept apart are published
+        // indistinguishably — the array-model defect `#P2b-37` closed by
+        // giving every pair of foreign arrays in different classes a witness
+        // read that separates them).  The assertion is unscoped for that
+        // reason: it is the property the printed interpretation needs, and
+        // narrowing it to same-class collisions is what let the second kind
+        // pass unnoticed.
+        let mut seen_arg_keys: crate::prelude::HashMap<Vec<String>, (Vec<u64>, String)> =
+            crate::prelude::HashMap::new();
+        let mut entries: Vec<(Vec<String>, String)> = Vec::new();
+        let mut deferred: Vec<(&nixie_theories::euf::FuncAppEntry, String)> = Vec::new();
+        for entry in &euf_entries {
+            // Resolve the result value first: skip applications whose class has
+            // no concrete model value (an unconstrained application contributes
+            // nothing observable beyond the else-branch).
+            let Some(val_str) =
+                self.class_value_string(&entry.result_class_terms, solver_model, class_values)
+            else {
+                continue;
+            };
+
+            // Resolve each argument to its canonical model value.  An
+            // argument class the model gives no value at all makes the whole
+            // entry unusable: substituting the argument *sort's* default
+            // invented a fact, and the invented tuple then collided with a
+            // real one — `(bvslt (f w) #b00)` with `w` modelled `#b00` printed
+            // `f(#b00) = #b00`, because an unrelated application whose
+            // argument the model left open was rendered at `#b00` first and
+            // won the deduplication (`#P2b-34`).  The else-value covers the
+            // point honestly instead.
+            let exact: Option<Vec<String>> = entry
+                .arg_class_terms
+                .iter()
+                .map(|members| self.class_value_string(members, solver_model, class_values))
+                .collect();
+            let arg_strs = match exact {
+                Some(args) => args,
+                None => {
+                    // Keep it for a second pass: the sort default is a guess,
+                    // and a guess must never take the tuple a real entry
+                    // needs.
+                    deferred.push((entry, val_str));
+                    continue;
+                }
+            };
+
+            let class_keys: Vec<u64> = entry
+                .arg_class_terms
+                .iter()
+                .map(|members| {
+                    members
+                        .first()
+                        .map_or(u64::MAX, |&member| self.class_key(member))
+                })
+                .collect();
+            if let Some((seen_keys, seen_value)) = seen_arg_keys.get(&arg_strs) {
+                is_function &= *seen_value == val_str;
+                debug_assert!(
+                    !assert_function || *seen_value == val_str,
+                    "two interpretation entries for {func_name}{arg_strs:?} disagree: the \
+                     canonical class -> value map gave {val_str} and {seen_value} (argument \
+                     classes {class_keys:?} and {seen_keys:?})"
+                );
+                continue;
+            }
+            seen_arg_keys.insert(arg_strs.clone(), (class_keys, val_str.clone()));
+            entries.push((arg_strs, val_str));
+        }
+
+        // Second pass: entries whose argument the model left open.  The
+        // corresponding sort default stands in, but only for a tuple no exact
+        // entry claimed.
+        for (entry, val_str) in deferred {
+            let arg_strs: Vec<String> = entry
+                .arg_class_terms
+                .iter()
+                .enumerate()
+                .map(|(i, members)| {
+                    self.class_value_string(members, solver_model, class_values)
+                        .unwrap_or_else(|| {
+                            decl.arg_sorts
+                                .get(i)
+                                .map_or_else(|| "?".to_string(), |&s| self.default_value(s))
+                        })
+                })
+                .collect();
+            if seen_arg_keys.contains_key(&arg_strs) {
+                continue;
+            }
+            seen_arg_keys.insert(arg_strs.clone(), (Vec::new(), val_str.clone()));
+            entries.push((arg_strs, val_str));
+        }
+
+        // Pick `else_value`: the most common entry value (ties → first seen),
+        // matching Z3's habit of reusing an existing value as the default.
+        let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
+        // An else value the published-model certificate chose because the
+        // most common one broke a universal (`published::repair_else_values`).
+        let else_value = self.else_override(func_name).unwrap_or(else_value);
+
+        Some(((entries, else_value, arity), is_function))
     }
 
-    /// Get the model (if SAT)
-    /// Returns a list of (name, sort, value) tuples
-    pub fn get_model(&self) -> Option<Vec<(String, String, String)>> {
+    pub(super) fn func_interp_from(
+        &self,
+        func_name: &str,
+        solver_model: &crate::solver::Model,
+        class_values: &class_values::ClassValues,
+    ) -> Option<RawFuncInterp> {
+        self.func_interp_reading(func_name, solver_model, class_values, true)
+            .map(|(interp, _)| interp)
+    }
+
+    pub(super) fn model_rows(&self) -> Option<Vec<(String, String, String)>> {
         if self.last_result != Some(SolverResult::Sat) {
             return None;
         }
@@ -221,8 +476,8 @@ impl Context {
         let mut model = Vec::new();
         // An empty assertion stack is satisfied by *every* assignment, so the
         // solver answers `sat` without ever building a model.  Completing from
-        // the sort defaults is exact there, not a guess – with nothing asserted
-        // no constraint exists that a completion could violate – whereas
+        // the sort defaults is exact there, not a guess — with nothing asserted
+        // no constraint exists that a completion could violate — whereas
         // reporting "no model available" for a `sat` verdict is simply wrong.
         // Any other missing model is a genuine extraction failure and stays
         // `None`, so a real assignment is never fabricated.
@@ -236,7 +491,7 @@ impl Context {
         // nothing weaker: widening it to "assertions non-empty" would fabricate
         // a sort-default model for every other modelless `sat` in the tree.
         let empty_model;
-        let solver_model = match self.solver.model() {
+        let solver_model = match self.published_model() {
             Some(solver_model) => solver_model,
             None if self.assertions.is_empty() || !self.solver.nl_algebraic_values().is_empty() => {
                 empty_model = crate::solver::Model::new();
@@ -245,34 +500,16 @@ impl Context {
             None => return None,
         };
 
-        // Witness bookkeeping for unconstrained uninterpreted-sort constants:
-        // `per_sort_next` is the next fresh witness index for a sort, and
-        // `class_witness` maps an EUF congruence class (or a lone, never-equated
-        // term) to its already-assigned index – so constants proven equal share
-        // one witness while distinct constants get distinct ones.
-        let mut per_sort_next: crate::prelude::HashMap<SortId, usize> =
-            crate::prelude::HashMap::new();
-        let mut int_class_value: crate::prelude::HashMap<u64, i64> = crate::prelude::HashMap::new();
-        let mut int_class_next: i64 = 0;
-        // Integer values already pinned by the solver model (the completion
-        // must not collide a completed argument with a real one).
-        let mut used_int_values: crate::prelude::HashSet<i64> = crate::prelude::HashSet::new();
-        for v in solver_model.assignments().values() {
-            if let Some(TermKind::IntConst(n)) = self.terms.get(*v).map(|t| &t.kind)
-                && let (sign, bytes) = n.to_bytes_le()
-            {
-                let mut i: i64 = 0;
-                for (k, b) in bytes.iter().take(7).enumerate() {
-                    i |= i64::from(*b) << (8 * k);
-                }
-                if sign == num_bigint::Sign::Minus {
-                    i = -i;
-                }
-                used_int_values.insert(i);
-            }
-        }
-        let mut class_witness: crate::prelude::HashMap<(SortId, u64), usize> =
-            crate::prelude::HashMap::new();
+        // The one canonical class → value map of this query (`#P2b-34`): the
+        // constants below, every `define-fun` interpretation, every array
+        // chain and `(get-value …)` all read their answers out of it, so two
+        // renderers cannot describe the same class differently.  It carries
+        // the synthesised `@uc_S_n` witnesses for unconstrained
+        // uninterpreted-sort constants — grouped by congruence class, so
+        // constants proven equal share a witness and distinct ones stay
+        // distinct — as well as every value the circuit or the tableau
+        // published.
+        let class_values = self.build_class_values(solver_model);
 
         for decl in &self.declared_consts {
             // The exact-value side-channel is consulted first. It is only ever
@@ -283,90 +520,119 @@ impl Context {
             // only be a rounded stand-in). Without this arm the sqrt2 goal
             // falls through to `default_value(Real)` and reports `0.0` — a
             // number satisfying none of its assertions.
-            let value = if let Some(exact) = self.solver.nl_algebraic_value(decl.term) {
+            let value = if let Some(value) = self.published.literal_values.get(&decl.term) {
+                value.clone()
+            } else if let Some(exact) = self.solver.nl_algebraic_value(decl.term) {
                 render_nl_witness_value(exact)
-            } else if let Some(defined) = self.alias_model_values.get(&decl.term) {
-                // A nullary `define-fun`: its named constant carries no
-                // constraint (the parser inlined every use), so the value is
-                // the defining body evaluated under this model at the
-                // `sat` verdict (`Context::resolve_define_fun_aliases`).
-                self.format_value(*defined)
-            } else if let Some(val) = solver_model.get(decl.term) {
-                self.format_value(val)
-            } else if self.is_uninterpreted_sort(decl.sort) {
-                // No direct model entry for an uninterpreted-sort constant:
-                // synthesize a Z3-style `@uc_S_n` abstract witness.  Group by
-                // EUF congruence class so equal constants share a witness;
-                // never-equated constants key by their own term id (a disjoint
-                // namespace via the high bit) so they stay distinct.  Always a
-                // valid value, unlike the previous invalid `?`.
-                let class_key: u64 = match self.solver.euf_class_representative(decl.term) {
-                    Some(rep) => (1u64 << 32) | u64::from(rep),
-                    None => u64::from(decl.term.0),
-                };
-                let idx = if let Some(&i) = class_witness.get(&(decl.sort, class_key)) {
-                    i
-                } else {
-                    let next = per_sort_next.entry(decl.sort).or_insert(0);
-                    let i = *next;
-                    *next += 1;
-                    class_witness.insert((decl.sort, class_key), i);
-                    i
-                };
-                self.format_uninterpreted_witness(decl.sort, idx)
-            } else if decl.sort == self.terms.sorts.int_sort
-                && self.solver.euf_app_argument(decl.term)
+            } else if self.is_uninterpreted_sort(decl.sort)
+                && let Some(value) = class_values.get(self.class_key(decl.term))
             {
-                // Unassigned INTEGER constants that feed uninterpreted
-                // applications complete PER EUF CLASS with distinct
-                // integers: defaulting every free argument to 0 collapses
-                // the applications' arguments in the printed model while
-                // the core never decided them — the UCLID-pred wrong-model
-                // class (`fdi0 = emi0 = 0` completed, the structurally
-                // identical ite chains over `ifield(fdi0)` /
-                // `ifield(emi0)` then demanding opposite branches of one
-                // function value).  Distinct-per-class completions keep
-                // the printed model congruence-honest without deciding
-                // anything the search left open.
-                let class_key: u64 = match self.solver.euf_class_representative(decl.term) {
-                    Some(rep) => (1u64 << 32) | u64::from(rep),
-                    None => u64::from(decl.term.0),
-                };
-                let v = if let Some(&i) = int_class_value.get(&class_key) {
-                    i
-                } else {
-                    let mut i = int_class_next;
-                    while used_int_values.contains(&i) {
-                        i += 1;
-                    }
-                    int_class_value.insert(class_key, i);
-                    int_class_next = i + 1;
-                    i
-                };
-                v.to_string()
+                value.to_string()
+            } else if matches!(
+                self.terms.sorts.get(decl.sort).map(|s| &s.kind),
+                Some(SortKind::Array { .. })
+            ) {
+                self.array_model_value(decl.term, decl.sort, solver_model, &class_values)
+                    .unwrap_or_else(|| self.default_value(decl.sort))
+            } else if let Some(value) = self.alias_model_values.get(&decl.term) {
+                self.format_value_at(*value, decl.term)
+            } else if let Some(val) = solver_model.get(decl.term) {
+                self.format_value_at(val, decl.term)
+            } else if let Some(chain) =
+                self.array_model_value(decl.term, decl.sort, solver_model, &class_values)
+            {
+                // An array is never *assigned* a value term — there is no
+                // literal for "the function `{0 ↦ 5}` extended by 0" — so
+                // before `#P2b-34` it fell through to the sort default and
+                // printed `((as const …) #x00)` beside its own `select`
+                // entries saying otherwise.  The published reads are that
+                // function; a `store` chain over the default is how SMT-LIB
+                // spells it.
+                chain
+            } else if let Some(witness) = self
+                .is_uninterpreted_sort(decl.sort)
+                .then(|| class_values.get(self.class_key(decl.term)))
+                .flatten()
+            {
+                // No direct model entry for an uninterpreted-sort constant:
+                // the canonical map's synthesized Z3-style `@uc_S_n` abstract
+                // witness, which is grouped by congruence class so equal
+                // constants share one and distinct constants get distinct
+                // ones.  Always a valid value, unlike the previous invalid
+                // `?` — and, being the same map every other renderer reads,
+                // the same witness `f`'s interpretation prints.
+                witness.to_string()
+            } else if let Some(value) =
+                self.datatype_class_value(decl.term, decl.sort, solver_model, &class_values)
+            {
+                // A datatype constant the reconstruction could not build
+                // (`#P2b-39`): assembled from the values this model gives the
+                // *selector applications* the script itself spells, rather
+                // than from the sort defaults.  Falling through to
+                // `default_value` printed a constructor whose fields were the
+                // sort defaults while `(get-value ((tag b)))` answered the
+                // asserted value out of the same model in the same run — 153
+                // of 300 generated datatype scripts published a model that
+                // contradicted their own assertions that way.
+                value
             } else {
-                // Default value based on sort — EXCEPT for a Boolean that the
-                // assertions DEFINE at conjunct level (`(= b φ)`): a plain
-                // `false` default can contradict the numeric values printed
-                // in this very model (the definition evaluates `true` under
-                // them), publishing a model that violates its own assertions
-                // — the QF_NIA/VeryMax invalid-model class.  Evaluate the
-                // defining formula under the completed model instead; an
-                // unevaluable definition keeps the default (nothing better
-                // is known).
-                if decl.sort == self.terms.sorts.bool_sort
-                    && let Some(v) = self.defined_bool_value(decl.term, solver_model)
-                {
-                    v
-                } else {
-                    self.default_value(decl.sort)
-                }
+                self.defined_bool_value(decl.term, solver_model)
+                    .unwrap_or_else(|| self.default_value(decl.sort))
             };
             let sort_name = self.format_sort_name(decl.sort);
             model.push((decl.name.clone(), sort_name, value));
         }
 
         Some(model)
+    }
+
+    fn published_model_withheld(&self) -> bool {
+        self.uncertified_model_error().is_some()
+    }
+
+    /// Quote the entire witness symbol, rather than embedding a quoted sort
+    /// token inside a simple symbol.
+    fn format_uninterpreted_witness(&self, sort: SortId, index: usize) -> String {
+        let rendered = self.format_sort_name(sort);
+        let name = rendered
+            .strip_prefix('|')
+            .and_then(|s| s.strip_suffix('|'))
+            .unwrap_or(&rendered);
+        // User @ symbols are legal in Nixie. Number only fresh spellings so
+        // declaring @uc_U_0 cannot turn an abstract value into a self-reference.
+        // Consider declarations, never parse-back artifacts in the term arena:
+        // repeated get-model/get-value calls must retain the same numbering.
+        let prefix = format!("@uc_{name}_");
+        let mut occupied: Vec<u128> = self
+            .declared_consts
+            .iter()
+            .map(|d| d.name.as_str())
+            .chain(self.declared_funs.iter().map(|d| d.name.as_str()))
+            .filter_map(|symbol| {
+                let suffix = symbol.strip_prefix(&prefix)?;
+                let number = suffix.parse::<u128>().ok()?;
+                (number.to_string() == suffix).then_some(number)
+            })
+            .collect();
+        occupied.sort_unstable();
+        occupied.dedup();
+        let mut candidate = index as u128;
+        for reserved in occupied {
+            if reserved > candidate {
+                break;
+            }
+            candidate += 1;
+        }
+        nixie_core::smtlib::format_symbol(&format!("{prefix}{candidate}"))
+    }
+
+    /// Get the model (if SAT)
+    /// Returns a list of (name, sort, value) tuples
+    pub fn get_model(&self) -> Option<Vec<(String, String, String)>> {
+        if self.published_model_withheld() {
+            return None;
+        }
+        self.model_rows()
     }
 
     /// Build a raw function interpretation for a declared uninterpreted function.
@@ -399,88 +665,9 @@ impl Context {
         if self.last_result != Some(SolverResult::Sat) {
             return None;
         }
-        let solver_model = self.solver.model()?;
-
-        // Find the declared function so we know its arity and default sort.
-        let decl = self.declared_funs.iter().find(|d| d.name == func_name)?;
-        let arity = decl.arg_sorts.len();
-        let default_else = self.default_value(decl.ret_sort);
-
-        // Resolve `func_name` to the EUF function-symbol id.  For an `Apply`
-        // term the EUF id is the underlying value of the function-name `Spur`,
-        // so we recover it from any matching application term (read-only – no
-        // mutable interner access required).
-        let mut func_id: Option<u32> = None;
-        for idx in 0..(self.terms.len() as u32) {
-            let tid = TermId(idx);
-            let Some(term) = self.terms.get(tid) else {
-                continue;
-            };
-            if let TermKind::Apply {
-                func: func_spur, ..
-            } = &term.kind
-                && self.terms.resolve_str(*func_spur) == func_name
-            {
-                func_id = Some(func_spur.into_inner().get());
-                break;
-            }
-        }
-
-        // No application of this function exists in the E-graph: the function is
-        // declared but never applied, so its interpretation is purely the default.
-        let Some(func_id) = func_id else {
-            return Some((Vec::new(), default_else, arity));
-        };
-
-        // Pull congruence-closed application entries from the EUF solver.  Each
-        // entry already has its argument and result classes canonicalized, so
-        // congruence (e.g. f(a) == f(b) when a == b) is applied for us.
-        let euf_entries = self.solver.euf_function_entries(func_id);
-
-        // Deduplicate on the canonical argument-class representative tuple so
-        // congruent applications produce exactly one entry.  Because congruence
-        // forces congruent applications into the same result class, the values
-        // agree in a consistent model.
-        let mut seen_arg_keys: crate::prelude::HashSet<smallvec::SmallVec<[u32; 4]>> =
-            crate::prelude::HashSet::new();
-        let mut entries: Vec<(Vec<String>, String)> = Vec::new();
-        for entry in &euf_entries {
-            // Resolve the result value first: skip applications whose class has
-            // no concrete model value (an unconstrained application contributes
-            // nothing observable beyond the else-branch).
-            let Some(val_str) = self.class_value_string(&entry.result_class_terms, solver_model)
-            else {
-                continue;
-            };
-
-            if !seen_arg_keys.insert(entry.arg_reps.clone()) {
-                continue; // already emitted this congruence class of arguments
-            }
-
-            // Resolve each argument to its canonical model value.  Falls back to
-            // the default value for the corresponding argument sort when the
-            // class carries no concrete value (rare: an unconstrained argument).
-            let arg_strs: Vec<String> = entry
-                .arg_class_terms
-                .iter()
-                .enumerate()
-                .map(|(i, members)| {
-                    self.class_value_string(members, solver_model)
-                        .unwrap_or_else(|| {
-                            decl.arg_sorts
-                                .get(i)
-                                .map_or_else(|| "?".to_string(), |&s| self.default_value(s))
-                        })
-                })
-                .collect();
-            entries.push((arg_strs, val_str));
-        }
-
-        // Pick `else_value`: the most common entry value (ties → first seen),
-        // matching Z3's habit of reusing an existing value as the default.
-        let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
-
-        Some((entries, else_value, arity))
+        let solver_model = self.published_model()?;
+        let class_values = self.build_class_values(solver_model);
+        self.func_interp_from(func_name, solver_model, &class_values)
     }
 
     /// Resolve an equivalence class (its member `TermId`s) to a formatted model
@@ -492,7 +679,52 @@ impl Context {
         &self,
         members: &[TermId],
         solver_model: &crate::solver::Model,
+        class_values: &class_values::ClassValues,
     ) -> Option<String> {
+        // The canonical map first: it carries the `@uc_S_n` witness a class
+        // over an uninterpreted sort has no term for, which is exactly the
+        // class this walk used to report as valueless (`#P2b-34`).
+        if let Some(&member) = members.first()
+            && let Some(value) = class_values.get(self.class_key(member))
+        {
+            return Some(value.to_string());
+        }
+        // An array-sorted class is rendered the way `(get-model)` renders an
+        // array constant of that class — the `store` chain over its base — so
+        // `f : Array -> BV` gets one interpretation entry per array rather
+        // than one per *sort*: `(distinct (f arr) (f brr))` printed `f` as a
+        // constant, because both argument classes fell back to the array
+        // sort's default and the second entry was deduplicated away.
+        for &member in members {
+            let Some(sort) = self.terms.get(member).map(|data| data.sort) else {
+                continue;
+            };
+            if !self
+                .terms
+                .sorts
+                .get(sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Array { .. }))
+            {
+                continue;
+            }
+            if let Some(chain) = self.array_model_value(member, sort, solver_model, class_values) {
+                return Some(chain);
+            }
+            return Some(self.default_value(sort));
+        }
+        // Folding a member in the model is still an *exact* answer — it is the
+        // model's own arithmetic — and it is what resolves an argument like
+        // `(bvsub (f #b10) v)` that has a value without having a model entry.
+        for &member in members {
+            if let Some(value) = self
+                .solver
+                .eval_under_interpretation(member, solver_model, &self.terms)
+                .value_owned()
+                && let Some(text) = render_eval_value(&value, member, &self.terms)
+            {
+                return Some(text);
+            }
+        }
         for &member in members {
             // Direct model assignment (covers variables and applications whose
             // value was extracted from an equality constraint).
@@ -788,10 +1020,28 @@ impl Context {
 
     /// Whether `sort` is an uninterpreted (user-declared) sort.
     fn is_uninterpreted_sort(&self, sort: SortId) -> bool {
-        self.terms
-            .sorts
-            .get(sort)
-            .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+        !self.is_rounding_mode_sort(sort)
+            && self
+                .terms
+                .sorts
+                .get(sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+    }
+
+    /// Render numeric values at the sort of the declaration they interpret.
+    fn format_value_at(&self, value: TermId, target: TermId) -> String {
+        if !self.terms.get(target).is_some_and(|node| {
+            node.sort == self.terms.sorts.int_sort || node.sort == self.terms.sorts.real_sort
+        }) {
+            return self.format_value(value);
+        }
+        crate::solver::array_completion_certify::evaluate_closed_value_pure(
+            &self.solver,
+            value,
+            &self.terms,
+        )
+        .and_then(|value| render_eval_value(&value, target, &self.terms))
+        .unwrap_or_else(|| self.format_value(value))
     }
 
     /// Format a model value
@@ -890,6 +1140,9 @@ impl Context {
             {
                 nixie_core::smtlib::format_symbol(self.terms.resolve_str(*spur))
             }
+            Some(TermKind::Var(name)) if self.terms.get(term).is_some_and(|t| self.is_uninterpreted_sort(t.sort)) => {
+                nixie_core::smtlib::format_symbol(self.terms.resolve_str(*name))
+            }
             _ => "?".to_string(),
         }
     }
@@ -939,13 +1192,17 @@ impl Context {
                     SortKind::Real => break "0.0".to_string(),
                     // The empty set is ground and exists at every element
                     // sort, so no witness has to be minted for it.
-                    SortKind::Set(_) => break "(as set.empty (Set ?))".to_string(),
+                    SortKind::Set(_) => {
+                        break format!("(as set.empty {})", self.format_sort_name(sort));
+                    }
                     // The empty bag is ground and exists at every element
                     // sort, likewise.
                     SortKind::Seq(_) => {
                         break format!("(as seq.empty {})", self.format_sort_name(task.0));
                     }
-                    SortKind::Bag(_) => break "(as bag.empty (Bag ?))".to_string(),
+                    SortKind::Bag(_) => {
+                        break format!("(as bag.empty {})", self.format_sort_name(sort));
+                    }
                     // The empty string is the canonical ground `String`
                     // value; the old `?` fallback was not valid SMT-LIB
                     // output at all.
@@ -1130,7 +1387,7 @@ impl Context {
     /// unconstrained declared constants – otherwise `Model::eval` returns an
     /// unassigned constant unchanged and `(get-value (x))` answered `((x x))`,
     /// echoing the term instead of producing a value.
-    pub(super) fn format_get_value(&mut self, terms: &[TermId], keys: &[String]) -> String {
+    fn format_get_value_legacy(&mut self, terms: &[TermId], keys: &[String]) -> String {
         if terms.len() != keys.len() {
             return "(error \"get-value query spellings do not match its terms\")".into();
         }
@@ -1141,7 +1398,7 @@ impl Context {
         // Owned so the evaluation below can borrow `self.terms` mutably; see
         // `get_model` for why an empty assertion stack — or a populated
         // algebraic side-channel — yields an empty model rather than an error.
-        let mut model = match self.solver.model() {
+        let mut model = match self.published_model() {
             Some(model) => model.clone(),
             None if self.assertions.is_empty() || !self.solver.nl_algebraic_values().is_empty() => {
                 crate::solver::Model::new()
@@ -1213,6 +1470,8 @@ impl Context {
             self.solver
                 .complete_rel_values(&survey, &mut model, &mut self.terms);
         }
+        self.solver
+            .complete_set_query(terms, &mut model, &mut self.terms);
         // Bag queries over an installed bag value: `bag.card`, `bag.count`
         // and `bag.member` are *functions of the value* (which the model
         // pass verified), so folding them is evaluation, not a guess. A
@@ -1455,25 +1714,42 @@ impl Context {
     /// Render the model of the last successful `check-sat` in SMT-LIB
     /// `(model ...)` form.
     pub fn format_model(&self) -> String {
+        let recfun_lines = self.recfun_model_lines();
+        // Declared uninterpreted functions are part of the model too
+        // (`#P2b-34`): omitting them left `(get-model)` printing the constants
+        // of a `(f x)` goal and nothing about `f`, so the model could be
+        // neither replayed nor checked.
+        if let Some(error) = self.uncertified_model_error() {
+            return error;
+        }
+        let mut func_lines = self.func_interp_lines();
+        let mut division_sorts: Vec<_> =
+            self.published.zero_division_sorts.iter().copied().collect();
+        division_sorts.sort_unstable_by_key(|s| s.0);
+        for sort in division_sorts {
+            let (name, sort, value) = if sort == self.terms.sorts.int_sort {
+                ("div0", "Int", "0")
+            } else {
+                ("/0", "Real", "0.0")
+            };
+            func_lines.push(format!(
+                "  (define-fun {name} ((x!0 {sort}) (x!1 {sort})) {sort} {value})"
+            ));
+        }
         match self.get_model() {
             None => "(error \"No model available\")".to_string(),
-            Some(model) if model.is_empty() => {
-                // Even an empty model still lists the recursive definitions
-                // in scope: they are part of the interpretation the model
-                // claims. (Upstream v0.3.3.)
-                let lines = self.recfun_model_lines();
-                if lines.is_empty() {
-                    "(model)".to_string()
-                } else {
-                    let mut out = vec!["(model".to_string()];
-                    out.extend(lines);
-                    out.push(")".to_string());
-                    out.join("\n")
-                }
+            Some(model) if model.is_empty() && recfun_lines.is_empty() && func_lines.is_empty() => {
+                "(model)".to_string()
             }
             Some(model) => {
                 let mut lines = vec!["(model".to_string()];
                 for (name, sort, value) in model {
+                    // The name goes through the one symbol encoder
+                    // (`#P2b-39`): a declaration the script wrote as `|a b|`
+                    // was printed back bare, which is not re-parsable SMT-LIB
+                    // — `(define-fun a b () (_ BitVec 1) #b0)` reads as two
+                    // symbols — and disagreed with the `(get-value)` key path,
+                    // which answers with the term's source spelling.
                     lines.push(format!(
                         "  (define-fun {} () {} {})",
                         nixie_core::smtlib::format_symbol(&name),
@@ -1481,10 +1757,8 @@ impl Context {
                         value
                     ));
                 }
-                // The `define-fun-rec` definitions in scope: a model that
-                // omits them leaves every `(f x)` the assertions mention
-                // without an interpretation. (Ported from upstream v0.3.3.)
-                lines.extend(self.recfun_model_lines());
+                lines.extend(func_lines);
+                lines.extend(recfun_lines);
                 lines.push(")".to_string());
                 lines.join("\n")
             }
@@ -1495,8 +1769,8 @@ impl Context {
 impl Context {
     /// Fold one bag query term against the model's installed bag values,
     /// installing entries for `bag.card`/`bag.count`/`bag.member` terms
-    /// whose operands have values. A term already entered (the assertion
-    /// readback) keeps its entry; anything unresolvable is left alone
+    /// whose operands have values. Recompute even existing readbacks from the
+    /// installed bag; anything unresolvable is left alone
     /// (the honest echo).
     fn complete_bag_query(&self, term: TermId, model: &crate::solver::Model) -> Vec<(TermId, i64)> {
         // Explicit stack over the query: nesting is user-shaped. The
@@ -1515,17 +1789,17 @@ impl Context {
             use nixie_core::ast::TermKind;
             match kind {
                 TermKind::BagCard(b) => {
-                    if model.get(t).is_none()
-                        && let Some(cells) = self.installed_bag_cells(b, model)
-                    {
-                        let total: i64 = cells.iter().map(|&(_, n)| n).sum();
-                        out.push((t, total));
+                    if let Some(cells) = self.installed_bag_cells(b, model) {
+                        if let Some(total) = cells
+                            .iter()
+                            .try_fold(0_i64, |sum, &(_, n)| sum.checked_add(n))
+                        {
+                            out.push((t, total));
+                        }
                     }
                 }
                 TermKind::BagCount(e, b) => {
-                    if model.get(t).is_none()
-                        && let Some(cells) = self.installed_bag_cells(b, model)
-                    {
+                    if let Some(cells) = self.installed_bag_cells(b, model) {
                         // The element may itself have a model entry — a
                         // `bag.choose` valued by the bag pass, or any
                         // element-sorted term the model pins — and the
@@ -1538,9 +1812,7 @@ impl Context {
                     }
                 }
                 TermKind::BagMember(e, b) => {
-                    if model.get(t).is_none()
-                        && let Some(cells) = self.installed_bag_cells(b, model)
-                    {
+                    if let Some(cells) = self.installed_bag_cells(b, model) {
                         let e = model.get(e).unwrap_or(e);
                         let n = self.cell_of(e, &cells);
                         out.push((t, if n > 0 { 1 } else { 0 }));
@@ -1551,8 +1823,7 @@ impl Context {
                 // resolve from installed/ground values, and the atom folds
                 // to its truth — evaluation of verified objects.
                 TermKind::Eq(a, b) => {
-                    if model.get(t).is_none()
-                        && self.bag_element_sort_of(a).is_some()
+                    if self.bag_element_sort_of(a).is_some()
                         && self.bag_element_sort_of(b).is_some()
                         && let (Some(ca), Some(cb)) = (
                             self.value_bag_cells(a, model),
@@ -1572,12 +1843,10 @@ impl Context {
                 // like `(bag 1 2)` is never installed — its value is
                 // itself).
                 TermKind::BagSubbag(a, b) => {
-                    if model.get(t).is_none()
-                        && let (Some(ca), Some(cb)) = (
-                            self.value_bag_cells(a, model),
-                            self.value_bag_cells(b, model),
-                        )
-                    {
+                    if let (Some(ca), Some(cb)) = (
+                        self.value_bag_cells(a, model),
+                        self.value_bag_cells(b, model),
+                    ) {
                         let holds = ca.iter().all(|&(e, n)| self.cell_of(e, &cb) >= n);
                         out.push((t, if holds { 1 } else { 0 }));
                     }
@@ -1650,7 +1919,18 @@ impl Context {
                 _ => return None,
             }
         }
-        Some(cells)
+        let mut merged: Vec<(TermId, i64)> = Vec::new();
+        for (element, count) in cells {
+            if count <= 0 {
+                continue;
+            }
+            if let Some((_, old)) = merged.iter_mut().find(|(e, _)| *e == element) {
+                *old = old.checked_add(count)?;
+            } else {
+                merged.push((element, count));
+            }
+        }
+        Some(merged)
     }
 
     /// An `IntConst` term's value.
@@ -1727,14 +2007,14 @@ impl Context {
                 }
             };
             match out_cells.iter_mut().find(|(v, _)| *v == target) {
-                Some((_, m)) => *m += n,
+                Some((_, m)) => *m = m.checked_add(n)?,
                 None => out_cells.push((target, n)),
             }
         }
         let es = if is_map {
             ret?
         } else {
-            self.terms.get(bag)?.sort
+            self.bag_element_sort_of(bag)?
         };
         let bag_sort = self.terms.sorts.bag(es);
         let mut acc = self.terms.mk_bag_empty_at(bag_sort);
@@ -1911,7 +2191,7 @@ mod tests {
     }
 
     /// The full script-level repro from the audit terminates and reports a
-    /// model for the declared constant.
+    /// honest Unknown instead of a placeholder model.
     #[test]
     fn test_get_model_ill_founded_datatype_script_terminates() {
         let mut ctx = Context::new();
@@ -1923,11 +2203,11 @@ mod tests {
                  (get-model)",
             )
             .expect("repro script executes");
-        assert_eq!(out.first().map(String::as_str), Some("sat"));
+        assert_eq!(out.first().map(String::as_str), Some("unknown"));
         let model = out.get(1).map(String::as_str).unwrap_or_default();
         assert!(
-            model.contains("(define-fun a () T "),
-            "model must report the declared constant: {model}"
+            model.starts_with("(error"),
+            "an incomplete value must not be published: {model}"
         );
     }
 

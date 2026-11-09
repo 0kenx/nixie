@@ -621,6 +621,7 @@ impl Statistics {
 pub struct Model {
     /// Variable assignments
     assignments: FxHashMap<TermId, TermId>,
+    defaulted: crate::prelude::FxHashSet<TermId>,
 }
 
 impl Model {
@@ -629,6 +630,7 @@ impl Model {
     pub fn new() -> Self {
         Self {
             assignments: FxHashMap::default(),
+            defaulted: crate::prelude::FxHashSet::default(),
         }
     }
 
@@ -646,11 +648,24 @@ impl Model {
     /// would otherwise keep the default).
     pub fn remove(&mut self, term: TermId) {
         self.assignments.remove(&term);
+        self.defaulted.remove(&term);
     }
 
     /// Assign `term` to `value`.
     pub fn set(&mut self, term: TermId, value: TermId) {
         self.assignments.insert(term, value);
+        self.defaulted.remove(&term);
+    }
+
+    /// Whether the value was chosen without a solver constraint.
+    pub(crate) fn is_defaulted(&self, term: TermId) -> bool {
+        self.defaulted.contains(&term)
+    }
+
+    /// Record an unconstrained completion, distinct from a solved assignment.
+    pub(crate) fn set_default(&mut self, term: TermId, value: TermId) {
+        self.set(term, value);
+        self.defaulted.insert(term);
     }
 
     /// Minimize the model by removing redundant assignments
@@ -661,7 +676,11 @@ impl Model {
         // Only keep assignments for essential variables
         for &var in essential_vars {
             if let Some(&value) = self.assignments.get(&var) {
-                minimized.set(var, value);
+                if self.is_defaulted(var) {
+                    minimized.set_default(var, value);
+                } else {
+                    minimized.set(var, value);
+                }
             }
         }
 

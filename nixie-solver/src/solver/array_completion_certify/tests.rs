@@ -256,3 +256,23 @@ fn completion_certifies_original_assertions_and_invalidates_on_mutation() {
     solver.model = Some(Model::new());
     assert!(!solver.certify_sat_by_array_completion(&mut tm));
 }
+
+#[test]
+fn publication_attempts_share_the_query_cap_and_cached_checks_get_a_new_budget() {
+    let manager = TermManager::new();
+    let solver = Solver::new();
+    let truth = manager.mk_true();
+    let mut first = QueryBudget::for_solver(&solver);
+    for _ in 0..MAX_CERTIFICATE_QUERIES {
+        assert!(first.start(truth, &manager, None).is_some());
+    }
+    let mut second = QueryBudget::for_solver(&solver);
+    assert!(second.start(truth, &manager, None).is_none());
+    let mut solver = solver;
+    solver.completion_work = std::sync::Arc::new(CompletionWork::cached_query());
+    assert!(
+        QueryBudget::for_solver(&solver)
+            .start(truth, &manager, None)
+            .is_some()
+    );
+}

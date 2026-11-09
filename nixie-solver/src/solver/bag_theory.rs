@@ -1001,6 +1001,51 @@ pub(crate) fn reduce(
     }
     let zero = manager.mk_int(0);
 
+    // A positive image count needs an actual preimage, not merely numeric
+    // slack. This is the existential consequence of CVC5's map-down rule:
+    // count(y,map(f,b)) > 0 => count(k,b) > 0 && f(k) = y.
+    // Do not equate count(k,b) to the entire residual: several preimages may
+    // be needed by other maps or constraints on the same bag.
+    let mut witnessed = FxHashSet::default();
+    for (element, image) in s
+        .counts
+        .iter()
+        .map(|&(_, e, b)| (e, b))
+        .chain(s.members.iter().map(|&(_, e, b)| (e, b)))
+    {
+        if !witnessed.insert((element, image)) {
+            continue;
+        }
+        let Some(TermKind::BagMap { func, ret, bag }) = manager.get(image).map(|t| t.kind.clone())
+        else {
+            continue;
+        };
+        if bag_is_closed(bag, manager) {
+            continue;
+        }
+        let Some(domain_sort) = bag_element_of(bag, manager) else {
+            out.incomplete = true;
+            continue;
+        };
+        let name = nixie_core::reserved::reserved_name(
+            "bag-map-preimage",
+            &format!("{}!{}", image.0, element.0),
+        );
+        let witness = manager.mk_var(&name, domain_sort);
+        let domain = by_sort.entry(domain_sort).or_default();
+        if !domain.contains(&witness) {
+            domain.push(witness);
+        }
+        let image_count = count_term(element, image, manager);
+        let positive = manager.mk_gt(image_count, zero);
+        let preimage_count = count_term(witness, bag, manager);
+        let present = manager.mk_gt(preimage_count, zero);
+        let applied = bag_apply_fun(func, witness, ret, fun_defs, manager);
+        let maps_to = manager.mk_eq(applied, element);
+        let consequence = manager.mk_and([present, maps_to]);
+        out.axioms.push(manager.mk_implies(positive, consequence));
+    }
+
     // ---- the map images join the codomain element list ----
     // `count(y, map(f, b))` is stated over the codomain's element list, and
     // the image bag's support is exactly the images of the domain's

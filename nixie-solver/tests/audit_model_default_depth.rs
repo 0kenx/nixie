@@ -63,40 +63,28 @@ fn datatype_whose_field_is_an_array_of_itself_terminates_in_get_model() {
          (check-sat)\n\
          (get-model)\n",
     );
-    assert_eq!(out.first().map(String::as_str), Some("sat"));
+    assert_eq!(out.first().map(String::as_str), Some("unknown"));
     let model = out.get(1).expect("(get-model) response");
-
-    // Terminating is necessary but not sufficient: the output must also stop
-    // at the documented budget and say so, rather than silently presenting a
-    // plausible-looking finite value for a sort that has no ground value.
     assert!(
-        model.contains('?'),
-        "the truncation marker must be visible in an ill-founded default: {model}"
-    );
-    assert_eq!(
-        model.matches("as const").count(),
-        16,
-        "the datatype budget (16) must bound the alternation: {model}"
+        model.starts_with("(error"),
+        "an incomplete value is no model: {model}"
     );
 }
 
 #[test]
-fn directly_ill_founded_datatype_still_truncates_at_the_same_budget() {
-    // The pre-existing, already-bounded case must be unchanged by threading
-    // the budget through the other half of the recursion.
+fn directly_ill_founded_datatype_cannot_publish_a_placeholder_model() {
     let out = run_script(
         "(declare-datatype T ((c (f T))))\n\
          (declare-const t T)\n\
          (check-sat)\n\
          (get-model)\n",
     );
+    assert_eq!(out.first().map(String::as_str), Some("unknown"));
     let model = out.get(1).expect("(get-model) response");
-    assert_eq!(
-        model.matches("(c ").count(),
-        16,
-        "expected exactly 16 constructor levels then `?`: {model}"
+    assert!(
+        model.starts_with("(error"),
+        "an incomplete value is no model: {model}"
     );
-    assert!(model.contains('?'), "unexpected model: {model}");
 }
 
 #[test]

@@ -357,11 +357,6 @@ impl<'a> Parser<'a> {
     /// Seed further symbols incrementally with [`Parser::seed_declaration`] /
     /// [`Parser::seed_function`].
     ///
-    /// Note: for an *external* embedder to reach this API, the `Parser` type
-    /// must be re-exported from `smtlib/mod.rs` (which currently re-exports only
-    /// `parse_term` / `parse_script` / `Command`); that re-export lives outside
-    /// this file. Until then the seeding API is reachable in-crate (e.g. by an
-    /// `nixie-solver` `Context` that lives in this crate) and via tests.
     #[allow(dead_code)]
     pub fn with_context<I>(input: &'a str, manager: &'a mut TermManager, declarations: I) -> Self
     where
@@ -383,7 +378,7 @@ impl<'a> Parser<'a> {
     /// This is the builder-style counterpart to [`Parser::with_context`]: an
     /// embedder can chain `seed_declaration` calls on a parser built with
     /// [`Parser::new`] or [`Parser::with_context`] before invoking
-    /// [`Parser::parse_term`] / [`Parser::parse_script`]. Seeded symbols resolve
+    /// [`Parser::parse_term`]. Seeded symbols resolve
     /// with their true sort; unseeded symbols keep whatever undeclared-symbol
     /// behavior the parser's mode dictates.
     #[allow(dead_code)]
@@ -403,6 +398,17 @@ impl<'a> Parser<'a> {
         ret: SortId,
     ) -> &mut Self {
         self.functions.insert(name.into(), (params, ret));
+        self
+    }
+
+    /// Pre-register a datatype constructor from an existing term manager.
+    /// This preserves its datatype sort when parsing model-value fragments.
+    pub fn seed_datatype_constructor(
+        &mut self,
+        name: impl Into<String>,
+        sort: SortId,
+    ) -> &mut Self {
+        self.dt_constructors.insert(name.into(), sort);
         self
     }
 

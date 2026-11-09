@@ -628,45 +628,61 @@ fn leaf_value(id: TermId, manager: &TermManager, interp: &Interpretation) -> Opt
 /// this module has no license to declare them equal or unequal on that
 /// evidence, so it returns `None` (refuse) rather than guessing.
 fn same_value(left: &Value, right: &Value, interp: &Interpretation) -> Option<bool> {
-    match (left, right) {
-        (Value::Num(a), Value::Num(b)) => Some(a == b),
-        (Value::Truth(a), Value::Truth(b)) => Some(a == b),
-        (Value::Mapping(a), Value::Mapping(b)) => {
-            let mut probes: Vec<BigRational> = Vec::new();
-            for (index, _) in a.writes.iter().chain(b.writes.iter()) {
-                if !probes.contains(index) {
-                    probes.push(index.clone());
-                }
-            }
-            for index in &probes {
-                let av = read_layered(a, index, interp)?;
-                let bv = read_layered(b, index, interp)?;
-                if !same_value(&av, &bv, interp)? {
+    let mut work = vec![(left, right)];
+    let mut undecided = false;
+    while let Some((left, right)) = work.pop() {
+        match (left, right) {
+            (Value::Num(a), Value::Num(b)) => {
+                if a != b {
                     return Some(false);
                 }
             }
-            if a.root == b.root {
-                // Same root: the probed indices are exactly where the two
-                // values can disagree, and none of them did.
-                Some(true)
-            } else {
-                // Different roots agree only where the interpretation says so,
-                // and it says nothing about the unlisted cells.
-                None
+            (Value::Truth(a), Value::Truth(b)) => {
+                if a != b {
+                    return Some(false);
+                }
             }
+            (Value::Mapping(a), Value::Mapping(b)) => {
+                let mut probes = std::collections::BTreeSet::new();
+                probes.extend(a.writes.iter().chain(&b.writes).map(|(index, _)| index));
+                probes.extend(interp.cells.keys().filter_map(|(root, index)| {
+                    (*root == a.root || *root == b.root).then_some(index)
+                }));
+                for index in probes {
+                    match (
+                        read_layered(a, index, interp),
+                        read_layered(b, index, interp),
+                    ) {
+                        (Some(av), Some(bv)) => work.push((av, bv)),
+                        _ => undecided = true,
+                    }
+                }
+                if a.root != b.root {
+                    match (interp.fallbacks.get(&a.root), interp.fallbacks.get(&b.root)) {
+                        (Some(av), Some(bv)) => work.push((av, bv)),
+                        _ => undecided = true,
+                    }
+                }
+            }
+            _ => undecided = true,
         }
-        _ => None,
     }
+    (!undecided).then_some(true)
 }
 
-/// Read one index of an array value (writes newest-first, then the root).
-fn read_layered(value: &ArrayValue, index: &BigRational, interp: &Interpretation) -> Option<Value> {
-    for (written_at, written) in value.writes.iter().rev() {
-        if written_at == index {
-            return Some(written.clone());
-        }
-    }
-    interp.read_root(value.root, index)
+/// Read one index without cloning a potentially nested array value.
+fn read_layered<'a>(
+    value: &'a ArrayValue,
+    index: &BigRational,
+    interp: &'a Interpretation,
+) -> Option<&'a Value> {
+    value
+        .writes
+        .iter()
+        .rev()
+        .find_map(|(at, value)| (at == index).then_some(value))
+        .or_else(|| interp.cells.get(&(value.root, index.clone())))
+        .or_else(|| interp.fallbacks.get(&value.root))
 }
 
 #[cfg(test)]
@@ -966,5 +982,30 @@ mod tests {
         let mut interp = Interpretation::empty();
         interp.pin_int(x, BigInt::from(0));
         assert!(holds_under(&[goal], &tm, &interp));
+    }
+}
+
+#[cfg(test)]
+mod publication_array_regressions {
+    use super::*;
+
+    #[test]
+    fn equality_checks_root_cells_and_complete_fallbacks() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let a = tm.mk_var("a", sort);
+        let b = tm.mk_var("b", sort);
+        let eq = tm.mk_eq(a, b);
+        let zero = Value::Num(BigRational::from_integer(0.into()));
+        let one = Value::Num(BigRational::from_integer(1.into()));
+        let mut interp = Interpretation::empty();
+        interp.pin_fallback(a, zero.clone());
+        interp.pin_fallback(b, zero);
+        assert_eq!(evaluate(eq, &tm, &interp), Some(Value::Truth(true)));
+        let index = BigRational::from_integer(BigInt::from(1) << 130);
+        interp.pin_cell(a, index.clone(), one.clone());
+        assert_eq!(evaluate(eq, &tm, &interp), Some(Value::Truth(false)));
+        interp.pin_cell(b, index, one);
+        assert_eq!(evaluate(eq, &tm, &interp), Some(Value::Truth(true)));
     }
 }

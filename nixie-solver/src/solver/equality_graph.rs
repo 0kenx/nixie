@@ -55,8 +55,18 @@ impl Solver {
                 super::SolverResult::Unsat
             }
             nixie_sat::SolverResult::Sat => {
+                let Some(partition) = self.equality_model_partition(manager) else {
+                    self.model = None;
+                    self.unsat_core = None;
+                    return super::SolverResult::Unknown;
+                };
+                // The partition is an interpretation, never a permanent theory
+                // fact. Replacing a SAT candidate must retract its equalities.
+                let theory = core::mem::replace(&mut self.euf, partition);
                 self.build_model(manager);
-                if self.model_refutes_assertions(manager) {
+                let refuted = self.model_refutes_assertions(manager);
+                self.model_euf_snapshot = Some(Box::new(core::mem::replace(&mut self.euf, theory)));
+                if refuted {
                     // The SAT core committed a trail that violates an assertion
                     // (a backstop for any skeleton-encoding gap). Stay honest.
                     self.model = None;
@@ -69,7 +79,7 @@ impl Solver {
                 // constants the user asserted equal. Re-derive the equality
                 // classes from the SAT model into EUF – the independent
                 // union-find backstop for the pure-equality fragment.
-                self.reconcile_euf_from_equality_model(manager);
+
                 self.unsat_core = None;
                 super::SolverResult::Sat
             }
@@ -87,56 +97,78 @@ impl Solver {
         manager: &TermManager,
         term_to_var: &FxHashMap<TermId, Var>,
         out: &mut Vec<(TermId, TermId, TermId, Var)>,
-    ) {
-        let Some(t) = manager.get(term) else { return };
-        match &t.kind {
-            TermKind::True | TermKind::False => {}
-            TermKind::Not(inner) => Self::gather_eq_atoms(*inner, manager, term_to_var, out),
-            TermKind::And(ts) | TermKind::Or(ts) => {
-                for &c in ts {
-                    Self::gather_eq_atoms(c, manager, term_to_var, out);
-                }
+    ) -> bool {
+        let mut stack = vec![term];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term) {
+                continue;
             }
-            TermKind::Eq(a, b) => {
-                // Only the pure-equality fragment reaches this path; operands
-                // are leaf (Var-kind) terms.
-                let ok = manager
-                    .get(*a)
-                    .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
-                    && manager
-                        .get(*b)
-                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)));
-                if ok {
-                    if let Some(&var) = term_to_var.get(&term) {
-                        out.push((term, *a, *b, var));
+            let Some(node) = manager.get(term) else {
+                return false;
+            };
+            match &node.kind {
+                TermKind::True | TermKind::False => {}
+                TermKind::Not(inner) => stack.push(*inner),
+                TermKind::And(args) | TermKind::Or(args) => stack.extend(args.iter().copied()),
+                TermKind::Eq(a, b) => {
+                    if ![*a, *b].iter().all(|&t| {
+                        manager
+                            .get(t)
+                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                    }) {
+                        return false;
                     }
+                    let Some(&var) = term_to_var.get(&term) else {
+                        return false;
+                    };
+                    out.push((term, *a, *b, var));
                 }
+                _ => return false,
             }
-            _ => {}
         }
+        true
     }
 
     /// Pure-equality `Sat` backstop: drive the SAT model's equality-atom
     /// polarities into the EUF congruence closure so `get_model` gives equal
     /// constants a shared witness. See `solve_equality_via_sat`.
-    fn reconcile_euf_from_equality_model(&mut self, manager: &TermManager) {
-        let mut atoms: Vec<(TermId, TermId, TermId, Var)> = Vec::new();
+    fn equality_model_partition(
+        &self,
+        manager: &TermManager,
+    ) -> Option<nixie_theories::euf::EufSolver> {
+        let mut atoms = Vec::new();
         for &assertion in &self.assertions {
-            Self::gather_eq_atoms(assertion, manager, &self.term_to_var, &mut atoms);
+            if !Self::gather_eq_atoms(assertion, manager, &self.term_to_var, &mut atoms) {
+                return None;
+            }
         }
+        let mut partition = nixie_theories::euf::EufSolver::new();
         for &(eq, a, b, var) in &atoms {
-            let na = self.euf.intern(a);
-            let nb = self.euf.intern(b);
+            let na = partition.intern(a);
+            let nb = partition.intern(b);
             match self.sat.model_value(var) {
                 LBool::True => {
-                    let _ = self.euf.merge(na, nb, eq);
+                    partition.merge(na, nb, eq).ok()?;
                 }
-                LBool::False => {
-                    self.euf.assert_diseq(na, nb, eq);
-                }
+                LBool::False => partition.assert_diseq(na, nb, eq),
                 LBool::Undef => {}
             }
         }
+        if partition.check_conflicts().is_some() {
+            return None;
+        }
+        // Check every decided atom independently of the merge procedure.
+        for &(_, a, b, var) in &atoms {
+            let na = partition.term_to_node(a)?;
+            let nb = partition.term_to_node(b)?;
+            match self.sat.model_value(var) {
+                LBool::True if !partition.are_equal(na, nb) => return None,
+                LBool::False if partition.are_equal(na, nb) => return None,
+                _ => {}
+            }
+        }
+        Some(partition)
     }
 
     /// If the current assertion set is pure Equality Logic, add chordal-Sparse
@@ -269,7 +301,7 @@ impl Solver {
         true
     }
 
-    /// Recursive walk recording equality-graph edges. Sets `pure = false` on
+    /// Heap walk recording equality-graph edges. Sets `pure = false` on
     /// the first construct outside pure equality logic.
     fn collect_eq_edges(
         term: TermId,
@@ -280,84 +312,66 @@ impl Solver {
         edge_var: &mut FxHashMap<(TermId, TermId), Var>,
         pure: &mut bool,
     ) {
-        if !*pure {
-            return;
-        }
-        let Some(t) = manager.get(term) else {
-            *pure = false;
-            return;
-        };
-        match &t.kind {
-            TermKind::True | TermKind::False => {}
-            TermKind::Not(inner) => {
-                Self::collect_eq_edges(
-                    *inner,
-                    manager,
-                    self_euf_apps,
-                    self_arr_ops,
-                    term_to_var,
-                    edge_var,
-                    pure,
-                );
+        let mut stack = vec![term];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !*pure {
+                return;
             }
-            TermKind::And(ts) | TermKind::Or(ts) => {
-                for &c in ts {
-                    Self::collect_eq_edges(
-                        c,
-                        manager,
-                        self_euf_apps,
-                        self_arr_ops,
-                        term_to_var,
-                        edge_var,
-                        pure,
-                    );
-                    if !*pure {
+            if !seen.insert(term) {
+                continue;
+            }
+            let Some(t) = manager.get(term) else {
+                *pure = false;
+                return;
+            };
+            match &t.kind {
+                TermKind::True | TermKind::False => {}
+                TermKind::Not(inner) => stack.push(*inner),
+                TermKind::And(args) | TermKind::Or(args) => stack.extend(args.iter().copied()),
+                TermKind::Eq(a, b) => {
+                    // Numeric equality is NOT pure equality logic: `(= x y)` over
+                    // Int/Real needs the arithmetic theory (the trichotomy split
+                    // and the tableau) to produce a model that separates the
+                    // sides — the chordal-SAT path has none of that, and on
+                    // `(not (= x y))` it answered with a colliding model the
+                    // collision gate honestly refused (root-caused 2026-08-29;
+                    // the pre-gate behaviour was a wrong-model `sat`).
+                    // Opt out of the fast path only for the PLAIN-ARITHMETIC shape
+                    // (no uninterpreted applications, no arrays): there the goal
+                    // needs the trichotomy + tableau to produce a separating
+                    // model.  UF- and array-bearing goals keep the chordal path —
+                    // routing them to the general loop was measured at several
+                    // differential timeouts (Hash, RDS), and their compound
+                    // numeric equalities are the arrangement's province anyway.
+                    let plain_arith = || !self_euf_apps && !self_arr_ops;
+                    let numeric = |t: &nixie_core::ast::TermId| {
+                        manager.get(*t).is_some_and(|n| {
+                            n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort
+                        })
+                    };
+                    let ok = manager
+                        .get(*a)
+                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
+                        && manager
+                            .get(*b)
+                            .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
+                        && !(plain_arith() && (numeric(a) || numeric(b)));
+                    if !ok {
+                        *pure = false;
                         return;
                     }
+                    let Some(&var) = term_to_var.get(&term) else {
+                        *pure = false;
+                        return;
+                    };
+                    let key = if a < b { (*a, *b) } else { (*b, *a) };
+                    edge_var.insert(key, var);
                 }
+                // Distinct, ite, xor, =>, arithmetic, bit-vector, strings,
+                // datatypes, function applications, quantifiers -> not pure.
+                _ => *pure = false,
             }
-            TermKind::Eq(a, b) => {
-                // Numeric equality is NOT pure equality logic: `(= x y)` over
-                // Int/Real needs the arithmetic theory (the trichotomy split
-                // and the tableau) to produce a model that separates the
-                // sides — the chordal-SAT path has none of that, and on
-                // `(not (= x y))` it answered with a colliding model the
-                // collision gate honestly refused (root-caused 2026-08-29;
-                // the pre-gate behaviour was a wrong-model `sat`).
-                // Opt out of the fast path only for the PLAIN-ARITHMETIC shape
-                // (no uninterpreted applications, no arrays): there the goal
-                // needs the trichotomy + tableau to produce a separating
-                // model.  UF- and array-bearing goals keep the chordal path —
-                // routing them to the general loop was measured at several
-                // differential timeouts (Hash, RDS), and their compound
-                // numeric equalities are the arrangement's province anyway.
-                let plain_arith = || !self_euf_apps && !self_arr_ops;
-                let numeric = |t: &nixie_core::ast::TermId| {
-                    manager.get(*t).is_some_and(|n| {
-                        n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort
-                    })
-                };
-                let ok = manager
-                    .get(*a)
-                    .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
-                    && manager
-                        .get(*b)
-                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
-                    && !(plain_arith() && (numeric(a) || numeric(b)));
-                if !ok {
-                    *pure = false;
-                    return;
-                }
-                let Some(&var) = term_to_var.get(&term) else {
-                    *pure = false;
-                    return;
-                };
-                let key = if a < b { (*a, *b) } else { (*b, *a) };
-                edge_var.insert(key, var);
-            }
-            // Distinct, ite, xor, =>, arithmetic, bit-vector, strings,
-            // datatypes, function applications, quantifiers -> not pure.
-            _ => *pure = false,
         }
     }
 }

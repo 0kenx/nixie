@@ -114,9 +114,58 @@ impl Select {
 }
 
 impl Solver {
+    /// Read a proposed model without using live theory assignments.
+    pub(crate) fn model_value_in(
+        &self,
+        term: TermId,
+        model: &Model,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let sort = manager.get(term)?.sort;
+        if let Some(value) = self
+            .eval_under_interpretation(term, model, manager)
+            .value_owned()
+        {
+            return match value {
+                EvalVal::Bool(value) if sort == manager.sorts.bool_sort => {
+                    Some(manager.mk_bool(value))
+                }
+                EvalVal::Bv { value, width }
+                    if manager.sorts.get(sort)?.bitvec_width() == Some(width) =>
+                {
+                    Some(manager.mk_bitvec(value, width))
+                }
+                value => {
+                    let value = value.to_big()?;
+                    if sort == manager.sorts.int_sort && value.is_integer() {
+                        Some(manager.mk_int(value.to_integer()))
+                    } else if sort == manager.sorts.real_sort {
+                        let n = manager.mk_int(value.numer().clone());
+                        let d = manager.mk_int(value.denom().clone());
+                        Some(manager.mk_rdiv(n, d))
+                    } else {
+                        None
+                    }
+                }
+            };
+        }
+        // Only opaque leaves can use an assignment directly. Compound terms
+        // must be recomputed so a cached gate cannot validate itself.
+        if matches!(
+            manager.get(term)?.kind,
+            TermKind::Var(_) | TermKind::Apply { .. } | TermKind::DtSelector { .. }
+        ) {
+            let value = model.get(term)?;
+            return (manager.get(value)?.sort == sort).then_some(value);
+        }
+        None
+    }
+}
+
+impl Solver {
     /// Fold a supplied interpretation without consulting arithmetic, BV, EUF,
     /// SAT caches, or certificate-mode flags. Unsupported operations decline.
-    pub(in crate::solver) fn eval_under_interpretation(
+    pub(crate) fn eval_under_interpretation(
         &self,
         term: TermId,
         model: &Model,
