@@ -2092,6 +2092,9 @@ impl Solver {
             // concretely.  Without this arm the elim-uncnstr dispatch's
             // certification could never settle the `spear` family's width-1
             // `(= … (distinct …))` encodings (`sat` degraded to `unknown`).
+            TermKind::Distinct(args) if manager.distinct_has_repeated_operand(args) => {
+                Opened::Done(EvalOutcome::boolean(false))
+            }
             TermKind::Distinct(args) => {
                 let widths: Option<Vec<_>> = args
                     .iter()

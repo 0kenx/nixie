@@ -485,12 +485,44 @@ impl TermManager {
         self.intern(TermKind::Eq(lhs, rhs), sort)
     }
 
+    /// Whether a well-sorted distinct operand list repeats a term.
+    ///
+    /// Identity alone proves distinctness false, even when the operand sort
+    /// has no concrete evaluator. Validate the whole list first so a repeated
+    /// prefix cannot hide an invalid term or a differently sorted suffix.
+    #[must_use]
+    pub fn distinct_has_repeated_operand(&self, args: &[TermId]) -> bool {
+        let Some(sort) = args
+            .first()
+            .and_then(|&term| self.get(term))
+            .map(|node| node.sort)
+        else {
+            return false;
+        };
+        if self.sorts.get(sort).is_none() {
+            return false;
+        }
+        let mut seen = FxHashSet::default();
+        let mut repeated = false;
+        for &term in args {
+            if self.get(term).is_none_or(|node| node.sort != sort) {
+                return false;
+            }
+            repeated |= !seen.insert(term);
+        }
+        repeated
+    }
+
     /// Create a distinct constraint
     pub fn mk_distinct(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         let args: SmallVec<[TermId; 4]> = args.into_iter().collect();
 
         if args.len() <= 1 {
             return self.true_id;
+        }
+
+        if self.distinct_has_repeated_operand(&args) {
+            return self.false_id;
         }
 
         let sort = self.sorts.bool_sort;

@@ -1689,29 +1689,23 @@ fn ufff_solve_node(
                 if f1 != f2 || r1 == r2 {
                     continue;
                 }
-                // Arguments: break on the first KNOWN difference. A pair
-                // with UNEVALUABLE arguments (terms no literal mentions —
-                // unconstrained) is left to the completion pass, which
-                // can always separate variable arguments by fresh
-                // values; splitting on them would explore arrangements
-                // the model does not care about.
-                let mut equal_known = true;
-                let mut any_unknown = false;
+                // Different results require a known difference between the
+                // arguments. An unassigned argument is not evidence of one:
+                // split on the same valid congruence disjunction so the field
+                // solver chooses an in-range, jointly consistent assignment.
+                let mut differs = false;
                 for (&x, &y) in args1.iter().zip(args2.iter()) {
-                    match (
+                    if let (Some(vx), Some(vy)) = (
                         eval_ff_term_in_model(manager, &model, x),
                         eval_ff_term_in_model(manager, &model, y),
-                    ) {
-                        (Some(vx), Some(vy)) if vx != vy => {
-                            equal_known = false;
-                            break;
-                        }
-                        (Some(_), Some(_)) => {}
-                        _ => any_unknown = true,
+                    ) && vx != vy
+                    {
+                        differs = true;
+                        break;
                     }
                 }
-                if !equal_known || any_unknown {
-                    continue; // arguments differ, or unconstrained.
+                if differs {
+                    continue;
                 }
                 // Violation: split, results-equal branch first.
                 let mut children = vec![UfffChoice {
@@ -2146,6 +2140,12 @@ fn ufff_complete(
                     }
                     candidate += 1u8;
                 }
+                // The first unused integer can be the modulus itself. It
+                // would normalize back to zero when published, invalidating
+                // a disequality the completion checked before normalization.
+                if candidate >= modulus {
+                    return None;
+                }
                 map.insert(var, candidate);
             }
         }
@@ -2202,6 +2202,41 @@ fn ufff_complete(
 #[cfg(test)]
 mod fragment_tests {
     use super::*;
+
+    #[test]
+    fn completion_never_uses_the_modulus_as_a_fresh_field_value() {
+        let mut manager = TermManager::new();
+        let commands = nixie_core::smtlib::parse_script(
+            "(declare-fun f ((_ FiniteField 2)) (_ FiniteField 2))
+             (declare-const x (_ FiniteField 2))
+             (declare-const y (_ FiniteField 2))
+             (assert (distinct (f x) (f y)))",
+            &mut manager,
+        )
+        .expect("script");
+        let root = commands
+            .into_iter()
+            .find_map(|command| match command {
+                nixie_core::smtlib::Command::Assert(term) => Some(term),
+                _ => None,
+            })
+            .expect("assertion");
+        let TermKind::Distinct(args) = &manager.get(root).expect("root").kind else {
+            panic!("distinct");
+        };
+        let mut model = UfffModel::default();
+        let mut values = FxHashMap::default();
+        for (index, &term) in args.iter().enumerate() {
+            let TermKind::Apply { func, args } = &manager.get(term).expect("app").kind else {
+                panic!("application");
+            };
+            model.apps.push((term, *func, args.clone()));
+            values.insert(term, BigUint::from(index));
+        }
+        let field = ff_sort_field(&manager, args[0]).expect("field");
+        model.per_field.push((field, values));
+        assert!(ufff_complete(&manager, &[root], model).is_none());
+    }
 
     #[test]
     fn field_boolean_encoder_rejects_foreign_atoms_without_a_dispatch_guard() {

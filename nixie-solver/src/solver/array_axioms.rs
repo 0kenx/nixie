@@ -184,6 +184,7 @@ impl Solver {
         if collected.selects.is_empty()
             && collected.eq_pairs.is_empty()
             && collected.distinct_atoms.is_empty()
+            && collected.interface_arrays.len() < 2
         {
             return false;
         }

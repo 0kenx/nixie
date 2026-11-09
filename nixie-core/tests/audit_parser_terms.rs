@@ -149,18 +149,15 @@ fn to_real_is_value_preserving_and_not_bool_apply() {
     let TermKind::Lt(lhs, _) = kind(&m, asserts[0]) else {
         panic!("expected <");
     };
-    // to_real(n) must be the integer variable itself (the injection), never a
-    // Bool-sorted uninterpreted apply.
-    match kind(&m, lhs) {
-        TermKind::Var(_) => {}
-        other => panic!("expected Var for to_real arg, got {other:?}"),
-    }
-    // Its sort must NOT be Bool.
-    let sort = m.get(lhs).unwrap().sort;
-    assert!(
-        !matches!(m.sorts.get(sort).unwrap().kind, SortKind::Bool),
-        "to_real result must not be Bool-sorted"
-    );
+    // The injection retains an Int leaf but its result must be Real,
+    // including when it appears in a typed function argument or ite branch.
+    assert_eq!(m.get(lhs).expect("cast").sort, m.sorts.real_sort);
+    let leaves = m.free_vars_including_patterns(lhs);
+    assert_eq!(leaves.len(), 1);
+    assert!(leaves.iter().all(|&term| {
+        m.get(term)
+            .is_some_and(|node| node.sort == m.sorts.int_sort)
+    }));
 }
 
 #[test]

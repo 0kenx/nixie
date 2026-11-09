@@ -67,6 +67,7 @@ fn condition_bv_operands(cond: TermId, mgr: &TermManager) -> Option<Vec<TermId>>
                 }
                 roots.extend([*a, *b]);
             }
+            TermKind::Distinct(args) if mgr.distinct_has_repeated_operand(args) => {}
             TermKind::Distinct(args) => {
                 if let Some(&first) = args.first() {
                     let sort = mgr.get(first)?.sort;
@@ -933,5 +934,24 @@ mod s8_iterative_tests {
         let unsupported = tm.mk_and(vec![eq, unsupported_leaf]);
         let mut bv2 = BvSolver::new();
         assert!(!bit_blast_cond_operands(&mut bv2, unsupported, &tm));
+    }
+}
+
+#[cfg(test)]
+mod repeated_distinct_regressions {
+    use super::*;
+
+    #[test]
+    fn raw_array_distinct_selector_requires_no_bv_operands() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let a = tm.mk_var("a", sort);
+        let raw = tm.intern_term(TermKind::Distinct(vec![a, a].into()), tm.sorts.bool_sort);
+        assert_eq!(condition_bv_operands(raw, &tm), Some(Vec::new()));
+        let bad = tm.intern_term(
+            TermKind::Distinct(vec![a, a, tm.true_id].into()),
+            tm.sorts.bool_sort,
+        );
+        assert!(condition_bv_operands(bad, &tm).is_none());
     }
 }

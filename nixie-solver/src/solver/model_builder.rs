@@ -2226,6 +2226,14 @@ impl Solver {
             }
         }
 
+        if core.indices.is_empty() {
+            // Preprocessing can derive false while the source assertion stays
+            // quantified or compound. The empty set is not a core of that
+            // source. Start from all original identities and let the existing
+            // query-time minimizer replay source subsets.
+            self.build_unsat_core();
+            return;
+        }
         self.unsat_core = Some(core);
     }
 
@@ -2992,5 +3000,22 @@ mod compound_field_regressions {
             exact,
             num_rational::BigRational::new((num_bigint::BigInt::from(1) << 160usize) + 6, 3.into())
         );
+    }
+}
+
+#[cfg(test)]
+mod malformed_core_regression {
+    use super::*;
+
+    #[test]
+    fn out_of_scope_core_indices_invalidate_the_artifact() {
+        let mut solver = Solver::new();
+        solver.produce_unsat_cores = true;
+        let mut core = UnsatCore::new();
+        core.indices.push(u32::MAX);
+        solver.unsat_core = Some(core);
+        let mut manager = TermManager::new();
+        assert!(solver.minimize_unsat_core(&mut manager).is_none());
+        assert!(solver.get_unsat_core().is_none());
     }
 }

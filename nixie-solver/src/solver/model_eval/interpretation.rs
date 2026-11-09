@@ -277,6 +277,9 @@ impl Solver {
                 Opened::Done(EvalOutcome::boolean(true))
             }
             TermKind::Eq(a, b) => Opened::Frame(Frame::binary(*a, *b, EagerKind::EqCertify, depth)),
+            TermKind::Distinct(args) if manager.distinct_has_repeated_operand(args) => {
+                Opened::Done(EvalOutcome::boolean(false))
+            }
             TermKind::Distinct(args) => Opened::Frame(Frame::new(
                 Op::ExactDistinct {
                     operands: args.clone(),
@@ -510,6 +513,37 @@ mod repair_cycle_regression {
         assert!(
             solver
                 .eval_datatype_repair(selector, &model, &tm)
+                .value_owned()
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod repeated_distinct_regressions {
+    use super::*;
+
+    #[test]
+    fn raw_array_repeat_is_false_without_an_array_interpretation() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let a = tm.mk_var("a", sort);
+        let raw = tm.intern_term(TermKind::Distinct(vec![a, a].into()), tm.sorts.bool_sort);
+        let solver = Solver::new();
+        let model = Model::new();
+        for value in [
+            solver.eval_under_interpretation(raw, &model, &tm),
+            solver.eval_in_model_outcome(raw, &model, &tm, 0),
+        ] {
+            assert!(matches!(value.value_owned(), Some(EvalVal::Bool(false))));
+        }
+        let bad = tm.intern_term(
+            TermKind::Distinct(vec![a, a, tm.true_id].into()),
+            tm.sorts.bool_sort,
+        );
+        assert!(
+            solver
+                .eval_under_interpretation(bad, &model, &tm)
                 .value_owned()
                 .is_none()
         );

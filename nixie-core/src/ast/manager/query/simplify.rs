@@ -1628,42 +1628,9 @@ impl TermManager {
 
     /// Simplify multiplication with constant folding.
     fn simplify_mul(&mut self, args: SmallVec<[TermId; 4]>) -> TermId {
-        let mut constant_product = BigInt::from(1);
-        let mut other_args: SmallVec<[TermId; 4]> = SmallVec::new();
-        let zero = BigInt::from(0);
-        let one = BigInt::from(1);
-
-        for arg in args {
-            if let Some(TermKind::IntConst(n)) = self.get(arg).map(|t| &t.kind) {
-                if *n == zero {
-                    return self.mk_int(0);
-                }
-                constant_product *= n;
-            } else {
-                other_args.push(arg);
-            }
-        }
-
-        if other_args.is_empty() {
-            return self.intern(TermKind::IntConst(constant_product), self.sorts.int_sort);
-        }
-
-        if constant_product == zero {
-            return self.mk_int(0);
-        }
-
-        if constant_product != one {
-            other_args.insert(
-                0,
-                self.intern(TermKind::IntConst(constant_product), self.sorts.int_sort),
-            );
-        }
-
-        if other_args.len() == 1 {
-            return other_args[0];
-        }
-
-        self.mk_mul(other_args)
+        // The shared constructor preserves the unified sort, including
+        // an integer zero multiplied by a Real injection factor.
+        self.mk_mul(args)
     }
 
     /// Simplify negation.

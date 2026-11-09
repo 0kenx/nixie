@@ -40,6 +40,7 @@ impl BvSolver {
                         stack.push((*a, false));
                     }
                 }
+                TermKind::Distinct(args) if manager.distinct_has_repeated_operand(args) => {}
                 TermKind::Distinct(args) => {
                     if args.iter().all(|&arg| {
                         manager
@@ -199,6 +200,9 @@ impl BvSolver {
                 self.wire(out, folded);
                 out
             }
+            TermKind::Distinct(ref args) if manager.distinct_has_repeated_operand(args) => {
+                self.const_false
+            }
             TermKind::Distinct(ref args)
                 if args.iter().all(|&arg| {
                     manager
@@ -261,5 +265,25 @@ impl BvSolver {
         };
         self.bool_node.insert(term, out);
         Some(out)
+    }
+}
+
+#[cfg(test)]
+mod repeated_distinct_regressions {
+    use super::*;
+
+    #[test]
+    fn raw_array_distinct_is_false_without_array_bitvector_circuits() {
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.array(tm.sorts.int_sort, tm.sorts.int_sort);
+        let a = tm.mk_var("a", sort);
+        let raw = tm.intern_term(TermKind::Distinct(vec![a, a].into()), tm.sorts.bool_sort);
+        let mut solver = BvSolver::new();
+        assert_eq!(solver.encode_bool_node(raw, &tm), Some(solver.const_false));
+        let bad = tm.intern_term(
+            TermKind::Distinct(vec![a, a, tm.true_id].into()),
+            tm.sorts.bool_sort,
+        );
+        assert!(solver.encode_bool_node(bad, &tm).is_none());
     }
 }

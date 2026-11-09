@@ -5005,25 +5005,32 @@ impl Solver {
         }
 
         // Get the current unsat core
-        let core = self.unsat_core.as_ref()?;
+        let core = self.unsat_core.clone()?;
         if core.is_empty() {
-            return Some(core.clone());
+            return Some(core);
         }
 
         // Extract the assertions in the core
-        let mut core_assertions: Vec<_> = core
+        let core_assertions: Option<Vec<_>> = core
             .indices
             .iter()
             .map(|&idx| {
-                let assertion = self.assertions[idx as usize];
+                let assertion = *self.assertions.get(idx as usize)?;
                 let name = self
                     .named_assertions
                     .iter()
                     .find(|na| na.index == idx)
                     .and_then(|na| na.name.clone());
-                (idx, assertion, name)
+                Some((idx, assertion, name))
             })
             .collect();
+
+        let Some(mut core_assertions) = core_assertions else {
+            // Refuse a stale or malformed artifact; never index past the
+            // current scope or expose it via the caller's raw-core fallback.
+            self.unsat_core = None;
+            return None;
+        };
 
         // Try to remove each assertion one by one
         let mut i = 0;

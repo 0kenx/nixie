@@ -831,11 +831,23 @@ impl Parser<'_> {
                 let neg = self.manager.mk_neg(x);
                 self.manager.mk_ite(cond, x, neg)
             }
-            // Int -> Real injection. The arithmetic engine represents both
-            // sorts as rationals and the value is preserved exactly, so the
-            // injection is the identity on the term; the operand keeps its
-            // (integer) constraints, which is exactly `to_real` semantics.
-            "to_real" => x,
+            // Preserve both the exact value and the Real result sort. The
+            // existing real-division constructor lowers x/1 to an exact Real
+            // numeral or a Real-sorted linear expression over the Int leaf.
+            "to_real" => {
+                if self
+                    .manager
+                    .get(x)
+                    .is_none_or(|term| term.sort != self.manager.sorts.int_sort)
+                {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: "to_real requires an Int operand".to_string(),
+                    });
+                }
+                let one = self.manager.mk_int(1);
+                self.manager.mk_rdiv(x, one)
+            }
             // ======== Transcendentals (Real -> Real) ========
             // A non-arithmetic operand is a sort error per the standard's
             // spirit (these are Real-embedded functions); reporting beats
