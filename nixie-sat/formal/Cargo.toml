@@ -1,0 +1,33 @@
+# Standalone: ordinary release tests need no external verifier.
+[workspace]
+
+[package]
+name = "nixie-sat-formal"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Literal representation obligations over Nixie's public SAT API"
+
+[dependencies]
+nixie-sat = { path = "..", default-features = false, features = ["std"] }
+# prepare.py inserts the explicitly selected local oxiformal dependency here.
+
+[package.metadata.formal]
+schema = 1
+default-layers = ["hygiene", "bmc", "contract"]
+unwind = 4
+budget = { max-conflicts = 200000, timeout-ms = 30000, seed = 1 }
+# Conservative: the upstream verifier and this target share solver ancestry.
+self-host = true
+dep-crates = ["nixie-sat"]
+
+[[package.metadata.formal.target]]
+path = "src/lib.rs"
+layers = ["hygiene", "bmc", "contract"]
+
+[lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(formal)', 'cfg(oxiformal_runtime_checks)'] }
+
+[lints.clippy]
+unwrap_used = "deny"
