@@ -12,6 +12,7 @@ mod factor;
 pub mod heuristic;
 mod incremental;
 mod learn;
+mod root_clause;
 use learn::InprocBudgets;
 use subsume::SubsumeScratch;
 mod lucky;
@@ -1519,6 +1520,8 @@ pub struct Solver {
     pub(super) restart_threshold: u64,
     /// Assertion scope snapshots for incremental solving.
     pub(super) assertion_levels: Vec<AssertionScope>,
+    /// Permanent units and their proof originals, replayed after assertion pop.
+    root_units: Vec<(Lit, i64)>,
     /// Set once `push()` is called.  Retracted clauses stay live in the database
     /// after `pop()` (watch lists are cleaned lazily), so the fully-falsified
     /// scan in `trail_falsifies_live_clause` cannot distinguish a genuinely
@@ -2384,6 +2387,7 @@ impl Solver {
             seen: Vec::new(),
             analyze_stack: Vec::new(),
             assertion_levels: vec![AssertionScope::default()],
+            root_units: Vec::new(),
             ever_pushed: false,
             model: Vec::new(),
             trivially_unsat: false,
@@ -2777,6 +2781,21 @@ impl Solver {
         }
     }
 
+    /// Flush delayed parsing implications in their assignment order. A pop may
+    /// have removed an implication (and its reason) before the next solve.
+    fn flush_pending_parse_units(&mut self) {
+        let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
+        for (lit, cid) in pending {
+            if self.trail.lit_value(lit).is_true()
+                && self.trail.level(lit.var()) == 0
+                && self.trail.reason(lit.var()) == Reason::Propagation(cid)
+                && self.clauses.get(cid).is_some_and(|c| !c.deleted)
+            {
+                self.flush_level0_unit(lit, cid);
+            }
+        }
+    }
+
     /// Flush a level-0 propagation to an explicit derived unit (the principled
     /// fix that makes every level-0 literal a unit with an LRAT id, matching
     /// cadical's invariant). Called right after a literal is propagated at
@@ -3053,6 +3072,11 @@ impl Solver {
             return;
         }
         if self.lrat {
+            // Parsing can find a conflict before solve() flushes its implied
+            // units. Their ids must exist before the empty clause cites them.
+            // This clause ends the proof, so allocating derived ids now cannot
+            // interrupt the still-open original prefix of a live proof.
+            self.flush_pending_parse_units();
             // Same per-literal walk as `build_chain_for_empty`, but driven by
             // the explicit seed literals + id rather than a stored ClauseId.
             debug_assert!(
@@ -3823,7 +3847,7 @@ impl Solver {
     ///
     /// The sound response restores the information the elimination removed:
     /// re-assert every clause retired for that variable as a live original
-    /// through the full [`Self::add_clause`] machinery (fresh ids, watches,
+    /// through permanent clause installation (fresh ids, watches,
     /// proof lines, unit/conflict handling), drop the pure pin, and void the
     /// variable's extension-stack obligations so [`Self::save_model`]'s walk
     /// stops toggling its witnesses. The search then enforces the
@@ -3832,13 +3856,32 @@ impl Solver {
     /// variable is resurrected at most once — its eliminated marker stays
     /// set, so no later round re-eliminates it.
     fn void_elimination_promises(&mut self, lits: &[Lit]) {
+        let mut pending = self.take_elimination_obligations(lits);
+        let mut restored = Vec::new();
+        while let Some(mut clause) = pending.pop() {
+            for lit in &mut clause {
+                *lit = self.resolve_reintroduced_literal(*lit);
+            }
+            pending.extend(self.take_elimination_obligations(&clause));
+            restored.push(clause);
+        }
+        // Destructive elimination runs only at base scope. Restored originals
+        // must therefore survive even when the new mention occurs inside push.
+        // Finish restoring the entire closure even if scoped facts conflict.
+        for clause in restored {
+            self.install_root_clause(clause);
+        }
+    }
+
+    fn take_elimination_obligations(&mut self, lits: &[Lit]) -> Vec<SmallVec<[Lit; 8]>> {
+        let mut obligations = Vec::new();
         // No pins recorded and no BVE obligation table built: nothing to
         // guard (the common case — both tables start empty and stay empty
         // until an elimination pass actually runs; `elim_var_flag` alone is
         // checked per-literal below, keeping this O(1) — a whole-array scan
         // here made define-heavy ingestions quadratic).
         if self.pure_literal_reconstruction.is_empty() && self.bve_def.is_empty() {
-            return;
+            return obligations;
         }
         // (a) Pure-literal pins: only the *opposite* polarity voids the pin;
         // a mention of the pin's own polarity is satisfied by the pin forever.
@@ -3860,12 +3903,7 @@ impl Solver {
                 .position(|(p, _)| *p == pin)
             {
                 let (_, retired) = self.pure_deleted_clauses.swap_remove(pos);
-                for clause in retired {
-                    self.add_clause(clause);
-                    if self.trivially_unsat {
-                        return;
-                    }
-                }
+                obligations.extend(retired);
             }
         }
 
@@ -3907,13 +3945,9 @@ impl Solver {
                 }
                 i = end + 1;
             }
-            for clause in resurrect {
-                self.add_clause(clause);
-                if self.trivially_unsat {
-                    return;
-                }
-            }
+            obligations.extend(resurrect);
         }
+        obligations
     }
 
     /// Add a clause to the solver (original, non-learned). Returns `false`
@@ -4390,12 +4424,7 @@ impl Solver {
         // before the initial propagation below: that propagate's own unit
         // flushes reference these literals as antecedents, and the search's
         // first RUP chains reference their unit ids.
-        if !self.pending_parse_unit_flushes.is_empty() {
-            let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
-            for (lit, cid) in pending {
-                self.flush_level0_unit(lit, cid);
-            }
-        }
+        self.flush_pending_parse_units();
         // Check if trivially unsatisfiable
         if self.trivially_unsat {
             self.drat_emit_empty(None);
@@ -5567,6 +5596,10 @@ impl Solver {
                 // on the popped scope (false unsat across check/pop/check).
                 for var in &unassigned_vars {
                     self.theory_prop_reasons.remove(var);
+                    // A later propagation of this literal needs a new proof
+                    // based on the surviving clauses, not its scoped reason.
+                    self.proof_set_unit_id(Lit::pos(*var).to_dimacs(), 0);
+                    self.proof_set_unit_id(Lit::neg(*var).to_dimacs(), 0);
                 }
 
                 self.trail.backtrack_to_size(trail_size);
@@ -5611,6 +5644,7 @@ impl Solver {
             // beyond restoring the facts the pop erased. Mirrors the same rewind
             // in `Solver::restore_to_trail_size`.
             self.trail.reset_propagation_head();
+            self.replay_root_units();
         }
     }
 
@@ -5664,6 +5698,8 @@ impl Solver {
         self.learnt.clear();
         self.seen.clear();
         self.analyze_stack.clear();
+        self.root_units.clear();
+        self.pending_parse_unit_flushes.clear();
         self.assertion_levels.clear();
         self.assertion_levels.push(AssertionScope::default());
         self.model.clear();

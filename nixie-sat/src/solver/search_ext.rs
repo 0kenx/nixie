@@ -51,12 +51,7 @@ impl Solver {
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
         // LRAT: solve-entry deferred parse-unit flush (see `Solver::solve`).
-        if !self.pending_parse_unit_flushes.is_empty() {
-            let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
-            for (lit, cid) in pending {
-                self.flush_level0_unit(lit, cid);
-            }
-        }
+        self.flush_pending_parse_units();
         // Mark the search as theory-carrying so `inprocess` can drop its
         // pure-literal pass (unsound when theory lemmas may later force the
         // opposite polarity of a Boolean-pure variable – see
