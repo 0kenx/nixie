@@ -1044,6 +1044,12 @@ impl SortManager {
         self.datatypes.get(&key)
     }
 
+    /// Whether a datatype has been declared (forward sort references do not count).
+    #[must_use]
+    pub fn has_datatypes(&self) -> bool {
+        !self.datatypes.is_empty()
+    }
+
     /// Check if a datatype with the given name is declared
     #[must_use]
     pub fn is_datatype_declared(&self, name: &str) -> bool {

@@ -3113,3 +3113,18 @@ fn equiv_substitution_grown_tail_stays_identity() {
         "els grown tail",
     );
 }
+
+#[test]
+fn variable_limits_precede_bulk_allocation_and_state_mutation() {
+    let mut solver = Solver::new();
+    for count in [Var::MAX_INDEX as usize + 2, usize::MAX] {
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| solver.new_vars_bulk(count)))
+                .is_err()
+        );
+        assert_eq!(solver.num_vars(), 0);
+    }
+    solver.num_vars = Var::MAX_INDEX as usize + 1;
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| solver.new_var())).is_err());
+    assert_eq!(solver.num_vars(), Var::MAX_INDEX as usize + 1);
+}

@@ -115,6 +115,7 @@ impl Solver {
             // Budget exhausted: NOT a fixpoint.  The caller must not mark the
             // refinement saturated (`array_axioms_saturated` stays `false` so
             // the Context honesty gate keeps guarding a `Sat` verdict).
+            self.array_witness_budget_exhausted = true;
             return false;
         }
 
@@ -129,6 +130,22 @@ impl Solver {
         }
         for &root in self.array_axiom_instances.iter() {
             collect_array_structure(root, false, manager, &mut visited, &mut collected);
+        }
+
+        // Quantifier instances are conditional on their owning quantifier.
+        // Discover their terms, but never promote a conditional equality or
+        // disequality to an asserted fact. Sort roots for deterministic emission.
+        let mut instance_roots: Vec<_> = self.ground_instance_roots.iter().copied().collect();
+        instance_roots.sort_unstable();
+        for root in instance_roots {
+            collect_array_structure_with_asserted(
+                root,
+                false,
+                false,
+                manager,
+                &mut visited,
+                &mut collected,
+            );
         }
 
         if collected.selects.is_empty() && collected.eq_pairs.is_empty() {
@@ -549,6 +566,17 @@ fn collect_array_structure(
     visited: &mut FxHashSet<TermId>,
     out: &mut ArrayStructure,
 ) {
+    collect_array_structure_with_asserted(term, from_input, true, manager, visited, out);
+}
+
+fn collect_array_structure_with_asserted(
+    term: TermId,
+    from_input: bool,
+    asserted: bool,
+    manager: &TermManager,
+    visited: &mut FxHashSet<TermId>,
+    out: &mut ArrayStructure,
+) {
     // The stack carries three flags alongside the term:
     //
     // * `positive` (polarity, `true` = positive).  It flips under `Not`, so a
@@ -577,7 +605,7 @@ fn collect_array_structure(
     let mut stack: Vec<WalkFrame> = vec![WalkFrame {
         term,
         positive: true,
-        asserted: true,
+        asserted,
         from_input,
     }];
     while let Some(WalkFrame {
@@ -594,6 +622,8 @@ fn collect_array_structure(
             continue;
         };
         match &data.kind {
+            // Bound terms acquire ground axioms only after instantiation.
+            TermKind::Forall { .. } | TermKind::Exists { .. } => {}
             TermKind::Not(inner) => {
                 stack.push(WalkFrame {
                     term: *inner,
@@ -2432,6 +2462,29 @@ mod s8_iterative_tests {
         assert!(out.asserted_diseq_pairs.is_empty());
         // ... but it is still an `eq_pair` (valid congruence material).
         assert_eq!(out.eq_pairs, vec![(a, b)]);
+    }
+
+    #[test]
+    fn conditional_instance_root_does_not_assert_an_array_disequality() {
+        let mut manager = TermManager::new();
+        let int = manager.sorts.int_sort;
+        let array = manager.sorts.array(int, int);
+        let a = manager.mk_var("a", array);
+        let b = manager.mk_var("b", array);
+        let eq = manager.mk_eq(a, b);
+        let diseq = manager.mk_not(eq);
+        let mut visited = FxHashSet::default();
+        let mut out = ArrayStructure::default();
+        collect_array_structure_with_asserted(
+            diseq,
+            false,
+            false,
+            &manager,
+            &mut visited,
+            &mut out,
+        );
+        assert!(out.asserted_diseq_pairs.is_empty());
+        assert_eq!(out.eq_pairs, [(a, b)]);
     }
 
     /// Cross-theory arguments are interface arrays; plain `select` array

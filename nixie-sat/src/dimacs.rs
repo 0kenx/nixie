@@ -53,10 +53,9 @@ impl From<io::Error> for DimacsError {
 /// The header value is attacker-controlled and is used to eagerly allocate
 /// per-variable state (`Solver::ensure_vars`), so an unbounded value turns a
 /// tiny file such as `p cnf 999999999999 1` into an effectively infinite loop
-/// and OOM. `2^31` both fits the `u32` variable index space and caps the eager
-/// allocation. Callers needing more can raise it with
-/// [`DimacsParser::set_max_vars`].
-pub const DEFAULT_MAX_VARS: usize = 1 << 31;
+/// and OOM. The bound also ensures every variable has both signed DIMACS
+/// representations. Callers can lower it with [`DimacsParser::set_max_vars`].
+pub const DEFAULT_MAX_VARS: usize = Var::MAX_INDEX as usize + 1;
 
 /// DIMACS CNF parser
 pub struct DimacsParser {
@@ -80,10 +79,10 @@ impl DimacsParser {
     ///
     /// A header declaring more than this many variables is rejected with
     /// [`DimacsError::InvalidProblem`] instead of triggering an unbounded
-    /// allocation. Values above `u32::MAX` are clamped to `u32::MAX` because
-    /// variable indices must fit in a `u32`.
+    /// allocation. Values above `Var::MAX_INDEX + 1` are clamped to that
+    /// representation limit.
     pub fn set_max_vars(&mut self, max_vars: usize) {
-        self.max_vars = max_vars.min(u32::MAX as usize);
+        self.max_vars = max_vars.min(DEFAULT_MAX_VARS);
     }
 
     /// Parse a DIMACS file and load into solver
@@ -379,8 +378,8 @@ impl DimacsParser {
 
         // Reject an adversarial variable count before it is handed to
         // `Solver::ensure_vars`, which would otherwise allocate per-variable
-        // state in a loop (hang / OOM). Variable indices must also fit in a
-        // `u32`, so `max_vars` never exceeds `u32::MAX`.
+        // state in a loop (hang / OOM). Every index must also support both
+        // signs in DIMACS, so `max_vars` never exceeds DEFAULT_MAX_VARS.
         if self.num_vars > self.max_vars {
             return Err(DimacsError::InvalidProblem);
         }
@@ -395,7 +394,7 @@ impl DimacsParser {
         }
 
         let abs_val = dimacs_lit.unsigned_abs();
-        if abs_val as usize > self.num_vars {
+        if dimacs_lit == i32::MIN || abs_val as usize > self.num_vars {
             return Err(DimacsError::LiteralOutOfRange(dimacs_lit));
         }
 
@@ -455,6 +454,18 @@ impl DimacsWriter {
         num_vars: usize,
         clauses: &[Vec<Lit>],
     ) -> Result<(), DimacsError> {
+        // Validate before writing any output; raw encodings can bypass the
+        // checked literal constructors.
+        if num_vars > DEFAULT_MAX_VARS {
+            return Err(DimacsError::InvalidProblem);
+        }
+        for lit in clauses.iter().flatten() {
+            if lit.try_to_dimacs().is_none() || lit.var().index() >= num_vars {
+                return Err(DimacsError::Parse(
+                    "unrepresentable or undeclared literal".into(),
+                ));
+            }
+        }
         // Write header
         writeln!(writer, "c DIMACS CNF")?;
         writeln!(writer, "p cnf {} {}", num_vars, clauses.len())?;
@@ -462,7 +473,7 @@ impl DimacsWriter {
         // Write clauses
         for clause in clauses {
             for &lit in clause {
-                write!(writer, "{} ", Self::lit_to_dimacs(lit))?;
+                write!(writer, "{} ", lit.to_dimacs())?;
             }
             writeln!(writer, "0")?;
         }
@@ -520,16 +531,6 @@ impl DimacsWriter {
             }
         }
         Ok(())
-    }
-
-    /// Convert internal Lit to DIMACS literal
-    fn lit_to_dimacs(lit: Lit) -> i32 {
-        let var_index = lit.var().index() as i32;
-        if lit.is_pos() {
-            var_index + 1
-        } else {
-            -(var_index + 1)
-        }
     }
 }
 
@@ -724,5 +725,31 @@ mod tests {
             .parse_reader(cnf.as_bytes(), &mut solver)
             .expect("plain digit tokens parse");
         assert_eq!(parser.num_vars(), 3);
+    }
+    #[test]
+    fn representation_limits_are_checked_before_allocation_or_output() {
+        let mut parser = DimacsParser::new();
+        parser.set_max_vars(usize::MAX);
+        let mut solver = Solver::new();
+        assert!(matches!(
+            parser.parse_reader(b"p cnf 2147483648 0".as_slice(), &mut solver),
+            Err(DimacsError::InvalidProblem)
+        ));
+        assert_eq!(solver.num_vars(), 0);
+        // Exercise the conversion separately so a header guard cannot hide it.
+        parser.num_vars = usize::MAX;
+        assert!(matches!(
+            parser.dimacs_to_lit(i32::MIN),
+            Err(DimacsError::LiteralOutOfRange(_))
+        ));
+        for lit in [
+            Lit::from_code(u32::MAX),
+            Lit::from_code(u32::MAX - 1),
+            Lit::pos(Var::new(1)),
+        ] {
+            let mut output = Vec::new();
+            assert!(DimacsWriter::write_cnf_to(&mut output, 1, &[vec![lit]]).is_err());
+            assert!(output.is_empty());
+        }
     }
 }

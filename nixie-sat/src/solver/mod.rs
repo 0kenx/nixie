@@ -3365,6 +3365,10 @@ impl Solver {
 
     /// Create a new variable
     pub fn new_var(&mut self) -> Var {
+        assert!(
+            self.num_vars <= Var::MAX_INDEX as usize,
+            "SAT variable limit exceeded"
+        );
         let var = Var::new(self.num_vars as u32);
         self.num_vars += 1;
         self.trail.resize(self.num_vars);
@@ -3454,6 +3458,10 @@ impl Solver {
             return;
         }
         let old = self.num_vars;
+        assert!(
+            n <= (Var::MAX_INDEX as usize + 1).saturating_sub(old),
+            "SAT variable limit exceeded"
+        );
         let target = old + n;
         self.num_vars = target;
         self.trail.resize(target);

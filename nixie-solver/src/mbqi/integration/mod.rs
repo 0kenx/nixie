@@ -30,6 +30,7 @@ use super::{
     Instantiation, InstantiationReason, MBQIResult, MBQIStats, QuantifiedFormula, QuantifierId,
 };
 
+mod goal;
 mod search_state;
 
 pub use search_state::MbqiSearchCheckpoint;
@@ -162,6 +163,8 @@ pub struct MBQIIntegration {
     /// is `sat`-worthy only if it *evaluates* them true, not merely if
     /// the ground solver's own model (its source) did.
     ground_assertions: Vec<TermId>,
+    goal_assertions: Vec<TermId>,
+    unnamed_only: bool,
     /// Cached answer to [`Self::goal_uses_constructor_tables`] — a
     /// static property of the quantifier set, invalidated whenever the
     /// set changes.
@@ -208,6 +211,8 @@ impl MBQIIntegration {
             last_round_barren: false,
             barren_streak: 0,
             ground_assertions: Vec::new(),
+            goal_assertions: Vec::new(),
+            unnamed_only: false,
             tables_goal_cache: None,
             compound_representations: Vec::new(),
             gate_violations_seen: FxHashMap::default(),
@@ -1098,72 +1103,35 @@ impl MBQIIntegration {
         // an unsatisfiable goal into a detected conflict but never fabricate
         // `Sat`.  Goals outside the fragment yield `NotEligible` and fall
         // through to the normal counterexample path (and ultimately `Unknown`).
-        match sat_certify::collect_fragment_instances(
+        self.unnamed_only = false;
+        let mut certification = sat_certify::collect_fragment_instances(
             &quantifiers,
             &completed_model,
+            None,
             manager,
             SAT_CERTIFY_CAP,
             self.current_round as u32,
-        ) {
-            sat_certify::CertifyResult::Instances(insts) => {
-                let mut fresh = Vec::new();
-                for mut inst in insts {
-                    if self.is_duplicate(&inst) {
-                        continue;
-                    }
-                    // Record against the (quantifier, binding) key *before* the
-                    // tautology filter below.  Saturation is detected purely by
-                    // this key (never by the result term), so recording every
-                    // relevant tuple – even those whose body collapses to `true`
-                    // – is what lets a later round observe "nothing fresh" and
-                    // conclude `Satisfied` soundly.
-                    self.record_instantiation(&inst);
-
-                    // Simplify so that the concrete guards of a bounded-box
-                    // instance collapse: e.g.
-                    //   (and (>= 1 0) (<= 1 10) (= (f 1) (f 2))) => (= 1 2)
-                    // reduces to the clean disequality (not (= (f 1) (f 2))).
-                    // Emitting the raw guarded implication instead feeds the
-                    // downstream pigeonhole / integer-domain clause heuristics a
-                    // spurious "bounded integer variable" shape (the substituted
-                    // constants still parse as `(>= c 0) (<= c 10)` conjuncts),
-                    // which over-constrains the ground problem and can flip a
-                    // satisfiable goal to a spurious `unsat`.  This mirrors
-                    // the enumerative path, which simplifies for the same reason.
-                    inst.result = self.deep_simplify(inst.result, manager);
-
-                    // A tautology instance (body ≡ ⊤) constrains nothing.  It is
-                    // already recorded above (so the set can still saturate), so
-                    // just skip emitting it as a lemma.
-                    if manager
-                        .get(inst.result)
-                        .is_some_and(|t| matches!(t.kind, TermKind::True))
-                    {
-                        continue;
-                    }
-
-                    callback.on_instantiation(&inst);
-                    fresh.push(inst);
-                }
-                let result = if fresh.is_empty() {
-                    // Saturated: every relevant instance was either emitted in an
-                    // earlier round or is a tautology, and the ground solver still
-                    // found a model – so by the completeness theorem for this
-                    // fragment the whole quantified formula is `Sat`.
-                    if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-                        eprintln!("[mc] SATISFIED VIA sat_certify saturation");
-                    }
-                    MBQIResult::Satisfied
-                } else {
-                    MBQIResult::NewInstantiations(fresh)
-                };
-                callback.on_round_end(self.current_round, &result);
-                self.update_final_stats();
-                return result;
-            }
-            sat_certify::CertifyResult::NotEligible => {
-                // Not in the certifiable fragment: keep the normal behaviour.
-            }
+        );
+        if matches!(certification, sat_certify::CertifyResult::NotEligible) {
+            // With no ground read yet, a Real-indexed array has an empty
+            // relevant set. The goal's named and unnamed index regions can
+            // seed a complete set even before ordinary saturation is possible.
+            certification = sat_certify::collect_fragment_instances(
+                &quantifiers,
+                &completed_model,
+                Some(&self.goal_assertions),
+                manager,
+                SAT_CERTIFY_CAP,
+                self.current_round as u32,
+            );
+        }
+        if let sat_certify::CertifyResult::Instances(insts) = certification
+            && let Some(result) =
+                self.certify_or_refine(insts, &quantifiers, &completed_model, manager, callback)
+        {
+            callback.on_round_end(self.current_round, &result);
+            self.update_final_stats();
+            return result;
         }
 
         for quantifier in &quantifiers {

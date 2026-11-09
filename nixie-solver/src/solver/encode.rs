@@ -2748,6 +2748,7 @@ impl Solver {
     }
 
     pub(super) fn emit_assertion_clauses(&mut self, term: TermId, manager: &mut TermManager) {
+        self.register_ground_instance_root(term, manager);
         /// Mark the assertion set inconsistent (mirrors the pre-encode
         /// `False` handling at the top of `assert`).
         fn note_false(solver: &mut Solver) {

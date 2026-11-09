@@ -81,7 +81,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
-use nixie_core::sort::SortId;
+use nixie_core::sort::{SortId, SortKind};
 
 use super::Solver;
 use super::term_walk::collect_structural_children;
@@ -149,32 +149,104 @@ pub(super) struct DtScan {
 /// both operands of an equality – unlike [`super::term_walk::asserted_children`],
 /// which exists for the opposite kind of pass.
 ///
-/// Quantifier bodies are *not* entered: a selector applied to a bound variable
-/// is not a ground term and axiomatising it would constrain a variable that has
-/// no fixed meaning.
+/// Enter binder bodies only to discover subterms independent of every enclosing
+/// binder. For example, `tail(l)` is ground in `forall n. n > 0 => is_nil(tail(l))`,
+/// whereas `tail(n)` is not. The latter acquires axioms only after instantiation.
+/// Memoization includes the lexical scope: a hash-consed variable can occur both
+/// free and bound under the same name.
 pub(super) fn scan_datatype_terms(assertions: &[TermId], manager: &TermManager) -> Option<DtScan> {
-    let mut visited: FxHashSet<TermId> = FxHashSet::default();
-    let mut stack: Vec<TermId> = assertions.to_vec();
+    use nixie_core::interner::Spur;
+    enum Frame {
+        Visit(TermId, usize),
+        Bind(Vec<Spur>, TermId),
+        Unbind(Vec<Spur>),
+    }
+    let mut visited = FxHashSet::default();
+    let mut stack: Vec<_> = assertions.iter().map(|&t| Frame::Visit(t, 0)).collect();
+    let mut bound: FxHashMap<Spur, usize> = FxHashMap::default();
+    let mut free_names: FxHashMap<TermId, Vec<Spur>> = FxHashMap::default();
+    let mut scope = 0usize;
     let mut by_sort: FxHashMap<SortId, Vec<TermId>> = FxHashMap::default();
     let mut children: Vec<TermId> = Vec::new();
 
-    while let Some(term) = stack.pop() {
-        if !visited.insert(term) {
+    while let Some(frame) = stack.pop() {
+        let (term, context) = match frame {
+            Frame::Bind(names, body) => {
+                for &name in &names {
+                    *bound.entry(name).or_default() += 1;
+                }
+                scope += 1;
+                stack.push(Frame::Unbind(names));
+                stack.push(Frame::Visit(body, scope));
+                continue;
+            }
+            Frame::Unbind(names) => {
+                for name in names {
+                    if let Some(count) = bound.get_mut(&name) {
+                        *count -= 1;
+                        if *count == 0 {
+                            bound.remove(&name);
+                        }
+                    }
+                }
+                continue;
+            }
+            Frame::Visit(term, context) => (term, context),
+        };
+        if !visited.insert((term, context)) {
             continue;
         }
         let Some(node) = manager.get(term) else {
             continue;
         };
         if manager.sorts.is_datatype(node.sort) {
-            by_sort.entry(node.sort).or_default().push(term);
+            let ground = bound.is_empty()
+                || free_names
+                    .entry(term)
+                    .or_insert_with(|| {
+                        manager
+                            .free_vars(term)
+                            .iter()
+                            .filter_map(|&v| match manager.get(v).map(|n| &n.kind) {
+                                Some(TermKind::Var(name)) => Some(*name),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .iter()
+                    .all(|name| !bound.contains_key(name));
+            if ground {
+                by_sort.entry(node.sort).or_default().push(term);
+            }
         }
-        // Binders introduce non-ground sub-terms; stop there.
-        if matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
-            continue;
+        match &node.kind {
+            TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
+                stack.push(Frame::Bind(
+                    vars.iter().map(|(name, _)| *name).collect(),
+                    *body,
+                ));
+            }
+            TermKind::Let { bindings, body } => {
+                stack.push(Frame::Bind(
+                    bindings.iter().map(|(name, _)| *name).collect(),
+                    *body,
+                ));
+                for &(_, value) in bindings {
+                    stack.push(Frame::Visit(value, context));
+                }
+            }
+            TermKind::Match { scrutinee, cases } => {
+                for case in cases {
+                    stack.push(Frame::Bind(case.bindings.to_vec(), case.body));
+                }
+                stack.push(Frame::Visit(*scrutinee, context));
+            }
+            kind => {
+                children.clear();
+                collect_structural_children(kind, &mut children);
+                stack.extend(children.iter().map(|&t| Frame::Visit(t, context)));
+            }
         }
-        children.clear();
-        collect_structural_children(&node.kind, &mut children);
-        stack.extend(children.iter().copied());
     }
 
     if by_sort.is_empty() {
@@ -196,6 +268,7 @@ pub(super) fn scan_datatype_terms(assertions: &[TermId], manager: &TermManager) 
         .filter(|(sort, _)| decls.contains_key(sort))
         .map(|(sort, mut terms)| {
             terms.sort_unstable();
+            terms.dedup();
             (sort, terms)
         })
         .collect();
@@ -278,6 +351,50 @@ fn dt_size(term: TermId, manager: &mut TermManager) -> TermId {
 }
 
 impl Solver {
+    /// Record only ground portions of source/instance terms. Axiom-generated
+    /// recursive selectors are deliberately excluded to keep expansion finite.
+    pub(super) fn register_ground_instance_root(&mut self, term: TermId, manager: &TermManager) {
+        if self.ground_instance_roots.contains(&term) {
+            return;
+        }
+        let mut stack = vec![term];
+        let mut visited = FxHashSet::default();
+        let mut has_arrays = false;
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            if let Some(node) = manager.get(current) {
+                if matches!(
+                    manager.sorts.get(node.sort).map(|s| &s.kind),
+                    Some(SortKind::Array { .. })
+                ) {
+                    has_arrays = true;
+                    break;
+                }
+                stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
+            }
+        }
+        if has_arrays
+            || (manager.sorts.has_datatypes() && scan_datatype_terms(&[term], manager).is_some())
+        {
+            self.ground_instance_roots.insert(term);
+            self.trail.push(TrailOp::GroundInstanceRootAdded { term });
+        }
+    }
+
+    /// Include ground encodings and instances that the stored binder hides.
+    pub(super) fn datatype_scan(&self, manager: &TermManager) -> Option<DtScan> {
+        if !manager.sorts.has_datatypes() {
+            return None;
+        }
+        let mut roots = self.assertions.clone();
+        roots.extend(self.ground_instance_roots.iter().copied());
+        roots.sort_unstable();
+        roots.dedup();
+        scan_datatype_terms(&roots, manager)
+    }
+
     /// Assert the defining axioms of every datatype term reachable from the
     /// current assertion set.
     ///
@@ -287,7 +404,7 @@ impl Solver {
     /// re-derives whatever it still needs.  Idempotent – re-running it inside
     /// the refinement loop of [`Solver::check`] adds nothing new.
     pub(super) fn instantiate_dt_axioms(&mut self, manager: &mut TermManager) {
-        let Some(scan) = scan_datatype_terms(&self.assertions, manager) else {
+        let Some(scan) = self.datatype_scan(manager) else {
             return;
         };
 
@@ -651,5 +768,66 @@ impl Solver {
             .push(TrailOp::DtAxiomInstanceAdded { term: lemma });
         let lit = self.encode(lemma, manager);
         let _ = self.sat.add_clause([lit]);
+    }
+}
+
+#[cfg(test)]
+mod upstream034_tests {
+    use super::*;
+    use crate::Context;
+
+    const DECLS: &str = "(declare-datatype L ((nil) (cons (hd Int) (tl L))))
+        (declare-const l L)";
+
+    #[test]
+    fn datatype_axioms_and_roots_reset_with_the_clause_database() {
+        let mut context = Context::new();
+        context
+            .execute_script(&format!("{DECLS}(assert ((_ is cons) l))(check-sat)"))
+            .expect("script");
+        assert!(!context.solver().dt_axiom_instances.is_empty());
+        assert!(!context.solver().ground_instance_roots.is_empty());
+        // The budget flag must reset even if it is not reached on this tiny goal.
+        context.solver_mut().dt_axioms_incomplete = true;
+        context.reset();
+        assert!(context.solver().dt_axiom_instances.is_empty());
+        assert!(context.solver().ground_instance_roots.is_empty());
+        assert!(!context.solver().dt_axioms_incomplete);
+        let output = context
+            .execute_script(&format!("{DECLS}(assert ((_ is cons) l))(check-sat)"))
+            .expect("script");
+        assert_eq!(output.last().map(String::as_str), Some("sat"));
+        assert!(!context.solver().dt_axiom_instances.is_empty());
+    }
+
+    #[test]
+    fn datatype_root_and_axiom_journals_rollback_together() {
+        let mut context = Context::new();
+        context
+            .execute_script(&format!("{DECLS}(assert ((_ is cons) l))(check-sat)"))
+            .expect("script");
+        let roots = context.solver().ground_instance_roots.clone();
+        let axioms = context.solver().dt_axiom_instances.clone();
+        let sort = context.terms.sorts.mk_datatype_sort("L");
+        let l = context.terms.mk_var("l", sort);
+        let tail = context.terms.mk_dt_selector("tl", l, sort);
+        let tester = context.terms.mk_dt_tester("cons", tail);
+        for _ in 0..2 {
+            context.push();
+            context.assert(tester);
+            assert_eq!(context.check_sat(), super::super::SolverResult::Sat);
+            assert!(context.solver().ground_instance_roots.len() > roots.len());
+            context.pop();
+            assert_eq!(context.solver().ground_instance_roots, roots);
+            assert_eq!(context.solver().dt_axiom_instances, axioms);
+        }
+    }
+
+    #[test]
+    fn datatype_declaration_guard_excludes_forward_references() {
+        let mut manager = TermManager::new();
+        assert!(!manager.sorts.has_datatypes());
+        manager.sorts.mk_datatype_sort("Forward");
+        assert!(!manager.sorts.has_datatypes());
     }
 }

@@ -144,6 +144,8 @@ impl MBQIIntegration {
         // universe.
         self.model_completer.reset_structure();
         self.ground_assertions.clear();
+        self.goal_assertions.clear();
+        self.unnamed_only = false;
         self.gate_violations_seen.clear();
         self.gate_materialized = false;
         self.compound_representations.clear();

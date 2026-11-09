@@ -9,9 +9,20 @@ use core::ops::Not;
 pub struct Var(pub u32);
 
 impl Var {
+    /// Largest index that fits the packed literal and both signed DIMACS forms.
+    pub const MAX_INDEX: u32 = (1 << 31) - 2;
+
     /// Create a new variable from a raw index
+    ///
+    /// # Panics
+    ///
+    /// Panics in every build profile when `idx` exceeds [`Var::MAX_INDEX`].
     #[must_use]
     pub const fn new(idx: u32) -> Self {
+        assert!(
+            idx <= Self::MAX_INDEX,
+            "variable index exceeds Var::MAX_INDEX"
+        );
         Self(idx)
     }
 
@@ -33,22 +44,42 @@ pub struct Lit(u32);
 
 impl Lit {
     /// Create a positive literal from a variable
+    ///
+    /// # Panics
+    ///
+    /// Panics in every build profile when the index exceeds [`Var::MAX_INDEX`].
     #[must_use]
     pub const fn pos(var: Var) -> Self {
+        assert!(
+            var.0 <= Var::MAX_INDEX,
+            "variable index exceeds Var::MAX_INDEX"
+        );
         Self(var.0 << 1)
     }
 
     /// Create a negative literal from a variable
+    ///
+    /// # Panics
+    ///
+    /// Panics in every build profile when the index exceeds [`Var::MAX_INDEX`].
     #[must_use]
     pub const fn neg(var: Var) -> Self {
+        assert!(
+            var.0 <= Var::MAX_INDEX,
+            "variable index exceeds Var::MAX_INDEX"
+        );
         Self((var.0 << 1) | 1)
     }
 
     /// Create a literal from a signed integer (DIMACS format)
     /// Positive int -> positive literal, negative int -> negative literal
+    ///
+    /// # Panics
+    ///
+    /// Panics for zero and `i32::MIN`, which have no supported literal.
     #[must_use]
     pub fn from_dimacs(lit: i32) -> Self {
-        debug_assert!(lit != 0);
+        assert!(lit != 0 && lit != i32::MIN, "invalid DIMACS literal");
         let var = Var::new(lit.unsigned_abs() - 1);
         if lit > 0 {
             Self::pos(var)
@@ -58,10 +89,25 @@ impl Lit {
     }
 
     /// Convert to DIMACS format
+    ///
+    /// # Panics
+    ///
+    /// Panics in every build profile when the raw encoding exceeds [`Var::MAX_INDEX`]. Use [`Lit::try_to_dimacs`] to handle this as `None`.
     #[must_use]
     pub fn to_dimacs(self) -> i32 {
-        let var = (self.var().0 + 1) as i32;
-        if self.is_pos() { var } else { -var }
+        match self.try_to_dimacs() {
+            Some(lit) => lit,
+            None => panic!("Lit::to_dimacs: variable index exceeds Var::MAX_INDEX"),
+        }
+    }
+
+    /// Convert to DIMACS without panicking, rejecting an unrepresentable magnitude.
+    ///
+    /// Raw encodings created by [`Lit::from_code`] can exceed [`Var::MAX_INDEX`].
+    #[must_use]
+    pub fn try_to_dimacs(self) -> Option<i32> {
+        let magnitude = i32::try_from(self.var().0.checked_add(1)?).ok()?;
+        Some(if self.is_pos() { magnitude } else { -magnitude })
     }
 
     /// Get the variable of this literal
@@ -203,6 +249,36 @@ mod tests {
         assert!(lit.is_neg());
         assert_eq!(lit.var(), Var::new(1));
         assert_eq!(lit.to_dimacs(), -2);
+    }
+
+    #[test]
+    fn dimacs_boundary_roundtrips() {
+        for index in [0, 1, Var::MAX_INDEX] {
+            let var = Var::new(index);
+            for lit in [Lit::pos(var), Lit::neg(var)] {
+                let value = lit.try_to_dimacs().expect("representable literal");
+                assert_eq!(Lit::from_dimacs(value), lit);
+                assert_eq!(lit.to_dimacs(), value);
+            }
+        }
+        for code in [u32::MAX - 1, u32::MAX] {
+            assert_eq!(Lit::from_code(code).try_to_dimacs(), None);
+        }
+    }
+
+    #[test]
+    fn invalid_literals_are_rejected_in_release_too() {
+        for index in [Var::MAX_INDEX + 1, 1 << 31, u32::MAX] {
+            assert!(std::panic::catch_unwind(|| Var::new(index)).is_err());
+            assert!(std::panic::catch_unwind(|| Lit::pos(Var(index))).is_err());
+            assert!(std::panic::catch_unwind(|| Lit::neg(Var(index))).is_err());
+        }
+        for value in [0, i32::MIN] {
+            assert!(std::panic::catch_unwind(|| Lit::from_dimacs(value)).is_err());
+        }
+        for code in [u32::MAX - 1, u32::MAX] {
+            assert!(std::panic::catch_unwind(|| Lit::from_code(code).to_dimacs()).is_err());
+        }
     }
 
     #[test]

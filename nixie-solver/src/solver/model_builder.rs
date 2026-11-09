@@ -8,7 +8,7 @@ use num_traits::ToPrimitive;
 use smallvec::SmallVec;
 
 use super::Solver;
-use super::dt_axioms::{DeclInfo, resolve_decl, scan_datatype_terms};
+use super::dt_axioms::{DeclInfo, resolve_decl};
 use super::types::Constraint;
 use super::types::{Model, UnsatCore};
 
@@ -851,7 +851,7 @@ impl Solver {
         if self.dt_axiom_instances.is_empty() {
             return;
         }
-        let Some(scan) = scan_datatype_terms(&self.assertions, manager) else {
+        let Some(scan) = self.datatype_scan(manager) else {
             return;
         };
 

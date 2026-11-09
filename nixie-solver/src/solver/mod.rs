@@ -818,6 +818,9 @@ pub struct Solver {
     /// already added to the SAT core as lemmas, keyed by the interned lemma
     /// term id.  See [`Solver::instantiate_dt_axioms`].
     pub(super) dt_axiom_instances: FxHashSet<TermId>,
+    /// Ground array/datatype roots introduced by assertion encoding and quantifier
+    /// instances. Rolled back with the clauses that reference them.
+    pub(super) ground_instance_roots: FxHashSet<TermId>,
     /// Set to `true` when the datatype axiom budget ran out before every
     /// instance had been asserted.  The remaining axiomatisation is then a
     /// strict subset of the theory, so `Unsat` is still trustworthy but a `Sat`
@@ -1365,6 +1368,7 @@ impl Solver {
             trans_delta_sat: false,
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
+            ground_instance_roots: FxHashSet::default(),
             dt_axioms_incomplete: false,
             entailed_int_consts: FxHashMap::default(),
             entailed_int_consts_upto: 0,
@@ -3333,6 +3337,7 @@ impl Solver {
         // checked just as explicitly before `Satisfied` may print `sat`
         // (the completed-vs-asserted divergence class the sixteenth
         // follow-up decoded).
+        self.mbqi.note_goal(&self.assertions);
         self.mbqi.set_ground_assertions(
             self.assertions
                 .iter()
@@ -3568,6 +3573,145 @@ impl Solver {
                         {
                             return SolverResult::Unknown;
                         }
+                    }
+                    // Lazy array-axiom instantiation: the syntactic array
+                    // pre-checks and EUF congruence do not implement a
+                    // complete array decision procedure, so a candidate `Sat`
+                    // may violate read-over-write / extensionality.  Watch the
+                    // array terms in this candidate model and assert every
+                    // axiom instance it does not already satisfy as a lemma,
+                    // then re-solve.  Only genuine array models survive.
+                    let array_refined =
+                        self.has_array_ops && self.instantiate_array_axioms(manager);
+                    // Distinct-semantics guard clauses: for a live
+                    // injective-`distinct` spec, every encoded
+                    // `(= t_i t_j)` atom between two of its arguments is
+                    // falsified by `¬result ∨ ¬(t_i = t_j)` — a VALID
+                    // clause (distinct true ⟹ pairwise distinct).  With
+                    // the asserted top-level distinct, `result` is a
+                    // level-0 unit, so ordinary unit propagation falsifies
+                    // every existing guard atom at the START of the next
+                    // descent — exactly the atoms the conflict census
+                    // found CDCL learning one conflict at a time (the RoW
+                    // guard equalities `eq(v,v)`: 23 k of 58 k classified
+                    // theory lemmas on memory-alias-s0-large; see
+                    // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+                    // Bounded by the atoms that already exist (created by
+                    // the refinement's asserted instances), never C(n,2);
+                    // both operand orders probed (hash-consing interns
+                    // them distinctly).
+                    if self.has_injective_distinct {
+                        for &(result, ref args) in &self.injective_distinct_specs {
+                            let Some(&rv) = self.term_to_var.get(&result) else {
+                                continue;
+                            };
+                            let not_result = Lit::neg(rv);
+                            for wi in 0..args.len() {
+                                for wj in (wi + 1)..args.len() {
+                                    for (a, b) in [(args[wi], args[wj]), (args[wj], args[wi])] {
+                                        let Some(eq) = manager.find_interned(
+                                            &TermKind::Eq(a, b),
+                                            manager.sorts.bool_sort,
+                                        ) else {
+                                            continue;
+                                        };
+                                        let Some(&ev) = self.term_to_var.get(&eq) else {
+                                            continue;
+                                        };
+                                        if self.distinct_guard_clauses.insert(eq) {
+                                            self.trail.push(TrailOp::DistinctGuardClauseAdded {
+                                                term: eq,
+                                            });
+                                            let _ = self.sat.add_clause([not_result, Lit::neg(ev)]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // The refinement loop reported "no instance the
+                    // candidate model violates" (or there are no array
+                    // operations at all): the element-wise agreement the
+                    // Context-level array honesty gate asks for has been
+                    // checked axiom by axiom.  Only the budget-exhausted
+                    // exit keeps this `false` (see the field's doc).
+                    self.array_axioms_saturated =
+                        !array_refined && !self.array_witness_budget_exhausted;
+                    if !array_refined && self.array_witness_budget_exhausted {
+                        self.model = None;
+                        self.unsat_core = None;
+                        return SolverResult::Unknown;
+                    }
+                    if array_refined {
+                        array_refinement_rounds += 1;
+                        if array_refinement_rounds >= max_array_refinement_rounds {
+                            // Could not saturate the array axioms within the
+                            // round budget: do not fabricate a verdict.
+                            //
+                            // The model goes with it (upstream #40): since
+                            // the refutation gate moved *below* this path,
+                            // the candidate on the table here may be one
+                            // the gate would have rejected, and a rejected
+                            // model must not stay readable behind an
+                            // `Unknown`.
+                            self.model = None;
+                            self.unsat_core = None;
+                            {
+                                return SolverResult::Unknown;
+                            }
+                        }
+                        // A read-over-write lemma is an `ite` over the two
+                        // array values; at Int/Real sort that `ite` is a new
+                        // opaque arithmetic atom, so define it before the
+                        // re-solve or the lemma carries no numeric meaning.
+                        self.instantiate_arith_axioms(manager);
+                        // Re-solve with the freshly asserted array lemmas from
+                        // a clean state.  `add_clause` backtracked the SAT core
+                        // to root for the unit lemmas, but the incremental
+                        // theory solvers still hold the facts committed by the
+                        // just-refuted candidate model (e.g. a stale
+                        // `select = 6`) – including any left in scopes this
+                        // round's search never unwound.
+                        self.rebase_theory_state();
+                        // After backtracking to root and resetting the
+                        // theory solvers: the SAT-variable <-> term tables
+                        // and the Tseitin memo are *not* reset here, so
+                        // they must still describe the same variables the
+                        // replayed search will re-derive.
+                        self.debug_check_invariants("check_core: after array-lemma backtrack");
+                        // Re-solve with the freshly asserted array lemmas.
+                        let zero_term = manager.mk_int(0);
+                        theory_manager = TheoryManager::new(
+                            manager,
+                            &mut self.euf,
+                            &mut self.arith,
+                            &mut self.bv,
+                            &mut self.diff,
+                            &mut self.array_theory,
+                            &self.bv_terms,
+                            &self.var_to_constraint,
+                            &self.var_to_parsed_arith,
+                            &self.term_to_var,
+                            &self.var_to_term,
+                            &self.numarg_proxies,
+                            &self.interface_const_pins,
+                            zero_term,
+                            &self.ite_result_terms,
+                            &mut self.derived_reasons,
+                            self.config.theory_mode,
+                            &mut self.statistics,
+                            self.config.max_conflicts,
+                            self.config.max_decisions,
+                            self.has_bv_arith_ops,
+                            self.has_array_ops,
+                            self.config.timeout_ms,
+                            self.logic.as_deref(),
+                            pure_dl,
+                            sparse_dl,
+                            self.has_injective_distinct,
+                            &self.injective_distinct_specs,
+                        );
+                        continue;
                     }
                     // If no quantifiers, we're done
                     if !self.has_quantifiers {
@@ -3862,141 +4006,6 @@ impl Solver {
                         // (see `pre_encode_care_graph_atoms`) so CDCL branches on
                         // the shared-term arrangement during the single search;
                         // no post-Sat restart is needed here.
-                        // Lazy array-axiom instantiation: the syntactic array
-                        // pre-checks and EUF congruence do not implement a
-                        // complete array decision procedure, so a candidate `Sat`
-                        // may violate read-over-write / extensionality.  Watch the
-                        // array terms in this candidate model and assert every
-                        // axiom instance it does not already satisfy as a lemma,
-                        // then re-solve.  Only genuine array models survive.
-                        let array_refined =
-                            self.has_array_ops && self.instantiate_array_axioms(manager);
-                        // Distinct-semantics guard clauses: for a live
-                        // injective-`distinct` spec, every encoded
-                        // `(= t_i t_j)` atom between two of its arguments is
-                        // falsified by `¬result ∨ ¬(t_i = t_j)` — a VALID
-                        // clause (distinct true ⟹ pairwise distinct).  With
-                        // the asserted top-level distinct, `result` is a
-                        // level-0 unit, so ordinary unit propagation falsifies
-                        // every existing guard atom at the START of the next
-                        // descent — exactly the atoms the conflict census
-                        // found CDCL learning one conflict at a time (the RoW
-                        // guard equalities `eq(v,v)`: 23 k of 58 k classified
-                        // theory lemmas on memory-alias-s0-large; see
-                        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
-                        // Bounded by the atoms that already exist (created by
-                        // the refinement's asserted instances), never C(n,2);
-                        // both operand orders probed (hash-consing interns
-                        // them distinctly).
-                        if self.has_injective_distinct {
-                            for &(result, ref args) in &self.injective_distinct_specs {
-                                let Some(&rv) = self.term_to_var.get(&result) else {
-                                    continue;
-                                };
-                                let not_result = Lit::neg(rv);
-                                for wi in 0..args.len() {
-                                    for wj in (wi + 1)..args.len() {
-                                        for (a, b) in [(args[wi], args[wj]), (args[wj], args[wi])] {
-                                            let Some(eq) = manager.find_interned(
-                                                &TermKind::Eq(a, b),
-                                                manager.sorts.bool_sort,
-                                            ) else {
-                                                continue;
-                                            };
-                                            let Some(&ev) = self.term_to_var.get(&eq) else {
-                                                continue;
-                                            };
-                                            if self.distinct_guard_clauses.insert(eq) {
-                                                self.trail.push(
-                                                    TrailOp::DistinctGuardClauseAdded { term: eq },
-                                                );
-                                                let _ =
-                                                    self.sat.add_clause([not_result, Lit::neg(ev)]);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // The refinement loop reported "no instance the
-                        // candidate model violates" (or there are no array
-                        // operations at all): the element-wise agreement the
-                        // Context-level array honesty gate asks for has been
-                        // checked axiom by axiom.  Only the budget-exhausted
-                        // exit keeps this `false` (see the field's doc).
-                        self.array_axioms_saturated =
-                            !array_refined && !self.array_witness_budget_exhausted;
-                        if array_refined {
-                            array_refinement_rounds += 1;
-                            if array_refinement_rounds >= max_array_refinement_rounds {
-                                // Could not saturate the array axioms within the
-                                // round budget: do not fabricate a verdict.
-                                //
-                                // The model goes with it (upstream #40): since
-                                // the refutation gate moved *below* this path,
-                                // the candidate on the table here may be one
-                                // the gate would have rejected, and a rejected
-                                // model must not stay readable behind an
-                                // `Unknown`.
-                                self.model = None;
-                                self.unsat_core = None;
-                                {
-                                    return SolverResult::Unknown;
-                                }
-                            }
-                            // A read-over-write lemma is an `ite` over the two
-                            // array values; at Int/Real sort that `ite` is a new
-                            // opaque arithmetic atom, so define it before the
-                            // re-solve or the lemma carries no numeric meaning.
-                            self.instantiate_arith_axioms(manager);
-                            // Re-solve with the freshly asserted array lemmas from
-                            // a clean state.  `add_clause` backtracked the SAT core
-                            // to root for the unit lemmas, but the incremental
-                            // theory solvers still hold the facts committed by the
-                            // just-refuted candidate model (e.g. a stale
-                            // `select = 6`) – including any left in scopes this
-                            // round's search never unwound.
-                            self.rebase_theory_state();
-                            // After backtracking to root and resetting the
-                            // theory solvers: the SAT-variable <-> term tables
-                            // and the Tseitin memo are *not* reset here, so
-                            // they must still describe the same variables the
-                            // replayed search will re-derive.
-                            self.debug_check_invariants("check_core: after array-lemma backtrack");
-                            // Re-solve with the freshly asserted array lemmas.
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.config.max_conflicts,
-                                self.config.max_decisions,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                self.config.timeout_ms,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
                         // Final congruence honesty gate — the
                         // trajectory-independent closure of the non-convex
                         // Nelson-Oppen gap.  The arrangement round's coverage
@@ -4469,23 +4478,16 @@ impl Solver {
 
                             // Add instantiation lemmas
                             for inst in instantiations {
-                                // If the instantiation result is definitively False
-                                // (e.g., a nested Exists with no valid witness), add an
-                                // empty clause to signal immediate UNSAT.
-                                let is_false_result = manager
-                                    .get(inst.result)
-                                    .is_some_and(|t| matches!(t.kind, TermKind::False));
-                                if is_false_result {
-                                    self.sat.add_clause([] as [Lit; 0]);
-                                    break;
-                                }
                                 // Scan for pigeonhole patterns (recurses into Implies)
-                                self.scan_for_pigeonhole(
-                                    inst.result,
-                                    manager,
-                                    &mut ph_domains,
-                                    &mut ph_diseqs,
-                                );
+                                if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                    self.scan_for_pigeonhole(
+                                        inst.result,
+                                        manager,
+                                        &mut ph_domains,
+                                        &mut ph_diseqs,
+                                    );
+                                }
+                                self.register_ground_instance_root(inst.result, manager);
                                 let lit = self.encode(inst.result, manager);
                                 // A *boundary* quantifier's instance is only
                                 // valid under its own meaning: `q -> body[t]`
@@ -4507,7 +4509,9 @@ impl Solver {
                                 let _ = ok;
                                 self.add_arith_diseq_split(inst.result, manager);
                                 self.add_arith_eq_trichotomy(inst.result, manager);
-                                self.add_int_domain_clauses(inst.result, manager);
+                                if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                    self.add_int_domain_clauses(inst.result, manager);
+                                }
                             }
                             // Instantiation results can introduce fresh
                             // div/mod terms (the symbolic linear-witness
@@ -4537,6 +4541,7 @@ impl Solver {
                             let mut new_clauses_added = 0usize;
                             let mut ematch_unsat = false;
                             for lemma in ematch_lemmas {
+                                self.register_ground_instance_root(lemma, manager);
                                 let lit = self.encode(lemma, manager);
                                 self.register_unit_lemma_quantifiers(lemma, manager);
                                 if self.sat.add_clause([lit]) {
@@ -4567,21 +4572,17 @@ impl Solver {
                                     FxHashMap::default();
                                 let mut ph_diseqs: Vec<(TermId, TermId)> = Vec::new();
                                 for inst in blind {
-                                    let is_false = manager
-                                        .get(inst.result)
-                                        .is_some_and(|t| matches!(t.kind, TermKind::False));
-                                    if is_false {
-                                        self.sat.add_clause([] as [Lit; 0]);
-                                        break;
-                                    }
                                     // Track domains and disequalities for pigeonhole
                                     let _ = manager.get(inst.result);
-                                    self.scan_for_pigeonhole(
-                                        inst.result,
-                                        manager,
-                                        &mut ph_domains,
-                                        &mut ph_diseqs,
-                                    );
+                                    if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                        self.scan_for_pigeonhole(
+                                            inst.result,
+                                            manager,
+                                            &mut ph_domains,
+                                            &mut ph_diseqs,
+                                        );
+                                    }
+                                    self.register_ground_instance_root(inst.result, manager);
                                     let lit = self.encode(inst.result, manager);
                                     let clause: Vec<Lit> = match self.mbqi.guard_of(inst.quantifier)
                                     {
@@ -4591,7 +4592,9 @@ impl Solver {
                                     let _ = self.sat.add_clause(clause);
                                     self.add_arith_diseq_split(inst.result, manager);
                                     self.add_arith_eq_trichotomy(inst.result, manager);
-                                    self.add_int_domain_clauses(inst.result, manager);
+                                    if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                        self.add_int_domain_clauses(inst.result, manager);
+                                    }
                                 }
                                 // Add pigeonhole exclusion clauses directly
                                 // from the collected domains and disequalities.
@@ -4622,13 +4625,22 @@ impl Solver {
                                         {
                                             continue;
                                         }
-                                        self.scan_for_pigeonhole(
-                                            simplified, manager, &mut ph_d, &mut ph_q,
-                                        );
+                                        if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                            self.scan_for_pigeonhole(
+                                                simplified, manager, &mut ph_d, &mut ph_q,
+                                            );
+                                        }
+                                        self.register_ground_instance_root(simplified, manager);
                                         let lit = self.encode(simplified, manager);
-                                        let _ = self.sat.add_clause([lit]);
+                                        let clause = match self.mbqi.guard_of(inst.quantifier) {
+                                            Some(g) => vec![g.negate(), lit],
+                                            None => vec![lit],
+                                        };
+                                        let _ = self.sat.add_clause(clause);
                                         self.add_arith_diseq_split(simplified, manager);
-                                        self.add_int_domain_clauses(simplified, manager);
+                                        if self.mbqi.guard_of(inst.quantifier).is_none() {
+                                            self.add_int_domain_clauses(simplified, manager);
+                                        }
                                     }
                                     if !ph_q.is_empty() && !ph_d.is_empty() {
                                         self.add_pigeonhole_exclusions_from(&ph_d, &ph_q, manager);
@@ -4705,6 +4717,9 @@ impl Solver {
                     // instantiation / e-matching lemmas through `encode`, each
                     // of which may allocate SAT variables and extend the
                     // Tseitin memo.  Check before the next round consumes them.
+                    // Fresh ground instances need datatype semantics before
+                    // the next candidate can be accepted.
+                    self.instantiate_dt_axioms(manager);
                     self.debug_check_invariants("check_core: mbqi round boundary");
 
                     // Seam 2 of 2: rebuild the theory solvers before the next
@@ -5430,6 +5445,9 @@ impl Solver {
                                 }
                             }
                         }
+                        TrailOp::GroundInstanceRootAdded { term } => {
+                            self.ground_instance_roots.remove(&term);
+                        }
                         TrailOp::DtAxiomInstanceAdded { term } => {
                             // Same reasoning as the array axioms: the lemma
                             // clause is retracted with the scope's clauses, so
@@ -5650,6 +5668,9 @@ impl Solver {
         self.array_axiom_instances.clear();
         self.arith_defined_terms.clear();
         self.arith_const_axiom_pairs.clear();
+        self.dt_axiom_instances.clear();
+        self.ground_instance_roots.clear();
+        self.dt_axioms_incomplete = false;
         // The assertions that entailed these constants are gone; a survivor
         // would license a finite-range expansion the new formula never asserts.
         self.entailed_int_consts.clear();

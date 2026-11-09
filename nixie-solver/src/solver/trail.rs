@@ -98,6 +98,8 @@ pub(crate) enum TrailOp {
     CareSplitAdded { a: TermId, b: TermId },
     /// A ground datatype-axiom instance was asserted to the SAT core
     DtAxiomInstanceAdded { term: TermId },
+    /// A ground array/datatype root entered the current assertion scope.
+    GroundInstanceRootAdded { term: TermId },
     /// A Tseitin-memo entry was written by [`super::Solver::encode`].
     ///
     /// `previous` carries the value the write displaced (`None` when the term
@@ -385,6 +387,7 @@ impl super::Solver {
             numeric_eq_split_pairs: _,  // dedup across `check`s; SAT base
             // clauses survive `pop`, so a stale entry only suppresses re-emitting
             // a clause that is still present (sound).
+            ground_instance_roots: _,    // TRAIL: GroundInstanceRootAdded
             dt_axiom_instances: _,       // TRAIL: DtAxiomInstanceAdded
             dt_axioms_incomplete: _,     // SNAPSHOT
             entailed_int_consts: _, // cleared wholesale by `pop` (see the field doc); empty = re-fold, never stale
