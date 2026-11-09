@@ -373,7 +373,7 @@ impl Z3Context {
             .tm
             .borrow_mut()
             .mk_forall_with_patterns(vars, body.id, pats);
-        Bool::from_id(id)
+        Bool::from_context_id(self, id)
     }
 
     /// Build an existential quantifier with explicit instantiation patterns.
@@ -393,7 +393,7 @@ impl Z3Context {
             .tm
             .borrow_mut()
             .mk_exists_with_patterns(vars, body.id, pats);
-        Bool::from_id(id)
+        Bool::from_context_id(self, id)
     }
 }
 

@@ -359,6 +359,71 @@ impl Context {
         self.fun_name_to_index.insert(name.to_string(), index);
     }
 
+    /// Register the free symbols of a DAG imported by the Z3 facade.
+    #[cfg(feature = "std")]
+    pub(crate) fn register_imported_symbols(&mut self, root: TermId) -> Result<()> {
+        let mut variables = self.terms.free_vars_including_patterns(root);
+        variables.sort_unstable();
+        for var in variables {
+            let node = self
+                .terms
+                .get(var)
+                .ok_or(nixie_core::error::NixieError::InvalidTermId(var.raw()))?;
+            let TermKind::Var(name) = node.kind else {
+                return Err(nixie_core::error::NixieError::Unsupported(
+                    "non-variable in imported free-variable set".into(),
+                ));
+            };
+            let sort = node.sort;
+            let name = self.terms.resolve_str(name).to_string();
+            if let Some(&index) = self.const_name_to_index.get(&name) {
+                if self.declared_consts[index].sort != sort {
+                    return Err(nixie_core::error::NixieError::Unsupported(format!(
+                        "conflicting imported constant {name}"
+                    )));
+                }
+            } else {
+                self.declare_const(&name, sort);
+            }
+        }
+        let mut stack = vec![root];
+        let mut visited = crate::prelude::FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let node = self
+                .terms
+                .get(term)
+                .ok_or(nixie_core::error::NixieError::InvalidTermId(term.raw()))?;
+            let children = nixie_core::ast::traversal::get_children(&node.kind);
+            if let TermKind::Apply { func, args } = &node.kind {
+                let name = self.terms.resolve_str(*func).to_string();
+                let result = node.sort;
+                let sorts = args
+                    .iter()
+                    .map(|arg| {
+                        self.terms
+                            .get(*arg)
+                            .map(|t| t.sort)
+                            .ok_or(nixie_core::error::NixieError::InvalidTermId(arg.raw()))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if let Some(signature) = self.get_fun_signature(&name) {
+                    if signature != (sorts, result) {
+                        return Err(nixie_core::error::NixieError::Unsupported(format!(
+                            "conflicting imported function {name}"
+                        )));
+                    }
+                } else {
+                    self.declare_fun(&name, sorts, result);
+                }
+            }
+            stack.extend(children);
+        }
+        Ok(())
+    }
+
     /// Get function signature if it exists
     pub fn get_fun_signature(&self, name: &str) -> Option<(Vec<SortId>, SortId)> {
         self.fun_name_to_index.get(name).and_then(|&idx| {
@@ -434,7 +499,7 @@ impl Context {
     /// clearing it *is* that mode transition: they answer with the standard
     /// "not available" error instead of reporting a model, core or proof that
     /// belongs to a superseded assertion stack.
-    fn invalidate_last_check(&mut self) {
+    pub(crate) fn invalidate_last_check(&mut self) {
         self.last_result = None;
         self.last_assumptions.clear();
     }
@@ -975,6 +1040,7 @@ impl Context {
         self.fun_stack.clear();
         self.fun_name_to_index.clear();
         self.logic = None;
+        self.logic_was_set = false;
         self.options.clear();
         if self.certified_mode_required {
             self.options
@@ -1513,9 +1579,31 @@ impl Context {
             .check_with_assumptions(assumptions, &mut self.terms)
     }
 
+    /// Assumption check with the same publication gates as the script command.
+    pub(crate) fn check_assumptions_published(&mut self, assumptions: &[TermId]) -> SolverResult {
+        self.invalidate_last_check();
+        if self.ensure_fsm_registered().is_err() {
+            return SolverResult::Unknown;
+        }
+        let mut result = self.check_with_assumptions_raw(assumptions);
+        if result == SolverResult::Sat
+            && self.solver.array_atoms_need_theory(&self.terms)
+            && !self.solver.array_axioms_saturated
+        {
+            result = SolverResult::Unknown;
+        }
+        self.resolve_define_fun_aliases(result);
+        self.last_assumptions = assumptions.to_vec();
+        self.last_result = Some(result);
+        result
+    }
+
     /// Return the unsat core from the last check (crate-internal use only).
     #[must_use]
     pub(crate) fn get_unsat_core_raw(&self) -> Option<&crate::solver::UnsatCore> {
+        if self.last_result != Some(SolverResult::Unsat) {
+            return None;
+        }
         self.solver.get_unsat_core()
     }
 
@@ -2638,6 +2726,18 @@ mod tests {
             .execute_script(script)
             .expect("script should parse and run");
         assert_eq!(output, vec!["sat"]);
+    }
+
+    #[test]
+    fn reset_allows_a_new_logic_but_reset_assertions_preserves_it() {
+        let mut ctx = Context::new();
+        ctx.set_logic("QF_UF").unwrap();
+        assert!(ctx.set_logic("QF_LIA").is_err());
+        ctx.reset_assertions();
+        assert!(ctx.set_logic("QF_LIA").is_err());
+        ctx.reset();
+        ctx.set_logic("QF_LIA").unwrap();
+        assert_eq!(ctx.logic(), Some("QF_LIA"));
     }
 
     #[test]

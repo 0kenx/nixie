@@ -261,6 +261,7 @@ impl Z3Goal {
     pub fn get_formula(&self, i: usize) -> Bool {
         Bool {
             id: self.inner.assertions[i],
+            source: Some(self.ctx_tm.clone()),
         }
     }
 
@@ -1076,13 +1077,28 @@ fn sort_name_to_id(ctx: &Z3Context, name: &str) -> SortId {
 impl Z3Solver {
     /// Check satisfiability under a list of additional assumptions.
     ///
-    /// The assumptions are asserted into a temporary scope (push/pop) so they
-    /// do not modify the permanent assertion stack.  The assumptions must have
-    /// been built using the same [`Z3Context`] that was passed to
-    /// [`Z3Solver::new`].
+    /// Assumptions are temporary SAT assumptions, preserving the returned model
+    /// or core without modifying permanent assertions. Context-built terms must
+    /// use the context passed to [`Z3Solver::new`]; [`Bool::from_id`] wraps a
+    /// solver-local term.
     pub fn check_assumptions(&mut self, assumptions: &[Bool]) -> SatResult {
-        let term_ids: Vec<TermId> = assumptions.iter().map(|b| b.id).collect();
-        self.ctx.check_with_assumptions_raw(&term_ids).into()
+        self.last_assumptions.clear();
+        self.ctx.invalidate_last_check();
+        if self.import_failed {
+            return SatResult::Unknown;
+        }
+        let mut term_ids = Vec::with_capacity(assumptions.len());
+        for assumption in assumptions {
+            let Ok(term) = self.import_formula(assumption) else {
+                return SatResult::Unknown;
+            };
+            term_ids.push(term);
+        }
+        let result: SatResult = self.ctx.check_assumptions_published(&term_ids).into();
+        if result == SatResult::Unsat {
+            self.last_assumptions = assumptions.to_vec();
+        }
+        result
     }
 
     /// Return the unsat core from the most recent `check()` or
@@ -1092,6 +1108,12 @@ impl Z3Solver {
     /// was `Sat`, or unsat-core production is not enabled).
     #[must_use]
     pub fn unsat_core(&self) -> Vec<Bool> {
+        if self.import_failed {
+            return Vec::new();
+        }
+        if !self.last_assumptions.is_empty() {
+            return self.last_assumptions.clone();
+        }
         match self.ctx.get_unsat_core_raw() {
             None => Vec::new(),
             Some(core) => {
@@ -1101,7 +1123,7 @@ impl Z3Solver {
                 core.indices
                     .iter()
                     .filter_map(|&idx| assertions.get(idx as usize).copied())
-                    .map(|id| Bool { id })
+                    .filter_map(|id| self.imported_roots.get(&id).cloned())
                     .collect()
             }
         }
@@ -1153,12 +1175,18 @@ impl Z3AstVector {
     /// Panics if `i >= self.len()`.
     #[must_use]
     pub fn get(&self, i: usize) -> Bool {
-        Bool { id: self.terms[i] }
+        Bool {
+            id: self.terms[i],
+            source: Some(self.ctx_tm.clone()),
+        }
     }
 
     /// Iterate over all terms as [`Bool`] values.
     pub fn iter(&self) -> impl Iterator<Item = Bool> + '_ {
-        self.terms.iter().map(|&id| Bool { id })
+        self.terms.iter().map(|&id| Bool {
+            id,
+            source: Some(self.ctx_tm.clone()),
+        })
     }
 
     /// Return `true` if any term in this vector is syntactically `true`.

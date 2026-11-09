@@ -267,6 +267,11 @@ impl std::fmt::Display for Z3Model {
 /// Wraps [`Context`] and exposes a Z3-style interface.
 pub struct Z3Solver {
     ctx: Context,
+    source: Rc<RefCell<TermManager>>,
+    imported_roots: std::collections::HashMap<TermId, Bool>,
+    import_failed: bool,
+    import_scopes: Vec<bool>,
+    last_assumptions: Vec<Bool>,
 }
 
 impl Z3Solver {
@@ -281,31 +286,86 @@ impl Z3Solver {
         if z3ctx.config.proof {
             ctx.set_option("produce-proofs", "true");
         }
-        // The Z3Context's tm is used only by term constructors outside the
-        // solver; the solver has its own TermManager which is the authoritative
-        // source of TermIds during solving.
-        Self { ctx }
+        // Terms are imported from the context's arena before solving. Numeric
+        // ids, interned symbols, and sorts are local to each arena.
+        ctx.set_solver_config(z3ctx.config.clone());
+        Self {
+            ctx,
+            source: z3ctx.tm.clone(),
+            imported_roots: Default::default(),
+            import_failed: false,
+            import_scopes: Vec::new(),
+            last_assumptions: Vec::new(),
+        }
     }
 
     /// Assert a boolean formula.
     pub fn assert(&mut self, t: &Bool) {
-        self.ctx.assert(t.id);
+        self.last_assumptions.clear();
+        self.ctx.invalidate_last_check();
+        match self.import_formula(t) {
+            Ok(term) => self.ctx.assert(term),
+            Err(_) => self.import_failed = true,
+        }
+    }
+
+    fn import_formula(&mut self, formula: &Bool) -> nixie_core::error::Result<TermId> {
+        let original = formula.id;
+        let term = match &formula.source {
+            Some(source) if Rc::ptr_eq(source, &self.source) => {
+                self.ctx.terms.import_term(&source.borrow(), original)?
+            }
+            Some(_) => {
+                return Err(nixie_core::error::NixieError::Unsupported(
+                    "formula belongs to another Z3 context".into(),
+                ));
+            }
+            None => {
+                if self.ctx.terms.get(original).is_none() {
+                    return Err(nixie_core::error::NixieError::InvalidTermId(original.raw()));
+                }
+                original
+            }
+        };
+        if !self
+            .ctx
+            .terms
+            .get(term)
+            .is_some_and(|node| node.sort == self.ctx.terms.sorts.bool_sort)
+        {
+            return Err(nixie_core::error::NixieError::Unsupported(
+                "assertion is not Boolean".into(),
+            ));
+        }
+        self.ctx.register_imported_symbols(term)?;
+        self.imported_roots.insert(term, formula.clone());
+        Ok(term)
     }
 
     /// Check satisfiability of the asserted formulas.
     #[must_use]
     pub fn check(&mut self) -> SatResult {
+        self.last_assumptions.clear();
+        if self.import_failed {
+            return SatResult::Unknown;
+        }
         self.ctx.check_sat().into()
     }
 
     /// Push a new scope onto the assertion stack.
     pub fn push(&mut self) {
+        self.last_assumptions.clear();
+        self.import_scopes.push(self.import_failed);
         self.ctx.push();
     }
 
     /// Pop the top scope from the assertion stack.
     pub fn pop(&mut self) {
+        self.last_assumptions.clear();
         self.ctx.pop();
+        if let Some(failed) = self.import_scopes.pop() {
+            self.import_failed = failed;
+        }
     }
 
     /// Return the model from the last `Sat` result, or `None`.
@@ -315,6 +375,9 @@ impl Z3Solver {
     /// holding a reference to the solver.
     #[must_use]
     pub fn get_model(&self) -> Option<Z3Model> {
+        if self.import_failed {
+            return None;
+        }
         let entries = self.ctx.get_model()?;
         // Eagerly collect function interpretations for all declared functions.
         let func_interps = self
@@ -342,6 +405,8 @@ impl Z3Solver {
 
     /// Access a mutable reference to the underlying [`Context`].
     pub fn context_mut(&mut self) -> &mut Context {
+        self.last_assumptions.clear();
+        self.ctx.invalidate_last_check();
         &mut self.ctx
     }
 }
@@ -362,15 +427,26 @@ macro_rules! build {
 /// A boolean-sorted term, analogous to `z3::Bool<'ctx>`.
 #[derive(Debug, Clone)]
 pub struct Bool {
-    /// The underlying term identifier.
+    /// The underlying term identifier, local to its originating arena.
     pub id: TermId,
+    pub(crate) source: Option<Rc<RefCell<TermManager>>>,
 }
 
 impl Bool {
-    /// Wrap a raw `TermId` as a `Bool`.
+    /// Wrap a solver-local raw `TermId` as a `Bool`.
+    /// For a context-built term use [`Self::from_context_id`].
     #[must_use]
     pub fn from_id(id: TermId) -> Self {
-        Self { id }
+        Self { id, source: None }
+    }
+
+    /// Wrap a term from the supplied context, retaining its arena identity.
+    #[must_use]
+    pub fn from_context_id(ctx: &Z3Context, id: TermId) -> Self {
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Declare a fresh boolean constant named `name`.
@@ -378,14 +454,20 @@ impl Bool {
     pub fn new_const(ctx: &Z3Context, name: &str) -> Self {
         let sort = ctx.bool_sort();
         let id = build!(ctx, mk_var, name, sort);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Create the boolean literal `true`.
     #[must_use]
     pub fn from_bool(ctx: &Z3Context, value: bool) -> Self {
         let id = build!(ctx, mk_bool, value);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Logical conjunction (AND) of a slice of boolean terms.
@@ -393,7 +475,10 @@ impl Bool {
     pub fn and(ctx: &Z3Context, args: &[Bool]) -> Self {
         let ids: Vec<TermId> = args.iter().map(|b| b.id).collect();
         let id = build!(ctx, mk_and, ids);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Logical disjunction (OR) of a slice of boolean terms.
@@ -401,21 +486,30 @@ impl Bool {
     pub fn or(ctx: &Z3Context, args: &[Bool]) -> Self {
         let ids: Vec<TermId> = args.iter().map(|b| b.id).collect();
         let id = build!(ctx, mk_or, ids);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Logical negation (NOT) of a boolean term.
     #[must_use]
     pub fn not(ctx: &Z3Context, arg: &Bool) -> Self {
         let id = build!(ctx, mk_not, arg.id);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Logical implication: `lhs => rhs`.
     #[must_use]
     pub fn implies(ctx: &Z3Context, lhs: &Bool, rhs: &Bool) -> Self {
         let id = build!(ctx, mk_implies, lhs.id, rhs.id);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Logical bi-implication (IFF / XNOR): `lhs <=> rhs`.
@@ -425,14 +519,20 @@ impl Bool {
     pub fn iff(ctx: &Z3Context, lhs: &Bool, rhs: &Bool) -> Self {
         // Z3 encodes iff as equality on Bool sort.
         let id = build!(ctx, mk_eq, lhs.id, rhs.id);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 
     /// Exclusive-or of two boolean terms.
     #[must_use]
     pub fn xor(ctx: &Z3Context, lhs: &Bool, rhs: &Bool) -> Self {
         let id = build!(ctx, mk_xor, lhs.id, rhs.id);
-        Self { id }
+        Self {
+            id,
+            source: Some(ctx.tm.clone()),
+        }
     }
 }
 
@@ -521,35 +621,35 @@ impl Int {
     #[must_use]
     pub fn lt(ctx: &Z3Context, lhs: &Int, rhs: &Int) -> Bool {
         let id = build!(ctx, mk_lt, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Less-than-or-equal comparison: `lhs <= rhs`.
     #[must_use]
     pub fn le(ctx: &Z3Context, lhs: &Int, rhs: &Int) -> Bool {
         let id = build!(ctx, mk_le, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Strict greater-than comparison: `lhs > rhs`.
     #[must_use]
     pub fn gt(ctx: &Z3Context, lhs: &Int, rhs: &Int) -> Bool {
         let id = build!(ctx, mk_gt, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Greater-than-or-equal comparison: `lhs >= rhs`.
     #[must_use]
     pub fn ge(ctx: &Z3Context, lhs: &Int, rhs: &Int) -> Bool {
         let id = build!(ctx, mk_ge, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Equality: `lhs = rhs`.
     #[must_use]
     pub fn eq(ctx: &Z3Context, lhs: &Int, rhs: &Int) -> Bool {
         let id = build!(ctx, mk_eq, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 }
 
@@ -617,21 +717,21 @@ impl Real {
     #[must_use]
     pub fn lt(ctx: &Z3Context, lhs: &Real, rhs: &Real) -> Bool {
         let id = build!(ctx, mk_lt, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Less-than-or-equal comparison: `lhs <= rhs`.
     #[must_use]
     pub fn le(ctx: &Z3Context, lhs: &Real, rhs: &Real) -> Bool {
         let id = build!(ctx, mk_le, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Equality: `lhs = rhs`.
     #[must_use]
     pub fn eq(ctx: &Z3Context, lhs: &Real, rhs: &Real) -> Bool {
         let id = build!(ctx, mk_eq, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 }
 
@@ -742,35 +842,35 @@ impl BV {
     #[must_use]
     pub fn bvult(ctx: &Z3Context, lhs: &BV, rhs: &BV) -> Bool {
         let id = build!(ctx, mk_bv_ult, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Bitvector signed less-than: `bvslt lhs rhs`.
     #[must_use]
     pub fn bvslt(ctx: &Z3Context, lhs: &BV, rhs: &BV) -> Bool {
         let id = build!(ctx, mk_bv_slt, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Bitvector unsigned less-than-or-equal: `bvule lhs rhs`.
     #[must_use]
     pub fn bvule(ctx: &Z3Context, lhs: &BV, rhs: &BV) -> Bool {
         let id = build!(ctx, mk_bv_ule, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Bitvector signed less-than-or-equal: `bvsle lhs rhs`.
     #[must_use]
     pub fn bvsle(ctx: &Z3Context, lhs: &BV, rhs: &BV) -> Bool {
         let id = build!(ctx, mk_bv_sle, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Bitvector equality: `lhs = rhs` (on BV sort).
     #[must_use]
     pub fn eq(ctx: &Z3Context, lhs: &BV, rhs: &BV) -> Bool {
         let id = build!(ctx, mk_eq, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Bitvector unsigned left shift: `bvshl lhs rhs`.

@@ -33,14 +33,14 @@ impl Real {
     #[must_use]
     pub fn gt(ctx: &Z3Context, lhs: &Real, rhs: &Real) -> Bool {
         let id = build!(ctx, mk_gt, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Greater-than-or-equal comparison: `lhs >= rhs`.
     #[must_use]
     pub fn ge(ctx: &Z3Context, lhs: &Real, rhs: &Real) -> Bool {
         let id = build!(ctx, mk_ge, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 
     /// Arithmetic negation: `-arg`.
@@ -73,7 +73,7 @@ impl Real {
 #[must_use]
 pub fn ite_bool(ctx: &Z3Context, cond: &Bool, then_branch: &Bool, else_branch: &Bool) -> Bool {
     let id = build!(ctx, mk_ite, cond.id, then_branch.id, else_branch.id);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 /// Integer if-then-else: `ite(cond, then_branch, else_branch) : Int`.
@@ -107,7 +107,7 @@ pub fn ite_bv(ctx: &Z3Context, cond: &Bool, then_branch: &BV, else_branch: &BV) 
 pub fn distinct_int(ctx: &Z3Context, args: &[Int]) -> Bool {
     let ids = args.iter().map(|x| x.id);
     let id = build!(ctx, mk_distinct, ids);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 /// Assert that all given real terms are pairwise distinct.
@@ -115,7 +115,7 @@ pub fn distinct_int(ctx: &Z3Context, args: &[Int]) -> Bool {
 pub fn distinct_real(ctx: &Z3Context, args: &[Real]) -> Bool {
     let ids = args.iter().map(|x| x.id);
     let id = build!(ctx, mk_distinct, ids);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 /// Assert that all given bitvector terms are pairwise distinct.
@@ -123,7 +123,7 @@ pub fn distinct_real(ctx: &Z3Context, args: &[Real]) -> Bool {
 pub fn distinct_bv(ctx: &Z3Context, args: &[BV]) -> Bool {
     let ids = args.iter().map(|x| x.id);
     let id = build!(ctx, mk_distinct, ids);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 // ======== Array ========
@@ -188,7 +188,7 @@ impl Array {
     #[must_use]
     pub fn eq(ctx: &Z3Context, lhs: &Array, rhs: &Array) -> Bool {
         let id = build!(ctx, mk_eq, lhs.id, rhs.id);
-        Bool { id }
+        Bool::from_context_id(ctx, id)
     }
 }
 
@@ -268,7 +268,7 @@ pub fn forall_bool<'a>(
     body: &Bool,
 ) -> Bool {
     let id = ctx.tm.borrow_mut().mk_forall(vars, body.id);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 /// Existential quantifier over a boolean body.
@@ -284,7 +284,7 @@ pub fn exists_bool<'a>(
     body: &Bool,
 ) -> Bool {
     let id = ctx.tm.borrow_mut().mk_exists(vars, body.id);
-    Bool { id }
+    Bool::from_context_id(ctx, id)
 }
 
 // ======== Z3Optimize ========
@@ -677,7 +677,7 @@ mod tests {
         let x_var = ctx.tm.borrow_mut().mk_var("x", int_sort);
         let zero = ctx.tm.borrow_mut().mk_int(BigInt::from(0));
         let body_id = ctx.tm.borrow_mut().mk_ge(x_var, zero);
-        let body = Bool { id: body_id };
+        let body = Bool::from_context_id(&ctx, body_id);
         // forall x:Int. x >= 0  (clearly false, but we just check no panic)
         let _q = forall_bool(&ctx, [("x", int_sort)], &body);
     }
@@ -689,7 +689,7 @@ mod tests {
         let x_var = ctx.tm.borrow_mut().mk_var("x", int_sort);
         let zero = ctx.tm.borrow_mut().mk_int(BigInt::from(0));
         let body_id = ctx.tm.borrow_mut().mk_ge(x_var, zero);
-        let body = Bool { id: body_id };
+        let body = Bool::from_context_id(&ctx, body_id);
         let _q = exists_bool(&ctx, [("x", int_sort)], &body);
     }
 

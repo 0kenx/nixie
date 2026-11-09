@@ -2904,16 +2904,26 @@ impl Solver {
         let mut seen = FxHashSet::default();
         let mut arguments = FxHashSet::default();
         let mut numeric = FxHashSet::default();
+        let mut array_ites = Vec::new();
         while let Some(term) = stack.pop() {
             if !seen.insert(term) {
                 continue;
             }
             let Some(node) = manager.get(term) else {
+                self.encode_depth_exceeded = true;
                 continue;
             };
             // Bound terms are instantiated before they acquire ground circuits.
             if matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
                 continue;
+            }
+            if let TermKind::Ite(cond, then_term, else_term) = node.kind
+                && manager
+                    .sorts
+                    .get(node.sort)
+                    .is_some_and(|sort| matches!(sort.kind, SortKind::Array { .. }))
+            {
+                array_ites.push((term, cond, then_term, else_term));
             }
             let children = get_children(&node.kind);
             if matches!(
@@ -2946,6 +2956,28 @@ impl Solver {
         self.polarity_aware = false;
         for arg in arguments {
             self.encode_depth(arg, manager, 0);
+        }
+        // Z3 context::internalize_ite_term: a term-valued ITE is equal to
+        // its selected branch even when it occurs only in a disequality or
+        // a function argument. Read axioms alone do not establish this.
+        // Use the original term as its EUF name, avoiding duplicate array roots.
+        array_ites.sort_unstable();
+        for (term, cond, then_term, else_term) in array_ites {
+            if !self.array_ite_definitions.insert(term) {
+                continue;
+            }
+            self.trail.push(TrailOp::ArrayIteDefined { term });
+            let cond_lit = self.encode_depth(cond, manager, 0);
+            let then_eq = manager.mk_eq(term, then_term);
+            let else_eq = manager.mk_eq(term, else_term);
+            // Discover reads and extensionality for these conditional atoms
+            // without promoting either equality to an asserted fact.
+            self.register_ground_instance_root(then_eq, manager);
+            self.register_ground_instance_root(else_eq, manager);
+            let then_lit = self.encode_depth(then_eq, manager, 0);
+            let else_lit = self.encode_depth(else_eq, manager, 0);
+            self.sat.add_clause([cond_lit.negate(), then_lit]);
+            self.sat.add_clause([cond_lit, else_lit]);
         }
         self.polarity_aware = polarity_aware;
     }
@@ -3021,9 +3053,10 @@ impl Solver {
                 continue;
             };
             // Same scope as `eliminate_nonbool_ite`: only sorts EUF owns
-            // (uninterpreted / Int / Real). BitVec/Array/String/Float ite is
+            // (uninterpreted / Int / Real). BitVec/String/Float ite is
             // the theory encoder's business (it recurses through `ite`
-            // directly when bit-blasting / axiomatising).
+            // directly when bit-blasting / axiomatising). Array ITEs receive
+            // unconditional branch definitions in `encode_shared_interfaces`.
             if !needs_ite_elimination(bt.sort, manager) {
                 continue;
             }

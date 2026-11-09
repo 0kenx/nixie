@@ -13,6 +13,7 @@ mod builder;
 mod dt_eq;
 mod dt_fold;
 mod dt_ite_lift;
+mod import;
 pub use dt_ite_lift::MAX_ITE_LIFT_NODES;
 pub mod bv_fold;
 pub mod ff_fold;

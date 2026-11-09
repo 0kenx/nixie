@@ -819,6 +819,8 @@ pub struct Solver {
     /// Ground array/datatype roots introduced by assertion encoding and quantifier
     /// instances. Rolled back with the clauses that reference them.
     pub(super) ground_instance_roots: FxHashSet<TermId>,
+    /// Ground array ITE branch definitions installed in the current scopes.
+    pub(super) array_ite_definitions: FxHashSet<TermId>,
     /// Scope-local rewrites of quantified ground instances and their definitions.
     pub(super) prepared_ground_instances: FxHashMap<(TermId, bool), TermId>,
     /// Set to `true` when the datatype axiom budget ran out before every
@@ -1356,6 +1358,7 @@ impl Solver {
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
             ground_instance_roots: FxHashSet::default(),
+            array_ite_definitions: FxHashSet::default(),
             prepared_ground_instances: FxHashMap::default(),
             dt_axioms_incomplete: false,
             entailed_int_consts: FxHashMap::default(),
@@ -5219,6 +5222,9 @@ impl Solver {
                                 }
                             }
                         }
+                        TrailOp::ArrayIteDefined { term } => {
+                            self.array_ite_definitions.remove(&term);
+                        }
                         TrailOp::GroundInstancePrepared { term, conditional } => {
                             self.prepared_ground_instances.remove(&(term, conditional));
                         }
@@ -5452,6 +5458,7 @@ impl Solver {
         self.arith_const_axiom_pairs.clear();
         self.dt_axiom_instances.clear();
         self.ground_instance_roots.clear();
+        self.array_ite_definitions.clear();
         self.prepared_ground_instances.clear();
         self.dt_axioms_incomplete = false;
         // The assertions that entailed these constants are gone; a survivor
