@@ -163,6 +163,28 @@ impl Solver {
 }
 
 impl Solver {
+    /// Evaluate a datatype repair proposal. Its selector entries are deliberate
+    /// candidate assignments, not certificates: the caller checks collisions and
+    /// the normal publication gate still validates the resulting interpretation.
+    pub(in crate::solver) fn eval_datatype_repair(
+        &self,
+        term: TermId,
+        model: &Model,
+        manager: &TermManager,
+    ) -> EvalOutcome {
+        Self::eval_with_reader(term, 0, |term, depth| {
+            if let Some(data) = manager.get(term)
+                && matches!(data.kind, TermKind::DtSelector { .. })
+                && let Some(sort) = ScalarSort::of(data.sort, manager)
+                && let Some(value) = model.get(term)
+            {
+                Opened::Frame(Frame::unary(value, EagerKind::ModelValue(sort), depth))
+            } else {
+                self.open_interpretation(term, model, manager, depth)
+            }
+        })
+    }
+
     /// Fold a supplied interpretation without consulting arithmetic, BV, EUF,
     /// SAT caches, or certificate-mode flags. Unsupported operations decline.
     pub(crate) fn eval_under_interpretation(

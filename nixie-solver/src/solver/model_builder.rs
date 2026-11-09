@@ -17,6 +17,7 @@ use super::types::{Model, UnsatCore};
 type DecidedEqualities = (Vec<(TermId, TermId)>, FxHashMap<TermId, Vec<TermId>>);
 
 mod opaque_leaves;
+mod separation;
 
 impl Solver {
     /// Restore ground definitions eliminated before a specialized arithmetic
@@ -1576,11 +1577,11 @@ impl Solver {
     /// witnesses – the same effect `Solver::eval_in_model` documents for
     /// `distinct`), so both sides reconstructed to `(mk-pair 0 0)`.
     ///
-    /// The repair only ever re-values a field whose accessor occurs in *no*
-    /// assertion – one nothing in the formula constrains, where every value of
-    /// the sort is equally legitimate – so it can only turn a wrong witness into
-    /// a right one, never the reverse.  See [`Solver::separate_dt_value`] for
-    /// why that, and not the arithmetic solver's `value()`, is the pin test.
+    /// Source assertions, encoded ground roots, and constructor arguments pin
+    /// fields. Bounded exact numeric offsets and datatype constructor alternatives
+    /// move entire proven equality classes. Each proposal must reduce collisions
+    /// without introducing a new known violation; the final model certification
+    /// still checks the complete interpretation before publication.
     fn separate_disequal_dt_values(
         &self,
         decls: &FxHashMap<SortId, DeclInfo>,
@@ -1589,44 +1590,7 @@ impl Solver {
         model: &mut Model,
         manager: &mut TermManager,
     ) {
-        let (mut disequal, equal_adjacency) = self.decided_dt_equalities(model, manager);
-        // Injectivity-derived pairs (see the hint builder): the top-level
-        // equality atom may never be committed false on its own, but the
-        // values must render distinct all the same.
-        disequal.extend(injectivity_pairs.iter().copied());
-        if disequal.is_empty() {
-            return;
-        }
-        let asserted = assertion_subterms(&self.assertions, manager);
-        for (left, right) in disequal {
-            let (Some(left_value), Some(right_value)) = (model.get(left), model.get(right)) else {
-                continue;
-            };
-            if left_value != right_value {
-                continue;
-            }
-            // The whole class the search proved equal to `right` has to move
-            // together, or the repair would break one of those equalities while
-            // fixing the disequality.  A class containing *both* sides is a
-            // contradictory assignment the repair must not paper over.
-            let class = equality_class(right, &equal_adjacency);
-            if class.contains(&left) {
-                continue;
-            }
-            let Some(sort) = manager.get(right).map(|node| node.sort) else {
-                continue;
-            };
-            self.separate_dt_value(
-                right,
-                sort,
-                &class,
-                &asserted,
-                decls,
-                dt_field_hints,
-                model,
-                manager,
-            );
-        }
+        self.separate_datatype_models(decls, dt_field_hints, injectivity_pairs, model, manager);
     }
 
     /// The datatype-sorted term pairs whose equality atom the search decided
@@ -1701,133 +1665,6 @@ impl Solver {
             neighbours.dedup();
         }
         (disequal, adjacency)
-    }
-
-    /// Re-value one numeric field of `term`'s reconstructed value so that the
-    /// value changes.
-    ///
-    /// Only fields of the outermost constructor are considered, and only
-    /// `Int`/`Real` ones whose accessor occurs in *no* assertion – for every
-    /// member of the equality class, so a field pinned through a term the search
-    /// proved equal to `term` is left alone too.  That is the criterion that
-    /// makes the repair safe: a term the assertions never mention has no
-    /// user constraint on it at all (the only lemmas that speak about it are
-    /// datatype axioms, which the repair moves *towards* satisfying), and it is
-    /// also invisible to [`Solver::model_refutes_assertions`], which evaluates
-    /// nothing but the assertions.  Note that the arithmetic solver's own
-    /// `value()` is *not* a usable pin test: it reports a value for every
-    /// tableau variable, constrained or not – reporting `0` for both `(fst p)`
-    /// and `(fst q)` is exactly how the collision arises.
-    ///
-    /// A datatype all of whose scalar fields are pinned keeps its colliding
-    /// value rather than acquiring a fabricated one.
-    ///
-    /// `class` is every term the search proved equal to `term`; all of them
-    /// receive the new value so the repair cannot break an equality.
-    #[allow(clippy::too_many_arguments)]
-    fn separate_dt_value(
-        &self,
-        term: TermId,
-        sort: SortId,
-        class: &[TermId],
-        asserted: &FxHashSet<TermId>,
-        decls: &FxHashMap<SortId, DeclInfo>,
-        dt_field_hints: &FxHashMap<TermId, Vec<String>>,
-        model: &mut Model,
-        manager: &mut TermManager,
-    ) {
-        let Some(decl) = decls.get(&sort) else {
-            return;
-        };
-        let Some(TermKind::DtConstructor { constructor, args }) = model
-            .get(term)
-            .and_then(|value| manager.get(value))
-            .cloned()
-            .map(|node| node.kind)
-        else {
-            return;
-        };
-        let name = manager.resolve_str(constructor).to_string();
-        let Some(index) = decl.constructors.iter().position(|c| c.name == name) else {
-            return;
-        };
-        let fields: Vec<(String, SortId)> = decl.constructors[index]
-            .fields
-            .iter()
-            .map(|field| (field.selector.clone(), field.sort))
-            .collect();
-        if fields.len() != args.len() {
-            return;
-        }
-        let int_sort = manager.sorts.int_sort;
-        let real_sort = manager.sorts.real_sort;
-        // Try the hinted field first (see `dt_field_hints`' builder), then
-        // the rest in declaration order.
-        let hinted: Vec<String> = dt_field_hints.get(&term).cloned().unwrap_or_default();
-        let mut order: Vec<usize> = (0..fields.len()).collect();
-        for hint in hinted.iter().rev() {
-            if let Some(pos) = fields.iter().position(|(sel, _)| sel == hint) {
-                order.retain(|&i| i != pos);
-                order.insert(0, pos);
-            }
-        }
-        for position in order {
-            let (selector, field_sort) = fields[position].clone();
-            if field_sort != int_sort && field_sort != real_sort {
-                continue;
-            }
-            let accessor = manager.mk_dt_selector(&selector, term, field_sort);
-            let pinned = class.iter().any(|&member| {
-                let member_accessor = manager.mk_dt_selector(&selector, member, field_sort);
-                asserted.contains(&member_accessor)
-            });
-            if pinned || asserted.contains(&accessor) {
-                continue;
-            }
-            // Cumulative: `model[term]` may already carry an earlier
-            // iteration's bump (the core can commit BOTH selector pairs of a
-            // disequal pair false), so read the CURRENT value, not the
-            // pre-loop snapshot.
-            let current = model
-                .get(term)
-                .and_then(|v| manager.get(v).cloned().map(|n| n.kind))
-                .and_then(|kind| match kind {
-                    TermKind::DtConstructor { args, .. } => Some(args.to_vec()),
-                    _ => None,
-                })
-                .map(|cur_args| cur_args[position])
-                .unwrap_or(args[position]);
-            let bumped = match manager.get(current).map(|node| node.kind.clone()) {
-                Some(TermKind::IntConst(value)) => manager.mk_int(value + 1),
-                Some(TermKind::RealConst(value)) => {
-                    manager.mk_real(value + num_rational::Rational64::from_integer(1))
-                }
-                _ => continue,
-            };
-            let mut new_args = model
-                .get(term)
-                .and_then(|v| manager.get(v).cloned().map(|n| n.kind))
-                .and_then(|kind| match kind {
-                    TermKind::DtConstructor { args, .. } => Some(args.to_vec()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| args.to_vec());
-            new_args[position] = bumped;
-            let value = manager.mk_dt_constructor(&name, new_args, sort);
-            // Publish the field too, so `(get-value ((fst q)))` reports the very
-            // number `(get-model)` printed inside `q`.
-            model.set(accessor, bumped);
-            model.set(term, value);
-            for &member in class {
-                model.set(member, value);
-            }
-            if hinted.iter().any(|h| h == &selector) {
-                // More hinted fields may need separating (the core can commit
-                // BOTH selector pairs of a disequal pair false); keep going.
-                continue;
-            }
-            return;
-        }
     }
 
     /// Record `value` as the model entry for the datatype term `term`, unless it
