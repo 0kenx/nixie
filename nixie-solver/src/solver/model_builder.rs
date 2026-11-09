@@ -2811,7 +2811,7 @@ pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Op
                         let def = manager.sorts.get_datatype(&name)?;
                         let index = default_constructor_index(def, &manager.sorts)?;
                         let constructor = def.constructors.get(index)?;
-                        let ctor_name = manager.resolve_str(constructor.name).to_string();
+                        let ctor_name = manager.sorts.resolve_spur(constructor.name).to_string();
                         let field_sorts: Vec<SortId> = constructor
                             .selectors
                             .iter()

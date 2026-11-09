@@ -1005,7 +1005,7 @@ impl Context {
                             break "?".to_string();
                         };
                         let name = nixie_core::smtlib::format_symbol(
-                            self.terms.resolve_str(constructor.name),
+                            self.terms.sorts.resolve_spur(constructor.name),
                         );
                         let fields: Vec<SortId> = constructor
                             .selectors

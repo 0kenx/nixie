@@ -1160,26 +1160,10 @@ mod tests {
             .axiom_to_term(&axiom, &mut manager)
             .expect("first(mk(x, y)) = x should be buildable");
 
-        let TermKind::Eq(lhs, rhs) =
-            manager
-                .get(term)
-                .map(|t| t.kind.clone())
-                .unwrap_or_else(|| {
-                    panic!("the axiom term should exist");
-                })
-        else {
-            panic!("expected an equality");
-        };
-        let (selector_side, value_side) = if lhs == x { (rhs, lhs) } else { (lhs, rhs) };
-        assert_eq!(value_side, x);
-
-        match manager.get(selector_side).map(|t| t.kind.clone()) {
-            Some(TermKind::DtSelector { selector, arg }) => {
-                assert_eq!(manager.resolve_str(selector), "first");
-                assert_eq!(arg, pair);
-            }
-            other => panic!("expected a selector application, got {other:?}"),
-        }
+        assert_eq!(
+            term, manager.true_id,
+            "the constructor selector folds to its field"
+        );
     }
 
     #[test]
@@ -1202,14 +1186,8 @@ mod tests {
                 &mut manager,
             )
             .expect("is_mk(mk(x, y)) = true should be buildable");
-        // `is_C(C(…)) = true` now folds at construction — the builder's
-        // Boolean-equality section (z3 `mk_eq_core` parity) rewrites
-        // `(= p true)` to `p` — so the axiom IS the tester application,
-        // equivalent to the equation it spells.
-        match manager.get(positive).map(|t| t.kind.clone()) {
-            Some(TermKind::DtTester { .. }) => {}
-            other => panic!("expected the tester application, got {other:?}"),
-        }
+        // The builder now knows tester-over-constructor semantics directly.
+        assert_eq!(positive, manager.true_id);
 
         let negative = theory
             .axiom_to_term(
@@ -1220,15 +1198,7 @@ mod tests {
                 &mut manager,
             )
             .expect("not is_none(mk(x, y)) should be buildable");
-        match manager.get(negative).map(|t| t.kind.clone()) {
-            Some(TermKind::Not(inner)) => {
-                assert!(matches!(
-                    manager.get(inner).map(|t| t.kind.clone()),
-                    Some(TermKind::DtTester { .. })
-                ));
-            }
-            other => panic!("expected a negation, got {other:?}"),
-        }
+        assert_eq!(negative, manager.true_id);
     }
 
     #[test]
@@ -1252,20 +1222,8 @@ mod tests {
             .axiom_to_term(distinctness, &mut manager)
             .expect("the ground instance should be buildable");
 
-        match manager.get(term).map(|t| t.kind.clone()) {
-            Some(TermKind::Not(inner)) => match manager.get(inner).map(|t| t.kind.clone()) {
-                Some(TermKind::Eq(lhs, rhs)) => {
-                    for side in [lhs, rhs] {
-                        assert!(matches!(
-                            manager.get(side).map(|t| t.kind.clone()),
-                            Some(TermKind::DtConstructor { .. })
-                        ));
-                    }
-                }
-                other => panic!("expected an equality under the negation, got {other:?}"),
-            },
-            other => panic!("expected a negation, got {other:?}"),
-        }
+        // Constructor disjointness folds this ground axiom to true.
+        assert_eq!(term, manager.true_id);
     }
 
     #[test]
@@ -1338,11 +1296,9 @@ mod tests {
             .axiom_to_term(&DatatypeAxiom::Acyclicity { term: outer }, &mut manager)
             .expect("outer has proper sub-terms of its own sort");
 
-        // Two disequalities: outer != inner and outer != nil.
-        match manager.get(term).map(|t| t.kind.clone()) {
-            Some(TermKind::And(conjuncts)) => assert_eq!(conjuncts.len(), 2),
-            other => panic!("expected a conjunction, got {other:?}"),
-        }
+        // Both disequalities fold: outer and inner differ in their heads,
+        // and outer and nil use different constructors.
+        assert_eq!(term, manager.true_id);
     }
 
     #[test]
@@ -1517,7 +1473,15 @@ mod tests {
         let x = manager.mk_var("x", bv_sort);
         let y = manager.mk_var("y", bv_sort);
         let pair = manager.mk_dt_constructor("mk", [x, y], pair_sort);
-        let second = manager.mk_dt_selector("second", pair, bv_sort);
+        // Exercise the independent theory propagation path, before rewriting.
+        let selector = manager.intern_str("second");
+        let second = manager.intern_term(
+            TermKind::DtSelector {
+                selector,
+                arg: pair,
+            },
+            bv_sort,
+        );
 
         theory.add_term(pair, &manager, &manager.sorts);
         theory.add_term(second, &manager, &manager.sorts);

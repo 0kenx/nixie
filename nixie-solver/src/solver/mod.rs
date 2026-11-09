@@ -39,6 +39,7 @@ pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
 mod set_model;
+mod set_refinement;
 pub(super) mod set_theory;
 pub(super) mod static_features;
 pub(super) mod term_walk;
@@ -3356,11 +3357,10 @@ impl Solver {
         let mut unproductive_mbqi_streak = 0;
         let mut insts_before = self.mbqi.stats().total_instantiations;
 
-        // Lazy array-axiom refinement rounds (see `instantiate_array_axioms`).
-        // Bounded independently of the MBQI budget; deduplication guarantees
-        // saturation well within this generous cap for realistic inputs.
-        let max_array_refinement_rounds = 256;
-        let mut array_refinement_rounds = 0;
+        // Lazy array-axiom and late membership-congruence refinement rounds.
+        // Bounded independently of MBQI; exhausting this cap yields Unknown.
+        let max_theory_refinement_rounds = 256;
+        let mut theory_refinement_rounds = 0;
         // Unified-BV pending-link rounds (see the `Sat` exit): each round
         // links every late-minted BV atom found by the previous search, so
         // one round is the common case; the cap guards against a
@@ -3574,15 +3574,27 @@ impl Solver {
                             return SolverResult::Unknown;
                         }
                     }
-                    // Lazy array-axiom instantiation: the syntactic array
+                    // Complete late set-membership congruence, then perform
+                    // lazy array-axiom instantiation: the syntactic array
                     // pre-checks and EUF congruence do not implement a
                     // complete array decision procedure, so a candidate `Sat`
                     // may violate read-over-write / extensionality.  Watch the
                     // array terms in this candidate model and assert every
                     // axiom instance it does not already satisfy as a lemma,
                     // then re-solve.  Only genuine array models survive.
-                    let array_refined =
-                        self.has_array_ops && self.instantiate_array_axioms(manager);
+                    let set_refined = match self.refine_set_membership(manager) {
+                        Ok(refined) => refined,
+                        Err(()) => {
+                            self.model = None;
+                            self.unsat_core = None;
+                            return SolverResult::Unknown;
+                        }
+                    };
+                    // A set lemma may backtrack the candidate. Read array
+                    // model facts only on a round where that did not happen.
+                    let array_refined = !set_refined
+                        && self.has_array_ops
+                        && self.instantiate_array_axioms(manager);
                     // Distinct-semantics guard clauses: for a live
                     // injective-`distinct` spec, every encoded
                     // `(= t_i t_j)` atom between two of its arguments is
@@ -3636,16 +3648,16 @@ impl Solver {
                     // checked axiom by axiom.  Only the budget-exhausted
                     // exit keeps this `false` (see the field's doc).
                     self.array_axioms_saturated =
-                        !array_refined && !self.array_witness_budget_exhausted;
+                        !array_refined && !set_refined && !self.array_witness_budget_exhausted;
                     if !array_refined && self.array_witness_budget_exhausted {
                         self.model = None;
                         self.unsat_core = None;
                         return SolverResult::Unknown;
                     }
-                    if array_refined {
-                        array_refinement_rounds += 1;
-                        if array_refinement_rounds >= max_array_refinement_rounds {
-                            // Could not saturate the array axioms within the
+                    if array_refined || set_refined {
+                        theory_refinement_rounds += 1;
+                        if theory_refinement_rounds >= max_theory_refinement_rounds {
+                            // Could not saturate set/array axioms within the
                             // round budget: do not fabricate a verdict.
                             //
                             // The model goes with it (upstream #40): since
@@ -3665,7 +3677,7 @@ impl Solver {
                         // opaque arithmetic atom, so define it before the
                         // re-solve or the lemma carries no numeric meaning.
                         self.instantiate_arith_axioms(manager);
-                        // Re-solve with the freshly asserted array lemmas from
+                        // Re-solve with the freshly asserted theory lemmas from
                         // a clean state.  `add_clause` backtracked the SAT core
                         // to root for the unit lemmas, but the incremental
                         // theory solvers still hold the facts committed by the

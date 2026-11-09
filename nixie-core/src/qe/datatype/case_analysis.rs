@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_analyze_enum_produces_real_cases() {
-        // ∃ x:Maybe. (x = Nothing). Two nullary constructors -> two cases.
+        // ∃ x:Maybe. (x = Nothing). The other constructor case folds to false.
         let mut tm = TermManager::new();
         let maybe = tm.sorts.mk_datatype_sort("Maybe");
         let x = tm.mk_var("x", maybe);
@@ -323,7 +323,7 @@ mod tests {
 
         let result = analyzer.analyze(x, "Maybe", phi, &mut tm);
         assert!(result.complete);
-        assert_eq!(result.cases.len(), 2);
+        assert_eq!(result.cases.len(), 1);
         assert_eq!(analyzer.stats().cases_generated, 2);
 
         // The variable must not appear free in any case (real substitution).

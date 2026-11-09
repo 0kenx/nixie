@@ -1326,46 +1326,44 @@ fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
 /// for a point nothing in the query constrained, and it is the same thing an
 /// unassigned variable evaluates to.
 ///
-/// Bounded, because a malformed chain must not spin: an array term is finite,
-/// but this walks it without a `seen` set for store links (the bound retires
-/// that) and with one for the ALIAS hops below (a cycle there would otherwise
-/// burn the whole bound re-resolving the same two names).
+/// Model assignments may form cycles through aliases or store bases. Track
+/// every visited link, and leave an unresolved read when a cycle is reached.
+/// The deterministic bound also limits exceptionally long acyclic chains.
 fn select_in(model: &Model, manager: &mut TermManager, array: TermId, index: TermId) -> TermId {
     /// A store chain longer than this is not something a query built.
     const MAX_CHAIN: usize = 1_000_000;
     let mut cur = array;
     let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
     for _ in 0..MAX_CHAIN {
-        // Resolve the link before reading it. A chain does not arrive as one
-        // nested `store`: each `Append` writes onto the *previous* sequence's
-        // graph, so the base of one link is a name — `@sf(h@1)` — whose own
-        // chain is another model assignment. Following those is the walk.
-        //
-        // This does not recurse through the chain: `Model::eval` returns an
-        // assignment without descending into it, so each call resolves one
-        // link and the walk stays a loop.
-        let resolved = model.eval(cur, manager);
-        let Some(TermKind::Store(base, at, written)) =
-            manager.get(resolved).map(|t| t.kind.clone())
-        else {
-            // A model assignment may be a plain ALIAS — `x@2 -> x@1` from a
-            // committed-true UNCHANGED-style equality, where neither side is
-            // a store. Breaking here (the old behaviour) strands the walk on
-            // the name: the minted `select(x@2, i)` below matches no
-            // query-built select, the point reads back unconstrained, and a
-            // caller completing it (the TLA+ trace decoder) had to invent a
-            // value that the taken branch disagrees with. Following the
-            // alias is sound for the same reason the chain walk is: the
-            // assignment states an equality the query committed to, so
-            // reading `x@2` at `i` IS reading `x@1` at `i`. One hop per
-            // alias, cycle-guarded by `visited` — an assignment cycle
-            // (`a -> b`, `b -> a`) is a malformed model, not a walk to
-            // follow.
-            if resolved != cur && visited.insert(resolved) {
-                cur = resolved;
+        if !visited.insert(cur) {
+            break; // Model aliases may close a cycle through a store, too.
+        }
+        // Follow one assignment without rebuilding a store/ITE DAG. Eagerly
+        // evaluating the whole link can grow fresh terms on every cycle and
+        // defeat an identity-based guard, even when no index is writable.
+        if let Some(resolved) = model.get(cur)
+            && resolved != cur
+        {
+            cur = resolved;
+            continue;
+        }
+        let Some(kind) = manager.get(cur).map(|t| t.kind.clone()) else {
+            break;
+        };
+        let (base, at, written) = match kind {
+            TermKind::Store(base, at, written) => (base, at, written),
+            TermKind::Ite(condition, then_array, else_array) => {
+                let condition = model.eval(condition, manager);
+                if term_kind_is_true(condition, manager) {
+                    cur = then_array;
+                } else if term_kind_is_false(condition, manager) {
+                    cur = else_array;
+                } else {
+                    break; // The model has not chosen an array branch.
+                }
                 continue;
             }
-            break;
+            _ => break,
         };
         // The chain's own index and value are evaluated as the walk reaches
         // them. They are not evaluated already: a chain that came from a model

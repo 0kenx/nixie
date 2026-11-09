@@ -223,22 +223,13 @@ pub(crate) fn declare_struct(fields: &[(String, SortId)], tm: &mut TermManager) 
         return def.sort_id;
     }
     let sort = tm.sorts.mk_datatype_sort(&name);
-    // The constructor and selector names are interned in the **term**
-    // manager's interner, not the sort manager's. `TermManager` and
-    // `SortManager` keep separate interners, and the datatype axioms
-    // (`nixie_solver::solver::dt_axioms::resolve_decl`) resolve these two
-    // fields through the term manager — only `DataTypeDef::name` belongs to
-    // the sort manager's own. Interning them in the wrong one does not fail:
-    // it resolves to whatever string happens to sit at that index, so the
-    // axioms are generated for names no term uses, the reconstruction axiom
-    // never fires, and a datatype variable behaves like an opaque constant
-    // whose selectors are unrelated to it. That reads as a wrong `sat`, and
-    // it is how this comment came to be written.
+    // This API accepts term-local names and normalizes them into the sort
+    // manager when storing the declaration. Never compare cross-interner keys.
     let ctor = nixie_core::sort::DataTypeConstructor {
         name: tm.intern_str(&name),
         selectors: fields.iter().map(|(f, s)| (tm.intern_str(f), *s)).collect(),
     };
-    tm.sorts.declare_datatype(&name, vec![ctor]);
+    tm.declare_datatype(&name, vec![ctor]);
     sort
 }
 
@@ -252,7 +243,7 @@ pub(crate) fn struct_fields(sort: SortId, tm: &TermManager) -> Option<Vec<(Strin
     Some(
         ctor.selectors
             .iter()
-            .map(|(f, s)| (tm.resolve_str(*f).to_string(), *s))
+            .map(|(f, s)| (tm.sorts.resolve_spur(*f).to_string(), *s))
             .collect(),
     )
 }

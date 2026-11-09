@@ -287,21 +287,18 @@ pub(super) fn resolve_decl(sort: SortId, manager: &TermManager) -> Option<DeclIn
     if def.constructors.is_empty() {
         return None;
     }
-    // Constructor and selector names live in the *term* manager's interner:
-    // that is what `Parser::parse_datatype_constructor_group` interns them with
-    // before handing the definition to the sort manager, and what
-    // `context::model_fmt` resolves them through.  Only `DataTypeDef::name`
-    // belongs to the sort manager's own interner.
+    // Stored declaration names belong to SortManager; AST names belong to
+    // TermManager. Resolve declarations before constructing AST terms.
     let constructors = def
         .constructors
         .iter()
         .map(|constructor| ConstructorInfo {
-            name: manager.resolve_str(constructor.name).to_string(),
+            name: manager.sorts.resolve_spur(constructor.name).to_string(),
             fields: constructor
                 .selectors
                 .iter()
                 .map(|&(selector, field_sort)| FieldInfo {
-                    selector: manager.resolve_str(selector).to_string(),
+                    selector: manager.sorts.resolve_spur(selector).to_string(),
                     sort: field_sort,
                     is_datatype: manager.sorts.is_datatype(field_sort),
                 })
@@ -716,7 +713,8 @@ impl Solver {
             .filter(|(a, b)| a != b)
             .map(|(&a, &b)| manager.mk_eq(a, b))
             .collect();
-        let conclusion = manager.mk_eq(left, right);
+        // Preserve an equality atom: decomposition would repeat the premise.
+        let conclusion = manager.mk_eq_atom(left, right);
         let lemma = if premises.is_empty() {
             // Every field is syntactically shared, so the two applications are
             // the same term and `mk_eq` has already folded this to `true`;

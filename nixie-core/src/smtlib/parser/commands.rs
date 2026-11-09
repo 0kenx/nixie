@@ -1178,7 +1178,7 @@ impl<'a> Parser<'a> {
             for (ctor_name, _selectors) in &dt_constructors {
                 self.dt_constructors.insert(ctor_name.clone(), dt_sort);
             }
-            self.manager.sorts.declare_datatype(dt_name, ctor_defs);
+            self.manager.declare_datatype(dt_name, ctor_defs);
 
             constructors.extend(dt_constructors);
         }
@@ -1282,7 +1282,7 @@ impl<'a> Parser<'a> {
         for (ctor_name, _selectors) in &constructors {
             self.dt_constructors.insert(ctor_name.clone(), dt_sort);
         }
-        self.manager.sorts.declare_datatype(&name, ctor_defs);
+        self.manager.declare_datatype(&name, ctor_defs);
 
         Ok(Command::DeclareDatatype { name, constructors })
     }

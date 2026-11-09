@@ -10,6 +10,10 @@ use hashbrown::HashTable;
 use portable_atomic::{AtomicU32, Ordering};
 
 mod builder;
+mod dt_eq;
+mod dt_fold;
+mod dt_ite_lift;
+pub use dt_ite_lift::MAX_ITE_LIFT_NODES;
 pub mod bv_fold;
 pub mod ff_fold;
 mod query;
@@ -268,6 +272,25 @@ impl TermManager {
     /// Intern a string, returning its key
     pub fn intern_str(&mut self, s: &str) -> Spur {
         self.interner.get_or_intern(s)
+    }
+
+    /// Declare a datatype whose constructor/selector keys belong to this term
+    /// manager. Declaration names are normalized into the sort manager's
+    /// interner; term nodes continue to use this manager's interner.
+    pub fn declare_datatype(
+        &mut self,
+        name: &str,
+        mut constructors: Vec<crate::sort::DataTypeConstructor>,
+    ) {
+        for constructor in &mut constructors {
+            let name = self.resolve_str(constructor.name).to_string();
+            constructor.name = self.sorts.intern_str(&name);
+            for (selector, _) in &mut constructor.selectors {
+                let name = self.resolve_str(*selector).to_string();
+                *selector = self.sorts.intern_str(&name);
+            }
+        }
+        self.sorts.declare_datatype(name, constructors);
     }
 
     /// Resolve an interned string

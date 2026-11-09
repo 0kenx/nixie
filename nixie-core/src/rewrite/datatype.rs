@@ -398,7 +398,7 @@ mod tests {
 
         let con1 = manager.mk_dt_constructor("Pair", vec![x1, y1], dt_sort);
         let con2 = manager.mk_dt_constructor("Pair", vec![x2, y2], dt_sort);
-        let eq = manager.mk_eq(con1, con2);
+        let eq = manager.mk_eq_atom(con1, con2);
 
         // The eq term should be an Eq with two DtConstructors
         let eq_term = manager.get(eq).expect("eq term");
@@ -445,7 +445,7 @@ mod tests {
 
         let con1 = manager.mk_dt_constructor("Red", vec![], dt_sort);
         let con2 = manager.mk_dt_constructor("Blue", vec![], dt_sort);
-        let eq = manager.mk_eq(con1, con2);
+        let eq = manager.mk_eq_atom(con1, con2);
 
         let result = rewriter.rewrite(eq, &mut ctx, &mut manager);
         assert!(result.was_rewritten());

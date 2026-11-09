@@ -105,7 +105,7 @@ fn enumerate_datatype(
             .iter()
             .map(|ctor| {
                 (
-                    manager.resolve_str(ctor.name).to_string(),
+                    manager.sorts.resolve_spur(ctor.name).to_string(),
                     ctor.selectors.iter().map(|&(_, field)| field).collect(),
                 )
             })

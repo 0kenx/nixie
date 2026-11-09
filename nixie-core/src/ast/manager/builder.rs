@@ -374,7 +374,7 @@ impl TermManager {
     }
 
     /// Create an equality
-    pub fn mk_eq(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+    pub(super) fn mk_eq_basic(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if lhs == rhs {
             return self.true_id;
         }
@@ -382,29 +382,6 @@ impl TermManager {
         // Check for constant comparisons
         let lhs_kind = self.get(lhs).map(|t| t.kind.clone());
         let rhs_kind = self.get(rhs).map(|t| t.kind.clone());
-
-        // **Tuple constructors unfold componentwise** — the datatype
-        // injectivity axiom, stated as a rewrite so it holds everywhere a
-        // tuple equality is built (user assertions, the counting guards,
-        // extensionality witnesses). Without it `(tuple 1 2) = (tuple 5 2)`
-        // stayed an opaque equality SAT could satisfy, and a wrong-`sat`
-        // followed through the join's counting guards.
-        if let (
-            Some(TermKind::DtConstructor { args: xs, .. }),
-            Some(TermKind::DtConstructor { args: ys, .. }),
-        ) = (&lhs_kind, &rhs_kind)
-            && xs.len() == ys.len()
-            && let Some(ls) = self.get(lhs).map(|d| d.sort)
-            && let Some(rs) = self.get(rhs).map(|d| d.sort)
-            && ls == rs
-            && self.tuple_field_sorts_of(ls).is_some()
-        {
-            let mut parts: Vec<TermId> = Vec::with_capacity(xs.len());
-            for (&a, &b) in xs.iter().zip(ys.iter()) {
-                parts.push(self.mk_eq(a, b));
-            }
-            return self.mk_and(parts);
-        }
 
         match (&lhs_kind, &rhs_kind) {
             // Integer constants
@@ -470,10 +447,6 @@ impl TermManager {
         // Boolean `p`).  Gated on Boolean-ness by shape: `True`/`False`
         // and `Not` only ever occur at the Boolean sort.
         if let Some(TermKind::Not(l_inner)) = lhs_kind.as_ref() {
-            if let Some(TermKind::Not(r_inner)) = rhs_kind.as_ref() {
-                // (not a) = (not b)  ==>  a = b
-                return self.mk_eq(*l_inner, *r_inner);
-            }
             // p = (not p)  ==>  false
             if *l_inner == rhs {
                 return self.false_id;
@@ -1714,7 +1687,7 @@ impl TermManager {
                 .selectors
                 .iter()
                 .enumerate()
-                .all(|(i, &(sel, _))| self.resolve_str(sel) == format!("@t{}", i + 1))
+                .all(|(i, &(sel, _))| self.sorts.resolve_spur(sel) == format!("@t{}", i + 1))
         {
             return Some(ctor.selectors.iter().map(|&(_, s)| s).collect());
         }
@@ -1735,7 +1708,7 @@ impl TermManager {
                 .selectors
                 .iter()
                 .enumerate()
-                .all(|(i, &(sel, _))| self.resolve_str(sel) == format!("@t{}", i + 1))
+                .all(|(i, &(sel, _))| self.sorts.resolve_spur(sel) == format!("@t{}", i + 1))
         {
             return ctor.selectors.iter().map(|&(_, s)| s).collect();
         }
@@ -1762,7 +1735,7 @@ impl TermManager {
                 .map(|(i, &f)| (self.intern_str(&format!("@t{}", i + 1)), f))
                 .collect(),
         };
-        self.sorts.declare_datatype(&name, vec![ctor]);
+        self.declare_datatype(&name, vec![ctor]);
         sort
     }
 
@@ -2570,14 +2543,7 @@ impl TermManager {
     /// For example, `is-cons(x)` tests if `x` is a cons cell.
     pub fn mk_dt_tester(&mut self, constructor: &str, arg: TermId) -> TermId {
         let constructor_spur = self.intern_str(constructor);
-        let bool_sort = self.sorts.bool_sort;
-        self.intern(
-            TermKind::DtTester {
-                constructor: constructor_spur,
-                arg,
-            },
-            bool_sort,
-        )
+        self.mk_dt_tester_spur(constructor_spur, arg)
     }
 
     /// Create a datatype selector/accessor
@@ -2586,13 +2552,7 @@ impl TermManager {
     /// For example, `head(x)` extracts the first element of a cons cell.
     pub fn mk_dt_selector(&mut self, selector: &str, arg: TermId, result_sort: SortId) -> TermId {
         let selector_spur = self.intern_str(selector);
-        self.intern(
-            TermKind::DtSelector {
-                selector: selector_spur,
-                arg,
-            },
-            result_sort,
-        )
+        self.mk_dt_selector_spur(selector_spur, arg, result_sort)
     }
 
     /// Create a universal quantifier without patterns

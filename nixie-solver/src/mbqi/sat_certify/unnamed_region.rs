@@ -644,7 +644,7 @@ fn enumeration_constructors(sort: SortId, manager: &mut TermManager) -> Option<V
         }
         def.constructors
             .iter()
-            .map(|ctor| manager.resolve_str(ctor.name).to_string())
+            .map(|ctor| manager.sorts.resolve_spur(ctor.name).to_string())
             .collect()
     };
     Some(

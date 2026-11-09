@@ -252,6 +252,8 @@ impl Sort {
 /// Datatype constructor for algebraic datatypes.
 ///
 /// Represents a constructor for an algebraic datatype like `cons` in a list type.
+/// Stored declarations use names interned by their `SortManager`.
+/// `TermManager::declare_datatype` accepts term-local names and converts them.
 #[derive(Debug, Clone)]
 pub struct DataTypeConstructor {
     /// Name of the constructor

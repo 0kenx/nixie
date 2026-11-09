@@ -975,7 +975,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 .datatype_name(sort)
                 .and_then(|name| manager.sorts.get_datatype(name))
                 .and_then(|def| def.constructors.first())
-                .map(|ctor| manager.resolve_str(ctor.name).to_string());
+                .map(|ctor| manager.sorts.resolve_spur(ctor.name).to_string());
             let Some(constructor) = constructor else {
                 rel_incomplete = true;
                 continue;
@@ -1380,6 +1380,19 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             if !group.contains(&x) || !group.contains(&y) {
                 continue;
             }
+            // Only emit memberships whose definitions were generated above.
+            // Equality-chain intermediates can be array reads or applications
+            // that were never surveyed as elements. Minting their memberships
+            // here leaves them free of set-equality/constructor semantics and
+            // lets model synthesis mistake an auxiliary assignment for a fact.
+            // Candidate refinement relates the actual elements directly, so
+            // equality chains still imply their membership congruence.
+            if !elements
+                .get(&es)
+                .is_some_and(|members| members.contains(&x) && members.contains(&y))
+            {
+                continue;
+            }
             for &set in &s.sets {
                 if element_sort(set, manager) != Some(es) {
                     continue;
@@ -1638,6 +1651,19 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 continue;
             };
             if !group.contains(&x) || !group.contains(&y) {
+                continue;
+            }
+            // Only emit memberships whose definitions were generated above.
+            // Equality-chain intermediates can be array reads or applications
+            // that were never surveyed as elements. Minting their memberships
+            // here leaves them free of set-equality/constructor semantics and
+            // lets model synthesis mistake an auxiliary assignment for a fact.
+            // Candidate refinement relates the actual elements directly, so
+            // equality chains still imply their membership congruence.
+            if !elements
+                .get(&es)
+                .is_some_and(|members| members.contains(&x) && members.contains(&y))
+            {
                 continue;
             }
             for &set in &s.sets {
@@ -1926,7 +1952,7 @@ mod tuple_reconstruction_tests {
             name: tm.intern_str("custom_pair"),
             selectors: vec![(tm.intern_str("@t1"), int), (tm.intern_str("@t2"), int)].into(),
         };
-        tm.sorts.declare_datatype("CustomPair", vec![ctor]);
+        tm.declare_datatype("CustomPair", vec![ctor]);
         let canonical = tm.tuple_sort(&[int, int]);
         assert_ne!(custom, canonical);
         let one = tm.mk_int(1);
