@@ -255,7 +255,7 @@ impl FiniteModelFinder {
         let mut universe = Vec::new();
 
         for i in 0..size.size() {
-            let name = format!("u!{}!{}", sort.0, i);
+            let name = nixie_core::reserved::reserved_name("universe", &format!("{}!{i}", sort.0));
             let elem = manager.mk_var(&name, sort);
             universe.push(elem);
         }

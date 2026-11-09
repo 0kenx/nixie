@@ -1826,6 +1826,14 @@ impl MBQIIntegration {
         self.extra_candidates.entry(sort).or_default().push(term);
     }
 
+    /// Whether at least one ground instantiation candidate is registered for a sort.
+    #[must_use]
+    pub fn has_candidate_of_sort(&self, sort: SortId) -> bool {
+        self.extra_candidates
+            .get(&sort)
+            .is_some_and(|terms| !terms.is_empty())
+    }
+
     /// Test-only snapshot of the registered extra-candidate pool for a sort.
     ///
     /// `extra_candidates` is intentionally private: production code only

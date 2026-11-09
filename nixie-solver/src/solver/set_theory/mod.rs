@@ -397,7 +397,7 @@ fn spells_join_skolem(t: TermId, manager: &TermManager) -> bool {
         };
         if let TermKind::Var(name) = &data.kind {
             let n = manager.resolve_str(*name);
-            if n.starts_with("@set_join_") {
+            if nixie_core::reserved::is_reserved_tag(n, "set-join") {
                 return true;
             }
         }
@@ -417,7 +417,7 @@ fn element_plausible(t: TermId, manager: &TermManager) -> bool {
         // atoms for proxies — which then grow the element list every pass.
         TermKind::Var(name) => {
             let n = manager.resolve_str(*name);
-            !(n.starts_with("__nixie") || n.starts_with("$p"))
+            !nixie_core::reserved::is_encoder_proxy(n)
         }
         TermKind::IntConst(_)
         | TermKind::RealConst(_)
@@ -647,7 +647,10 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // its pair, which is what the axiom means.
     let pair_witness =
         |manager: &mut TermManager, sort: nixie_core::SortId, a: TermId, b: TermId| -> TermId {
-            manager.mk_var(&format!("@set_ext_{}_{}", a.0, b.0), sort)
+            manager.mk_var(
+                &nixie_core::reserved::reserved_name("set-ext", &format!("{}!{}", a.0, b.0)),
+                sort,
+            )
         };
 
     // One witness per set relation. `(= a b)` and `(set.subset a b)` both need
@@ -804,7 +807,10 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 break;
             }
             let total = tuple_arity(e, manager).unwrap_or(n1.max(1));
-            let k = manager.mk_var(&format!("@set_join_{}_{}", set.0, e.0), middle_sort);
+            let k = manager.mk_var(
+                &nixie_core::reserved::reserved_name("set-join", &format!("{}!{}", set.0, e.0)),
+                middle_sort,
+            );
             let mut left: Vec<TermId> = (0..n1.saturating_sub(1))
                 .map(|i| select_i(e, i, manager))
                 .collect();
@@ -1156,7 +1162,13 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     // `r1` member (e's front plus the witness) and an `r2`
                     // member (the witness plus e's back).
                     let total = tuple_arity(e, manager).unwrap_or(n1.max(1));
-                    let k = manager.mk_var(&format!("@set_join_{}_{}", set.0, e.0), middle_sort);
+                    let k = manager.mk_var(
+                        &nixie_core::reserved::reserved_name(
+                            "set-join",
+                            &format!("{}!{}", set.0, e.0),
+                        ),
+                        middle_sort,
+                    );
                     let mut left: Vec<TermId> = (0..n1.saturating_sub(1))
                         .map(|i| select_i(e, i, manager))
                         .collect();

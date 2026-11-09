@@ -939,7 +939,7 @@ impl Solver {
     /// genuine "the search must separate the trees" signal — which the
     /// blocking loop can act on.
     fn rederive_size_measures(&mut self, model: &mut Model, manager: &mut TermManager) {
-        const DT_SIZE_PREFIX: &str = "dt.size!";
+        const DT_SIZE_PREFIX: &str = super::dt_axioms::DT_SIZE_MEASURE;
         // (measured term, size var) for every encoded measure variable.
         let mut pairs: Vec<(TermId, TermId)> = Vec::new();
         for (&t, _) in self.term_to_var.iter() {

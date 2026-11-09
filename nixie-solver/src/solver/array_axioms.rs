@@ -453,6 +453,8 @@ impl Solver {
                 .push(super::trail::TrailOp::ArrayAxiomInstanceAdded { term: inst });
             let lit = self.encode(inst, manager);
             let _ = self.sat.add_clause([lit]);
+            self.statistics.array_lemma_instances =
+                self.statistics.array_lemma_instances.saturating_add(1);
             if std::env::var("NIXIE_ARRAY_LEMMA_LOG").is_ok() {
                 use nixie_core::smtlib::Printer;
                 let p = Printer::new(manager);
@@ -2021,7 +2023,7 @@ fn extensionality_witness(
     } else {
         (b.raw(), a.raw())
     };
-    // The `!nixie!ext!` prefix cannot collide with an SMT-LIB source symbol.
+    // The [`nixie_core::reserved::ARRAY_EXT_WITNESS_PREFIX`] prefix cannot collide with an SMT-LIB source symbol.
     let name = format!(
         "{}{lo}!{hi}",
         nixie_core::reserved::ARRAY_EXT_WITNESS_PREFIX
@@ -2031,14 +2033,16 @@ fn extensionality_witness(
 
 /// Whether `term` is an extensionality witness index minted by
 /// [`extensionality_witness`]: a variable whose name carries the
-/// solver-internal `!nixie!ext!` prefix (which cannot collide with an
+/// solver-internal [`nixie_core::reserved::ARRAY_EXT_WITNESS_PREFIX`] prefix (which cannot collide with an
 /// SMT-LIB source symbol – the same guarantee the mint relies on).  A read
 /// at such an index is a SYNTHETIC read: no input constraint mentions the
 /// index, so its read-over-write content is instantiated model-based (see
 /// the routing in [`build_read_over_write`]).
 fn is_extensionality_witness(term: TermId, manager: &TermManager) -> bool {
     match manager.get(term).map(|t| &t.kind) {
-        Some(TermKind::Var(name)) => manager.resolve_str(*name).starts_with("!nixie!ext!"),
+        Some(TermKind::Var(name)) => {
+            nixie_core::reserved::is_reserved_tag(manager.resolve_str(*name), "ext")
+        }
         _ => false,
     }
 }
@@ -2771,6 +2775,19 @@ mod conditional_alias_tests {
 #[cfg(test)]
 mod derived_equality_tests {
     use super::*;
+
+    #[test]
+    fn witness_recognition_matches_the_reserved_mint_only() {
+        let mut tm = TermManager::new();
+        let int = tm.sorts.int_sort;
+        let sort = tm.sorts.array(int, int);
+        let a = tm.mk_var("a", sort);
+        let b = tm.mk_var("b", sort);
+        let witness = extensionality_witness(&mut tm, a, b, int);
+        let source = tm.mk_var("!nixie!ext!1!2", int);
+        assert!(is_extensionality_witness(witness, &tm));
+        assert!(!is_extensionality_witness(source, &tm));
+    }
 
     #[test]
     fn an_existing_witness_does_not_spend_the_next_rounds_budget() {

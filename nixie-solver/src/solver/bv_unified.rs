@@ -786,7 +786,10 @@ impl Solver {
             .unwrap_or_else(|| manager.sorts.bitvec(width));
         let mut wires: Vec<TermId> = args.to_vec();
         for i in args.len()..n2 {
-            let name = format!("__nixie_order_pad_{}_{}", self.bv_order_specs.len(), i);
+            let name = nixie_core::reserved::reserved_name(
+                "order-pad",
+                &format!("{}!{i}", self.bv_order_specs.len()),
+            );
             wires.push(manager.mk_var(&name, sort));
         }
         self.bv_order_specs.push(BvOrderSpec {

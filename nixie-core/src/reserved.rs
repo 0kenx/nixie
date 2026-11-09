@@ -30,6 +30,23 @@ pub fn is_reserved_tag(name: &str, tag: &str) -> bool {
         .is_some_and(|rest| rest.starts_with('!'))
 }
 
+/// Whether a symbol is an encoder proxy whose model value can override its
+/// temporary arithmetic tableau value. Skolems and other witnesses are not proxies.
+#[must_use]
+pub fn is_encoder_proxy(name: &str) -> bool {
+    [
+        "ite",
+        "boolarg",
+        "numarg",
+        "order-pad",
+        "ite-table",
+        "uncnstr",
+        "arith-proxy",
+    ]
+    .iter()
+    .any(|tag| is_reserved_tag(name, tag))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,5 +60,10 @@ mod tests {
         assert!(CONST_ARRAY_FUNC.starts_with(RESERVED_PREFIX));
         assert!(ARRAY_EXT_WITNESS_PREFIX.starts_with(RESERVED_PREFIX));
         assert!(ARRAY_OFF_CHAIN_PREFIX.starts_with(RESERVED_PREFIX));
+        assert!(is_encoder_proxy(&reserved_name("ite", "17")));
+        assert!(is_encoder_proxy(&reserved_name("arith-proxy", "3")));
+        assert!(!is_encoder_proxy("__nixie_ite_17"));
+        assert!(!is_encoder_proxy("$price"));
+        assert!(!is_encoder_proxy(&reserved_name("sk", "17")));
     }
 }

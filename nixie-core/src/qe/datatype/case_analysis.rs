@@ -227,7 +227,7 @@ impl CaseAnalyzer {
     fn fresh_name(&mut self) -> String {
         let n = self.next_id;
         self.next_id += 1;
-        format!("!dtca{n}")
+        crate::reserved::reserved_name("dtca", &n.to_string())
     }
 
     /// Check if a case is trivially false.

@@ -138,7 +138,7 @@ impl Solver {
                 // recurse into its arguments like any other n-ary node.
                 TermKind::Apply { func, args } => {
                     let fname = manager.resolve_str(*func);
-                    if fname.starts_with("sk") || fname.starts_with("skf") {
+                    if nixie_core::reserved::is_reserved_tag(fname, "sk") || nixie_core::reserved::is_reserved_tag(fname, "skf") {
                         // Register the whole application as a candidate
                         self.mbqi.add_candidate(term, t.sort);
                     }
@@ -163,7 +163,7 @@ impl Solver {
                 // it can appear in.
                 TermKind::Var(name) => {
                     let vname = manager.resolve_str(*name);
-                    if vname.starts_with("sk!") {
+                    if nixie_core::reserved::is_reserved_tag(vname, "sk") {
                         self.mbqi.add_candidate(term, t.sort);
                     }
                 }

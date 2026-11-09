@@ -578,6 +578,10 @@ impl SolverConfig {
 /// Solver statistics
 #[derive(Debug, Clone, Default)]
 pub struct Statistics {
+    /// Productive array-refinement rounds in the most recent query.
+    pub array_refinement_rounds: u64,
+    /// New array lemma instances asserted in the most recent query.
+    pub array_lemma_instances: u64,
     /// Embedded BV checks attempted in the most recent query.
     pub bv_embedded_checks: u64,
     /// Number of decisions made

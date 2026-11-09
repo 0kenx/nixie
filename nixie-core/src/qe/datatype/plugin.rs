@@ -254,7 +254,7 @@ impl DatatypeQePlugin {
         let n = self.next_var_id;
         self.next_var_id += 1;
         self.stats.fresh_vars += 1;
-        format!("!dtqe{n}")
+        crate::reserved::reserved_name("dtqe", &n.to_string())
     }
 
     /// Extract datatype constraints on `var` from `formula`.
@@ -366,8 +366,8 @@ mod tests {
         let mut plugin = DatatypeQePlugin::default_config();
         let v1 = plugin.fresh_name();
         let v2 = plugin.fresh_name();
-        assert_eq!(v1, "!dtqe0");
-        assert_eq!(v2, "!dtqe1");
+        assert_eq!(v1, crate::reserved::reserved_name("dtqe", "0"));
+        assert_eq!(v2, crate::reserved::reserved_name("dtqe", "1"));
         assert_eq!(plugin.stats().fresh_vars, 2);
     }
 

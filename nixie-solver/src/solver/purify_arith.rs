@@ -311,7 +311,7 @@ fn allocate_fresh(
         }
         return f;
     }
-    let name = format!("$p{}", state.next_id);
+    let name = nixie_core::reserved::reserved_name("arith-proxy", &state.next_id.to_string());
     state.next_id += 1;
     let fresh = manager.mk_var(&name, sort);
     state.foreign_to_fresh.insert(original, fresh);

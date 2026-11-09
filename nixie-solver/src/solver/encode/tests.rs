@@ -132,7 +132,7 @@ fn skolem_candidate_walk_preserves_previously_covered_connectives() {
 
     // Reached through `Eq`, itself reached through `And`, itself reached
     // through `Forall`'s body.
-    let sk_apply = manager.mk_apply("sk!0", [x], int_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!0", [x], int_sort);
     let eq_atom = manager.mk_eq(sk_apply, y);
 
     // Reached through `And` (Apply is covered), but its name does not start
@@ -166,7 +166,7 @@ fn skolem_candidate_walk_preserves_previously_covered_connectives() {
         .filter(|&id| {
             manager.get(id).is_some_and(|t| {
                 matches!(&t.kind, TermKind::Apply { func, .. }
-                    if { let n = manager.resolve_str(*func); n.starts_with("sk") || n.starts_with("skf") })
+                    if { let n = manager.resolve_str(*func); nixie_core::reserved::is_reserved_tag(n, "sk") || nixie_core::reserved::is_reserved_tag(n, "skf") })
             })
         })
         .collect();
@@ -191,7 +191,7 @@ fn skolem_candidate_walk_preserves_remaining_previously_covered_connectives() {
     let int_sort = manager.sorts.int_sort;
 
     let x = manager.mk_var("x", int_sort);
-    let sk_apply = manager.mk_apply("sk!9", [x], int_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!9", [x], int_sort);
     let one = manager.mk_int(1);
 
     let add_t = manager.mk_add(vec![sk_apply, one]); // Add
@@ -245,7 +245,7 @@ fn skolem_candidate_found_under_bitvector_operation() {
 
     let x = manager.mk_var("x", bv8);
     let y = manager.mk_var("y", bv8);
-    let sk_apply = manager.mk_apply("sk!0", [x], bv8);
+    let sk_apply = manager.mk_apply("\\nixie.sk!0", [x], bv8);
     let body = manager.mk_bv_ult(sk_apply, y);
     let forall = manager.mk_forall(vec![("x", bv8)], body);
 
@@ -271,7 +271,7 @@ fn skolem_candidate_found_under_floating_point_operation() {
 
     let x = manager.mk_var("x", fp_sort);
     let y = manager.mk_var("y", fp_sort);
-    let sk_apply = manager.mk_apply("sk!7", [x], fp_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!7", [x], fp_sort);
     let body = manager.mk_fp_leq(sk_apply, y);
     let forall = manager.mk_forall(vec![("x", fp_sort)], body);
 
@@ -298,7 +298,7 @@ fn skolem_candidate_found_under_string_operation() {
 
     let x = manager.mk_var("x", int_sort);
     let y = manager.mk_var("y", string_sort);
-    let sk_apply = manager.mk_apply("sk!8", [x], string_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!8", [x], string_sort);
     let body = manager.mk_str_contains(sk_apply, y);
     let forall = manager.mk_forall(vec![("x", int_sort)], body);
 
@@ -323,7 +323,7 @@ fn skolem_candidate_found_under_distinct() {
 
     let x = manager.mk_var("x", int_sort);
     let y = manager.mk_var("y", int_sort);
-    let sk_apply = manager.mk_apply("sk!1", [x], int_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!1", [x], int_sort);
     let distinct_term = manager.mk_distinct(vec![sk_apply, y]);
     let forall = manager.mk_forall(vec![("x", int_sort)], distinct_term);
 
@@ -348,7 +348,7 @@ fn skolem_candidate_found_under_let_binding() {
     let int_sort = manager.sorts.int_sort;
 
     let x = manager.mk_var("x", int_sort);
-    let sk_apply = manager.mk_apply("sk!2", [x], int_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!2", [x], int_sort);
     let let_body = manager.mk_true();
     let let_term = manager.mk_let(vec![("a", sk_apply)], let_body);
     let forall = manager.mk_forall(vec![("x", int_sort)], let_term);
@@ -387,7 +387,7 @@ fn skolem_candidate_found_under_match_scrutinee() {
     let bool_sort = manager.sorts.bool_sort;
 
     let x = manager.mk_var("x", int_sort);
-    let sk_apply = manager.mk_apply("sk!5", [x], int_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!5", [x], int_sort);
     let match_term = manager.intern_term(
         TermKind::Match {
             scrutinee: sk_apply,
@@ -416,7 +416,7 @@ fn skolem_candidate_found_under_xor() {
 
     let x = manager.mk_var("x", bool_sort);
     let y = manager.mk_var("y", bool_sort);
-    let sk_apply = manager.mk_apply("sk!6", [x], bool_sort);
+    let sk_apply = manager.mk_apply("\\nixie.sk!6", [x], bool_sort);
     let xor_term = manager.mk_xor(sk_apply, y);
     let forall = manager.mk_forall(vec![("x", bool_sort)], xor_term);
 
@@ -1470,4 +1470,31 @@ fn finite_interface_ownership_after_pop() {
         s.var_to_constraint.len(),
         s.statistics
     );
+}
+
+#[test]
+fn interface_proxies_do_not_capture_source_variables() {
+    let mut tm = TermManager::new();
+    let mut solver = Solver::new();
+    let int = tm.sorts.int_sort;
+    let boolean = tm.sorts.bool_sort;
+    let p = tm.mk_var("p", boolean);
+    let q = tm.mk_var("q", boolean);
+    let one = tm.mk_int(1);
+    let two = tm.mk_int(2);
+    let ite = tm.mk_ite(p, one, two);
+    let old_ite = tm.mk_var(&format!("__nixie_ite_{}", ite.0), int);
+    let eq = tm.mk_eq(ite, one);
+    let rewritten = solver.eliminate_nonbool_ite(eq, &mut tm);
+    assert!(!nixie_core::ast::collect_subterms(rewritten, &tm).contains(&old_ite));
+    let condition = tm.mk_and([p, q]);
+    let old_bool = tm.mk_var(&format!("__nixie_boolarg_{}", condition.0), boolean);
+    let app = tm.mk_apply("predicate", [condition], boolean);
+    let rewritten = solver.abstract_compound_bool_args(app, &mut tm);
+    assert!(!nixie_core::ast::collect_subterms(rewritten, &tm).contains(&old_bool));
+    let old_numeric = tm.mk_var(&format!("__nixie_numarg_{}", two.0), int);
+    let app = tm.mk_apply("numeric", [two], int);
+    let eq = tm.mk_eq(app, one);
+    let rewritten = solver.purify_numeric_uf_args(eq, &mut tm);
+    assert!(!nixie_core::ast::collect_subterms(rewritten, &tm).contains(&old_numeric));
 }

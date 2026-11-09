@@ -60,7 +60,13 @@ fn embedded_check_option_limits_work_and_can_be_cleared() {
     )
     .unwrap();
     assert_eq!(ctx.execute_script("(check-sat)").unwrap(), ["unknown"]);
-    assert!(ctx.get_statistics().contains(":bv-embedded-checks 2)"));
+    let stats = ctx.get_statistics();
+    let words: Vec<_> = stats.trim_matches(['(', ')']).split_whitespace().collect();
+    assert!(
+        words
+            .windows(2)
+            .any(|pair| pair == [":bv-embedded-checks", "2"])
+    );
     assert_eq!(
         ctx.execute_script("(set-option :max-bv-embedded-checks 0)(check-sat)")
             .unwrap(),

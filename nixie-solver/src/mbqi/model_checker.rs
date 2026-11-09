@@ -372,7 +372,8 @@ impl ModelChecker {
             };
         let mut skolem_terms: Vec<(Spur, SortId, TermId)> = Vec::new();
         for &(name, sort) in &q.bound_vars {
-            let sk_name = format!("mbqi!veto{}", self.skolem_counter);
+            let sk_name =
+                nixie_core::reserved::reserved_name("mbqi-veto", &self.skolem_counter.to_string());
             self.skolem_counter = self.skolem_counter.wrapping_add(1);
             let sk = manager.mk_var(&sk_name, sort);
             skolem_terms.push((name, sort, sk));
@@ -659,7 +660,8 @@ impl ModelChecker {
         // Skolemize the bound variables.
         let mut skolem_terms: Vec<(Spur, SortId, TermId)> = Vec::new();
         for &(name, sort) in &q.bound_vars {
-            let sk_name = format!("mbqi!sk{}", self.skolem_counter);
+            let sk_name =
+                nixie_core::reserved::reserved_name("mbqi-sk", &self.skolem_counter.to_string());
             self.skolem_counter = self.skolem_counter.wrapping_add(1);
             let sk = manager.mk_var(&sk_name, sort);
             skolem_terms.push((name, sort, sk));

@@ -43,7 +43,9 @@ impl Solver {
                     // nested applications (ack(ack(0,0), n)) that produce
                     // spurious conflicts.
                     let fname = manager.resolve_str(*func);
-                    if fname.starts_with("sk") || fname.starts_with("skf") {
+                    if nixie_core::reserved::is_reserved_tag(fname, "sk")
+                        || nixie_core::reserved::is_reserved_tag(fname, "skf")
+                    {
                         self.mbqi.add_candidate(term, t.sort);
                     }
                     stack.extend(args.iter().rev().copied());

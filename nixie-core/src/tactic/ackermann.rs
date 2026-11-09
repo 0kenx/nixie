@@ -326,7 +326,7 @@ impl<'a> AckermannizeTactic<'a> {
                 continue; // Skip if term not found
             };
             let sort = term.sort;
-            let var_name = format!("!ack_{}", var_counter);
+            let var_name = crate::reserved::reserved_name("ack", &var_counter.to_string());
             let fresh_var = self.manager.mk_var(&var_name, sort);
 
             term_to_var.insert(term_id, fresh_var);

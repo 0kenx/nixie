@@ -1164,7 +1164,7 @@ impl ModelCompleter {
                     .flat_map(|es| es.iter().map(|e| e.result))
                     .filter(|&r| {
                         manager.get(r).is_some_and(|n| {
-                            matches!(n.kind, TermKind::Var(name) if manager.resolve_str(name).starts_with("tbl!"))
+                            matches!(n.kind, TermKind::Var(name) if nixie_core::reserved::is_reserved_tag(manager.resolve_str(name), "constructor-table"))
                         })
                     })
                     .collect();
@@ -2676,7 +2676,7 @@ impl UninterpretedSortHandler {
 
         // Create fresh constants for the universe
         for i in 0..self.max_universe_size {
-            let name = format!("u!{}", i);
+            let name = nixie_core::reserved::reserved_name("universe", &format!("{}!{i}", sort.0));
             let const_id = manager.mk_var(&name, sort);
             universe.push(const_id);
         }

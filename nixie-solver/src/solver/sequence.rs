@@ -226,7 +226,10 @@ impl Reduction {
                     // Collision-free even if a client deliberately used our prefix.
                     let mut serial = tm.len();
                     let x = loop {
-                        let name = tm.intern_str(&format!("@native.seq.element.{serial}"));
+                        let name = tm.intern_str(&nixie_core::reserved::reserved_name(
+                            "seq-element",
+                            &serial.to_string(),
+                        ));
                         let kind = TermKind::Var(name);
                         if tm.find_interned(&kind, e).is_none() {
                             break tm.intern_term(kind, e);

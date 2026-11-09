@@ -1302,9 +1302,12 @@ fn mint_fresh_row_element(
         .map(|(_, b)| if *b { '1' } else { '0' })
         .collect();
     let fresh = manager.mk_var(
-        &format!(
-            "tbl!{}!{fingerprint:016x}!{row_bits}",
-            manager.resolve_str(qm.func)
+        &nixie_core::reserved::reserved_name(
+            "constructor-table",
+            &format!(
+                "{}!{fingerprint:016x}!{row_bits}",
+                manager.resolve_str(qm.func)
+            ),
         ),
         qm.func_range,
     );

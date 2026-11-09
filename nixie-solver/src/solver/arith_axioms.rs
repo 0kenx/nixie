@@ -236,7 +236,8 @@ impl Solver {
                 core::cmp::Ordering::Greater => Constraint::Gt(a, b),
                 core::cmp::Ordering::Equal => continue,
             };
-            let name = format!("!bigord!{}", self.next_skolem_id);
+            let name =
+                nixie_core::reserved::reserved_name("bigord", &self.next_skolem_id.to_string());
             self.next_skolem_id = self.next_skolem_id.wrapping_add(1);
             let atom = manager.mk_apply(&name, [a, b], manager.sorts.bool_sort);
             let var = self.get_or_create_var(atom);

@@ -234,7 +234,7 @@ impl Round<'_> {
 
     /// Create a fresh variable of `sort`.
     fn mk_fresh(&mut self, sort: nixie_core::sort::SortId, manager: &mut TermManager) -> TermId {
-        let name = format!("__nixie!uncnstr!{}", *self.name_counter);
+        let name = nixie_core::reserved::reserved_name("uncnstr", &self.name_counter.to_string());
         *self.name_counter += 1;
         *self.fresh_vars += 1;
         manager.mk_var(&name, sort)

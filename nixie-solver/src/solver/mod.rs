@@ -3513,6 +3513,10 @@ impl Solver {
                     let array_refined = !set_refined
                         && self.has_array_ops
                         && self.instantiate_array_axioms(manager);
+                    if array_refined {
+                        self.statistics.array_refinement_rounds =
+                            self.statistics.array_refinement_rounds.saturating_add(1);
+                    }
                     // Distinct-semantics guard clauses: for a live
                     // injective-`distinct` spec, every encoded
                     // `(= t_i t_j)` atom between two of its arguments is

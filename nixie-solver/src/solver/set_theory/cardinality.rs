@@ -748,7 +748,7 @@ fn counting_equation(
 /// into "the new elements contribute nothing" — a false `unsat` on the most
 /// ordinary input (`|s| = 2` then `1 ∈ s`).
 fn list_keyed_slack(set: TermId, list: &[TermId], manager: &mut TermManager) -> TermId {
-    let mut name = format!("@set_card_slack_{}", set.0);
+    let mut name = nixie_core::reserved::reserved_name("set-card-slack", &set.0.to_string());
     for e in list {
         name.push_str(&format!("_{}", e.0));
     }

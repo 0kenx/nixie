@@ -857,7 +857,7 @@ impl<'a> Nla2BvTactic<'a> {
             ArithConvData::Var { name, var_width } => {
                 let w = var_width.unwrap_or(width);
                 let name_str = self.manager.resolve_str(name).to_string();
-                let bv_name = format!("{}_bv", name_str);
+                let bv_name = crate::reserved::reserved_name("nlabv", &name_str);
                 let bv_sort = self.manager.sorts.bitvec(w);
                 let bv_var = self.manager.mk_var(&bv_name, bv_sort);
                 Some(bv_var)

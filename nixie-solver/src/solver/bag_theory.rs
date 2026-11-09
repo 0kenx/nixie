@@ -864,7 +864,10 @@ fn count_definition(
             if bag_is_closed(d, manager) {
                 CountDef::Defined(sum)
             } else {
-                let mut name = format!("@bag_map_slack_{}_{}", b.0, e.0);
+                let mut name = nixie_core::reserved::reserved_name(
+                    "bag-map-slack",
+                    &format!("{}!{}", b.0, e.0),
+                );
                 for &x in domain {
                     name.push_str(&format!("_{}", x.0));
                 }
@@ -1032,7 +1035,10 @@ pub(crate) fn reduce(
         if ea != eb {
             continue;
         }
-        let k = manager.mk_var(&format!("@bag_ext_{}_{}", a.0, b.0), ea);
+        let k = manager.mk_var(
+            &nixie_core::reserved::reserved_name("bag-ext", &format!("{}!{}", a.0, b.0)),
+            ea,
+        );
         if !by_sort.entry(ea).or_default().contains(&k) {
             by_sort.entry(ea).or_default().push(k);
         }
@@ -1052,7 +1058,10 @@ pub(crate) fn reduce(
         if ea != eb {
             continue;
         }
-        let k = manager.mk_var(&format!("@bag_ext_{}_{}", a.0, b.0), ea);
+        let k = manager.mk_var(
+            &nixie_core::reserved::reserved_name("bag-ext", &format!("{}!{}", a.0, b.0)),
+            ea,
+        );
         if !by_sort.entry(ea).or_default().contains(&k) {
             by_sort.entry(ea).or_default().push(k);
         }
@@ -1315,7 +1324,10 @@ pub(crate) fn reduce(
             let le = manager.mk_le(ca, cb);
             out.axioms.push(manager.mk_implies(atom, le));
         }
-        let k = manager.mk_var(&format!("@bag_ext_{}_{}", a.0, b.0), ea);
+        let k = manager.mk_var(
+            &nixie_core::reserved::reserved_name("bag-ext", &format!("{}!{}", a.0, b.0)),
+            ea,
+        );
         let (ca, cb) = (count_term(k, a, manager), count_term(k, b, manager));
         let gt = manager.mk_gt(ca, cb);
         let neg = manager.mk_not(atom);
@@ -1344,7 +1356,10 @@ pub(crate) fn reduce(
             let agree = manager.mk_eq(ca, cb);
             out.axioms.push(manager.mk_implies(atom, agree));
         }
-        let k = manager.mk_var(&format!("@bag_ext_{}_{}", a.0, b.0), ea);
+        let k = manager.mk_var(
+            &nixie_core::reserved::reserved_name("bag-ext", &format!("{}!{}", a.0, b.0)),
+            ea,
+        );
         let (ca, cb) = (count_term(k, a, manager), count_term(k, b, manager));
         let same = manager.mk_eq(ca, cb);
         let differs = manager.mk_not(same);
@@ -1497,7 +1512,7 @@ pub(crate) fn reduce(
             out.axioms.push(manager.mk_eq(card, total));
             continue;
         }
-        let mut name = format!("@bag_card_slack_{}", b.0);
+        let mut name = nixie_core::reserved::reserved_name("bag-card-slack", &b.0.to_string());
         for e in elems {
             name.push_str(&format!("_{}", e.0));
         }

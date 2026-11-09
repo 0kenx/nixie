@@ -900,8 +900,10 @@ impl Solver {
                     match manager.get(arg).map(|d| d.kind.clone()) {
                         Some(TermKind::DtConstructor { .. }) => stack.push(arg),
                         Some(TermKind::Var(n))
-                            if manager.resolve_str(n).starts_with("@set_join_")
-                                && minted.insert(arg)
+                            if nixie_core::reserved::is_reserved_tag(
+                                manager.resolve_str(n),
+                                "set-join",
+                            ) && minted.insert(arg)
                                 && self.skolem_pinned_to(arg, manager).is_none() =>
                         {
                             match self.mint_component_value(
@@ -990,7 +992,7 @@ impl Solver {
                     let is_join_skolem = matches!(
                         manager.get(arg).map(|d| &d.kind),
                         Some(TermKind::Var(n))
-                            if manager.resolve_str(*n).starts_with("@set_join_")
+                            if nixie_core::reserved::is_reserved_tag(manager.resolve_str(*n), "set-join")
                     ) && self.skolem_pinned_to(arg, manager).is_none()
                         && !minted.contains(&arg);
                     let value =
@@ -2298,7 +2300,8 @@ fn is_our_set_skolem(t: TermId, manager: &TermManager) -> bool {
     match manager.get(t).map(|d| &d.kind) {
         Some(TermKind::Var(n)) => {
             let name = manager.resolve_str(*n);
-            name.starts_with("@set_ext_") || name.starts_with("@set_join_")
+            nixie_core::reserved::is_reserved_tag(name, "set-ext")
+                || nixie_core::reserved::is_reserved_tag(name, "set-join")
         }
         _ => false,
     }

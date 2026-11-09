@@ -78,7 +78,10 @@ impl Solver {
                 .get(m.root)
                 .map(|t| t.sort)
                 .unwrap_or(manager.sorts.int_sort);
-            let r = manager.mk_var(&format!("__nixie_tbl_{}_{}", m.root.0, i), sort);
+            let r = manager.mk_var(
+                &nixie_core::reserved::reserved_name("ite-table", &format!("{}!{i}", m.root.0)),
+                sort,
+            );
             self.ite_result_terms.insert(r);
             self.table_index_terms.insert(m.index);
             {

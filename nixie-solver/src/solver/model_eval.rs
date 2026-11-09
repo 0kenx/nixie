@@ -1447,7 +1447,7 @@ impl Solver {
                     (n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort)
                         && !matches!(&n.kind, TermKind::Select(..) | TermKind::DtSelector { .. })
                         && (!matches!(&n.kind, TermKind::Var(v)
-                            if manager.resolve_str(*v).starts_with("dt.size"))
+                            if nixie_core::reserved::is_reserved_tag(manager.resolve_str(*v), "dtsize"))
                             || self.dt_derived_size_vars.contains(&t))
                 })
             };
@@ -1623,10 +1623,7 @@ impl Solver {
                     let is_proxy = matches!(
                         &t.kind,
                         TermKind::Var(name)
-                            if manager
-                                .resolve_str(*name)
-                                .starts_with("__nixie")
-                                || manager.resolve_str(*name).starts_with("$p")
+                            if nixie_core::reserved::is_encoder_proxy(manager.resolve_str(*name))
                     );
                     if is_proxy && let Some(value_term) = model.get(term) {
                         let parsed = parse_value_term(value_term, manager);

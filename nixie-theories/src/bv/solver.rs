@@ -686,6 +686,12 @@ impl BvSolver {
             .map(|(t, v)| (*t, v.width, v.bits.as_slice()))
     }
 
+    /// Every currently defined bit-vector circuit term, in unspecified order.
+    /// Pair with `get_value_big` to inspect values chosen by the circuit.
+    pub fn circuit_terms(&self) -> impl Iterator<Item = TermId> + '_ {
+        self.term_to_bv.keys().copied()
+    }
+
     /// Debug-only (worktree instrumentation): Bool nodes with their vars.
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub fn debug_bool_nodes(&self) -> impl Iterator<Item = (TermId, nixie_sat::Var)> + '_ {

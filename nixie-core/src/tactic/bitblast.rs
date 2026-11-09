@@ -798,7 +798,7 @@ impl BitBlaster {
         let bool_sort = manager.sorts.bool_sort;
         let bits = (0..width)
             .map(|i| {
-                let name = format!("!bb_{}_{i}", term_id.0);
+                let name = crate::reserved::reserved_name("bb", &format!("{}!{i}", term_id.0));
                 manager.mk_var(&name, bool_sort)
             })
             .collect();

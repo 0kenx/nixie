@@ -3061,7 +3061,10 @@ impl Solver {
                 continue;
             };
             if matches!(t.kind, TermKind::Ite(..)) && needs_ite_elimination(t.sort, manager) {
-                let v = manager.mk_var(&format!("__nixie_ite_{}", st.0), t.sort);
+                let v = manager.mk_var(
+                    &nixie_core::reserved::reserved_name("ite", &st.0.to_string()),
+                    t.sort,
+                );
                 self.ite_result_terms.insert(v);
                 map.insert(st, v);
             }
@@ -3174,7 +3177,10 @@ impl Solver {
             if map.contains_key(&arg) {
                 continue;
             }
-            let v = manager.mk_var(&format!("__nixie_boolarg_{}", arg.0), bool_sort);
+            let v = manager.mk_var(
+                &nixie_core::reserved::reserved_name("boolarg", &arg.0.to_string()),
+                bool_sort,
+            );
             map.insert(arg, v);
         }
         let mut side: Vec<TermId> = Vec::with_capacity(map.len());
@@ -3345,7 +3351,10 @@ impl Solver {
                 continue;
             }
             let Some(at) = manager.get(arg) else { continue };
-            let v = manager.mk_var(&format!("__nixie_numarg_{}", arg.0), at.sort);
+            let v = manager.mk_var(
+                &nixie_core::reserved::reserved_name("numarg", &arg.0.to_string()),
+                at.sort,
+            );
             map.insert(arg, v);
         }
         let mut side: Vec<TermId> = Vec::with_capacity(map.len());
@@ -4852,10 +4861,13 @@ impl Solver {
         // Fresh sort U and the two fresh function names.  Names carry the
         // per-encoding counter so two different `Distinct` terms (or two
         // encoding passes over the same one after a pop) never share symbols.
-        let u_spur = manager.intern_str(&format!("!nixie!dist-sort!{id}"));
+        let u_spur = manager.intern_str(&nixie_core::reserved::reserved_name(
+            "dist-sort",
+            &id.to_string(),
+        ));
         let u_sort = manager.sorts.intern(SortKind::Uninterpreted(u_spur));
-        let f_name = format!("!nixie!dist-f!{id}");
-        let g_name = format!("!nixie!dist-g!{id}");
+        let f_name = nixie_core::reserved::reserved_name("dist-f", &id.to_string());
+        let g_name = nixie_core::reserved::reserved_name("dist-g", &id.to_string());
 
         // The pairwise-distinct witnesses m_i.  `mk_var` hash-conses by name,
         // so a user symbol colliding with one of these names comes back
@@ -4865,7 +4877,10 @@ impl Solver {
         // Nothing has been emitted yet at this point, so the fallback is exact.
         let mut m_terms: Vec<TermId> = Vec::with_capacity(n);
         for i in 0..n {
-            let m = manager.mk_var(&format!("!nixie!dist-v!{id}!{i}"), u_sort);
+            let m = manager.mk_var(
+                &nixie_core::reserved::reserved_name("dist-v", &format!("{id}!{i}")),
+                u_sort,
+            );
             if self.term_to_var.contains_key(&m) {
                 debug_assert!(
                     false,
@@ -4882,7 +4897,10 @@ impl Solver {
                 .declare_value_const(m, u32::try_from(i).expect("n fits u32"));
             m_terms.push(m);
         }
-        let a_term = manager.mk_var(&format!("!nixie!dist-a!{id}"), u_sort);
+        let a_term = manager.mk_var(
+            &nixie_core::reserved::reserved_name("dist-a", &id.to_string()),
+            u_sort,
+        );
 
         // A, B and the L family.  All three go through `encode_depth` so the
         // equality atoms get SAT variables, `Constraint::Eq` registration and
@@ -5023,18 +5041,20 @@ impl Solver {
         let mut ge2: Option<Var> = None;
 
         for (k, &lit) in rest.iter().enumerate() {
-            let next_ge1 = self.get_or_create_var(
-                manager.mk_var(&format!("!nixie!dist-ge1!{id}!{}", k + 1), bool_sort),
-            );
+            let next_ge1 = self.get_or_create_var(manager.mk_var(
+                &nixie_core::reserved::reserved_name("dist-ge1", &format!("{id}!{}", k + 1)),
+                bool_sort,
+            ));
             // ge1_{k+1} ↔ ge1_k ∨ lit
             self.sat
                 .add_clause([Lit::neg(next_ge1), Lit::pos(ge1), lit]);
             self.sat.add_clause([Lit::pos(next_ge1), Lit::neg(ge1)]);
             self.sat.add_clause([Lit::pos(next_ge1), lit.negate()]);
 
-            let next_ge2 = self.get_or_create_var(
-                manager.mk_var(&format!("!nixie!dist-ge2!{id}!{}", k + 1), bool_sort),
-            );
+            let next_ge2 = self.get_or_create_var(manager.mk_var(
+                &nixie_core::reserved::reserved_name("dist-ge2", &format!("{id}!{}", k + 1)),
+                bool_sort,
+            ));
             match ge2 {
                 None => {
                     // k+1 == 1: ge2_1 ↔ ge1_0 ∧ lit (both of the two inputs

@@ -760,7 +760,7 @@ fn skolemization_iterative_matches_the_recursive_semantics() {
     };
     let produced = goals[0].assertions[0];
 
-    let sk = m.mk_apply("sk!0", [u], int_sort);
+    let sk = m.mk_apply("\\nixie.sk!0", [u], int_sort);
     let p_u_sk = m.mk_apply("P", [u, sk], bool_sort);
     let expected = m.mk_forall([("u", int_sort)], p_u_sk);
     assert_eq!(produced, expected);

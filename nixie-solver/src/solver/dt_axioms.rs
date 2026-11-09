@@ -90,9 +90,9 @@ use super::trail::TrailOp;
 /// Name prefix of the internal well-founded size measure; the term id of the
 /// datatype term being measured is appended.
 ///
-/// Follows the `sk!` Skolem-symbol convention already used by the encoder for
-/// names that cannot collide with a user symbol.
-const DT_SIZE_MEASURE: &str = "dt.size!";
+/// Shares the reserved namespace with Skolem symbols. Both the mint and
+/// model reconstruction use this constant; source text cannot spell it.
+pub(super) const DT_SIZE_MEASURE: &str = "\\nixie.dtsize!";
 
 /// Cap on the number of distinct ground datatype lemmas one solver run may
 /// assert.  Congruence is expanded Ackermann-style, so the count grows with the
