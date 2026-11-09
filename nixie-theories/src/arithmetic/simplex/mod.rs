@@ -3402,12 +3402,9 @@ impl Simplex {
                     return Ok(());
                 }
             }
-            let violating = self.find_violating();
-            if violating.is_none() {
+            let Some((basic_var, bound)) = self.find_violating() else {
                 return Ok(());
-            }
-            let (basic_var, bound) =
-                violating.expect("violating basic variable must exist after is_none check");
+            };
             if !bland_mode {
                 let repeats = left_basis_count.entry(basic_var).or_insert(0);
                 *repeats += 1;
@@ -3854,12 +3851,9 @@ impl Simplex {
             return Ok(());
         }
         for _ in 0..self.max_pivots {
-            let violating = self.find_violating();
-            if violating.is_none() {
+            let Some((leaving_var, bound)) = self.find_violating() else {
                 return Ok(());
-            }
-            let (leaving_var, bound) =
-                violating.expect("violating basic variable must exist after is_none check");
+            };
             let entering = self.find_dual_pivot_col(leaving_var, &bound);
             match entering {
                 Some(entering_var) => {

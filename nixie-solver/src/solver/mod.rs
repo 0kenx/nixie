@@ -3484,6 +3484,9 @@ impl Solver {
                         // opaque arithmetic atom, so define it before the
                         // re-solve or the lemma carries no numeric meaning.
                         self.instantiate_arith_axioms(manager);
+                        // Array witnesses can return datatypes. Install their
+                        // constructor constraints before accepting another model.
+                        self.instantiate_dt_axioms(manager);
                         // Re-solve with the freshly asserted theory lemmas from
                         // a clean state.  `add_clause` backtracked the SAT core
                         // to root for the unit lemmas, but the incremental

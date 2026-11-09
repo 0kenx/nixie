@@ -237,7 +237,7 @@ impl GF2Matrix {
             row.num_vars = self.num_vars;
         }
 
-        loop {
+        let pivot_col = loop {
             let first = match row.first_set() {
                 Some(f) => f,
                 None => {
@@ -253,20 +253,18 @@ impl GF2Matrix {
                 row.xor_with(&self.rows[pivot_row]);
             } else {
                 // Found a new pivot
-                break;
+                break first;
             }
-        }
+        };
 
         // Check for unit constraint
         if row.popcount() == 1 {
-            let var_idx = row.first_set().expect("popcount == 1");
-            let var = self.col_to_var[var_idx];
+            let var = self.col_to_var[pivot_col];
             let value = row.rhs;
             return XorAddResult::Unit(var, value, row.sources.clone(), Vec::new());
         }
 
         // Add as new row with pivot
-        let pivot_col = row.first_set().expect("non-zero row");
         let row_idx = self.rows.len();
         self.pivots[pivot_col] = Some(row_idx);
         for c in row.get_vars() {
@@ -321,9 +319,9 @@ impl GF2Matrix {
                 }
                 row.folded.push((col, value));
 
-                // Check for unit or conflict
-                if row.is_zero() {
-                    if row.rhs {
+                // Read the first column once; None is exactly a zero row.
+                match row.first_set() {
+                    None if row.rhs => {
                         let folded = row
                             .folded
                             .iter()
@@ -331,21 +329,22 @@ impl GF2Matrix {
                             .collect();
                         results.push(XorAddResult::Conflict(row.sources.clone(), folded));
                     }
-                } else if row.popcount() == 1 {
-                    let var_idx = row.first_set().expect("popcount == 1");
-                    let implied_var = self.col_to_var[var_idx];
-                    let implied_value = row.rhs;
-                    let folded = row
-                        .folded
-                        .iter()
-                        .map(|&(c, v)| (self.col_to_var[c], v))
-                        .collect();
-                    results.push(XorAddResult::Unit(
-                        implied_var,
-                        implied_value,
-                        row.sources.clone(),
-                        folded,
-                    ));
+                    Some(var_idx) if row.popcount() == 1 => {
+                        let implied_var = self.col_to_var[var_idx];
+                        let implied_value = row.rhs;
+                        let folded = row
+                            .folded
+                            .iter()
+                            .map(|&(c, v)| (self.col_to_var[c], v))
+                            .collect();
+                        results.push(XorAddResult::Unit(
+                            implied_var,
+                            implied_value,
+                            row.sources.clone(),
+                            folded,
+                        ));
+                    }
+                    None | Some(_) => {}
                 }
             }
         }

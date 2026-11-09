@@ -1459,21 +1459,29 @@ impl Solver {
                     manager.mk_int(value)
                 }
                 TermKind::RealConst(v) => {
-                    let one = num_rational::Rational64::from_integer(1);
+                    let one = num_rational::BigRational::from_integer(1.into());
                     let partner = model
                         .get(if side == l { r } else { l })
                         .and_then(|o| manager.get(o))
                         .map(|n| n.kind.clone());
-                    let mut value = v + one;
+                    let mut value =
+                        num_rational::BigRational::new((*v.numer()).into(), (*v.denom()).into())
+                            + &one;
                     if let Some(TermKind::RealConst(w)) = partner
-                        && w == value
+                        && num_rational::BigRational::new((*w.numer()).into(), (*w.denom()).into())
+                            == value
                     {
                         value += one;
                     }
-                    manager.mk_real(value)
+                    let numerator = manager.mk_int(value.numer().clone());
+                    let denominator = manager.mk_int(value.denom().clone());
+                    manager.mk_rdiv(numerator, denominator)
                 }
                 _ => continue, // non-numeric collisions are other theories' to repair
             };
+            // Snapshot before any proposal or dependent constructor update.
+            // Model::clone also preserves which assignments are defaults.
+            let saved = model.clone();
             model.set(side, bumped);
             // Propagate through constructor entries: a model entry that is a
             // datatype constructor application SPITTING the bumped term as an
@@ -1548,20 +1556,16 @@ impl Solver {
             // mentions a bumped side must still evaluate non-false under the
             // modified model.  A definite `false` means the bump broke a
             // live equality; revert the bump (and its rebuilds) entirely.
-            let saved: Vec<(TermId, TermId)> =
-                model.assignments().iter().map(|(t, v)| (*t, *v)).collect();
+            // Read the proposed interpretation, never the live theory state
+            // that still describes the pre-proposal assignment.
             let broke = true_containers.iter().any(|atom| {
                 matches!(
-                    self.eval_in_model_outcome(*atom, model, manager, 0),
+                    self.eval_under_interpretation(*atom, model, manager),
                     super::model_eval::EvalOutcome::Value(super::EvalVal::Bool(false))
                 )
             });
             if broke {
-                let mut fresh = crate::solver::types::Model::new();
-                for (t, v) in saved {
-                    fresh.set(t, v);
-                }
-                *model = fresh;
+                *model = saved;
             }
         }
     }
@@ -3017,5 +3021,66 @@ mod malformed_core_regression {
         let mut manager = TermManager::new();
         assert!(solver.minimize_unsat_core(&mut manager).is_none());
         assert!(solver.get_unsat_core().is_none());
+    }
+}
+
+#[cfg(test)]
+mod upstream034_repair_rollback {
+    use super::*;
+
+    #[test]
+    fn rejected_scalar_repair_restores_values_and_default_markers() {
+        let mut tm = TermManager::new();
+        let x = tm.mk_var("x", tm.sorts.int_sort);
+        let y = tm.mk_var("y", tm.sorts.int_sort);
+        let zero = tm.mk_int(0);
+        let distinct_pair = tm.mk_eq(x, y);
+        let pinned = tm.mk_eq(x, zero);
+        let mut solver = Solver::new();
+        let apart = solver.sat.new_var();
+        let fixed = solver.sat.new_var();
+        solver.term_to_var.insert(distinct_pair, apart);
+        solver.term_to_var.insert(pinned, fixed);
+        assert!(solver.sat.add_clause([nixie_sat::Lit::neg(apart)]));
+        assert!(solver.sat.add_clause([nixie_sat::Lit::pos(fixed)]));
+        assert_eq!(solver.sat.solve(), nixie_sat::SolverResult::Sat);
+        let mut model = Model::new();
+        model.set_default(x, zero);
+        model.set_default(y, zero);
+        model.set(pinned, tm.true_id);
+        solver.separate_committed_disequalities(&mut model, &mut tm);
+        assert_eq!(model.get(x), Some(zero));
+        assert_eq!(model.get(y), Some(zero));
+        assert!(model.is_defaulted(x));
+        assert!(model.is_defaulted(y));
+    }
+
+    #[test]
+    fn scalar_real_repair_does_not_overflow_the_narrow_numerator() {
+        let mut tm = TermManager::new();
+        let x = tm.mk_var("x", tm.sorts.real_sort);
+        let y = tm.mk_var("y", tm.sorts.real_sort);
+        let value = tm.mk_real(num_rational::Rational64::from_integer(i64::MAX));
+        let pair = tm.mk_eq(x, y);
+        let mut solver = Solver::new();
+        let atom = solver.sat.new_var();
+        solver.term_to_var.insert(pair, atom);
+        assert!(solver.sat.add_clause([nixie_sat::Lit::neg(atom)]));
+        assert_eq!(solver.sat.solve(), nixie_sat::SolverResult::Sat);
+        let mut model = Model::new();
+        model.set_default(x, value);
+        model.set_default(y, value);
+        solver.separate_committed_disequalities(&mut model, &mut tm);
+        let repaired = model.get(x).expect("value");
+        let exact = super::super::array_completion_certify::evaluate_closed_value_pure(
+            &solver, repaired, &tm,
+        )
+        .expect("exact value")
+        .to_big()
+        .expect("number");
+        assert_eq!(
+            exact,
+            num_rational::BigRational::from_integer(num_bigint::BigInt::from(i64::MAX) + 1)
+        );
     }
 }

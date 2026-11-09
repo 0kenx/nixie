@@ -258,7 +258,7 @@ impl Context {
                 // declared as a constant here for the terms to coincide.
                 self.declare_const(&decl.name, ret_sort);
             } else {
-                self.declare_fun(&decl.name, arg_sorts, ret_sort);
+                self.declare_interpreted_fun(&decl.name, arg_sorts, ret_sort);
             }
             let index = self.recfun.defs.len();
             self.recfun.defs.push(RecDef {
@@ -802,6 +802,21 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recursive_definitions_are_not_candidate_uninterpreted_tables() {
+        let mut context = Context::new();
+        context
+            .execute_script("(define-fun-rec f ((n Int)) Int (ite (<= n 0) 0 (f (- n 1))))")
+            .expect("definition");
+        let definition = context
+            .declared_funs
+            .iter()
+            .find(|decl| decl.name == "f")
+            .expect("registered definition");
+        assert!(definition.interpreted);
+        assert_eq!(context.recfun_model_lines().len(), 1);
+    }
 
     /// `pop` must retract exactly the definitions made inside the scope, and
     /// leave the outer ones (and the name index) intact.

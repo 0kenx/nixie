@@ -387,6 +387,11 @@ impl Solver {
         }
         let mut roots = self.assertions.clone();
         roots.extend(self.ground_instance_roots.iter().copied());
+        // Extensionality and read-over-write introduce fresh datatype-valued
+        // reads. They need constructor semantics just like source terms.
+        // Reuse the scoped array journal; do not feed datatype-generated
+        // recursive selectors back into discovery.
+        roots.extend(self.array_axiom_instances.iter().copied());
         roots.sort_unstable();
         roots.dedup();
         scan_datatype_terms(&roots, manager)
@@ -827,5 +832,45 @@ mod upstream034_tests {
         assert!(!manager.sorts.has_datatypes());
         manager.sorts.mk_datatype_sort("Forward");
         assert!(!manager.sorts.has_datatypes());
+    }
+}
+
+#[cfg(test)]
+mod upstream034_array_witness_discovery {
+    use super::*;
+
+    #[test]
+    fn datatype_scan_includes_only_the_current_array_lemma_journal() {
+        let mut tm = TermManager::new();
+        let commands = nixie_core::smtlib::parse_script(
+            "(declare-datatype E ((ea) (eb)))
+             (declare-const a (Array Int E)) (declare-const b (Array Int E))
+             (declare-const k Int) (assert (= (select a k) (select b k)))",
+            &mut tm,
+        )
+        .expect("script");
+        let lemma = commands
+            .into_iter()
+            .find_map(|command| match command {
+                nixie_core::smtlib::Command::Assert(term) => Some(term),
+                _ => None,
+            })
+            .expect("lemma");
+        let TermKind::Eq(left, right) = tm.get(lemma).expect("equality").kind else {
+            panic!("equality");
+        };
+        let mut solver = Solver::new();
+        assert!(solver.datatype_scan(&tm).is_none());
+        solver.array_axiom_instances.insert(lemma);
+        let scan = solver
+            .datatype_scan(&tm)
+            .expect("generated reads discovered");
+        assert!(
+            scan.members
+                .iter()
+                .any(|(_, terms)| terms.contains(&left) && terms.contains(&right))
+        );
+        solver.array_axiom_instances.remove(&lemma);
+        assert!(solver.datatype_scan(&tm).is_none());
     }
 }
