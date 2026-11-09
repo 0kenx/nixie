@@ -1640,7 +1640,7 @@ impl Solver {
             && self.array_store_terms.is_empty()
             && self.proof.is_none()
             && self.config.certification_mode == crate::solver::CertificationMode::Uncertified
-            && !self.has_bv_result_uf
+            && !self.has_bv_uf_interface
         {
             // Bookkeeping that must not defer: the theory-variable interning
             // (routing gates and model extraction read `bv_terms`), the
@@ -2875,7 +2875,64 @@ impl Solver {
     /// adversarially deep formulas (see [`ENCODE_DEPTH_LIMIT`](super::ENCODE_DEPTH_LIMIT)).
     pub(super) fn encode(&mut self, term: TermId, manager: &mut TermManager) -> Lit {
         self.mark_array_ops(term, manager);
+        self.encode_shared_interfaces(term, manager);
         self.encode_depth(term, manager, 0)
+    }
+
+    /// Internalize Boolean arguments of ground theory applications. Array
+    /// indices and store values need the same two-value domain as UF arguments
+    /// (Z3 `theory_array::internalize_term_core`, merge-tf). The SAT literal may
+    /// be negated and may already belong to another theory atom; retain its
+    /// encoding unchanged and let the final EUF bridge read that literal.
+    fn encode_shared_interfaces(&mut self, root: TermId, manager: &mut TermManager) {
+        let mut stack = vec![root];
+        let mut seen = FxHashSet::default();
+        let mut arguments = FxHashSet::default();
+        let mut numeric = FxHashSet::default();
+        while let Some(term) = stack.pop() {
+            if !seen.insert(term) {
+                continue;
+            }
+            let Some(node) = manager.get(term) else {
+                continue;
+            };
+            // Bound terms are instantiated before they acquire ground circuits.
+            if matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                continue;
+            }
+            let children = get_children(&node.kind);
+            if matches!(
+                node.kind,
+                TermKind::Apply { .. } | TermKind::Select(..) | TermKind::Store(..)
+            ) {
+                arguments.extend(children.iter().copied().filter(|&arg| {
+                    manager
+                        .get(arg)
+                        .is_some_and(|a| a.sort == manager.sorts.bool_sort)
+                }));
+                numeric.extend(children.iter().copied().filter(|&arg| {
+                    manager.get(arg).is_some_and(|a| {
+                        a.sort == manager.sorts.int_sort || a.sort == manager.sorts.real_sort
+                    })
+                }));
+            }
+            stack.extend(children);
+        }
+        let mut numeric: Vec<_> = numeric.into_iter().collect();
+        numeric.sort_unstable();
+        for arg in numeric {
+            self.pin_interface_const(arg, manager);
+        }
+        let mut arguments: Vec<_> = arguments.into_iter().collect();
+        arguments.sort_unstable();
+        // A Boolean in a term position is used at both polarities, even if
+        // its enclosing formula was analysed under just one polarity.
+        let polarity_aware = self.polarity_aware;
+        self.polarity_aware = false;
+        for arg in arguments {
+            self.encode_depth(arg, manager, 0);
+        }
+        self.polarity_aware = polarity_aware;
     }
 
     /// Emit the trichotomy clause for every numeric equality atom encoded

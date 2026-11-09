@@ -63,7 +63,7 @@
 //! non-convex LIA theory combination (Barrett et al., "Decision Procedures",
 //! ch. 10).
 
-use nixie_core::ast::{TermId, TermKind, TermManager, collect_subterms};
+use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_sat::Lit;
 use num_rational::Rational64;
 use num_traits::{CheckedAdd, CheckedSub, ToPrimitive};
@@ -150,11 +150,8 @@ impl Solver {
     /// free variables, the wisas shape.  Terms already eagerly split land in
     /// `case_split_terms`, so the reactive round skips them.
     pub(super) fn assert_eager_int_case_splits(&mut self, manager: &mut TermManager) {
-        // Quantified goals route through MBQI; enumeration lemmas over its
-        // search would churn without bound.
-        if self.has_quantifiers {
-            return;
-        }
+        // Only ground interface terms are collected. An unrelated quantifier
+        // must not disable finite arrangements required by the ground part.
         let uf_args = self.collect_int_uf_args(manager);
         if uf_args.is_empty() {
             return;
@@ -177,7 +174,11 @@ impl Solver {
             let Some(&(Some(lo), Some(hi))) = bounds.get(t) else {
                 continue;
             };
-            if hi < lo || hi - lo > MAX_INT_CASE_RANGE {
+            if hi < lo
+                || hi
+                    .checked_sub(lo)
+                    .is_none_or(|width| width > MAX_INT_CASE_RANGE)
+            {
                 continue;
             }
             candidates.push((*t, lo, hi));
@@ -281,7 +282,11 @@ impl Solver {
             let Some(&(Some(lo), Some(hi))) = bounds.get(t) else {
                 continue;
             };
-            if hi < lo || hi - lo > MAX_INT_CASE_RANGE {
+            if hi < lo
+                || hi
+                    .checked_sub(lo)
+                    .is_none_or(|width| width > MAX_INT_CASE_RANGE)
+            {
                 continue;
             }
             if let Some(val) = model_vals.get(t).and_then(|v| *v) {
@@ -334,22 +339,37 @@ impl Solver {
         let int_sort = manager.sorts.int_sort;
         let mut seen: FxHashSet<TermId> = FxHashSet::default();
         let mut out: Vec<TermId> = Vec::new();
-        for &assertion in &self.assertions {
-            for st in collect_subterms(assertion, manager) {
+        let mut roots = self.assertions.clone();
+        let mut instances: Vec<_> = self.ground_instance_roots.iter().copied().collect();
+        instances.sort_unstable();
+        roots.extend(instances);
+        let mut visited = FxHashSet::default();
+        for root in roots {
+            let mut stack = vec![(root, false)];
+            while let Some((st, finish)) = stack.pop() {
                 let Some(t) = manager.get(st) else {
                     continue;
                 };
-                let TermKind::Apply { args, .. } = &t.kind else {
+                if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
                     continue;
-                };
-                for &arg in args {
-                    let Some(at) = manager.get(arg) else {
-                        continue;
-                    };
-                    if at.sort != int_sort {
+                }
+                let children = nixie_core::ast::get_children(&t.kind);
+                if !finish {
+                    if !visited.insert(st) {
                         continue;
                     }
-                    if seen.insert(arg) {
+                    stack.push((st, true));
+                    stack.extend(children.iter().rev().map(|&c| (c, false)));
+                    continue;
+                }
+                if !matches!(
+                    t.kind,
+                    TermKind::Apply { .. } | TermKind::Select(..) | TermKind::Store(..)
+                ) {
+                    continue;
+                }
+                for arg in children {
+                    if manager.get(arg).is_some_and(|a| a.sort == int_sort) && seen.insert(arg) {
                         out.push(arg);
                     }
                 }

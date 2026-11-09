@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 
 use super::theory_bv_encode::debug_verify_bv_circuits;
 use super::types::{
-    ArithConstraintType, Constraint, ParsedArithConstraint, Statistics, TheoryMode,
+    ArithConstraintType, Constraint, ParsedArithConstraint, Polarity, Statistics, TheoryMode,
 };
 
 /// Whether theory-conflict tracing is enabled (`NIXIE_TRACE_DECISIONS`, shared
@@ -72,6 +72,8 @@ pub(crate) enum BoundPropMode {
     Tighten,
 }
 
+mod array_numeric_partition;
+mod boolean_bridge;
 mod bv_bridge;
 mod bv_budget;
 mod conflict_clause;
@@ -498,6 +500,7 @@ pub(crate) struct TheoryManager<'a> {
     bv_relevant: bool,
     bv_euf_undecided: bool,
     quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
+    boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
     bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
     /// manager could not account for, so that no conflict clause could be built
@@ -655,6 +658,7 @@ impl<'a> TheoryManager<'a> {
         has_bv_arith_ops: bool,
         has_array_ops: bool,
         quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
+        boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
         deadline: Option<nixie_time::Instant>,
         logic: Option<&str>,
         pure_dl: bool,
@@ -738,6 +742,7 @@ impl<'a> TheoryManager<'a> {
             bv_relevant,
             bv_euf_undecided: false,
             quantifier_uf_funcs,
+            boolean_encodings,
             bv_embedded_check_ceiling: bv_budget::effective_bv_embedded_check_ceiling(
                 max_bv_embedded_checks,
             ),
@@ -1558,6 +1563,11 @@ impl<'a> TheoryManager<'a> {
     /// next pair, so the round never leaves partial merges behind.
     fn arrange_model_equal_pairs(&mut self) {
         use nixie_theories::Theory;
+
+        if self.has_array_ops && !self.is_dl_family {
+            self.check_array_numeric_partition();
+            return;
+        }
 
         // Scoped to the validated family (QF_UFIDL/UFIDL), mirroring the
         // `is_dl_family` gate on bound propagation: on wider inputs the
@@ -3977,6 +3987,12 @@ impl TheoryManager<'_> {
             }
         }
 
+        // Boolean argument equalities must reach congruence before array and
+        // arithmetic final checks consume the classes they induce.
+        if let Some(result) = self.share_boolean_values_with_euf() {
+            return result;
+        }
+
         // A selector may be assigned after the last BV atom was checked.
         // Check the full current scope before accepting a candidate. The BV
         // solver reuses its last model when it satisfies the same definitions
@@ -4367,7 +4383,7 @@ impl TheoryCallback for TheoryManager<'_> {
         self.set_assigned_polarity(var, is_positive);
         self.set_assigned_level(var, self.current_level);
 
-        if self.bv_relevant
+        if (self.bv_relevant || self.euf.has_app_nodes())
             && let Some(term) = self.var_to_term.get(var.index()).copied()
         {
             self.bv.assert_bool_value(term, is_positive);
@@ -4376,8 +4392,7 @@ impl TheoryCallback for TheoryManager<'_> {
         if !self.var_to_constraint.contains_key(&var) {
             // Plain Boolean selectors also constrain BV circuits. Retain them
             // in the shadow trail so a lazy replay restores their exact scope.
-            if self.bv_relevant
-                && !self.bv.is_unified()
+            if (self.bv_relevant || self.euf.has_app_nodes())
                 && self.var_to_term.get(var.index()).is_some()
             {
                 let atom = TrailAtom {
@@ -4584,7 +4599,7 @@ impl TheoryCallback for TheoryManager<'_> {
         if matches!(result, TheoryCheckResult::Sat)
             && !self.resource_exhausted()
             && !self.bv.is_unified()
-            && self.bv.has_circuits()
+            && self.euf.has_app_nodes()
         {
             let manager = self.manager;
             self.intern_opaque_leaves(manager);

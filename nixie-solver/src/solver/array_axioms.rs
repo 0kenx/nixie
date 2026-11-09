@@ -242,11 +242,30 @@ impl Solver {
             used: self.array_witness_mints,
             exhausted: false,
         };
+        // Derived equality atoms need read consequences only when the
+        // candidate actually equates their operands. Expanding false
+        // antecedents feeds synthetic store/base pairs back into the witness
+        // vocabulary and causes unbounded-looking refinement cascades. Every
+        // emitted consequence remains guarded; a later candidate that makes
+        // another equality true is checked on the next round.
+        let mut congruence_pairs = collected.input_eq_pairs.clone();
+        for &(a, b) in &collected.eq_pairs {
+            if let (Some(na), Some(nb)) = (self.euf.term_to_node(a), self.euf.term_to_node(b))
+                && self.euf.are_equal_immutable(na, nb)
+            {
+                congruence_pairs.insert(unordered_pair(a, b));
+            }
+        }
         let no_eager = build_extensionality_and_congruence(
             manager,
             &collected,
             &separated_pairs,
             &interface_pairs,
+            ReadCongruence {
+                pairs: &congruence_pairs,
+                euf: Some(&self.euf),
+            },
+            &self.array_axiom_instances,
             &mut candidates,
             &mut budget,
         );
@@ -1787,11 +1806,19 @@ fn build_store_congruence(
     }
 }
 
+struct ReadCongruence<'a> {
+    pairs: &'a FxHashSet<(TermId, TermId)>,
+    euf: Option<&'a nixie_theories::euf::EufSolver>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_extensionality_and_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
     separated_pairs: &FxHashSet<(TermId, TermId)>,
     interface_pairs: &[(TermId, TermId)],
+    congruence: ReadCongruence<'_>,
+    existing_instances: &FxHashSet<TermId>,
     candidates: &mut Vec<TermId>,
     budget: &mut WitnessBudget,
 ) -> FxHashSet<TermId> {
@@ -1896,20 +1923,23 @@ fn build_extensionality_and_congruence(
             && separated_pairs.contains(&unordered_pair(a, b))
             && let Some(domain) = array_domain(a, manager)
         {
-            if budget.used >= MAX_ARRAY_WITNESS_PAIRS {
-                // Refuse the mint (honesty: the caller marks the
-                // refinement unsaturated – see [`MAX_ARRAY_WITNESS_PAIRS`]).
-                budget.exhausted = true;
-            } else {
-                budget.used += 1;
-                let witness = extensionality_witness(manager, a, b, domain);
-                let read_a = manager.mk_select(a, witness);
-                let read_b = manager.mk_select(b, witness);
-                let reads_eq = manager.mk_eq(read_a, read_b);
-                let reads_diff = manager.mk_not(reads_eq);
-                let eq_ab = manager.mk_eq(a, b);
-                let ext = manager.mk_or([eq_ab, reads_diff]);
-                candidates.push(ext);
+            let witness = extensionality_witness(manager, a, b, domain);
+            let read_a = manager.mk_select(a, witness);
+            let read_b = manager.mk_select(b, witness);
+            let reads_eq = manager.mk_eq(read_a, read_b);
+            let reads_diff = manager.mk_not(reads_eq);
+            let eq_ab = manager.mk_eq(a, b);
+            let ext = manager.mk_or([eq_ab, reads_diff]);
+            // A deterministic witness already asserted in an earlier round
+            // consumes no additional budget. Count distinct obligations, not
+            // how often refinement revisits the same pair.
+            if !existing_instances.contains(&ext) && !candidates.contains(&ext) {
+                if budget.used >= MAX_ARRAY_WITNESS_PAIRS {
+                    budget.exhausted = true;
+                } else {
+                    budget.used += 1;
+                    candidates.push(ext);
+                }
             }
         }
 
@@ -1932,18 +1962,10 @@ fn build_extensionality_and_congruence(
             continue;
         }
 
-        // Select congruence: a = b ⇒ select(a,j) = select(b,j) for every index
-        // read on either side.  INPUT pairs only, and never for a base
-        // `(array, store-of-that-array)` pair: those `Eq` atoms do not occur
-        // in the input, so materialising them here hands SAT a free `false`
-        // decision (the implication is satisfied vacuously), which the next
-        // round's separation query then misreads as a *demanded* array
-        // separation – minting witnesses and unfolding whole chains for pairs
-        // nothing separates.  EUF congruence closure already carries the
-        // `a = b ⇒ select(a,j) = select(b,j)` consequence for every asserted
-        // equality; this clause only has to cover input atoms whose reads the
-        // lazy RoW pass would not otherwise connect.
-        if !collected.input_eq_pairs.contains(&unordered_pair(a, b)) {
+        // Include active derived equalities as well as input equalities.
+        // Synthetic base/store candidates above must not create arbitrary
+        // new separations merely because their implication is vacuous.
+        if !congruence.pairs.contains(&unordered_pair(a, b)) {
             continue;
         }
         let mut indices: Vec<TermId> = Vec::new();
@@ -1964,6 +1986,16 @@ fn build_extensionality_and_congruence(
         for idx in indices {
             let read_a = manager.mk_select(a, idx);
             let read_b = manager.mk_select(b, idx);
+            // Existing equal reads already satisfy this candidate's
+            // obligation. Recheck on the next candidate rather than adding
+            // redundant clauses that re-seed synthetic array equalities.
+            if !collected.input_eq_pairs.contains(&unordered_pair(a, b))
+                && let Some(euf) = congruence.euf
+                && let (Some(na), Some(nb)) = (euf.term_to_node(read_a), euf.term_to_node(read_b))
+                && euf.are_equal_immutable(na, nb)
+            {
+                continue;
+            }
             let reads_eq = manager.mk_eq(read_a, read_b);
             let eq_ab = manager.mk_eq(a, b);
             let cong = manager.mk_implies(eq_ab, reads_eq);
@@ -2733,5 +2765,104 @@ mod conditional_alias_tests {
             .cloned()
             .unwrap_or_else(|| "no-verdict".to_string());
         assert_eq!(verdict, "sat");
+    }
+}
+
+#[cfg(test)]
+mod derived_equality_tests {
+    use super::*;
+
+    #[test]
+    fn an_existing_witness_does_not_spend_the_next_rounds_budget() {
+        let mut tm = TermManager::new();
+        let int = tm.sorts.int_sort;
+        let array = tm.sorts.array(int, int);
+        let a = tm.mk_var("a", array);
+        let b = tm.mk_var("b", array);
+        let equality = tm.mk_eq(a, b);
+        let mut structure = ArrayStructure::default();
+        collect_array_structure(
+            equality,
+            true,
+            &tm,
+            &mut FxHashSet::default(),
+            &mut structure,
+        );
+        let separated = FxHashSet::from_iter([unordered_pair(a, b)]);
+        let mut candidates = Vec::new();
+        let mut budget = WitnessBudget::default();
+        build_extensionality_and_congruence(
+            &mut tm,
+            &structure,
+            &separated,
+            &[],
+            ReadCongruence {
+                pairs: &FxHashSet::default(),
+                euf: None,
+            },
+            &FxHashSet::default(),
+            &mut candidates,
+            &mut budget,
+        );
+        assert_eq!(budget.used, 1);
+        assert_eq!(candidates.len(), 1);
+        let existing = candidates.drain(..).collect();
+        budget.used = MAX_ARRAY_WITNESS_PAIRS;
+        build_extensionality_and_congruence(
+            &mut tm,
+            &structure,
+            &separated,
+            &[],
+            ReadCongruence {
+                pairs: &FxHashSet::default(),
+                euf: None,
+            },
+            &existing,
+            &mut candidates,
+            &mut budget,
+        );
+        assert_eq!(budget.used, MAX_ARRAY_WITNESS_PAIRS);
+        assert!(!budget.exhausted);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn a_derived_array_equality_materializes_its_read_consequence() {
+        let mut tm = TermManager::new();
+        let int = tm.sorts.int_sort;
+        let array = tm.sorts.array(int, int);
+        let a = tm.mk_var("a", array);
+        let b = tm.mk_var("b", array);
+        let i = tm.mk_var("i", int);
+        let read_a = tm.mk_select(a, i);
+        let equality = tm.mk_eq(a, b);
+        let mut structure = ArrayStructure::default();
+        let mut visited = FxHashSet::default();
+        collect_array_structure(equality, false, &tm, &mut visited, &mut structure);
+        collect_array_structure(read_a, true, &tm, &mut visited, &mut structure);
+        assert!(structure.input_eq_pairs.is_empty());
+        let mut candidates = Vec::new();
+        let mut budget = WitnessBudget {
+            used: 0,
+            exhausted: false,
+        };
+        build_extensionality_and_congruence(
+            &mut tm,
+            &structure,
+            &FxHashSet::default(),
+            &[],
+            ReadCongruence {
+                pairs: &FxHashSet::from_iter([unordered_pair(a, b)]),
+                euf: None,
+            },
+            &FxHashSet::default(),
+            &mut candidates,
+            &mut budget,
+        );
+        let read_b = tm.mk_select(b, i);
+        let reads_equal = tm.mk_eq(read_a, read_b);
+        let consequence = tm.mk_implies(equality, reads_equal);
+        assert!(candidates.contains(&consequence));
+        assert_eq!(budget.used, 0);
     }
 }

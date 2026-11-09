@@ -149,7 +149,7 @@ impl Solver {
             && self.array_store_terms.is_empty()
             && self.proof.is_none()
             && self.config.certification_mode == CertificationMode::Uncertified
-            && !self.has_bv_result_uf
+            && !self.has_bv_uf_interface
             // The eager dispatch owns the all-blastable fragment (its
             // single-shot embedded solve is the better architecture there;
             // unification would blast every file twice) – unless stage 4's
@@ -573,12 +573,19 @@ impl Solver {
                     // same mid-search problem as quantifiers.
                     return false;
                 }
-                TermKind::Apply { .. } if is_bv_sort => {
-                    // Congruence merges of BV-sorted applications have no
-                    // clause-level equivalent (see the module docs); make the
+                TermKind::Apply { args, .. }
+                    if is_bv_sort
+                        || args.iter().any(|&a| {
+                            manager.get(a).is_some_and(|n| {
+                                manager.sorts.get(n.sort).is_some_and(|s| s.is_bitvec())
+                            })
+                        }) =>
+                {
+                    // Either direction of a BV/UF interface needs explained
+                    // theory exchange, absent from the unified circuit. Make the
                     // sighting sticky so later assertions do not re-enter a
                     // doomed generation.
-                    self.has_bv_result_uf = true;
+                    self.has_bv_uf_interface = true;
                     return false;
                 }
                 TermKind::Eq(lhs, _) if term.sort == bool_sort => {
@@ -720,7 +727,7 @@ impl Solver {
             && !self.has_array_ops
             && self.array_select_terms.is_empty()
             && self.array_store_terms.is_empty()
-            && !self.has_bv_result_uf
+            && !self.has_bv_uf_interface
             && self.proof.is_none()
             && self.config.certification_mode == CertificationMode::Uncertified
             && (Self::bv_dispatch_unified() || !self.all_assertions_bv_fragment))

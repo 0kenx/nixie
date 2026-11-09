@@ -1394,3 +1394,80 @@ fn assert_fold_refutes_select_end_to_end_by_default() {
     );
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
+
+#[test]
+fn generated_array_interfaces_encode_both_boolean_polarities_and_numeric_pins() {
+    let mut tm = TermManager::new();
+    let mut solver = Solver::new();
+    let b = tm.sorts.bool_sort;
+    let int = tm.sorts.int_sort;
+    let a_sort = tm.sorts.array(b, int);
+    let a = tm.mk_var("a", a_sort);
+    let p = tm.mk_var("p", b);
+    let q = tm.mk_var("q", b);
+    let condition = tm.mk_and([p, q]);
+    let read = tm.mk_select(a, condition);
+    let three = tm.mk_int(3);
+    let atom = tm.mk_eq(read, three);
+    solver.polarity_aware = true;
+    solver.polarities.insert(condition, Polarity::Positive);
+    solver.encode(atom, &mut tm);
+    assert_eq!(
+        solver.encoded_terms.get(&condition).map(|e| e.1),
+        Some(Polarity::Both)
+    );
+    let nested_sort = tm.sorts.array(int, int);
+    let nested = tm.mk_var("nested", nested_sort);
+    let numeric_read = tm.mk_select(nested, three);
+    let eq = tm.mk_eq(numeric_read, three);
+    solver.encode(eq, &mut tm);
+    assert_eq!(
+        solver.interface_const_pins.get(&three),
+        Some(&Rational64::from_integer(3))
+    );
+}
+
+#[test]
+fn resetting_the_solver_drops_interface_pins_and_proxy_ownership() {
+    let mut tm = TermManager::new();
+    let mut solver = Solver::new();
+    let int = tm.sorts.int_sort;
+    let three = tm.mk_int(3);
+    solver.pin_interface_const(three, &tm);
+    let x = tm.mk_var("x", int);
+    let fx = tm.mk_apply("f", [x], int);
+    solver.collect_quantifier_funcs(fx, &tm);
+    solver.numarg_proxies.insert(three, x);
+    assert!(!solver.interface_const_pins.is_empty());
+    assert!(!solver.quantifier_uf_funcs.is_empty());
+    solver.reset();
+    assert!(solver.interface_const_pins.is_empty());
+    assert!(solver.quantifier_uf_funcs.is_empty());
+    assert!(solver.numarg_proxies.is_empty());
+}
+
+#[test]
+fn finite_interface_ownership_after_pop() {
+    let mut ctx = crate::Context::new();
+    let output = ctx.execute_script("(set-logic ALL)(declare-sort U 0)(declare-fun f ((_ BitVec 1)) U)
+        (declare-const u U)(declare-const x (_ BitVec 1))(declare-const y (_ BitVec 1))(declare-const z (_ BitVec 1))
+        (push 1)(assert (forall ((t (_ BitVec 1))) (= (f t) u)))(pop 1)
+        (assert (distinct (f x) (f y) (f z)))(check-sat)").unwrap();
+    let s = ctx.solver();
+    assert!(
+        s.quantifier_uf_funcs.is_empty(),
+        "owners={:?}",
+        s.quantifier_uf_funcs
+    );
+    assert_eq!(
+        output,
+        ["unsat"],
+        "quant={} apps={} bv={} unified={} constraints={} stats={:?}",
+        s.has_quantifiers,
+        s.euf.has_app_nodes(),
+        s.bv.has_circuits(),
+        s.bv.is_unified(),
+        s.var_to_constraint.len(),
+        s.statistics
+    );
+}

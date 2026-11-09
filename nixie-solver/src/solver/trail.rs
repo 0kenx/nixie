@@ -130,6 +130,8 @@ pub(crate) struct ContextState {
     pub(crate) num_ematch_quantifiers: usize,
     /// `has_quantifiers` flag at the time of push
     pub(crate) has_quantifiers: bool,
+    /// Function interfaces owned by quantifiers at the time of push.
+    pub(crate) quantifier_uf_funcs: FxHashSet<nixie_core::interner::Spur>,
     /// `unowned_quantifier_seen` flag at the time of push: a quantifier the
     /// retracted scope left without an owning engine must stop gating `sat`
     /// once the scope is gone (and a still-unowned one from before the push
@@ -230,7 +232,7 @@ impl super::Solver {
             // stale high counts keep the default eager blast.
             bv_elim_deferred: _, // NOT trailed: routing bookkeeping; a stale
             // entry is re-linked eagerly on the next dispatch decline.
-            has_bv_result_uf: _, // NOT trailed: monotone routing input; same
+            has_bv_uf_interface: _, // NOT trailed: monotone routing input; same
             // conservative direction as the flag above.
             bv_unified: _, // NOT trailed: `push` ends the generation, and
             // `pop` rebases (embedded reset) regardless.
@@ -296,11 +298,8 @@ impl super::Solver {
             parity_rows: _,         // TRAIL: ParityScanAdded
             parity_watermark: _,    // TRAIL: ParityScanAdded
             parity_lemmas: _,       // TRAIL: ParityLemmaAdded
-            quantifier_uf_funcs: _, // accumulates function symbols seen inside
-            // asserted quantifiers; a stale entry after `pop` only makes
-            // `purify_numeric_uf_args` over-conservatively skip a *sound*
-            // purification, so it is left in place (cleared only by `reset`).
-            numarg_proxies: _, // accumulates arg->proxy entries; a stale entry
+            quantifier_uf_funcs: _, // SNAPSHOT: quantifier completion ownership
+            numarg_proxies: _,      // accumulates arg->proxy entries; a stale entry
             // only makes `eval_in_model` try a proxy that is no longer asserted
             // (it falls back to the original term), so it is sound to leave.
             // (This comment sat on the pin map below, which it never
@@ -496,6 +495,7 @@ impl super::Solver {
             state.num_ematch_quantifiers
         );
         debug_assert_eq!(self.has_quantifiers, state.has_quantifiers);
+        debug_assert_eq!(self.quantifier_uf_funcs, state.quantifier_uf_funcs);
         debug_assert_eq!(self.has_bv_arith_ops, state.has_bv_arith_ops);
         debug_assert_eq!(self.has_array_ops, state.has_array_ops);
         debug_assert_eq!(self.encode_depth_exceeded, state.encode_depth_exceeded);

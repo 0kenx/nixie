@@ -464,12 +464,10 @@ pub struct Solver {
         usize,
         crate::solver::bv_preprocess::PreprocessOutcome,
     )>,
-    /// Whether a UF application returning a bit-vector (including datatype
-    /// selectors over BV carriers) has been seen.  Sticky input to the
-    /// unified-blasting gate: congruence merges of such applications cannot
-    /// be expressed as clauses, so any sighting parks the problem on the
-    /// lazy path for good (see `bv_unified`'s module docs).
-    pub(super) has_bv_result_uf: bool,
+    /// Whether a UF application with a BV argument or result has been seen.
+    /// Sticky input to the unified-blasting gate: these interfaces need the
+    /// explained exchange implemented by the embedded BV bridge.
+    pub(super) has_bv_uf_interface: bool,
     /// Whether a **unified BV generation** is active (the BV-circuit
     /// unification campaign, Option A stage 1; see [`bv_unified`]).
     /// Mirrors `BvSolver::is_unified` on the solver side so the rebasing
@@ -584,9 +582,9 @@ pub struct Solver {
     /// certification as clean `Eq` nodes rather than the mangled
     /// `And(g v 10, v 0)` the certifier cannot certify. Per-function (not
     /// global) so an *unrelated* quantifier over `g` does not suppress `f`'s
-    /// purification. Accumulates across `assert`s; a stale entry after `pop`
-    /// only over-conservatively skips a sound purification, so it is left in
-    /// place (cleared wholesale by `reset`).
+    /// purification. Also marks interfaces owned by quantifier completion.
+    /// Snapshotted on push and restored on pop: a stale owner would suppress
+    /// ground finite-domain checking after its quantifier has been retracted.
     pub(super) quantifier_uf_funcs: FxHashSet<nixie_core::interner::Spur>,
     /// Numeric-argument purification proxies: maps each abstracted numeric
     /// argument term to its fresh proxy variable (`(f 3)` -> `(f v)` records
@@ -1301,7 +1299,7 @@ impl Solver {
             deferred_bv_asserts: Vec::new(),
             deferred_flush_pending: false,
             deferred_eliminations: Vec::new(),
-            has_bv_result_uf: false,
+            has_bv_uf_interface: false,
             bv_unified: false,
             bv_order_specs: Vec::new(),
             bv_order_built: Vec::new(),
@@ -3253,6 +3251,7 @@ impl Solver {
             self.has_bv_arith_ops,
             self.has_array_ops,
             Some(&self.quantifier_uf_funcs),
+            Some(&self.encoded_terms),
             self.check_deadline,
             self.logic.as_deref(),
             pure_dl,
@@ -3459,6 +3458,7 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
                                 Some(&self.quantifier_uf_funcs),
+                                Some(&self.encoded_terms),
                                 self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
@@ -3636,6 +3636,7 @@ impl Solver {
                             self.has_bv_arith_ops,
                             self.has_array_ops,
                             Some(&self.quantifier_uf_funcs),
+                            Some(&self.encoded_terms),
                             self.check_deadline,
                             self.logic.as_deref(),
                             pure_dl,
@@ -3645,6 +3646,59 @@ impl Solver {
                         );
                         continue;
                     }
+                    // Non-convex arrangement refinement: the tentative
+                    // arrangement round in the last `model_based_combination`
+                    // refuted pair(s) the search never got to decide (no
+                    // `(= x y)` atom existed).  Internalize those atoms and
+                    // re-solve so CDCL decides the arrangement; a true
+                    // polarity merges into EUF (congruence fires or the
+                    // context refutes it), a false polarity prunes it.
+                    // Ground arrangements are required even when the goal
+                    // also contains quantifiers. Exhaustion is Unknown.
+                    if !arrangement_pairs.is_empty() {
+                        if !self.refine_arrangement_splits(manager, arrangement_pairs) {
+                            self.model = None;
+                            self.unsat_core = None;
+                            return SolverResult::Unknown;
+                        }
+                        self.rebase_theory_state();
+                        let zero_term = manager.mk_int(0);
+                        theory_manager = TheoryManager::new(
+                            manager,
+                            &mut self.euf,
+                            &mut self.arith,
+                            &mut self.bv,
+                            &mut self.diff,
+                            &mut self.array_theory,
+                            &self.bv_terms,
+                            &self.var_to_constraint,
+                            &self.var_to_parsed_arith,
+                            &self.term_to_var,
+                            &self.var_to_term,
+                            &self.numarg_proxies,
+                            &self.interface_const_pins,
+                            zero_term,
+                            &self.ite_result_terms,
+                            &mut self.derived_reasons,
+                            self.config.theory_mode,
+                            &mut self.statistics,
+                            self.check_theory_conflict_ceiling,
+                            self.config.max_decisions,
+                            self.config.max_bv_embedded_checks,
+                            self.has_bv_arith_ops,
+                            self.has_array_ops,
+                            Some(&self.quantifier_uf_funcs),
+                            Some(&self.encoded_terms),
+                            self.check_deadline,
+                            self.logic.as_deref(),
+                            pure_dl,
+                            sparse_dl,
+                            self.has_injective_distinct,
+                            &self.injective_distinct_specs,
+                        );
+                        continue;
+                    }
+
                     // If no quantifiers, we're done
                     if !self.has_quantifiers {
                         // Unified BV generation (Option A stage 1, `bv_unified`):
@@ -3700,6 +3754,7 @@ impl Solver {
                                         self.has_bv_arith_ops,
                                         self.has_array_ops,
                                         Some(&self.quantifier_uf_funcs),
+                                        Some(&self.encoded_terms),
                                         self.check_deadline,
                                         self.logic.as_deref(),
                                         pure_dl,
@@ -3831,6 +3886,7 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
                                 Some(&self.quantifier_uf_funcs),
+                                Some(&self.encoded_terms),
                                 self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
@@ -3841,58 +3897,6 @@ impl Solver {
                             continue;
                         }
 
-                        // Non-convex arrangement refinement: the tentative
-                        // arrangement round in the last `model_based_combination`
-                        // refuted pair(s) the search never got to decide (no
-                        // `(= x y)` atom existed).  Internalize those atoms and
-                        // re-solve so CDCL decides the arrangement; a true
-                        // polarity merges into EUF (congruence fires or the
-                        // context refutes it), a false polarity prunes it.
-                        // Same affordability gate as the int case-split: the
-                        // refinement re-solves from scratch.
-                        if !arrangement_pairs.is_empty()
-                            && self.refine_arrangement_splits(manager, arrangement_pairs)
-                        {
-                            self.sat.backtrack_to_root();
-                            self.euf.reset();
-                            self.arith.reset();
-                            self.reset_bv_theory_for_round();
-                            self.diff.reset();
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.check_theory_conflict_ceiling,
-                                self.config.max_decisions,
-                                self.config.max_bv_embedded_checks,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                Some(&self.quantifier_uf_funcs),
-                                self.check_deadline,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
                         if self.refine_int_case_split(manager) {
                             // Re-solve with the freshly asserted case-split
                             // lemmas from a clean state.  `add_clause` left the
@@ -3933,6 +3937,7 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
                                 Some(&self.quantifier_uf_funcs),
+                                Some(&self.encoded_terms),
                                 self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
@@ -4021,6 +4026,7 @@ impl Solver {
                                     self.has_bv_arith_ops,
                                     self.has_array_ops,
                                     Some(&self.quantifier_uf_funcs),
+                                    Some(&self.encoded_terms),
                                     self.check_deadline,
                                     self.logic.as_deref(),
                                     pure_dl,
@@ -4084,6 +4090,7 @@ impl Solver {
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
                                 Some(&self.quantifier_uf_funcs),
+                                Some(&self.encoded_terms),
                                 self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
@@ -4142,6 +4149,7 @@ impl Solver {
                                         self.has_bv_arith_ops,
                                         self.has_array_ops,
                                         Some(&self.quantifier_uf_funcs),
+                                        Some(&self.encoded_terms),
                                         self.check_deadline,
                                         self.logic.as_deref(),
                                         pure_dl,
@@ -4738,6 +4746,7 @@ impl Solver {
                         self.has_bv_arith_ops,
                         self.has_array_ops,
                         Some(&self.quantifier_uf_funcs),
+                        Some(&self.encoded_terms),
                         self.check_deadline,
                         self.logic.as_deref(),
                         pure_dl,
@@ -5189,6 +5198,7 @@ impl Solver {
             arith_abstracted_big_const: self.arith_abstracted_big_const,
             num_ematch_quantifiers: self.ematch_engine.num_quantifiers(),
             has_quantifiers: self.has_quantifiers,
+            quantifier_uf_funcs: self.quantifier_uf_funcs.clone(),
             has_bv_arith_ops: self.has_bv_arith_ops,
             has_array_ops: self.has_array_ops,
             encode_depth_exceeded: self.encode_depth_exceeded,
@@ -5440,6 +5450,8 @@ impl Solver {
             self.ematch_engine
                 .truncate_quantifiers(state.num_ematch_quantifiers);
             self.has_quantifiers = state.has_quantifiers;
+            self.quantifier_uf_funcs
+                .clone_from(&state.quantifier_uf_funcs);
             self.unowned_quantifier_seen = state.unowned_quantifier_seen;
             self.arith_abstracted_big_const = state.arith_abstracted_big_const;
 
@@ -5544,7 +5556,7 @@ impl Solver {
         self.arith_abstracted_big_const = false;
         self.arith_big_const_terms.clear();
         self.arith_big_const_pair_watermark = 0;
-        self.has_bv_result_uf = false;
+        self.has_bv_uf_interface = false;
         self.diff.reset();
         self.derived_reasons.clear();
         // Quantifier reasoning state must be cleared too: leaving the previous
@@ -5555,6 +5567,9 @@ impl Solver {
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());
         self.has_quantifiers = false;
+        self.quantifier_uf_funcs.clear();
+        self.numarg_proxies.clear();
+        self.interface_const_pins.clear();
         self.unowned_quantifier_seen = false;
         #[cfg(feature = "nlsat")]
         {

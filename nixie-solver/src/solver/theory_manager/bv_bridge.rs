@@ -182,6 +182,9 @@ impl TheoryManager<'_> {
         // number of nodes.
         const MAX_COMBINE_ROUNDS: usize = 64;
         for _ in 0..MAX_COMBINE_ROUNDS {
+            if let Some(result) = self.share_boolean_values_with_euf() {
+                return Some(result);
+            }
             let leaves = match self.share_euf_equalities_with_bv() {
                 Exchange::Refuted(result) => return Some(result),
                 Exchange::Changed => true,
