@@ -30,8 +30,9 @@
 //!     for a *separated* pair (Z3 `new_diseq_eh`): an input-asserted array
 //!     disequality, a pair the finished search proved disequal in EUF, or a
 //!     pair whose equality atom the candidate model assigned false.  A pair
-//!     nothing separates is free to be equal in the model; minting its
-//!     witness anyway used to unfold whole store chains per chain link per
+//!     nothing separates is free to be equal in the model. Bool and bit-vector
+//!     domains with at most eight values instead use the disjunction over every
+//!     concrete index. Minting a witness for an unseparated pair used to unfold whole store chains per chain link per
 //!     round (the deep `swap` / `storecomm` timeouts).
 //!   * **Interface equality atoms** (Z3 `mk_interface_eqs`) – for arrays that
 //!     appear in a cross-theory position (arguments of uninterpreted
@@ -68,6 +69,9 @@ use nixie_core::sort::SortId;
 
 use super::{EvalVal, Solver};
 
+mod finite_domains;
+use finite_domains::{build_cardinality_refutations, enumerable_index_values};
+
 /// Safety valve on the number of distinct array-axiom instances asserted across
 /// a single `check`.  Deduplication is the real termination mechanism; this cap
 /// only guards against pathological growth (deeply nested store chains crossed
@@ -76,10 +80,10 @@ use super::{EvalVal, Solver};
 /// instances.
 const MAX_ARRAY_AXIOM_INSTANCES: usize = 20_000;
 
-/// Per-`check` budget on extensionality witness pairs.  One witness index
-/// per unordered pair is semantically sufficient (the deterministic mint
-/// already guarantees it); this bounds how many DISTINCT pairs may demand
-/// one within a single check.  A pair that is genuinely separated but
+/// Per-`check` budget on demanded extensionality pairs. One obligation per
+/// unordered pair is sufficient: a deterministic witness for larger domains,
+/// or the complete finite-index disjunction for small ones. This bounds how
+/// many DISTINCT pairs can demand a new obligation within a single check.  A pair that is genuinely separated but
 /// witnessless because the budget tripped leaves the candidate model
 /// unable to justify its `a != b` through a differing read – the round
 /// then must NOT count as saturated, so exhaustion forces
@@ -95,8 +99,7 @@ pub(super) const MAX_ARRAY_WITNESS_PAIRS: usize = 256;
 /// [`MAX_ARRAY_WITNESS_PAIRS`]).
 #[derive(Debug, Default)]
 pub(super) struct WitnessBudget {
-    /// Witness pairs minted so far in this check (across refinement
-    /// rounds).
+    /// Distinct extensionality obligations charged in this check (across rounds).
     pub(super) used: usize,
     /// Set when a mint was REFUSED by the cap: the caller must treat the
     /// refinement as unsaturated.
@@ -178,7 +181,10 @@ impl Solver {
             );
         }
 
-        if collected.selects.is_empty() && collected.eq_pairs.is_empty() {
+        if collected.selects.is_empty()
+            && collected.eq_pairs.is_empty()
+            && collected.distinct_atoms.is_empty()
+        {
             return false;
         }
 
@@ -238,6 +244,7 @@ impl Solver {
         // clauses can tell `build_read_over_write` which arrays need no eager
         // chain unfolding (the lever for deep `storecomm` chains).
         let mut candidates: Vec<TermId> = Vec::new();
+        build_cardinality_refutations(manager, &collected, &mut candidates);
         let mut budget = WitnessBudget {
             used: self.array_witness_mints,
             exhausted: false,
@@ -546,6 +553,8 @@ struct ArrayStructure {
     input_selects: FxHashSet<TermId>,
     /// Unordered array-sorted equality atoms `(a, b)` (`a != b` syntactically).
     eq_pairs: Vec<(TermId, TermId)>,
+    /// Ground distinct atoms with array operands, for exact finite pigeonholes.
+    distinct_atoms: Vec<TermId>,
     /// The subset of [`ArrayStructure::eq_pairs`] whose `Eq` atom occurs in
     /// the *user assertions* (as opposed to inside a lemma this module
     /// asserted earlier).  Instantiation families that exist to make a
@@ -756,6 +765,9 @@ fn collect_array_structure_with_asserted(
                 });
             }
             TermKind::Distinct(args) => {
+                if args.iter().any(|arg| is_array_sorted(*arg, manager)) {
+                    out.distinct_atoms.push(term);
+                }
                 // The encoder expands distinct into pairwise disequalities,
                 // but those equality atoms need not occur in the input DAG.
                 // Discover them here as well so separated arrays receive an
@@ -1958,14 +1970,21 @@ fn build_extensionality_and_congruence(
             && separated_pairs.contains(&unordered_pair(a, b))
             && let Some(domain) = array_domain(a, manager)
         {
-            let witness = extensionality_witness(manager, a, b, domain);
-            let read_a = manager.mk_select(a, witness);
-            let read_b = manager.mk_select(b, witness);
-            let reads_eq = manager.mk_eq(read_a, read_b);
-            let reads_diff = manager.mk_not(reads_eq);
-            let eq_ab = manager.mk_eq(a, b);
-            let ext = manager.mk_or([eq_ab, reads_diff]);
-            // A deterministic witness already asserted in an earlier round
+            // Over a complete small domain, extensionality is a finite
+            // disjunction. Larger domains retain the deterministic Skolem.
+            let indices = match enumerable_index_values(manager, domain) {
+                Some(indices) => indices,
+                None => vec![extensionality_witness(manager, a, b, domain)],
+            };
+            let mut arms = vec![manager.mk_eq(a, b)];
+            for index in indices {
+                let read_a = manager.mk_select(a, index);
+                let read_b = manager.mk_select(b, index);
+                let reads_eq = manager.mk_eq(read_a, read_b);
+                arms.push(manager.mk_not(reads_eq));
+            }
+            let ext = manager.mk_or(arms);
+            // An extensionality instance already asserted in an earlier round
             // consumes no additional budget. Count distinct obligations, not
             // how often refinement revisits the same pair.
             if !existing_instances.contains(&ext) && !candidates.contains(&ext) {
@@ -2003,7 +2022,9 @@ fn build_extensionality_and_congruence(
         if !congruence.pairs.contains(&unordered_pair(a, b)) {
             continue;
         }
-        let mut indices: Vec<TermId> = Vec::new();
+        let mut indices = array_domain(a, manager)
+            .and_then(|domain| enumerable_index_values(manager, domain))
+            .unwrap_or_default();
         if let Some(idxs) = collected.read_indices.get(&a) {
             for &idx in idxs {
                 if !indices.contains(&idx) {
