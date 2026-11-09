@@ -797,6 +797,10 @@ impl Context {
     /// Format a model value
     fn format_value(&self, term: TermId) -> String {
         match self.terms.get(term).map(|t| &t.kind) {
+            Some(TermKind::Apply { .. })
+                if crate::solver::array_axioms::const_array_default(term, &self.terms).is_some() => {
+                    nixie_core::smtlib::Printer::new(&self.terms).print_term(term)
+                }
             Some(TermKind::True) => "true".to_string(),
             Some(TermKind::False) => "false".to_string(),
             Some(TermKind::IntConst(n)) => n.to_string(),

@@ -173,6 +173,7 @@ impl Solver {
     ///   verdict about the old stack in exactly the way `model` is, so it is
     ///   cleared through exactly the same hook.
     pub(super) fn invalidate_results(&mut self) {
+        self.certified_array_model = None;
         #[cfg(feature = "std")]
         {
             self.user_state.cp_proof = None;

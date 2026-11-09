@@ -2315,3 +2315,29 @@ fn every_numeric_equality_atom_carries_its_trichotomy() {
          (each is a `false` assignment the arithmetic solver can never hear about)"
     );
 }
+
+#[test]
+fn model_reads_nested_assigned_store_indices_without_native_recursion() {
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| {
+            let mut tm = TermManager::new();
+            let int = tm.sorts.int_sort;
+            let array_sort = tm.sorts.array(int, int);
+            let zero = tm.mk_int(0);
+            let one = tm.mk_int(1);
+            let base = tm.mk_apply(nixie_core::reserved::CONST_ARRAY_FUNC, [zero], array_sort);
+            let mut model = Model::new();
+            let mut read = zero;
+            for level in 0..20_000 {
+                let array = tm.mk_var(&format!("a{level}"), array_sort);
+                let stored = tm.intern_term(TermKind::Store(base, read, one), array_sort);
+                model.set(array, stored);
+                read = tm.intern_term(TermKind::Select(array, zero), int);
+            }
+            assert_eq!(model.eval(read, &mut tm), zero);
+        })
+        .expect("test worker")
+        .join()
+        .expect("nested reads must use the heap");
+}

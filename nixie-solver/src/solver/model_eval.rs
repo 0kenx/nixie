@@ -30,6 +30,8 @@
 //! Reference: Z3's `smt_model_checker.cpp` plays the same role – re-checking a
 //! candidate model against the assertions before the verdict is trusted.
 
+mod interpretation;
+
 use super::model_eval_bv::{self, BvBinaryOp, BvCompareOp};
 use super::types::Model;
 use super::{ENCODE_DEPTH_LIMIT, EvalVal, Solver};
@@ -173,6 +175,11 @@ thread_local! {
 #[derive(Debug, Clone, Copy)]
 
 enum EagerKind {
+    ModelValue(interpretation::ScalarSort),
+    ExactStrict {
+        less: bool,
+    },
+    RealDiv,
     /// `not`
     Not,
     /// `=`
@@ -245,6 +252,15 @@ enum ImpliesState {
 /// from "ready to combine".
 #[derive(Debug)]
 enum Op {
+    NumericFallback {
+        operand: TermId,
+        fallback: EvalOutcome,
+        live: bool,
+    },
+    Select(interpretation::Select),
+    ExactDistinct {
+        operands: SmallVec<[TermId; 4]>,
+    },
     BvDistinct {
         operands: SmallVec<[TermId; 4]>,
     },
@@ -389,9 +405,19 @@ impl Frame {
     /// evaluated.
     fn accept(&mut self, values: &mut Vec<EvalVal>, result: EvalOutcome) -> Option<EvalOutcome> {
         match &mut self.op {
+            Op::Select(select) => select.accept(result),
+            Op::NumericFallback { fallback, live, .. } => Some(match result {
+                EvalOutcome::Undetermined => {
+                    if *live {
+                        CERTIFY_LIVE_READ.with(|f| f.set(true));
+                    }
+                    fallback.clone()
+                }
+                value => value,
+            }),
             // A fixed-arity operator gives up at the first operand it cannot
             // use, exactly as the recursive version's `rec(a)?` did.
-            Op::Eager { .. } | Op::BvDistinct { .. } => match result {
+            Op::Eager { .. } | Op::BvDistinct { .. } | Op::ExactDistinct { .. } => match result {
                 EvalOutcome::Value(value) => {
                     values.push(value);
                     self.filled += 1;
@@ -540,7 +566,28 @@ impl Frame {
 
     /// The next operand to evaluate, or the frame's finished outcome.
     fn request(&mut self, values: &[EvalVal]) -> Step {
-        match &self.op {
+        match &mut self.op {
+            Op::Select(select) => select.request(),
+            Op::NumericFallback { operand, .. } => Step::Need(*operand),
+            Op::ExactDistinct { operands } => {
+                if self.filled < operands.len() {
+                    Step::Need(operands[self.filled])
+                } else {
+                    let values = &values[self.base..];
+                    for (i, a) in values.iter().enumerate() {
+                        for b in &values[i + 1..] {
+                            match combine_eq_certify(a, b) {
+                                EvalOutcome::Value(EvalVal::Bool(false)) => {}
+                                EvalOutcome::Value(EvalVal::Bool(true)) => {
+                                    return Step::Done(EvalOutcome::boolean(false));
+                                }
+                                other => return Step::Done(other.demote()),
+                            }
+                        }
+                    }
+                    Step::Done(EvalOutcome::boolean(true))
+                }
+            }
             Op::BvDistinct { operands } => {
                 if self.filled < operands.len() {
                     Step::Need(operands[self.filled])
@@ -756,6 +803,17 @@ fn combine_eager(kind: EagerKind, values: &[EvalVal]) -> EvalOutcome {
         EvalOutcome::Value(EvalVal::NumBig(Box::new(v)))
     }
     match (kind, values) {
+        (EagerKind::ModelValue(sort), [value]) => sort.validate(value),
+        (EagerKind::ExactStrict { less }, [a, b]) => match (a.to_big(), b.to_big()) {
+            (Some(a), Some(b)) => EvalOutcome::boolean(if less { a < b } else { a > b }),
+            _ => EvalOutcome::UNDETERMINED,
+        },
+        (EagerKind::RealDiv, [a, b]) => match (a.to_big(), b.to_big()) {
+            (Some(a), Some(b)) if !b.is_zero() => {
+                EvalOutcome::Value(EvalVal::NumBig(Box::new(a / b)))
+            }
+            _ => EvalOutcome::UNDETERMINED,
+        },
         (EagerKind::Not, [EvalVal::Bool(b)]) => EvalOutcome::boolean(!b),
         (EagerKind::Eq, [a, b]) => combine_eq(a.clone(), b.clone()),
         (EagerKind::EqCertify, [a, b]) => combine_eq_certify(a, b),
@@ -1606,6 +1664,16 @@ impl Solver {
         manager: &TermManager,
         depth: u32,
     ) -> EvalOutcome {
+        Self::eval_with_reader(term, depth, |term, depth| {
+            self.open_in_model(term, model, manager, depth)
+        })
+    }
+
+    fn eval_with_reader(
+        term: TermId,
+        depth: u32,
+        mut open: impl FnMut(TermId, u32) -> Opened,
+    ) -> EvalOutcome {
         let mut frames: Vec<Frame> = Vec::new();
         let mut frame_terms = Vec::new();
         // Include depth because a declined budgeted read may be decidable
@@ -1618,7 +1686,7 @@ impl Solver {
         // for it.
         let mut carry: Option<EvalOutcome> = None;
 
-        match self.open_in_model(term, model, manager, depth) {
+        match open(term, depth) {
             Opened::Done(outcome) => return outcome,
             Opened::Frame(frame) => {
                 frames.push(frame);
@@ -1644,7 +1712,7 @@ impl Solver {
                         carry = Some(outcome.clone());
                         continue;
                     }
-                    match self.open_in_model(child, model, manager, child_depth) {
+                    match open(child, child_depth) {
                         Opened::Done(outcome) => {
                             memo.insert((child, child_depth), outcome.clone());
                             carry = Some(outcome);
@@ -1672,6 +1740,58 @@ impl Solver {
                 }
             }
         }
+    }
+
+    /// The legacy tableau/delta fallback, with its side effect delayed until
+    /// it is used. Compound published values are evaluated on the heap stack.
+    fn numeric_fallback(
+        &self,
+        term: TermId,
+        sort: nixie_core::sort::SortId,
+        manager: &TermManager,
+    ) -> (EvalOutcome, bool) {
+        // CERTIFICATE mode for a REAL variable: instantiate the
+        // delta concretely (`real + δ₀·delta`) so strict
+        // comparisons at the boundary DECIDE (the dive leaf's
+        // trick; `value()` drops the delta and the comparison
+        // softens).  The snapshot (concrete) and the honest
+        // delta read both flow through `delta_value_term`.
+        if self.eq_collision_verifies.get()
+            && sort == manager.sorts.real_sort
+            && let Some(d0) = self.certify_delta0.borrow().clone()
+        {
+            let out = self
+                .arith
+                .delta_value_term(term)
+                .map(|dv| {
+                    let real = num_rational::BigRational::new(
+                        num_bigint::BigInt::from(*dv.real.numer()),
+                        num_bigint::BigInt::from(*dv.real.denom()),
+                    );
+                    let coef = num_rational::BigRational::new(
+                        num_bigint::BigInt::from(*dv.delta.numer()),
+                        num_bigint::BigInt::from(*dv.delta.denom()),
+                    );
+                    EvalOutcome::Value(EvalVal::NumBig(Box::new(real + d0.clone() * coef)))
+                })
+                .unwrap_or(EvalOutcome::UNDETERMINED);
+            if !matches!(out, EvalOutcome::UNDETERMINED) {
+                return (out, false);
+            }
+        }
+        let outcome = match self.arith.value(term) {
+            Some(n) => EvalOutcome::number(n),
+            // A value beyond `Rational64` width (an honest
+            // boundary model — `x = i64::MIN`, a wide published
+            // witness) still has its EXACT value: evaluate it
+            // exactly rather than inconclusively, so the gate can
+            // certify (or refute) boundary-valued candidates.
+            None => match self.arith.value_exact(term) {
+                Some(b) => EvalOutcome::Value(EvalVal::NumBig(Box::new(b))),
+                None => EvalOutcome::UNDETERMINED,
+            },
+        };
+        (outcome, true)
     }
 
     /// Read one term: either it has an outcome on its own, or it opens a frame.
@@ -1772,63 +1892,25 @@ impl Solver {
                     if self.eq_collision_verifies.get()
                         && let Some(value_term) = model.get(term)
                     {
-                        let parsed = match parse_value_term(value_term, manager) {
-                            EvalOutcome::UNDETERMINED => self.eval_in_model_outcome(
-                                value_term,
-                                model,
-                                manager,
-                                depth.saturating_add(1),
-                            ),
-                            parsed => parsed,
-                        };
-                        if !matches!(parsed, EvalOutcome::UNDETERMINED) {
-                            return Opened::Done(parsed);
+                        let parsed = parse_value_term(value_term, manager);
+                        if matches!(parsed, EvalOutcome::Undetermined) {
+                            let (fallback, live) = self.numeric_fallback(term, sort, manager);
+                            return Opened::Frame(Frame::new(
+                                Op::NumericFallback {
+                                    operand: value_term,
+                                    fallback,
+                                    live,
+                                },
+                                depth,
+                            ));
                         }
+                        return Opened::Done(parsed);
                     }
-                    // CERTIFICATE mode for a REAL variable: instantiate the
-                    // delta concretely (`real + δ₀·delta`) so strict
-                    // comparisons at the boundary DECIDE (the dive leaf's
-                    // trick; `value()` drops the delta and the comparison
-                    // softens).  The snapshot (concrete) and the honest
-                    // delta read both flow through `delta_value_term`.
-                    if self.eq_collision_verifies.get()
-                        && sort == manager.sorts.real_sort
-                        && let Some(d0) = self.certify_delta0.borrow().clone()
-                    {
-                        let out = self
-                            .arith
-                            .delta_value_term(term)
-                            .map(|dv| {
-                                let real = num_rational::BigRational::new(
-                                    num_bigint::BigInt::from(*dv.real.numer()),
-                                    num_bigint::BigInt::from(*dv.real.denom()),
-                                );
-                                let coef = num_rational::BigRational::new(
-                                    num_bigint::BigInt::from(*dv.delta.numer()),
-                                    num_bigint::BigInt::from(*dv.delta.denom()),
-                                );
-                                EvalOutcome::Value(EvalVal::NumBig(Box::new(
-                                    real + d0.clone() * coef,
-                                )))
-                            })
-                            .unwrap_or(EvalOutcome::UNDETERMINED);
-                        if !matches!(out, EvalOutcome::UNDETERMINED) {
-                            return Opened::Done(out);
-                        }
+                    let (outcome, live) = self.numeric_fallback(term, sort, manager);
+                    if live {
+                        CERTIFY_LIVE_READ.with(|f| f.set(true));
                     }
-                    CERTIFY_LIVE_READ.with(|f| f.set(true));
-                    match self.arith.value(term) {
-                        Some(n) => EvalOutcome::number(n),
-                        // A value beyond `Rational64` width (an honest
-                        // boundary model — `x = i64::MIN`, a wide published
-                        // witness) still has its EXACT value: evaluate it
-                        // exactly rather than inconclusively, so the gate can
-                        // certify (or refute) boundary-valued candidates.
-                        None => match self.arith.value_exact(term) {
-                            Some(b) => EvalOutcome::Value(EvalVal::NumBig(Box::new(b))),
-                            None => EvalOutcome::UNDETERMINED,
-                        },
-                    }
+                    outcome
                 } else {
                     // Boolean / bit-vector / other: the model witness is fine
                     // (Booleans are exactly determined by the SAT assignment).

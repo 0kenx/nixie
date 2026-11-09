@@ -4,6 +4,7 @@ mod sequence;
 
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
+pub(crate) mod array_completion_certify;
 pub(super) mod array_theory;
 pub(super) mod bag_model;
 pub(super) mod bag_theory;
@@ -738,6 +739,8 @@ pub struct Solver {
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
     pub(super) has_array_ops: bool,
+    /// Exact assignment snapshot certified by array completion.
+    pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
     /// Incremental array-theory bookkeeping (Stage 1 of
     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
     /// internalised by the encoder, recorded as `(select_term, array, index)`.
@@ -1350,6 +1353,7 @@ impl Solver {
             ff_terms_unconstrained: false,
             ff_dispatch_answered: false,
             has_array_ops: false,
+            certified_array_model: None,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
             array_theory: array_theory::ArrayTheory::new(),
@@ -1584,6 +1588,7 @@ impl Solver {
             return cached;
         }
 
+        self.certified_array_model = None;
         self.begin_check_budget();
         self.certification_failure = None;
         #[cfg(feature = "std")]
@@ -1599,6 +1604,9 @@ impl Solver {
         self.seed_quantifier_domains(manager);
         let mbqi_checkpoint = self.mbqi.search_checkpoint();
         let mut raw_result = self.check_with_arith_refinement(manager);
+        if raw_result != SolverResult::Unsat && self.certify_sat_by_array_completion(manager) {
+            raw_result = SolverResult::Sat;
+        }
         if self.user_state.active() {
             if raw_result == SolverResult::Sat && !self.validate_user_model(manager) {
                 raw_result = SolverResult::Unknown;
@@ -4995,6 +5003,7 @@ impl Solver {
 
     /// Push a context level
     pub fn push(&mut self) {
+        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // The interface-repair memo compares vocabulary *sizes*; a pop can
@@ -5063,6 +5072,7 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
+        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // Same reasoning as `push`: the size-based memo must not survive a
@@ -5369,6 +5379,7 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        self.certified_array_model = None;
         self.user_state = user_propagation::UserState::default();
         self.sat.reset();
         // The database (and every blocking clause in it) is gone with the

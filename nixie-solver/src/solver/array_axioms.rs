@@ -2883,3 +2883,22 @@ mod derived_equality_tests {
         assert_eq!(budget.used, 0);
     }
 }
+
+/// Read a well-sorted qualified constant array. The reserved symbol alone is
+/// insufficient: raw AST clients can construct malformed applications.
+pub(crate) fn const_array_default(term: TermId, manager: &TermManager) -> Option<TermId> {
+    let data = manager.get(term)?;
+    let TermKind::Apply { func, args } = &data.kind else {
+        return None;
+    };
+    if manager.resolve_str(*func) != nixie_core::reserved::CONST_ARRAY_FUNC {
+        return None;
+    }
+    let [default] = args.as_slice() else {
+        return None;
+    };
+    let SortKind::Array { range, .. } = manager.sorts.get(data.sort)?.kind else {
+        return None;
+    };
+    (manager.get(*default)?.sort == range).then_some(*default)
+}

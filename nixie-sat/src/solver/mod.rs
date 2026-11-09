@@ -3218,6 +3218,12 @@ impl Solver {
         self.deadline_poll_countdown = 0;
     }
 
+    /// The absolute decision ceiling of the active query, if bounded.
+    #[must_use]
+    pub fn max_decisions(&self) -> Option<u64> {
+        self.max_decisions
+    }
+
     /// The current conflict budget ([`Self::set_max_conflicts`]); `None`
     /// means unlimited.  Portfolio drivers use it to compose per-arm caps
     /// with a caller-supplied global budget.

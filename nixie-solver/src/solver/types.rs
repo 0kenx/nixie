@@ -708,10 +708,15 @@ impl Model {
         let mut frames: Vec<EvalFrame> = Vec::new();
         let mut current = term;
 
+        let mut steps = 0usize;
         'open: loop {
             // Open `current`, descending through operators until some term
             // produces a value.
             let mut value = loop {
+                steps += 1;
+                if steps > 1_000_000 {
+                    return term;
+                }
                 // Direct model assignment – checked before anything else,
                 // exactly as the recursive version did.
                 if let Some(val) = self.get(current) {
@@ -1152,9 +1157,31 @@ impl Model {
                         continue 'open;
                     }
                     EvalFrame::SelectIdx { term, array_val } => {
-                        let v = select_in(self, manager, array_val, value);
-                        memo.insert(term, v);
-                        value = v;
+                        let mut read = SelectRead::new(term, array_val, value);
+                        match read.advance(None, self, manager) {
+                            SelectStep::Need(operand) => {
+                                frames.push(EvalFrame::SelectRead(read));
+                                current = operand;
+                                continue 'open;
+                            }
+                            SelectStep::Done(result) => {
+                                memo.insert(term, result);
+                                value = result;
+                            }
+                        }
+                    }
+                    EvalFrame::SelectRead(mut read) => {
+                        match read.advance(Some(value), self, manager) {
+                            SelectStep::Need(operand) => {
+                                frames.push(EvalFrame::SelectRead(read));
+                                current = operand;
+                                continue 'open;
+                            }
+                            SelectStep::Done(result) => {
+                                memo.insert(read.term, result);
+                                value = result;
+                            }
+                        }
                     }
                     EvalFrame::StoreArr {
                         term,
@@ -1321,83 +1348,121 @@ fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
         .is_some_and(|t| matches!(t.kind, TermKind::False))
 }
 
-/// One pending operator of [`Model::eval`]'s explicit evaluation stack.
-///
-/// Each variant carries the original term it evaluates (the memo key for its
-/// finished value) plus per-operator progress; a frame that still needs an
-/// operand pushes itself back and re-enters the open loop.
-/// `(select a i)` where `a` and `i` are already evaluated.
-///
-/// Walks the `store` chain: a write at an index *equal* to `i` is the answer,
-/// a write at a *different* index is skipped, and anything else stops the
-/// walk. Terms are hash-consed, so two constants are equal exactly when they
-/// are the same `TermId` — which is what makes both tests decidable without
-/// calling back into the solver.
-///
-/// Stopping is not failing. A `select` that cannot be reduced is returned as
-/// itself, and the model is consulted for it first: that is the honest answer
-/// for a point nothing in the query constrained, and it is the same thing an
-/// unassigned variable evaluates to.
-///
-/// Model assignments may form cycles through aliases or store bases. Track
-/// every visited link, and leave an unresolved read when a cycle is reached.
-/// The deterministic bound also limits exceptionally long acyclic chains.
-fn select_in(model: &Model, manager: &mut TermManager, array: TermId, index: TermId) -> TermId {
-    /// A store chain longer than this is not something a query built.
-    const MAX_CHAIN: usize = 1_000_000;
-    let mut cur = array;
-    let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
-    for _ in 0..MAX_CHAIN {
-        if !visited.insert(cur) {
-            break; // Model aliases may close a cycle through a store, too.
+/// A structural array read suspended on the evaluator's heap stack.
+struct SelectRead {
+    term: TermId,
+    index: TermId,
+    seen: rustc_hash::FxHashSet<TermId>,
+    state: SelectState,
+}
+enum SelectState {
+    Walk(TermId),
+    Compare {
+        array: TermId,
+        base: TermId,
+        written: TermId,
+    },
+    Condition {
+        array: TermId,
+        then_array: TermId,
+        else_array: TermId,
+    },
+    Value,
+}
+enum SelectStep {
+    Need(TermId),
+    Done(TermId),
+}
+impl SelectRead {
+    fn new(term: TermId, array: TermId, index: TermId) -> Self {
+        Self {
+            term,
+            index,
+            seen: rustc_hash::FxHashSet::default(),
+            state: SelectState::Walk(array),
         }
-        // Follow one assignment without rebuilding a store/ITE DAG. Eagerly
-        // evaluating the whole link can grow fresh terms on every cycle and
-        // defeat an identity-based guard, even when no index is writable.
-        if let Some(resolved) = model.get(cur)
-            && resolved != cur
-        {
-            cur = resolved;
-            continue;
-        }
-        let Some(kind) = manager.get(cur).map(|t| t.kind.clone()) else {
-            break;
-        };
-        let (base, at, written) = match kind {
-            TermKind::Store(base, at, written) => (base, at, written),
-            TermKind::Ite(condition, then_array, else_array) => {
-                let condition = model.eval(condition, manager);
-                if term_kind_is_true(condition, manager) {
-                    cur = then_array;
-                } else if term_kind_is_false(condition, manager) {
-                    cur = else_array;
-                } else {
-                    break; // The model has not chosen an array branch.
+    }
+    fn unresolved(&self, array: TermId, model: &Model, manager: &mut TermManager) -> SelectStep {
+        let read = manager.mk_select(array, self.index);
+        SelectStep::Done(model.get(read).unwrap_or(read))
+    }
+    fn advance(
+        &mut self,
+        incoming: Option<TermId>,
+        model: &Model,
+        manager: &mut TermManager,
+    ) -> SelectStep {
+        if let Some(value) = incoming {
+            match self.state {
+                SelectState::Compare {
+                    array,
+                    base,
+                    written,
+                } => {
+                    if value == self.index {
+                        self.state = SelectState::Value;
+                        return SelectStep::Need(written);
+                    }
+                    if !(is_constant(manager, value) && is_constant(manager, self.index)) {
+                        return self.unresolved(array, model, manager);
+                    }
+                    self.state = SelectState::Walk(base);
                 }
+                SelectState::Condition {
+                    array,
+                    then_array,
+                    else_array,
+                } => {
+                    if term_kind_is_true(value, manager) {
+                        self.state = SelectState::Walk(then_array);
+                    } else if term_kind_is_false(value, manager) {
+                        self.state = SelectState::Walk(else_array);
+                    } else {
+                        return self.unresolved(array, model, manager);
+                    }
+                }
+                SelectState::Value => return SelectStep::Done(value),
+                SelectState::Walk(array) => return self.unresolved(array, model, manager),
+            }
+        }
+        loop {
+            let SelectState::Walk(array) = self.state else {
+                return SelectStep::Done(self.term);
+            };
+            if self.seen.len() >= 1_000_000 || !self.seen.insert(array) {
+                return self.unresolved(array, model, manager);
+            }
+            if let Some(value) = model.get(array)
+                && value != array
+            {
+                self.state = SelectState::Walk(value);
                 continue;
             }
-            _ => break,
-        };
-        // The chain's own index and value are evaluated as the walk reaches
-        // them. They are not evaluated already: a chain that came from a model
-        // *assignment* is the raw term the assertion pinned, so an index like
-        // `len(h) + 1` arrives as arithmetic and would match nothing. This
-        // does not recurse through the chain — each call evaluates one small
-        // index term — so the walk stays a loop.
-        let at = model.eval(at, manager);
-        if at == index {
-            return model.eval(written, manager);
+            if let Some(default) = super::array_axioms::const_array_default(array, manager) {
+                self.state = SelectState::Value;
+                return SelectStep::Need(default);
+            }
+            match manager.get(array).map(|node| &node.kind) {
+                Some(TermKind::Store(base, index, written)) => {
+                    self.state = SelectState::Compare {
+                        array,
+                        base: *base,
+                        written: *written,
+                    };
+                    return SelectStep::Need(*index);
+                }
+                Some(TermKind::Ite(condition, then_array, else_array)) => {
+                    self.state = SelectState::Condition {
+                        array,
+                        then_array: *then_array,
+                        else_array: *else_array,
+                    };
+                    return SelectStep::Need(*condition);
+                }
+                _ => return self.unresolved(array, model, manager),
+            }
         }
-        // Two *constants* that are not the same term are different values, so
-        // the write cannot be the one being read. Anything else — a variable
-        // index, say — might alias, and the walk stops rather than guess.
-        if !(is_constant(manager, at) && is_constant(manager, index)) {
-            break;
-        }
-        cur = base;
     }
-    let sel = manager.mk_select(cur, index);
-    model.get(sel).unwrap_or(sel)
 }
 
 /// Whether a term is a literal, and so equal to another exactly when it is the
@@ -1417,8 +1482,11 @@ fn is_constant(manager: &TermManager, t: TermId) -> bool {
 }
 
 enum EvalFrame {
+    SelectRead(SelectRead),
     /// `not` – one operand.
-    Not { term: TermId },
+    Not {
+        term: TermId,
+    },
     /// `and` (`conjunction`) or `or`: operands evaluated left to right with
     /// the recursive version's short-circuiting; `acc` holds the operands
     /// kept so far.
@@ -1430,9 +1498,15 @@ enum EvalFrame {
         acc: Vec<TermId>,
     },
     /// `=>` – waiting on the antecedent.
-    ImpliesLhs { term: TermId, rhs: TermId },
+    ImpliesLhs {
+        term: TermId,
+        rhs: TermId,
+    },
     /// `=>` – waiting on the consequent.
-    ImpliesRhs { term: TermId, lhs_val: TermId },
+    ImpliesRhs {
+        term: TermId,
+        lhs_val: TermId,
+    },
     /// `ite` – waiting on the condition.
     IteCond {
         term: TermId,
@@ -1453,11 +1527,19 @@ enum EvalFrame {
     },
     /// The child's value *is* this term's value (`ite` on a constant
     /// condition evaluating only the selected branch).
-    Forward { term: TermId },
+    Forward {
+        term: TermId,
+    },
     /// `select` – waiting on the array.
-    SelectArr { term: TermId, index: TermId },
+    SelectArr {
+        term: TermId,
+        index: TermId,
+    },
     /// `select` – waiting on the index.
-    SelectIdx { term: TermId, array_val: TermId },
+    SelectIdx {
+        term: TermId,
+        array_val: TermId,
+    },
     /// `store` – waiting on the array.
     StoreArr {
         term: TermId,
@@ -1477,11 +1559,19 @@ enum EvalFrame {
         index_val: TermId,
     },
     /// `=` – waiting on the left operand.
-    EqLhs { term: TermId, rhs: TermId },
+    EqLhs {
+        term: TermId,
+        rhs: TermId,
+    },
     /// `=` – waiting on the right operand.
-    EqRhs { term: TermId, lhs_val: TermId },
+    EqRhs {
+        term: TermId,
+        lhs_val: TermId,
+    },
     /// Unary arithmetic negation.
-    Neg { term: TermId },
+    Neg {
+        term: TermId,
+    },
     /// n-ary `+` (`product = false`) or `*`; all operands are evaluated.
     Nary {
         term: TermId,
@@ -1491,9 +1581,15 @@ enum EvalFrame {
         acc: Vec<TermId>,
     },
     /// Binary `-` – waiting on the left operand.
-    SubLhs { term: TermId, rhs: TermId },
+    SubLhs {
+        term: TermId,
+        rhs: TermId,
+    },
     /// Binary `-` – waiting on the right operand.
-    SubRhs { term: TermId, lhs_val: TermId },
+    SubRhs {
+        term: TermId,
+        lhs_val: TermId,
+    },
     /// `div` (`is_div`) or `mod` – waiting on the dividend.
     DivModLhs {
         term: TermId,
