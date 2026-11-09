@@ -8,6 +8,12 @@ use num_rational::BigRational;
 use num_traits::{One, Zero};
 
 impl super::Polynomial {
+    /// The monomial ordering carried by this polynomial.
+    #[must_use]
+    pub fn monomial_order(&self) -> MonomialOrder {
+        self.order
+    }
+
     /// Create the zero polynomial.
     #[inline]
     pub fn zero() -> Self {

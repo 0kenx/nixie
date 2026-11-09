@@ -95,6 +95,7 @@ impl PmresSolver {
     /// Add a hard clause
     pub fn add_hard(&mut self, lits: impl IntoIterator<Item = Lit>) {
         self.hard_clauses.push(lits.into_iter().collect());
+        self.invalidate_model();
     }
 
     /// Add a soft clause with weight
@@ -106,6 +107,7 @@ impl PmresSolver {
     ) {
         let clause = SoftClause::new(SoftId(id), lits, weight);
         self.soft_clauses.push(clause);
+        self.invalidate_model();
     }
 
     /// Get statistics
@@ -135,18 +137,75 @@ impl PmresSolver {
 
     /// Solve using PMRES algorithm
     pub fn solve(&mut self) -> Result<MaxSatResult, MaxSatError> {
-        // Check if trivially satisfiable
-        if self.soft_clauses.is_empty() {
-            return self.check_hard_satisfiable();
+        self.invalidate_model();
+        if self
+            .soft_clauses
+            .iter()
+            .any(|clause| clause.weight.is_infinite() || clause.weight < Weight::zero())
+        {
+            return Err(MaxSatError::SolverError(
+                "PMRES requires finite, nonnegative soft weights".into(),
+            ));
         }
-
-        // Use stratified solving if enabled and weights differ
-        if self.config.stratified && self.has_different_weights() {
-            return self.solve_stratified();
+        let result = if self.soft_clauses.is_empty() {
+            self.check_hard_satisfiable()
+        } else if self.config.stratified && self.has_different_weights() {
+            self.solve_stratified()
+        } else {
+            self.solve_pmres_main()
+        };
+        // A model of an earlier weight stratum need not satisfy the full
+        // objective. Only the final certified optimum is published.
+        if !matches!(result, Ok(MaxSatResult::Optimal)) {
+            self.invalidate_model();
         }
+        result
+    }
 
-        // Main PMRES loop
-        self.solve_pmres_main()
+    fn invalidate_model(&mut self) {
+        self.best_model = None;
+        self.lower_bound = Weight::zero();
+        self.upper_bound = Weight::Infinite;
+    }
+
+    /// Check the original hard clauses and exact objective independently of
+    /// selectors/blocking variables. A mismatch is Unknown, never Optimal.
+    fn accept_optimum(
+        &mut self,
+        solver: &SatSolver,
+        soft: &[SoftClause],
+        bound: Weight,
+    ) -> MaxSatResult {
+        let model: Vec<_> = solver
+            .model()
+            .iter()
+            .map(|&v| if v == LBool::Undef { LBool::False } else { v })
+            .collect();
+        let holds = |lit: Lit| {
+            model
+                .get(lit.var().index())
+                .is_some_and(|&v| (v == LBool::True) == lit.is_pos())
+        };
+        if self
+            .hard_clauses
+            .iter()
+            .any(|clause| !clause.iter().any(|&lit| holds(lit)))
+        {
+            return MaxSatResult::Unknown;
+        }
+        let mut cost = Weight::zero();
+        for clause in soft {
+            if !clause.lits.iter().any(|&lit| holds(lit)) {
+                cost = cost.add(&clause.weight);
+            }
+        }
+        if cost != bound {
+            return MaxSatResult::Unknown;
+        }
+        self.best_model = Some(model);
+        self.lower_bound = bound;
+        self.upper_bound = cost;
+        MaxSatResult::Optimal
     }
 
     /// Check if soft clauses have different weights
@@ -183,8 +242,11 @@ impl PmresSolver {
 
             // Create temporary solver for this level
             let result = self.solve_level(&active_soft)?;
-            if result == MaxSatResult::Unsatisfiable {
-                return Err(MaxSatError::Unsatisfiable);
+            match result {
+                MaxSatResult::Optimal => {}
+                MaxSatResult::Unsatisfiable => return Err(MaxSatError::Unsatisfiable),
+                MaxSatResult::Unknown => return Ok(MaxSatResult::Unknown),
+                MaxSatResult::Satisfiable => return Ok(MaxSatResult::Unknown),
             }
         }
 
@@ -217,7 +279,9 @@ impl PmresSolver {
     fn solve_level(&mut self, soft_clauses: &[SoftClause]) -> Result<MaxSatResult, MaxSatError> {
         // An active soft constraint in the WPM1 working set.
         struct SoftEntry {
-            /// Original clause literals (never gains blocking/selector literals).
+            /// The clause as it now stands: the original literals plus the
+            /// blocking variable of every relaxation it took part in (never a
+            /// selector).
             body: SmallVec<[Lit; 8]>,
             /// Residual weight still to be paid if this constraint is violated.
             weight: Weight,
@@ -271,11 +335,7 @@ impl PmresSolver {
             if assumptions.is_empty() {
                 self.stats.sat_calls += 1;
                 return match solver.solve() {
-                    SolverResult::Sat => {
-                        self.best_model = Some(solver.model().to_vec());
-                        self.lower_bound = lb;
-                        Ok(MaxSatResult::Optimal)
-                    }
+                    SolverResult::Sat => Ok(self.accept_optimum(&solver, soft_clauses, lb)),
                     SolverResult::Unsat => Err(MaxSatError::Unsatisfiable),
                     SolverResult::Unknown => Ok(MaxSatResult::Unknown),
                 };
@@ -286,16 +346,23 @@ impl PmresSolver {
 
             match result {
                 SolverResult::Sat => {
-                    self.best_model = Some(solver.model().to_vec());
-                    self.lower_bound = lb;
-                    return Ok(MaxSatResult::Optimal);
+                    return Ok(self.accept_optimum(&solver, soft_clauses, lb));
                 }
                 SolverResult::Unknown => return Ok(MaxSatResult::Unknown),
                 SolverResult::Unsat => {
-                    let core_lits = core.unwrap_or_default();
+                    let Some(core_lits) = core else {
+                        return Ok(MaxSatResult::Unknown);
+                    };
                     if core_lits.is_empty() {
-                        // Conflict independent of the soft selectors → hard UNSAT.
-                        return Err(MaxSatError::Unsatisfiable);
+                        // Confirm the original hard problem independently of
+                        // all relaxation clauses before reporting hard UNSAT.
+                        return match self.check_hard_satisfiable() {
+                            Err(MaxSatError::Unsatisfiable) => Err(MaxSatError::Unsatisfiable),
+                            _ => Ok(MaxSatResult::Unknown),
+                        };
+                    }
+                    if core_lits.iter().any(|lit| !assumptions.contains(lit)) {
+                        return Ok(MaxSatResult::Unknown);
                     }
 
                     // Map the core's selector variables back to entry indices.
@@ -306,8 +373,7 @@ impl PmresSolver {
                         .collect();
 
                     if core_idx.is_empty() {
-                        // Core involves no soft selector → hard clauses are UNSAT.
-                        return Err(MaxSatError::Unsatisfiable);
+                        return Ok(MaxSatResult::Unknown);
                     }
 
                     self.stats.cores_extracted += 1;
@@ -357,6 +423,19 @@ impl PmresSolver {
                         let body = entries[i].body.clone();
                         self.add_relaxed_clause(&mut solver, &body, &[b, sel_new]);
 
+                        // WPM1 relaxes the clause *as it now stands*: the
+                        // blocking variable stays in the body, so a constraint
+                        // relaxed twice may be paid by either of its blocking
+                        // variables.  Dropping it (the body used to stay the
+                        // original clause) let each constraint be violated by
+                        // its newest blocking variable only, so a core that
+                        // needs two violations — at most one of `x0, x1, x2`
+                        // with all three wanted — reproduced itself forever.
+                        // A `solve_with_assumptions` that silently dropped
+                        // assumptions after a backjump used to end that loop
+                        // with a `Sat` violating them (fixed 2026-09-28,
+                        // `nixie-sat/tests/assumption_retention.rs`).
+                        entries[i].body.push(Lit::pos(b));
                         entries[i].selector = sel_new;
                         entries[i].weight = w_min.clone();
                     }
@@ -466,12 +545,7 @@ impl PmresSolver {
 
         self.stats.sat_calls += 1;
         match solver.solve() {
-            SolverResult::Sat => {
-                self.best_model = Some(solver.model().to_vec());
-                self.lower_bound = Weight::zero();
-                self.upper_bound = Weight::zero();
-                Ok(MaxSatResult::Optimal)
-            }
+            SolverResult::Sat => Ok(self.accept_optimum(&solver, &[], Weight::zero())),
             SolverResult::Unsat => Err(MaxSatError::Unsatisfiable),
             SolverResult::Unknown => Ok(MaxSatResult::Unknown),
         }
@@ -504,6 +578,16 @@ mod tests {
             Lit::neg(Var(v))
         } else {
             Lit::pos(Var(v))
+        }
+    }
+
+    #[test]
+    fn unsupported_weights_are_errors_not_false_optima() {
+        for weight in [Weight::Int((-1).into()), Weight::Infinite] {
+            let mut solver = PmresSolver::new();
+            solver.add_soft_weighted(0, [Lit::from_dimacs(1)], weight);
+            assert!(matches!(solver.solve(), Err(MaxSatError::SolverError(_))));
+            assert!(solver.best_model().is_none());
         }
     }
 
@@ -606,5 +690,95 @@ mod tests {
         assert!(matches!(result, Ok(MaxSatResult::Optimal)));
         // At least 2 soft clauses must be violated
         assert!(solver.cost() >= Weight::from(3)); // 3+1 or 5 or similar
+    }
+    #[test]
+    fn repeated_weighted_relaxation_preserves_prior_blocking_literals() {
+        // At most one of three desired variables can be true. Exhaustively
+        // check the cost and returned witness for every positive weight triple.
+        for stratified in [false, true] {
+            for a in 1u64..=3 {
+                for b in 1u64..=3 {
+                    for c in 1u64..=3 {
+                        let weights = [a, b, c];
+                        let mut solver = PmresSolver::with_config(PmresConfig {
+                            stratified,
+                            max_iterations: 64,
+                            ..Default::default()
+                        });
+                        for i in 0..3 {
+                            for j in (i + 1)..3 {
+                                solver.add_hard([lit(i, true), lit(j, true)]);
+                            }
+                            solver.add_soft_weighted(
+                                i,
+                                [lit(i, false)],
+                                Weight::from(weights[i as usize]),
+                            );
+                        }
+                        assert!(
+                            matches!(solver.solve(), Ok(MaxSatResult::Optimal)),
+                            "{stratified} {weights:?}"
+                        );
+                        let best = solver.best_model().expect("optimal witness");
+                        let truths: Vec<_> =
+                            best.iter().take(3).map(|v| *v == LBool::True).collect();
+                        assert_eq!(truths.len(), 3);
+                        assert!(truths.iter().filter(|&&v| v).count() <= 1);
+                        let cost: u64 = weights
+                            .iter()
+                            .zip(&truths)
+                            .filter_map(|(&w, &holds)| (!holds).then_some(w))
+                            .sum();
+                        let expected = a + b + c - a.max(b).max(c);
+                        assert_eq!(cost, expected, "{stratified} {weights:?}");
+                        assert_eq!(solver.cost(), Weight::from(expected));
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn exhausted_stratified_search_is_unknown_and_invalidates_old_models() {
+        let mut solver = PmresSolver::with_config(PmresConfig {
+            max_iterations: 0,
+            ..Default::default()
+        });
+        solver.add_soft_weighted(0, [lit(0, false)], Weight::one());
+        solver.add_soft_weighted(1, [lit(1, false)], Weight::from(2));
+        assert!(matches!(solver.solve(), Ok(MaxSatResult::Unknown)));
+        assert!(solver.best_model().is_none());
+        solver.config.max_iterations = 64;
+        assert!(matches!(solver.solve(), Ok(MaxSatResult::Optimal)));
+        assert!(solver.best_model().is_some());
+        solver.add_hard([lit(0, true)]);
+        assert!(solver.best_model().is_none());
+        solver.config.max_iterations = 0;
+        assert!(matches!(solver.solve(), Ok(MaxSatResult::Unknown)));
+        assert!(solver.best_model().is_none());
+        assert!(solver.upper_bound().is_infinite());
+    }
+
+    #[test]
+    fn candidate_optimum_must_match_the_original_hard_clauses_and_cost() {
+        let mut search = SatSolver::new();
+        search.new_var();
+        search.add_clause([lit(0, false)]);
+        assert_eq!(search.solve(), SolverResult::Sat);
+        let mut solver = PmresSolver::new();
+        solver.add_hard([lit(0, true)]);
+        assert_eq!(
+            solver.accept_optimum(&search, &[], Weight::zero()),
+            MaxSatResult::Unknown
+        );
+        solver.hard_clauses.clear();
+        let soft = [SoftClause::new(SoftId(0), [lit(0, true)], Weight::from(3))];
+        assert_eq!(
+            solver.accept_optimum(&search, &soft, Weight::one()),
+            MaxSatResult::Unknown
+        );
+        assert_eq!(
+            solver.accept_optimum(&search, &soft, Weight::from(3)),
+            MaxSatResult::Optimal
+        );
     }
 }

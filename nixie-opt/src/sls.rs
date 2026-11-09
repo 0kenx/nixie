@@ -13,6 +13,12 @@ use thiserror::Error;
 /// Errors from SLS
 #[derive(Error, Debug)]
 pub enum SlsError {
+    /// A probability is non-finite or outside the unit interval.
+    #[error("local-search probabilities must be finite and between zero and one")]
+    InvalidConfig,
+    /// A hard DIMACS literal or raw soft literal has no supported encoding.
+    #[error("invalid literal in local-search input")]
+    InvalidLiteral,
     /// No solution found within limits
     #[error("no solution found")]
     NoSolution,
@@ -81,6 +87,12 @@ pub struct Assignment {
 }
 
 impl Assignment {
+    /// Read a variable by its positive, one-based DIMACS index.
+    /// Returns `None` for zero or an index absent from the assignment.
+    pub fn value(&self, var: usize) -> Option<bool> {
+        (var > 0).then(|| self.values.get(var).copied()).flatten()
+    }
+
     /// Create a random assignment
     fn random(num_vars: usize, rng: &mut rand::rngs::StdRng) -> Self {
         Self {
@@ -124,6 +136,17 @@ impl ClauseCache {
     }
 }
 
+/// The state of one search: the current assignment and the clause cache
+/// evaluated against it. [`SlsSolver::initialize`] builds it at the start of
+/// [`SlsSolver::solve`] and every search step takes it as an argument, so no
+/// step can run without both.
+struct SearchState {
+    /// Current assignment
+    assignment: Assignment,
+    /// Clause cache
+    cache: ClauseCache,
+}
+
 /// SLS MaxSAT solver
 pub struct SlsSolver {
     /// Hard clauses (as literal vectors)
@@ -136,14 +159,10 @@ pub struct SlsSolver {
     stats: SlsStats,
     /// Random number generator
     rng: rand::rngs::StdRng,
-    /// Current assignment
-    assignment: Option<Assignment>,
     /// Best assignment found
     best_assignment: Option<Assignment>,
     /// Best cost found
     best_cost: Weight,
-    /// Clause cache
-    cache: Option<ClauseCache>,
     /// Tabu list (variable -> iteration when it was flipped)
     tabu: FxHashMap<usize, u32>,
     /// Number of variables
@@ -166,10 +185,8 @@ impl SlsSolver {
             config,
             stats: SlsStats::default(),
             rng: rand::rngs::StdRng::seed_from_u64(seed),
-            assignment: None,
             best_assignment: None,
             best_cost: Weight::Infinite,
-            cache: None,
             tabu: FxHashMap::default(),
             num_vars: 0,
         }
@@ -185,15 +202,17 @@ impl SlsSolver {
             }
         }
         self.hard_clauses.push(lits);
+        self.invalidate_model();
     }
 
     /// Add a soft clause
     pub fn add_soft(&mut self, clause: SoftClause) {
         self.soft_clauses.push(clause);
+        self.invalidate_model();
     }
 
     /// Initialize solver
-    fn initialize(&mut self) {
+    fn initialize(&mut self) -> SearchState {
         // Update num_vars from soft clauses
         for clause in &self.soft_clauses {
             for lit in &clause.lits {
@@ -204,67 +223,86 @@ impl SlsSolver {
             }
         }
 
-        // Create random initial assignment
-        self.assignment = Some(Assignment::random(self.num_vars + 1, &mut self.rng));
-
-        // Initialize cache
-        self.cache = Some(ClauseCache::new(
-            self.hard_clauses.len(),
-            self.soft_clauses.len(),
-        ));
+        let mut state = SearchState {
+            // Create random initial assignment
+            assignment: Assignment::random(self.num_vars + 1, &mut self.rng),
+            // Initialize cache
+            cache: ClauseCache::new(self.hard_clauses.len(), self.soft_clauses.len()),
+        };
 
         // Evaluate initial assignment
-        self.update_cache();
-        let cost = self.compute_cost();
-        self.best_cost = cost.clone();
-        self.best_assignment = self.assignment.clone();
-        self.stats.best_cost = Some(cost);
+        self.update_cache(&mut state);
+        self.record_feasible(&state);
+        state
     }
 
     /// Solve using SLS
     pub fn solve(&mut self) -> Result<SlsResult, SlsError> {
-        self.initialize();
+        self.invalidate_model();
+        self.stats = SlsStats::default();
+        self.tabu.clear();
+        if ![self.config.noise, self.config.random_walk_prob]
+            .into_iter()
+            .all(|p| (0.0..=1.0).contains(&p))
+        {
+            return Err(SlsError::InvalidConfig);
+        }
+        if self
+            .hard_clauses
+            .iter()
+            .flatten()
+            .any(|&lit| lit == 0 || lit == i32::MIN)
+            || self
+                .soft_clauses
+                .iter()
+                .flat_map(|c| &c.lits)
+                .any(|lit| lit.try_to_dimacs().is_none())
+        {
+            return Err(SlsError::InvalidLiteral);
+        }
+        if self.hard_clauses.iter().any(Vec::is_empty) {
+            return Ok(SlsResult::Unknown);
+        }
+        let mut state = self.initialize();
+        if self.num_vars == 0 {
+            return Ok(self.certified_result());
+        }
 
         for iter in 0..self.config.max_iterations {
             self.stats.iterations = iter + 1;
 
             // Update cache
-            self.update_cache();
+            self.update_cache(&mut state);
 
             // Check if all hard clauses are satisfied
-            if !self
-                .cache
-                .as_ref()
-                .expect("cache initialized at solve start")
-                .all_hard_satisfied()
-            {
+            if !state.cache.all_hard_satisfied() {
                 // Pick a violated hard clause and flip a variable from it
-                self.flip_from_violated_hard();
+                self.flip_from_violated_hard(&mut state);
                 continue;
             }
 
             // All hard clauses satisfied, try to improve soft clause satisfaction
-            let cost = self.compute_cost();
+            let cost = self.compute_cost(&state.cache);
 
             // Update best if improved
-            if cost < self.best_cost {
+            if self.best_assignment.is_none() || cost < self.best_cost {
                 self.best_cost = cost.clone();
-                self.best_assignment = self.assignment.clone();
+                self.best_assignment = Some(state.assignment.clone());
                 self.stats.best_cost = Some(cost.clone());
             }
 
             // Check if solved optimally (all clauses satisfied)
             if cost.is_zero() {
-                return Ok(SlsResult::Satisfiable);
+                return Ok(self.certified_result());
             }
 
             // Pick a move
             if self.rng.random_bool(self.config.random_walk_prob) {
                 // Random walk: flip a random variable from a violated soft clause
-                self.random_walk();
+                self.random_walk(&mut state);
             } else {
                 // Greedy or noise move
-                self.greedy_move();
+                self.greedy_move(&mut state);
             }
 
             self.stats.flips += 1;
@@ -274,36 +312,91 @@ impl SlsSolver {
             }
         }
 
-        // Restore best assignment
-        if let Some(best) = &self.best_assignment {
-            self.assignment = Some(best.clone());
-        }
+        // The final flip may be the first feasible assignment. Always check
+        // it, and never publish the initial random assignment just because the
+        // iteration budget expired.
+        self.update_cache(&mut state);
+        self.record_feasible(&state);
+        Ok(self.certified_result())
+    }
 
-        Ok(SlsResult::Satisfiable)
+    fn invalidate_model(&mut self) {
+        self.best_assignment = None;
+        self.best_cost = Weight::Infinite;
+        self.stats.best_cost = None;
+    }
+
+    fn record_feasible(&mut self, state: &SearchState) {
+        if state.cache.all_hard_satisfied() {
+            let cost = self.compute_cost(&state.cache);
+            if self.best_assignment.is_none() || cost < self.best_cost {
+                self.best_cost = cost.clone();
+                self.best_assignment = Some(state.assignment.clone());
+                self.stats.best_cost = Some(cost);
+            }
+        }
+    }
+
+    /// Read the original clauses against the returned assignment, independently
+    /// of the incremental cache. An incomplete search cannot prove Unsat.
+    fn certified_result(&mut self) -> SlsResult {
+        let valid = self.best_assignment.as_ref().is_some_and(|assignment| {
+            if self
+                .hard_clauses
+                .iter()
+                .flatten()
+                .any(|lit| assignment.value(lit.unsigned_abs() as usize).is_none())
+                || self.soft_clauses.iter().flat_map(|c| &c.lits).any(|lit| {
+                    lit.try_to_dimacs()
+                        .is_none_or(|raw| assignment.value(raw.unsigned_abs() as usize).is_none())
+                })
+            {
+                return false;
+            }
+            if !self
+                .hard_clauses
+                .iter()
+                .all(|c| Self::is_clause_satisfied_static(c, assignment))
+            {
+                return false;
+            }
+            let mut cost = Weight::zero();
+            for clause in &self.soft_clauses {
+                let holds = clause.lits.iter().any(|lit| {
+                    lit.try_to_dimacs().is_some_and(|raw| {
+                        assignment
+                            .values
+                            .get(raw.unsigned_abs() as usize)
+                            .is_some_and(|&value| value == (raw > 0))
+                    })
+                });
+                if !holds {
+                    cost = cost.add(&clause.weight);
+                }
+            }
+            cost == self.best_cost
+        });
+        if valid {
+            SlsResult::Satisfiable
+        } else {
+            self.invalidate_model();
+            SlsResult::Unknown
+        }
     }
 
     /// Update the clause satisfaction cache
-    fn update_cache(&mut self) {
-        let assignment = self
-            .assignment
-            .as_ref()
-            .expect("assignment initialized at solve start");
-
+    fn update_cache(&self, state: &mut SearchState) {
         // Update hard clauses
         for (idx, clause) in self.hard_clauses.iter().enumerate() {
-            let satisfied = Self::is_clause_satisfied_static(clause, assignment);
-            if let Some(cache) = self.cache.as_mut() {
-                cache.hard_satisfied[idx] = satisfied;
-            }
+            let satisfied = Self::is_clause_satisfied_static(clause, &state.assignment);
+            state.cache.hard_satisfied[idx] = satisfied;
         }
 
         // Update soft clauses
         for (idx, clause) in self.soft_clauses.iter().enumerate() {
             let lits: Vec<i32> = clause.lits.iter().map(|l| l.to_dimacs()).collect();
-            let satisfied = Self::is_clause_satisfied_static(&lits, assignment);
-            if let Some(cache) = self.cache.as_mut() {
-                cache.soft_satisfied[idx] = satisfied;
-            }
+            let satisfied = Self::is_clause_satisfied_static(&lits, &state.assignment);
+            state.cache.soft_satisfied[idx] = satisfied;
         }
     }
 
@@ -317,11 +410,7 @@ impl SlsSolver {
     }
 
     /// Compute current cost (sum of weights of violated soft clauses)
-    fn compute_cost(&self) -> Weight {
-        let cache = self
-            .cache
-            .as_ref()
-            .expect("cache initialized at solve start");
+    fn compute_cost(&self, cache: &ClauseCache) -> Weight {
         let mut cost = Weight::zero();
 
         for (idx, &satisfied) in cache.soft_satisfied.iter().enumerate() {
@@ -334,14 +423,10 @@ impl SlsSolver {
     }
 
     /// Flip a variable from a violated hard clause
-    fn flip_from_violated_hard(&mut self) {
-        let cache = self
-            .cache
-            .as_ref()
-            .expect("cache initialized at solve start");
-
+    fn flip_from_violated_hard(&mut self, state: &mut SearchState) {
         // Find violated hard clauses
-        let violated: Vec<usize> = cache
+        let violated: Vec<usize> = state
+            .cache
             .hard_satisfied
             .iter()
             .enumerate()
@@ -362,21 +447,15 @@ impl SlsSolver {
         let var = clause[lit_idx].unsigned_abs() as usize;
 
         // Flip it
-        if let Some(ref mut assignment) = self.assignment {
-            assignment.flip(var);
-            self.tabu.insert(var, self.stats.flips);
-        }
+        state.assignment.flip(var);
+        self.tabu.insert(var, self.stats.flips);
     }
 
     /// Random walk: flip a random variable from a violated soft clause
-    fn random_walk(&mut self) {
-        let cache = self
-            .cache
-            .as_ref()
-            .expect("cache initialized at solve start");
-
+    fn random_walk(&mut self, state: &mut SearchState) {
         // Find violated soft clauses
-        let violated: Vec<usize> = cache
+        let violated: Vec<usize> = state
+            .cache
             .soft_satisfied
             .iter()
             .enumerate()
@@ -401,14 +480,12 @@ impl SlsSolver {
         let var = clause.lits[lit_idx].to_dimacs().unsigned_abs() as usize;
 
         // Flip it
-        if let Some(ref mut assignment) = self.assignment {
-            assignment.flip(var);
-            self.tabu.insert(var, self.stats.flips);
-        }
+        state.assignment.flip(var);
+        self.tabu.insert(var, self.stats.flips);
     }
 
     /// Greedy move with noise
-    fn greedy_move(&mut self) {
+    fn greedy_move(&mut self, state: &mut SearchState) {
         // Try flipping each variable and pick the one with best improvement
         let mut best_var = None;
         let mut best_delta = Weight::Infinite;
@@ -422,11 +499,9 @@ impl SlsSolver {
             }
 
             // Try flipping this variable
-            if let Some(assignment) = self.assignment.as_mut() {
-                assignment.flip(var);
-            }
-            self.update_cache();
-            let new_cost = self.compute_cost();
+            state.assignment.flip(var);
+            self.update_cache(state);
+            let new_cost = self.compute_cost(&state.cache);
             let delta = new_cost.clone(); // Simplified: should compute actual delta
 
             if delta < best_delta {
@@ -435,25 +510,19 @@ impl SlsSolver {
             }
 
             // Flip back
-            if let Some(assignment) = self.assignment.as_mut() {
-                assignment.flip(var);
-            }
+            state.assignment.flip(var);
         }
 
         // Apply best move (or noise move)
         if self.rng.random_bool(self.config.noise) {
             // Noise move: pick random variable
             let var = self.rng.random_range(1..=self.num_vars);
-            if let Some(assignment) = self.assignment.as_mut() {
-                assignment.flip(var);
-                self.tabu.insert(var, self.stats.flips);
-            }
+            state.assignment.flip(var);
+            self.tabu.insert(var, self.stats.flips);
         } else if let Some(var) = best_var {
             // Greedy move
-            if let Some(assignment) = self.assignment.as_mut() {
-                assignment.flip(var);
-                self.tabu.insert(var, self.stats.flips);
-            }
+            state.assignment.flip(var);
+            self.tabu.insert(var, self.stats.flips);
         }
     }
 
@@ -529,5 +598,75 @@ mod tests {
         let solver = SlsSolver::with_config(config);
         assert_eq!(solver.config.max_iterations, 5000);
         assert_eq!(solver.config.noise, 0.3);
+    }
+    #[test]
+    fn contradictory_hard_clauses_never_publish_a_random_model() {
+        let mut solver = SlsSolver::with_config(SlsConfig {
+            max_iterations: 10,
+            ..Default::default()
+        });
+        solver.add_hard(vec![1]);
+        solver.add_hard(vec![-1]);
+        assert_eq!(solver.solve().expect("search"), SlsResult::Unknown);
+        assert!(solver.best_assignment().is_none());
+        assert!(solver.best_cost().is_infinite());
+        assert!(solver.stats().best_cost.is_none());
+    }
+
+    #[test]
+    fn initial_infeasible_cost_cannot_block_a_more_expensive_valid_model() {
+        for seed in 0..16 {
+            let mut solver = SlsSolver::with_config(SlsConfig {
+                random_seed: seed,
+                max_iterations: 2,
+                ..Default::default()
+            });
+            solver.add_hard(vec![1]);
+            solver.add_soft(SoftClause::new(
+                crate::SoftId(0),
+                [nixie_sat::Lit::from_dimacs(-1)],
+                Weight::from(3),
+            ));
+            assert_eq!(solver.solve().expect("search"), SlsResult::Satisfiable);
+            assert!(solver.best_assignment().expect("valid model").get(1));
+            assert_eq!(*solver.best_cost(), Weight::from(3));
+            solver.add_hard(vec![-1]);
+            assert!(solver.best_assignment().is_none());
+            assert_eq!(solver.solve().expect("search"), SlsResult::Unknown);
+        }
+    }
+
+    #[test]
+    fn invalid_literals_are_reported_before_allocating_assignments() {
+        for raw in [0, i32::MIN] {
+            let mut solver = SlsSolver::new();
+            solver.add_hard(vec![raw]);
+            assert!(matches!(solver.solve(), Err(SlsError::InvalidLiteral)));
+            assert!(solver.best_assignment().is_none());
+        }
+    }
+
+    #[test]
+    fn empty_clauses_and_invalid_probabilities_do_not_panic() {
+        let mut solver = SlsSolver::new();
+        solver.add_soft(SoftClause::new(SoftId(0), [], Weight::from(2)));
+        assert_eq!(
+            solver.solve().expect("constant objective"),
+            SlsResult::Satisfiable
+        );
+        assert_eq!(*solver.best_cost(), Weight::from(2));
+        solver.add_hard(vec![]);
+        assert_eq!(
+            solver.solve().expect("empty hard clause"),
+            SlsResult::Unknown
+        );
+        assert!(solver.best_assignment().is_none());
+        for probability in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            let mut solver = SlsSolver::with_config(SlsConfig {
+                noise: probability,
+                ..Default::default()
+            });
+            assert!(matches!(solver.solve(), Err(SlsError::InvalidConfig)));
+        }
     }
 }

@@ -17,7 +17,7 @@
 //! - McCallum's improved projection (1988)
 
 use crate::var_order::{OrderingStrategy, VariableOrdering};
-use nixie_math::polynomial::{NULL_VAR, Polynomial, Var};
+use nixie_math::polynomial::{MonomialOrder, NULL_VAR, Polynomial, Var, VarPower};
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
 use rayon::prelude::*;
@@ -187,6 +187,42 @@ impl ProjectionSet {
     }
 }
 
+/// Complete polynomial identity for cached algebraic operations. Cached hashes
+/// are not identities: all coefficients and variable/exponent pairs participate
+/// in equality, and the polynomial's ordering is retained too.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ResultantOperand {
+    order: u8,
+    terms: Vec<(BigRational, Vec<VarPower>)>,
+}
+
+impl ResultantOperand {
+    fn of(poly: &Polynomial) -> Self {
+        let order = match poly.monomial_order() {
+            MonomialOrder::Lex => 0,
+            MonomialOrder::GrLex => 1,
+            MonomialOrder::GRevLex => 2,
+        };
+        Self {
+            order,
+            terms: poly
+                .terms()
+                .iter()
+                .map(|term| (term.coeff.clone(), term.monomial.vars().to_vec()))
+                .collect(),
+        }
+    }
+}
+
+/// Ordered operands and elimination variable, as in Z3's polynomial PSC cache.
+/// Swapping operands changes a resultant's sign when both degrees are odd.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ResultantKey {
+    left: ResultantOperand,
+    right: ResultantOperand,
+    variable: Var,
+}
+
 /// CAD projection operator.
 ///
 /// Computes the projection of a set of polynomials, eliminating the
@@ -195,9 +231,9 @@ impl ProjectionSet {
 pub struct CadProjection {
     /// Use McCallum's reduced projection when possible.
     use_mccallum: bool,
-    /// Cache for computed resultants (polynomial pair hash -> resultant).
+    /// Cache for computed resultants, keyed by complete ordered operands and variable.
     /// Uses RwLock for thread-safe concurrent access.
-    resultant_cache: std::sync::RwLock<FxHashMap<(u64, u64), Polynomial>>,
+    resultant_cache: std::sync::RwLock<FxHashMap<ResultantKey, Polynomial>>,
     /// Enable caching.
     enable_cache: bool,
     /// Enable parallel projection computation.
@@ -251,22 +287,6 @@ impl CadProjection {
         }
     }
 
-    /// Compute a hash for a polynomial (simple hash based on degree and coefficients).
-    fn poly_hash(&self, poly: &Polynomial) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        poly.degree(NULL_VAR).hash(&mut hasher);
-        // Hash first few terms for efficiency
-        for (i, term) in poly.terms().iter().take(5).enumerate() {
-            i.hash(&mut hasher);
-            term.coeff.numer().hash(&mut hasher);
-            term.coeff.denom().hash(&mut hasher);
-        }
-        hasher.finish()
-    }
-
     /// Compute the resultant of two polynomials with caching.
     fn compute_resultant_cached(&self, p1: &Polynomial, p2: &Polynomial, var: Var) -> Polynomial {
         if !self.enable_cache {
@@ -274,17 +294,20 @@ impl CadProjection {
             return p1.resultant(p2, var);
         }
 
-        // Compute hashes for cache lookup
-        let h1 = self.poly_hash(p1);
-        let h2 = self.poly_hash(p2);
-        let cache_key = if h1 < h2 { (h1, h2) } else { (h2, h1) };
+        let cache_key = ResultantKey {
+            left: ResultantOperand::of(p1),
+            right: ResultantOperand::of(p2),
+            variable: var,
+        };
 
-        // Check cache with read lock
+        // Each write installs one complete computed value. A poisoned lock
+        // cannot expose a partial entry; full structural equality distinguishes
+        // keys even if their hash values collide.
         {
             let cache = self
                 .resultant_cache
                 .read()
-                .expect("lock should not be poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(cached) = cache.get(&cache_key) {
                 return cached.clone();
             }
@@ -293,12 +316,15 @@ impl CadProjection {
         // Not in cache, compute it
         let resultant = p1.resultant(p2, var);
 
-        // Store in cache with write lock
+        // Store in cache with write lock. As at the read above, this `insert`
+        // is the only mutation and leaves the map either without the entry
+        // or with the whole entry, so a poisoned lock guards a map whose
+        // entries are each a whole stored value and `into_inner` is sound.
         {
             let mut cache = self
                 .resultant_cache
                 .write()
-                .expect("lock should not be poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.insert(cache_key, resultant.clone());
         }
 
@@ -916,37 +942,39 @@ impl CadLifter {
         // root points themselves.
         let mut points = Vec::new();
 
-        if roots.is_empty() {
-            // No roots - just one cell, sample at 0
-            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
-                None, None,
-            )));
-        } else {
-            // Before first root
-            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
-                None,
-                Some(&roots[0]),
-            )));
-
-            for i in 0..roots.len() {
-                // The exact root itself
-                points.push(roots[i].to_point());
-
-                // Between this root and next
-                if i + 1 < roots.len() {
-                    points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
-                        Some(&roots[i]),
-                        Some(&roots[i + 1]),
-                    )));
-                }
+        match roots.last() {
+            None => {
+                // No roots - just one cell, sample at 0
+                points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                    None, None,
+                )));
             }
+            Some(last) => {
+                // Before first root
+                points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                    None,
+                    Some(&roots[0]),
+                )));
 
-            // After last root
-            let last = roots.last().expect("collection validated to be non-empty");
-            points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
-                Some(last),
-                None,
-            )));
+                for i in 0..roots.len() {
+                    // The exact root itself
+                    points.push(roots[i].to_point());
+
+                    // Between this root and next
+                    if i + 1 < roots.len() {
+                        points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                            Some(&roots[i]),
+                            Some(&roots[i + 1]),
+                        )));
+                    }
+                }
+
+                // After last root
+                points.push(CadPoint::rational(crate::cad_algebraic::open_sample(
+                    Some(last),
+                    None,
+                )));
+            }
         }
 
         points
@@ -1108,39 +1136,28 @@ impl CadDecomposer {
         // exact root points themselves.
         let mut cells = Vec::new();
 
-        if roots.is_empty() {
-            // No roots - single cell covering all of R
-            let sample = self.select_sample_point(None, None, var);
-            cells.push(CadCell {
-                var_order: vec![var],
-                sample: vec![CadPoint::rational(sample)],
-                signs: Vec::new(),
-            });
-            self.num_cells += 1;
-
-            if self.num_cells >= self.config.max_cells {
-                return Err(CadError::TooManyCells);
-            }
-        } else {
-            // Cell before first root: sample below the first root's isolating
-            // interval lower bound (hence below the true root).
-            let sample = self.select_sample_point(None, Some(&roots[0].lo), var);
-            cells.push(CadCell {
-                var_order: vec![var],
-                sample: vec![CadPoint::rational(sample)],
-                signs: Vec::new(),
-            });
-            self.num_cells += 1;
-
-            if self.num_cells >= self.config.max_cells {
-                return Err(CadError::TooManyCells);
-            }
-
-            for i in 0..roots.len() {
-                // Cell at the (exact) root
+        match roots.last() {
+            None => {
+                // No roots - single cell covering all of R
+                let sample = self.select_sample_point(None, None, var);
                 cells.push(CadCell {
                     var_order: vec![var],
-                    sample: vec![roots[i].to_point()],
+                    sample: vec![CadPoint::rational(sample)],
+                    signs: Vec::new(),
+                });
+                self.num_cells += 1;
+
+                if self.num_cells >= self.config.max_cells {
+                    return Err(CadError::TooManyCells);
+                }
+            }
+            Some(last) => {
+                // Cell before first root: sample below the first root's isolating
+                // interval lower bound (hence below the true root).
+                let sample = self.select_sample_point(None, Some(&roots[0].lo), var);
+                cells.push(CadCell {
+                    var_order: vec![var],
+                    sample: vec![CadPoint::rational(sample)],
                     signs: Vec::new(),
                 });
                 self.num_cells += 1;
@@ -1149,14 +1166,11 @@ impl CadDecomposer {
                     return Err(CadError::TooManyCells);
                 }
 
-                // Cell between this root and next: sampled strictly inside the
-                // gap between the two roots' isolating intervals.
-                if i + 1 < roots.len() {
-                    let sample =
-                        self.select_sample_point(Some(&roots[i].hi), Some(&roots[i + 1].lo), var);
+                for i in 0..roots.len() {
+                    // Cell at the (exact) root
                     cells.push(CadCell {
                         var_order: vec![var],
-                        sample: vec![CadPoint::rational(sample)],
+                        sample: vec![roots[i].to_point()],
                         signs: Vec::new(),
                     });
                     self.num_cells += 1;
@@ -1164,21 +1178,40 @@ impl CadDecomposer {
                     if self.num_cells >= self.config.max_cells {
                         return Err(CadError::TooManyCells);
                     }
+
+                    // Cell between this root and next: sampled strictly inside the
+                    // gap between the two roots' isolating intervals.
+                    if i + 1 < roots.len() {
+                        let sample = self.select_sample_point(
+                            Some(&roots[i].hi),
+                            Some(&roots[i + 1].lo),
+                            var,
+                        );
+                        cells.push(CadCell {
+                            var_order: vec![var],
+                            sample: vec![CadPoint::rational(sample)],
+                            signs: Vec::new(),
+                        });
+                        self.num_cells += 1;
+
+                        if self.num_cells >= self.config.max_cells {
+                            return Err(CadError::TooManyCells);
+                        }
+                    }
                 }
-            }
 
-            // Cell after last root: sample above the last root's interval.
-            let last = roots.last().expect("collection validated to be non-empty");
-            let sample = self.select_sample_point(Some(&last.hi), None, var);
-            cells.push(CadCell {
-                var_order: vec![var],
-                sample: vec![CadPoint::rational(sample)],
-                signs: Vec::new(),
-            });
-            self.num_cells += 1;
+                // Cell after last root: sample above the last root's interval.
+                let sample = self.select_sample_point(Some(&last.hi), None, var);
+                cells.push(CadCell {
+                    var_order: vec![var],
+                    sample: vec![CadPoint::rational(sample)],
+                    signs: Vec::new(),
+                });
+                self.num_cells += 1;
 
-            if self.num_cells >= self.config.max_cells {
-                return Err(CadError::TooManyCells);
+                if self.num_cells >= self.config.max_cells {
+                    return Err(CadError::TooManyCells);
+                }
             }
         }
 
@@ -1222,37 +1255,27 @@ impl CadDecomposer {
         let cell_roots = crate::cad_algebraic::isolate_root_samples(&univariate_polys, var);
 
         // Create lifted cells
-        if cell_roots.is_empty() {
-            // No roots - single cell
-            let sample = self.select_sample_point(None, None, var);
-            let mut new_sample = cell.sample.clone();
-            new_sample.push(CadPoint::rational(sample));
-
-            let mut new_var_order = cell.var_order.clone();
-            new_var_order.push(var);
-
-            result.push(CadCell {
-                var_order: new_var_order,
-                sample: new_sample,
-                signs: Vec::new(),
-            });
-        } else {
-            // Before first root
-            let sample = self.select_sample_point(None, Some(&cell_roots[0].lo), var);
-            let mut new_sample = cell.sample.clone();
-            new_sample.push(CadPoint::rational(sample));
-            let mut new_var_order = cell.var_order.clone();
-            new_var_order.push(var);
-            result.push(CadCell {
-                var_order: new_var_order.clone(),
-                sample: new_sample,
-                signs: Vec::new(),
-            });
-
-            for i in 0..cell_roots.len() {
-                // At the exact root
+        match cell_roots.last() {
+            None => {
+                // No roots - single cell
+                let sample = self.select_sample_point(None, None, var);
                 let mut new_sample = cell.sample.clone();
-                new_sample.push(cell_roots[i].to_point());
+                new_sample.push(CadPoint::rational(sample));
+
+                let mut new_var_order = cell.var_order.clone();
+                new_var_order.push(var);
+
+                result.push(CadCell {
+                    var_order: new_var_order,
+                    sample: new_sample,
+                    signs: Vec::new(),
+                });
+            }
+            Some(last) => {
+                // Before first root
+                let sample = self.select_sample_point(None, Some(&cell_roots[0].lo), var);
+                let mut new_sample = cell.sample.clone();
+                new_sample.push(CadPoint::rational(sample));
                 let mut new_var_order = cell.var_order.clone();
                 new_var_order.push(var);
                 result.push(CadCell {
@@ -1261,16 +1284,10 @@ impl CadDecomposer {
                     signs: Vec::new(),
                 });
 
-                // Between roots: strictly inside the gap between the two roots'
-                // isolating intervals.
-                if i + 1 < cell_roots.len() {
-                    let sample = self.select_sample_point(
-                        Some(&cell_roots[i].hi),
-                        Some(&cell_roots[i + 1].lo),
-                        var,
-                    );
+                for i in 0..cell_roots.len() {
+                    // At the exact root
                     let mut new_sample = cell.sample.clone();
-                    new_sample.push(CadPoint::rational(sample));
+                    new_sample.push(cell_roots[i].to_point());
                     let mut new_var_order = cell.var_order.clone();
                     new_var_order.push(var);
                     result.push(CadCell {
@@ -1278,23 +1295,39 @@ impl CadDecomposer {
                         sample: new_sample,
                         signs: Vec::new(),
                     });
-                }
-            }
 
-            // After last root
-            let last = cell_roots
-                .last()
-                .expect("collection validated to be non-empty");
-            let sample = self.select_sample_point(Some(&last.hi), None, var);
-            let mut new_sample = cell.sample.clone();
-            new_sample.push(CadPoint::rational(sample));
-            let mut new_var_order = cell.var_order.clone();
-            new_var_order.push(var);
-            result.push(CadCell {
-                var_order: new_var_order,
-                sample: new_sample,
-                signs: Vec::new(),
-            });
+                    // Between roots: strictly inside the gap between the two roots'
+                    // isolating intervals.
+                    if i + 1 < cell_roots.len() {
+                        let sample = self.select_sample_point(
+                            Some(&cell_roots[i].hi),
+                            Some(&cell_roots[i + 1].lo),
+                            var,
+                        );
+                        let mut new_sample = cell.sample.clone();
+                        new_sample.push(CadPoint::rational(sample));
+                        let mut new_var_order = cell.var_order.clone();
+                        new_var_order.push(var);
+                        result.push(CadCell {
+                            var_order: new_var_order.clone(),
+                            sample: new_sample,
+                            signs: Vec::new(),
+                        });
+                    }
+                }
+
+                // After last root
+                let sample = self.select_sample_point(Some(&last.hi), None, var);
+                let mut new_sample = cell.sample.clone();
+                new_sample.push(CadPoint::rational(sample));
+                let mut new_var_order = cell.var_order.clone();
+                new_var_order.push(var);
+                result.push(CadCell {
+                    var_order: new_var_order,
+                    sample: new_sample,
+                    signs: Vec::new(),
+                });
+            }
         }
 
         result
@@ -1772,5 +1805,97 @@ mod tests {
         };
         let decomposer_min_deg = CadDecomposer::with_auto_ordering(config_min_deg, &[poly]);
         assert_eq!(decomposer_min_deg.var_order.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod resultant_cache_regressions {
+    use super::*;
+
+    #[test]
+    fn warmed_projection_matches_uncached_serial_and_parallel_results() {
+        let p = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 1)])]);
+        let changed = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 2)])]);
+        let q = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-1, &[(1, 1)])]);
+        for mccallum in [false, true] {
+            for parallel in [false, true] {
+                let projection = CadProjection::with_config(mccallum, parallel);
+                let mut uncached = CadProjection::with_caching(mccallum, false);
+                uncached.parallel = parallel;
+                for (left, right, var) in [(&p, &q, 0), (&changed, &q, 0), (&p, &q, 1), (&q, &p, 0)]
+                {
+                    let input = [left.clone(), right.clone()];
+                    let got = projection.project(&input, var);
+                    let expected = uncached.project(&input, var);
+                    assert_eq!(got.len(), expected.len());
+                    for polynomial in expected.all() {
+                        assert!(
+                            got.all().any(|p| p == polynomial),
+                            "missing projection factor: {polynomial:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cache_distinguishes_monomials_with_identical_coefficient_sequences() {
+        let projection = CadProjection::new();
+        let p = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 1)])]);
+        let different = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 2)])]);
+        let q = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-1, &[(1, 1)])]);
+        assert_eq!(
+            projection.compute_resultant_cached(&p, &q, 0),
+            Polynomial::from_coeffs_int(&[(-2, &[(1, 1)])])
+        );
+        assert_eq!(
+            projection.compute_resultant_cached(&different, &q, 0),
+            Polynomial::from_coeffs_int(&[(-1, &[(1, 2)]), (-1, &[(1, 1)])])
+        );
+    }
+
+    #[test]
+    fn cache_retains_the_elimination_variable_and_operand_order() {
+        let projection = CadProjection::new();
+        let p = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (1, &[(1, 1)])]);
+        let q = Polynomial::from_coeffs_int(&[(1, &[(0, 1)]), (-1, &[(1, 1)])]);
+        assert_eq!(
+            projection.compute_resultant_cached(&p, &q, 0),
+            Polynomial::from_coeffs_int(&[(-2, &[(1, 1)])])
+        );
+        assert_eq!(
+            projection.compute_resultant_cached(&p, &q, 1),
+            Polynomial::from_coeffs_int(&[(2, &[(0, 1)])])
+        );
+        assert_eq!(
+            projection.compute_resultant_cached(&q, &p, 0),
+            Polynomial::from_coeffs_int(&[(2, &[(1, 1)])])
+        );
+    }
+
+    #[test]
+    fn cache_identity_includes_every_coefficient_and_the_ordering() {
+        let projection = CadProjection::new();
+        let p = Polynomial::from_coeffs_int(&[
+            (1, &[(0, 5)]),
+            (1, &[(0, 4)]),
+            (1, &[(0, 3)]),
+            (1, &[(0, 2)]),
+            (1, &[(0, 1)]),
+            (1, &[]),
+        ]);
+        let different = p.add(&Polynomial::one());
+        let q = Polynomial::from_coeffs_int(&[(1, &[(0, 1)])]);
+        assert_eq!(
+            projection.compute_resultant_cached(&p, &q, 0),
+            Polynomial::from_coeffs_int(&[(-1, &[])])
+        );
+        assert_eq!(
+            projection.compute_resultant_cached(&different, &q, 0),
+            Polynomial::from_coeffs_int(&[(-2, &[])])
+        );
+        let lex = Polynomial::from_terms(p.terms().iter().cloned(), MonomialOrder::Lex);
+        assert_ne!(ResultantOperand::of(&p), ResultantOperand::of(&lex));
     }
 }
