@@ -2,11 +2,11 @@
 //!
 //! Provides bump allocation for short-lived AST nodes with batch deallocation.
 
-#![allow(unsafe_code, clippy::non_canonical_clone_impl)]
+#![allow(unsafe_code)]
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
@@ -41,9 +41,19 @@ struct Chunk {
 }
 
 impl Chunk {
-    fn new(size: usize) -> Result<Self, ArenaError> {
-        let layout = Layout::from_size_align(size, 8).map_err(|_| ArenaError::LayoutError)?;
+    /// Allocate a chunk of `size` bytes (at least one) aligned to `align` and
+    /// to 8, so that an allocation of that alignment fits at its start.
+    fn new(size: usize, align: usize) -> Result<Self, ArenaError> {
+        // Never zero: allocating zero bytes is undefined behaviour, and a
+        // zero-sized value asks for it whenever the chunk size has become 0
+        // (a zero `initial_chunk_size`, or a `growth_factor` that rounds the
+        // next size down to 0).
+        let size = size.max(1);
+        let layout =
+            Layout::from_size_align(size, align.max(8)).map_err(|_| ArenaError::LayoutError)?;
 
+        // SAFETY: `layout.size()` is `size`, which the `max(1)` above makes
+        // non-zero, the one requirement `alloc` places on its layout.
         let ptr = unsafe { alloc(layout) };
         let non_null_ptr = NonNull::new(ptr).ok_or(ArenaError::AllocationFailed)?;
 
@@ -56,8 +66,16 @@ impl Chunk {
     }
 
     fn allocate(&self, size: usize, align: usize) -> Option<NonNull<u8>> {
-        let current = self.used.get();
-        let aligned_offset = align_up(current, align);
+        // Align the address, not the offset: `align_offset` gives the padding
+        // that makes the address at `used` a multiple of `align` (a power of
+        // two, a `Layout`'s alignment), or `usize::MAX` when it cannot, which
+        // the checked addition turns into "no room here" and a fresh chunk.
+        // The base is aligned to 8 and to the alignment the chunk was made
+        // for, so for `align <= 8` the padding is the one that rounds `used`
+        // itself up to `align`.
+        let used = self.used.get();
+        let padding = self.ptr.as_ptr().wrapping_add(used).align_offset(align);
+        let aligned_offset = used.checked_add(padding)?;
         let new_used = aligned_offset.checked_add(size)?;
 
         if new_used > self.capacity {
@@ -66,11 +84,11 @@ impl Chunk {
 
         self.used.set(new_used);
 
-        unsafe {
-            Some(NonNull::new_unchecked(
-                self.ptr.as_ptr().add(aligned_offset),
-            ))
-        }
+        // SAFETY: `aligned_offset <= new_used <= self.capacity`, the size of
+        // the allocation `self.ptr` heads (`Chunk::new` made it with
+        // `self.layout`, whose size is `self.capacity`), so the result is in
+        // bounds of that allocation or one past its end, as `add` requires.
+        Some(unsafe { self.ptr.add(aligned_offset) })
     }
 
     fn reset(&self) {
@@ -93,8 +111,8 @@ impl Drop for Chunk {
 /// Arena allocator for fast bump allocation.
 pub struct Arena {
     config: ArenaConfig,
-    chunks: Vec<Chunk>,
-    current_chunk_size: usize,
+    chunks: RefCell<Vec<Chunk>>,
+    current_chunk_size: Cell<usize>,
 }
 
 impl Arena {
@@ -106,87 +124,103 @@ impl Arena {
     /// Create a new arena with custom configuration.
     pub fn with_config(config: ArenaConfig) -> Self {
         Self {
-            current_chunk_size: config.initial_chunk_size,
+            current_chunk_size: Cell::new(config.initial_chunk_size),
             config,
-            chunks: Vec::new(),
+            chunks: RefCell::new(Vec::new()),
         }
     }
 
-    /// Allocate memory in the arena.
-    pub fn alloc<T>(&mut self, value: T) -> ArenaHandle<T> {
-        let layout = Layout::new::<T>();
-        let ptr = self
-            .alloc_raw(layout.size(), layout.align())
-            .expect("arena allocation failed");
+    /// Allocate a uniquely owned value whose storage borrows this arena.
+    ///
+    /// Panics on allocation failure; use [`Self::try_alloc`] for a fallible API.
+    pub fn alloc<T>(&self, value: T) -> ArenaHandle<'_, T> {
+        match self.try_alloc(value) {
+            Ok(handle) => handle,
+            Err(error) => panic!("arena allocation failed: {error}"),
+        }
+    }
 
+    /// Allocate a value, reporting layout or allocation failure.
+    pub fn try_alloc<T>(&self, value: T) -> Result<ArenaHandle<'_, T>, ArenaError> {
+        let layout = Layout::new::<T>();
+        let ptr = self.alloc_raw(layout.size(), layout.align())?;
+        // SAFETY: alloc_raw provides disjoint, aligned storage for T. The
+        // handle exclusively owns the initialized value and borrows the arena,
+        // preventing reset, clear, or deallocation until that handle is dropped.
         unsafe {
             ptr.as_ptr().cast::<T>().write(value);
         }
-
-        ArenaHandle {
+        Ok(ArenaHandle {
             ptr: ptr.cast::<T>(),
             _phantom: PhantomData,
-        }
+        })
     }
 
     /// Allocate raw memory.
-    fn alloc_raw(&mut self, size: usize, align: usize) -> Result<NonNull<u8>, ArenaError> {
+    fn alloc_raw(&self, size: usize, align: usize) -> Result<NonNull<u8>, ArenaError> {
+        let mut chunks = self.chunks.borrow_mut();
         // Try current chunk
-        if let Some(chunk) = self.chunks.last()
+        if let Some(chunk) = chunks.last()
             && let Some(ptr) = chunk.allocate(size, align)
         {
             return Ok(ptr);
         }
 
         // Need new chunk
-        self.grow(size)?;
+        self.grow(&mut chunks, size, align)?;
 
-        self.chunks
+        chunks
             .last()
             .and_then(|chunk| chunk.allocate(size, align))
             .ok_or(ArenaError::AllocationFailed)
     }
 
     /// Grow the arena by adding a new chunk.
-    fn grow(&mut self, min_size: usize) -> Result<(), ArenaError> {
-        let new_size = self.current_chunk_size.max(min_size);
-        let chunk = Chunk::new(new_size)?;
-        self.chunks.push(chunk);
+    fn grow(
+        &self,
+        chunks: &mut Vec<Chunk>,
+        min_size: usize,
+        align: usize,
+    ) -> Result<(), ArenaError> {
+        let new_size = self.current_chunk_size.get().max(min_size);
+        let chunk = Chunk::new(new_size, align)?;
+        chunks.push(chunk);
 
         // Grow chunk size for next allocation
-        let next_size = (self.current_chunk_size as f64 * self.config.growth_factor) as usize;
-        self.current_chunk_size = next_size.min(self.config.max_chunk_size);
+        let next_size = (self.current_chunk_size.get() as f64 * self.config.growth_factor) as usize;
+        self.current_chunk_size
+            .set(next_size.min(self.config.max_chunk_size));
 
         Ok(())
     }
 
     /// Reset the arena, reusing existing chunks.
     pub fn reset(&mut self) {
-        for chunk in &self.chunks {
+        for chunk in self.chunks.get_mut().iter() {
             chunk.reset();
         }
-        self.current_chunk_size = self.config.initial_chunk_size;
+        self.current_chunk_size.set(self.config.initial_chunk_size);
     }
 
     /// Clear the arena, deallocating all chunks.
     pub fn clear(&mut self) {
-        self.chunks.clear();
-        self.current_chunk_size = self.config.initial_chunk_size;
+        self.chunks.get_mut().clear();
+        self.current_chunk_size.set(self.config.initial_chunk_size);
     }
 
     /// Get total capacity across all chunks.
     pub fn capacity(&self) -> usize {
-        self.chunks.iter().map(|c| c.capacity).sum()
+        self.chunks.borrow().iter().map(|c| c.capacity).sum()
     }
 
     /// Get total used memory across all chunks.
     pub fn used(&self) -> usize {
-        self.chunks.iter().map(|c| c.used()).sum()
+        self.chunks.borrow().iter().map(|c| c.used()).sum()
     }
 
     /// Get number of chunks.
     pub fn num_chunks(&self) -> usize {
-        self.chunks.len()
+        self.chunks.borrow().len()
     }
 }
 
@@ -196,13 +230,36 @@ impl Default for Arena {
     }
 }
 
-/// Handle to an arena-allocated value.
-pub struct ArenaHandle<T> {
+/// Unique ownership of an arena-allocated value. Dropping the handle drops T;
+/// the arena reclaims its bytes in bulk. A handle cannot outlive or reset its arena.
+///
+/// ```compile_fail
+/// use nixie_core::alloc::Arena;
+/// let mut arena = Arena::new();
+/// let value = arena.alloc(42);
+/// arena.reset();
+/// println!("{}", *value);
+/// ```
+///
+/// ```compile_fail
+/// use nixie_core::alloc::Arena;
+/// let value = { let arena = Arena::new(); arena.alloc(42) };
+/// println!("{}", *value);
+/// ```
+///
+/// ```compile_fail
+/// use nixie_core::alloc::Arena;
+/// let arena = Arena::new();
+/// let value = arena.alloc(42);
+/// let alias = value;
+/// println!("{} {}", *value, *alias);
+/// ```
+pub struct ArenaHandle<'a, T> {
     ptr: NonNull<T>,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<(&'a Arena, T)>,
 }
 
-impl<T> ArenaHandle<T> {
+impl<T> ArenaHandle<'_, T> {
     /// Get a reference to the value.
     pub fn get(&self) -> &T {
         unsafe { self.ptr.as_ref() }
@@ -214,18 +271,17 @@ impl<T> ArenaHandle<T> {
     }
 }
 
-impl<T> Clone for ArenaHandle<T> {
-    fn clone(&self) -> Self {
-        Self {
-            ptr: self.ptr,
-            _phantom: PhantomData,
+impl<T> Drop for ArenaHandle<'_, T> {
+    fn drop(&mut self) {
+        // SAFETY: this non-Clone handle exclusively owns the initialized T,
+        // and its arena borrow guarantees that the backing chunk is live.
+        unsafe {
+            self.ptr.as_ptr().drop_in_place();
         }
     }
 }
 
-impl<T> Copy for ArenaHandle<T> {}
-
-impl<T: core::fmt::Debug> core::fmt::Debug for ArenaHandle<T> {
+impl<T: core::fmt::Debug> core::fmt::Debug for ArenaHandle<'_, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ArenaHandle")
             .field("value", self.get())
@@ -233,7 +289,7 @@ impl<T: core::fmt::Debug> core::fmt::Debug for ArenaHandle<T> {
     }
 }
 
-impl<T> core::ops::Deref for ArenaHandle<T> {
+impl<T> core::ops::Deref for ArenaHandle<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -261,25 +317,77 @@ impl core::fmt::Display for ArenaError {
 
 impl core::error::Error for ArenaError {}
 
-/// Align a value up to the given alignment.
-fn align_up(value: usize, align: usize) -> usize {
-    (value + align - 1) & !(align - 1)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn handles_own_values_and_growth_preserves_unique_access() {
+        use std::rc::Rc;
+        struct Owned(Rc<Cell<usize>>, String);
+        impl Drop for Owned {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+        let drops = Rc::new(Cell::new(0));
+        let mut arena = Arena::with_config(ArenaConfig {
+            initial_chunk_size: 1,
+            max_chunk_size: 64,
+            growth_factor: 2.0,
+        });
+        let mut first = arena.alloc(Owned(drops.clone(), "first".into()));
+        let mut second = arena.alloc(Owned(drops.clone(), "second".into()));
+        for i in 0..100 {
+            arena.alloc([i; 80]);
+        }
+        first.get_mut().1.push('!');
+        second.get_mut().1.push('?');
+        assert_eq!(first.get().1, "first!");
+        assert_eq!(second.get().1, "second?");
+        drop(first);
+        assert_eq!(drops.get(), 1);
+        drop(second);
+        assert_eq!(drops.get(), 2);
+        arena.reset();
+        arena.clear();
+        assert_eq!(drops.get(), 2);
+    }
+
+    #[test]
+    fn zero_sized_owned_values_are_dropped_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        #[repr(align(4096))]
+        struct Zero;
+        impl Drop for Zero {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let arena = Arena::with_config(ArenaConfig {
+            initial_chunk_size: 0,
+            max_chunk_size: 0,
+            growth_factor: 0.0,
+        });
+        let first = arena.alloc(Zero);
+        let second = arena.alloc(Zero);
+        assert_eq!((first.get() as *const Zero).addr() % 4096, 0);
+        drop(first);
+        drop(second);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn test_arena_basic() {
-        let mut arena = Arena::new();
+        let arena = Arena::new();
         let handle = arena.alloc(42);
         assert_eq!(*handle, 42);
     }
 
     #[test]
     fn test_arena_multiple() {
-        let mut arena = Arena::new();
+        let arena = Arena::new();
         let h1 = arena.alloc(1);
         let h2 = arena.alloc(2);
         let h3 = arena.alloc(3);
@@ -309,7 +417,7 @@ mod tests {
             max_chunk_size: 1024,
             growth_factor: 2.0,
         };
-        let mut arena = Arena::with_config(config);
+        let arena = Arena::with_config(config);
 
         // Allocate enough to trigger growth
         for _ in 0..100 {
@@ -319,11 +427,79 @@ mod tests {
         assert!(arena.num_chunks() > 1);
     }
 
+    /// For alignments up to 8 the offsets are those of the plain
+    /// offset-rounding layout: `used()` after each allocation.
     #[test]
-    fn test_alignment() {
-        assert_eq!(align_up(0, 8), 0);
-        assert_eq!(align_up(1, 8), 8);
-        assert_eq!(align_up(8, 8), 8);
-        assert_eq!(align_up(9, 8), 16);
+    fn test_small_alignment_offsets() {
+        let arena = Arena::new();
+        let mut used = Vec::new();
+        arena.alloc(1u8);
+        used.push(arena.used());
+        arena.alloc(2u32);
+        used.push(arena.used());
+        arena.alloc(3u16);
+        used.push(arena.used());
+        arena.alloc(4u64);
+        used.push(arena.used());
+        arena.alloc([5u8; 3]);
+        used.push(arena.used());
+        arena.alloc(6u64);
+        used.push(arena.used());
+        // Each value at its predecessor's end rounded up to its alignment.
+        let mut end: usize = 0;
+        let want: Vec<usize> = [
+            (1, 1),
+            (4, core::mem::align_of::<u32>()),
+            (2, core::mem::align_of::<u16>()),
+            (8, core::mem::align_of::<u64>()),
+            (3, 1),
+            (8, core::mem::align_of::<u64>()),
+        ]
+        .iter()
+        .map(|&(size, align): &(usize, usize)| {
+            end = end.next_multiple_of(align) + size;
+            end
+        })
+        .collect();
+        assert_eq!(used, want);
+    }
+
+    /// A value aligned more strictly than 8 is placed at an address of its
+    /// alignment, at the start of a fresh chunk and inside a used one.
+    #[test]
+    fn test_over_aligned_value_is_aligned() {
+        #[repr(align(4096))]
+        struct Page(u64);
+
+        let arena = Arena::new();
+        arena.alloc(1u8);
+        let page = arena.alloc(Page(7));
+        assert_eq!((page.get() as *const Page).addr() % 4096, 0);
+        assert_eq!(page.get().0, 7);
+
+        let roomy = Arena::with_config(ArenaConfig {
+            initial_chunk_size: 1 << 16,
+            max_chunk_size: 1 << 16,
+            growth_factor: 2.0,
+        });
+        roomy.alloc(1u8);
+        let page = roomy.alloc(Page(9));
+        assert_eq!((page.get() as *const Page).addr() % 4096, 0);
+        assert_eq!(page.get().0, 9);
+    }
+
+    /// A zero chunk size and a zero-sized value never ask the allocator for
+    /// zero bytes.
+    #[test]
+    fn test_zero_sized_requests() {
+        let arena = Arena::with_config(ArenaConfig {
+            initial_chunk_size: 0,
+            max_chunk_size: 0,
+            growth_factor: 2.0,
+        });
+        let unit = arena.alloc(());
+        let () = *unit.get();
+        let byte = arena.alloc(5u8);
+        assert_eq!(*byte.get(), 5);
     }
 }

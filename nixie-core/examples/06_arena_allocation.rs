@@ -39,7 +39,7 @@ fn main() {
         max_chunk_size: 1024 * 1024, // 1 MB max
     };
 
-    let mut arena = Arena::with_config(config);
+    let arena = Arena::with_config(config);
     println!("Created arena with 4 KB initial capacity");
 
     // Allocate some data
@@ -156,7 +156,7 @@ fn main() {
     );
 
     // Benchmark: Arena allocation
-    let mut arena2 = Arena::new();
+    let arena2 = Arena::new();
     let start = Instant::now();
     for i in 0..N {
         arena2.alloc(i);
@@ -207,7 +207,7 @@ fn main() {
     // ======== Example 6: Arena Growth ========
     println!("\n--- Example 6: Arena Growth ---");
 
-    let mut growing_arena = Arena::with_config(ArenaConfig {
+    let growing_arena = Arena::with_config(ArenaConfig {
         initial_chunk_size: 128,
         growth_factor: 2.0,
         max_chunk_size: 2048,
