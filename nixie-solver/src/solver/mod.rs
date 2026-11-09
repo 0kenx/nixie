@@ -34,6 +34,7 @@ pub(crate) mod logic_contract;
 pub(super) mod model_blocking;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
+mod model_eval_bv;
 pub(super) mod nla_relax;
 pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
@@ -1036,6 +1037,11 @@ pub(super) enum EvalVal {
     /// atoms to the WRONG truth value (a false-`sat` hazard).  Exact
     /// arithmetic keeps the gate sound AND complete at the boundary.
     NumBig(Box<num_rational::BigRational>),
+    /// Exact unsigned bit-vector residue in `[0, 2^width)`.
+    Bv {
+        value: num_bigint::BigInt,
+        width: u32,
+    },
 }
 
 impl EvalVal {
@@ -1047,7 +1053,7 @@ impl EvalVal {
                 num_bigint::BigInt::from(*r.denom()),
             )),
             EvalVal::NumBig(b) => Some((**b).clone()),
-            EvalVal::Bool(_) => None,
+            EvalVal::Bool(_) | EvalVal::Bv { .. } => None,
         }
     }
 }

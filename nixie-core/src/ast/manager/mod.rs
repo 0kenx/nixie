@@ -172,7 +172,15 @@ impl TermManager {
     /// This is the public-facing version of the internal `intern` method,
     /// intended for use by crates that need to construct term kinds directly
     /// (e.g. when rebuilding quantifiers with substituted bodies).
-    pub fn intern_term(&mut self, kind: TermKind, sort: SortId) -> TermId {
+    pub fn intern_term(&mut self, mut kind: TermKind, sort: SortId) -> TermId {
+        // Raw construction must preserve the numeral invariant that mk_bitvec
+        // establishes. Otherwise equality can fold two spellings of the same
+        // residue to false before any theory or model checker sees them.
+        if let TermKind::BitVecConst { value, width } = &mut kind
+            && (value.sign() == num_bigint::Sign::Minus || value.bits() > u64::from(*width))
+        {
+            *value = bv_fold::bv_wrap_unsigned(value, *width);
+        }
         self.intern(kind, sort)
     }
 
@@ -552,6 +560,29 @@ impl Default for SubstitutionBuilder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn raw_bv_numerals_share_the_builders_canonical_residue() {
+        use crate::ast::{TermKind, TermManager};
+        use num_bigint::BigInt;
+        for width in [1, 8, 64, 129] {
+            let mut manager = TermManager::new();
+            let sort = manager.sorts.bitvec(width);
+            let modulus = BigInt::from(1) << width as usize;
+            for value in [BigInt::from(-1), &modulus + 3u32, -(&modulus + 3u32)] {
+                let raw = manager.intern_term(
+                    TermKind::BitVecConst {
+                        value: value.clone(),
+                        width,
+                    },
+                    sort,
+                );
+                let built = manager.mk_bitvec(value, width);
+                assert_eq!(raw, built);
+                assert_eq!(manager.mk_eq(raw, built), manager.true_id);
+            }
+        }
+    }
+
     use super::*;
 
     #[test]
