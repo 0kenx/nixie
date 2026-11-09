@@ -11,6 +11,7 @@ use num_bigint::BigUint;
 use smallvec::SmallVec;
 
 mod bool_node;
+mod budget;
 /// Division / remainder encodings (`bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`).
 mod division;
 mod order;
@@ -173,6 +174,10 @@ impl BvAbstraction {
 pub struct BvSolver {
     /// Embedded SAT solver
     sat: SatSolver,
+    budget_max_conflicts: Option<u64>,
+    budget_deadline: Option<nixie_time::Instant>,
+    /// Total across embedded resets and repair rounds; re-armed explicitly.
+    conflicts_spent: u64,
     /// Term to BV variable mapping
     term_to_bv: FxHashMap<TermId, BvVar>,
     /// Pending assertions
@@ -380,6 +385,9 @@ impl BvSolver {
         let (const_true, const_false) = Self::reserve_const_bits(&mut sat);
         Self {
             sat,
+            budget_max_conflicts: None,
+            budget_deadline: None,
+            conflicts_spent: 0,
             term_to_bv: FxHashMap::default(),
             assertions: Vec::new(),
             asserted_eq_pairs: FxHashSet::default(),
@@ -3717,6 +3725,7 @@ impl Theory for BvSolver {
 
 impl TheoryCombination for BvSolver {
     fn notify_equality(&mut self, eq: EqualityNotification) -> bool {
+        self.shared_equalities.clear();
         if self.unified {
             // Unified generation: the equality is a semantic consequence of
             // clauses already in the caller's core (or of atoms the honesty

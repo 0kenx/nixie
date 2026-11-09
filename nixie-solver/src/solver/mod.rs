@@ -38,6 +38,7 @@ pub(super) mod nla_relax;
 pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
+mod resource_budget;
 mod set_model;
 mod set_refinement;
 pub(super) mod set_theory;
@@ -398,6 +399,8 @@ pub struct Solver {
     pub(super) simplifier: Simplifier,
     /// Solver statistics
     pub(super) statistics: Statistics,
+    check_deadline: Option<nixie_time::Instant>,
+    check_theory_conflict_ceiling: u64,
     /// Bitvector terms (for model extraction)
     pub(super) bv_terms: FxHashSet<TermId>,
     /// Whether the formula contains BV ring operations (`bvadd`/`bvsub`/
@@ -1057,14 +1060,6 @@ impl Default for Solver {
     }
 }
 
-/// Watchdog guard for [`Solver::deadline_watchdog`]: a detached thread
-/// raises the interrupt flag at the deadline; the flag is cleared when the
-/// guard drops (the solve has returned by then), so a timed-out check
-/// never poisons the next.
-struct DeadlineGuard {
-    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
 /// Structural pure-Boolean predicate for [`Solver::goal_is_pure_boolean`]:
 /// every sub-term is Bool-sorted and built from Boolean constants, Bool
 /// variables, and Boolean connectives (including Bool-sorted `=`/`ite`/
@@ -1110,12 +1105,6 @@ fn term_is_pure_boolean(term: TermId, manager: &TermManager) -> bool {
         stack.extend(nixie_core::ast::traversal::get_children(&term_data.kind));
     }
     true
-}
-
-impl Drop for DeadlineGuard {
-    fn drop(&mut self) {
-        self.flag.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 
 impl Solver {
@@ -1300,6 +1289,8 @@ impl Solver {
             },
             simplifier: Simplifier::new(),
             statistics: Statistics::new(),
+            check_deadline: None,
+            check_theory_conflict_ceiling: 0,
             bv_terms: FxHashSet::default(),
             has_bv_ring_ops: false,
             has_bv_wide_mul: false,
@@ -1588,6 +1579,7 @@ impl Solver {
             return cached;
         }
 
+        self.begin_check_budget();
         self.certification_failure = None;
         #[cfg(feature = "std")]
         {
@@ -2497,34 +2489,6 @@ impl Solver {
         }
     }
 
-    /// Wall-clock watchdog for the pure-Boolean fast path: mirrors the
-    /// theory callbacks' `timeout_ms` enforcement by raising the SAT
-    /// solver's interrupt flag once the deadline passes. `None` (no
-    /// timeout) releases immediately; the guard clears the flag on drop so
-    /// a timeout on one check never poisons the next.
-    fn deadline_watchdog(&mut self) -> Option<DeadlineGuard> {
-        if self.config.timeout_ms == 0 {
-            return None;
-        }
-        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        self.sat.set_interrupt(flag.clone());
-        let deadline =
-            nixie_time::Instant::now() + core::time::Duration::from_millis(self.config.timeout_ms);
-        // Detached watchdog: raises the interrupt flag at the deadline.
-        // The guard clears the flag when the solve returns, so a timed-out
-        // check never poisons the next; the thread itself exits after its
-        // sleep and only ever touches the AtomicBool.
-        let watch_flag = flag.clone();
-        std::thread::spawn(move || {
-            let now = nixie_time::Instant::now();
-            if now < deadline {
-                std::thread::sleep(deadline - now);
-            }
-            watch_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-        });
-        Some(DeadlineGuard { flag })
-    }
-
     /// Whether every assertion is built purely from Bool constants and
     /// Boolean connectives (the fast path's dispatch predicate; see the
     /// fast-path block in [`Self::check_core`]). A conservative structural
@@ -3004,18 +2968,6 @@ impl Solver {
             self.flush_deferred_bv_asserts_raw(manager);
         }
 
-        // Check resource limits before starting
-        if self.config.max_conflicts > 0 && self.statistics.conflicts >= self.config.max_conflicts {
-            {
-                return SolverResult::Unknown;
-            }
-        }
-        if self.config.max_decisions > 0 && self.statistics.decisions >= self.config.max_decisions {
-            {
-                return SolverResult::Unknown;
-            }
-        }
-
         // Equality-logic transitivity preprocessing (Sparse method, Bryant &
         // Velev). Self-gates to pure equality logic; for families like
         // `eq_diamond` it makes the search polynomial instead of 2^N. When it
@@ -3080,17 +3032,9 @@ impl Solver {
         // including those inside `let` bindings (array select results).
         self.ensure_numeric_equality_splits(manager);
 
-        // Wall-clock deadline for the CDCL(T)/MBQI search.  `timeout_ms == 0`
-        // means "no timeout".  The deadline is enforced (a) between MBQI
-        // rounds here and (b) mid-search inside the theory callbacks, so a
-        // single long `solve_with_theory` call cannot run past the budget.
+        // One deadline for every refinement round in this public check.
         #[cfg(feature = "std")]
-        let deadline: Option<nixie_time::Instant> = if self.config.timeout_ms > 0 {
-            nixie_time::Instant::now()
-                .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
-        } else {
-            None
-        };
+        let deadline = self.check_deadline;
 
         // Order-encoding fallback (Option A stage 2, `bv_unified`): any
         // `distinct` spec still pending gets its pairwise encoding here, at
@@ -3220,24 +3164,12 @@ impl Solver {
         // (a search restriction, not lemmas) keep `check_sat_only`'s
         // honesty caveat: an Unsat over a restricted database is Unknown.
         if !self.user_state.active() && self.goal_is_pure_boolean(manager) {
-            // Wall-clock budget parity: the general path enforces
-            // `timeout_ms` from inside the theory callbacks; the plain
-            // solver checks only `max_conflicts` and its interrupt flag,
-            // so a deadline runs here as a watchdog that raises the flag.
-            let _watchdog = self.deadline_watchdog();
             // Statistics parity: `Statistics::propagations` counts search
             // work the caller can observe (the general path's theory
             // callbacks bump it per assignment notification). Feed the
             // SAT core's delta in so `:statistics` and the verdict-cache
             // tests keep the same contract with no manager attached.
             let props_before = self.sat.stats().propagations;
-            // The SAT-core conflict budget (see the general path's twin
-            // note): this path's conflicts are all SAT-core conflicts.
-            if self.config.max_conflicts > 0 {
-                let spent = self.sat.stats().conflicts;
-                self.sat
-                    .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
-            }
             match self.sat.solve() {
                 SatResult::Unsat => {
                     self.statistics.propagations +=
@@ -3315,11 +3247,12 @@ impl Solver {
             &mut self.derived_reasons,
             self.config.theory_mode,
             &mut self.statistics,
-            self.config.max_conflicts,
+            self.check_theory_conflict_ceiling,
             self.config.max_decisions,
+            self.config.max_bv_embedded_checks,
             self.has_bv_arith_ops,
             self.has_array_ops,
-            self.config.timeout_ms,
+            self.check_deadline,
             self.logic.as_deref(),
             pure_dl,
             sparse_dl,
@@ -3402,24 +3335,6 @@ impl Solver {
             if crate::solver::freeze_collapse_enabled() {
                 let vars: Vec<_> = self.var_to_constraint.keys().copied().collect();
                 self.sat.freeze_theory_vars(vars);
-            }
-            // The SAT-core conflict budget (`config.max_conflicts`, the
-            // CLI's `--conflict-limit` and `check_with_limits`' per-check
-            // cap): the budget used to be enforced only at `check` entry
-            // and on *theory* conflicts inside the callbacks — a
-            // bit-blasted pure-BV goal spends its conflicts in the SAT
-            // core (theory conflicts ≈ 0), so the limit was a facade
-            // there (measured: `--conflict-limit 100` on a 1507-conflict
-            // QF_BV instance returned `unsat` untouched).  Set the core's
-            // own budget to the remaining allowance before every solve —
-            // the MBQI loop re-enters `solve_with_theory` per round, and
-            // the core's cumulative counter is the honest remaining-work
-            // base.  The core returns `Unknown` on exhaustion, which maps
-            // to `Unknown` below (a budget stop is never a verdict).
-            if self.config.max_conflicts > 0 {
-                let spent = self.sat.stats().conflicts;
-                self.sat
-                    .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
             }
             let sat_result = if self.user_state.active() {
                 let mut callback = user_propagation::UserCallback::new(
@@ -3537,11 +3452,12 @@ impl Solver {
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
                                 &mut self.statistics,
-                                self.config.max_conflicts,
+                                self.check_theory_conflict_ceiling,
                                 self.config.max_decisions,
+                                self.config.max_bv_embedded_checks,
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
-                                self.config.timeout_ms,
+                                self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
@@ -3712,11 +3628,12 @@ impl Solver {
                             &mut self.derived_reasons,
                             self.config.theory_mode,
                             &mut self.statistics,
-                            self.config.max_conflicts,
+                            self.check_theory_conflict_ceiling,
                             self.config.max_decisions,
+                            self.config.max_bv_embedded_checks,
                             self.has_bv_arith_ops,
                             self.has_array_ops,
-                            self.config.timeout_ms,
+                            self.check_deadline,
                             self.logic.as_deref(),
                             pure_dl,
                             sparse_dl,
@@ -3774,11 +3691,12 @@ impl Solver {
                                         &mut self.derived_reasons,
                                         self.config.theory_mode,
                                         &mut self.statistics,
-                                        self.config.max_conflicts,
+                                        self.check_theory_conflict_ceiling,
                                         self.config.max_decisions,
+                                        self.config.max_bv_embedded_checks,
                                         self.has_bv_arith_ops,
                                         self.has_array_ops,
-                                        self.config.timeout_ms,
+                                        self.check_deadline,
                                         self.logic.as_deref(),
                                         pure_dl,
                                         sparse_dl,
@@ -3903,11 +3821,12 @@ impl Solver {
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
                                 &mut self.statistics,
-                                self.config.max_conflicts,
+                                self.check_theory_conflict_ceiling,
                                 self.config.max_decisions,
+                                self.config.max_bv_embedded_checks,
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
-                                self.config.timeout_ms,
+                                self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
@@ -3954,11 +3873,12 @@ impl Solver {
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
                                 &mut self.statistics,
-                                self.config.max_conflicts,
+                                self.check_theory_conflict_ceiling,
                                 self.config.max_decisions,
+                                self.config.max_bv_embedded_checks,
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
-                                self.config.timeout_ms,
+                                self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
@@ -4001,11 +3921,12 @@ impl Solver {
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
                                 &mut self.statistics,
-                                self.config.max_conflicts,
+                                self.check_theory_conflict_ceiling,
                                 self.config.max_decisions,
+                                self.config.max_bv_embedded_checks,
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
-                                self.config.timeout_ms,
+                                self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
@@ -4087,11 +4008,12 @@ impl Solver {
                                     &mut self.derived_reasons,
                                     self.config.theory_mode,
                                     &mut self.statistics,
-                                    self.config.max_conflicts,
+                                    self.check_theory_conflict_ceiling,
                                     self.config.max_decisions,
+                                    self.config.max_bv_embedded_checks,
                                     self.has_bv_arith_ops,
                                     self.has_array_ops,
-                                    self.config.timeout_ms,
+                                    self.check_deadline,
                                     self.logic.as_deref(),
                                     pure_dl,
                                     sparse_dl,
@@ -4148,11 +4070,12 @@ impl Solver {
                                 &mut self.derived_reasons,
                                 self.config.theory_mode,
                                 &mut self.statistics,
-                                self.config.max_conflicts,
+                                self.check_theory_conflict_ceiling,
                                 self.config.max_decisions,
+                                self.config.max_bv_embedded_checks,
                                 self.has_bv_arith_ops,
                                 self.has_array_ops,
-                                self.config.timeout_ms,
+                                self.check_deadline,
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
@@ -4204,11 +4127,12 @@ impl Solver {
                                         &mut self.derived_reasons,
                                         self.config.theory_mode,
                                         &mut self.statistics,
-                                        self.config.max_conflicts,
+                                        self.check_theory_conflict_ceiling,
                                         self.config.max_decisions,
+                                        self.config.max_bv_embedded_checks,
                                         self.has_bv_arith_ops,
                                         self.has_array_ops,
-                                        self.config.timeout_ms,
+                                        self.check_deadline,
                                         self.logic.as_deref(),
                                         pure_dl,
                                         sparse_dl,
@@ -4798,11 +4722,12 @@ impl Solver {
                         &mut self.derived_reasons,
                         self.config.theory_mode,
                         &mut self.statistics,
-                        self.config.max_conflicts,
+                        self.check_theory_conflict_ceiling,
                         self.config.max_decisions,
+                        self.config.max_bv_embedded_checks,
                         self.has_bv_arith_ops,
                         self.has_array_ops,
-                        self.config.timeout_ms,
+                        self.check_deadline,
                         self.logic.as_deref(),
                         pure_dl,
                         sparse_dl,
@@ -4950,6 +4875,7 @@ impl Solver {
             return self.check(manager);
         }
         self.user_state.closed = true;
+        self.begin_check_budget();
         // Trivial verdicts first, mirroring `check_core`: an asserted `False`
         // never reaches the SAT core as a clause (`assert` records the flag
         // and returns), so solving the clause set alone would miss it and
@@ -4972,13 +4898,6 @@ impl Solver {
             }
         }
 
-        // The SAT-core conflict budget (see the general path's twin
-        // note): `check_sat_only`'s conflicts are all SAT-core conflicts.
-        if self.config.max_conflicts > 0 {
-            let spent = self.sat.stats().conflicts;
-            self.sat
-                .set_max_conflicts(Some(self.config.max_conflicts.saturating_sub(spent)));
-        }
         let raw_result = match self.sat.solve() {
             SatResult::Sat => {
                 self.build_model(manager);

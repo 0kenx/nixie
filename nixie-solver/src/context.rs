@@ -1073,7 +1073,9 @@ impl Context {
     ///   disables it.  Maps to [`crate::SolverConfig::timeout_ms`], enforced between
     ///   MBQI rounds and inside the theory callbacks.
     /// - `max-conflicts` / `max-decisions` (non-negative integer) – resource
-    ///   limits; `0` means unlimited.
+    ///   limits per query; `0` means unlimited.
+    /// - `max-bv-embedded-checks` limits embedded BV checks per query; `0`
+    ///   uses the fixed 250,000 cap, and nonzero values may only lower it.
     /// - `theory-mode` (`eager`/`lazy`) – theory propagation eagerness.
     /// - `simplify` (`true`/`false`) – pre-solve simplification of asserted
     ///   formulas.
@@ -1130,6 +1132,13 @@ impl Context {
                 if let Ok(n) = value.trim().parse::<u64>() {
                     let mut config = self.solver.config().clone();
                     config.max_conflicts = n;
+                    self.solver.set_config(config);
+                }
+            }
+            "max-bv-embedded-checks" | "max_bv_embedded_checks" => {
+                if let Ok(n) = value.trim().parse::<u64>() {
+                    let mut config = self.solver.config().clone();
+                    config.max_bv_embedded_checks = n;
                     self.solver.set_config(config);
                 }
             }
@@ -1377,14 +1386,15 @@ impl Context {
     pub fn get_statistics(&self) -> String {
         let stats = self.solver.get_statistics();
         format!(
-            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {})",
+            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {})",
             stats.decisions,
             stats.conflicts,
             stats.propagations,
             stats.restarts,
             stats.learned_clauses,
             stats.theory_propagations,
-            stats.theory_conflicts
+            stats.theory_conflicts,
+            stats.bv_embedded_checks
         )
     }
 
@@ -2194,6 +2204,12 @@ impl Context {
         }
 
         Ok(output)
+    }
+
+    /// Conflicts spent by embedded bit-vector searches in the last query.
+    #[must_use]
+    pub fn bv_conflicts_spent(&self) -> u64 {
+        self.solver.bv_conflicts_spent()
     }
 
     /// Get solver statistics

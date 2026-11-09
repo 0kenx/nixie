@@ -292,6 +292,9 @@ pub struct SolverConfig {
     pub max_conflicts: u64,
     /// Maximum number of decisions before giving up (0 = unlimited)
     pub max_decisions: u64,
+    /// Maximum embedded BV checks per query (0 uses the fixed 250,000 cap).
+    /// A caller may lower the cap but cannot raise it.
+    pub max_bv_embedded_checks: u64,
     /// Restart strategy for SAT solver
     pub restart_strategy: RestartStrategy,
     /// Enable clause minimization (recursive minimization of learned clauses)
@@ -375,6 +378,7 @@ impl SolverConfig {
             simplify: true, // Keep basic simplification
             max_conflicts: 0,
             max_decisions: 0,
+            max_bv_embedded_checks: 0,
             restart_strategy: RestartStrategy::Geometric, // Faster than Glucose
             enable_clause_minimization: true,             // Keep this, it's fast
             enable_clause_subsumption: false,             // Skip for speed
@@ -413,6 +417,7 @@ impl SolverConfig {
             simplify: true,
             max_conflicts: 0,
             max_decisions: 0,
+            max_bv_embedded_checks: 0,
             restart_strategy: RestartStrategy::Glucose, // Adaptive restarts
             enable_clause_minimization: true,
             enable_clause_subsumption: true,
@@ -451,6 +456,7 @@ impl SolverConfig {
             simplify: true,
             max_conflicts: 0,
             max_decisions: 0,
+            max_bv_embedded_checks: 0,
             restart_strategy: RestartStrategy::Glucose,
             enable_clause_minimization: true,
             enable_clause_subsumption: true,
@@ -490,6 +496,7 @@ impl SolverConfig {
             simplify: false,
             max_conflicts: 0,
             max_decisions: 0,
+            max_bv_embedded_checks: 0,
             restart_strategy: RestartStrategy::Geometric,
             enable_clause_minimization: false,
             enable_clause_subsumption: false,
@@ -571,6 +578,8 @@ impl SolverConfig {
 /// Solver statistics
 #[derive(Debug, Clone, Default)]
 pub struct Statistics {
+    /// Embedded BV checks attempted in the most recent query.
+    pub bv_embedded_checks: u64,
     /// Number of decisions made
     pub decisions: u64,
     /// Model-blocking clauses asserted by

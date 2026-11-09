@@ -72,6 +72,7 @@ pub(crate) enum BoundPropMode {
     Tighten,
 }
 
+mod bv_budget;
 mod conflict_clause;
 #[cfg(debug_assertions)]
 mod debug_scan;
@@ -492,6 +493,7 @@ pub(crate) struct TheoryManager<'a> {
     /// set, answers `Unknown` instead of trusting the `Sat` – so a dropped
     /// conflict never turns into a fabricated satisfiability result.
     resource_exhausted: bool,
+    bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
     /// manager could not account for, so that no conflict clause could be built
     /// (see [`Self::conflict_from_terms`]).
@@ -644,23 +646,18 @@ impl<'a> TheoryManager<'a> {
         statistics: &'a mut Statistics,
         max_conflicts: u64,
         max_decisions: u64,
+        max_bv_embedded_checks: u64,
         has_bv_arith_ops: bool,
         has_array_ops: bool,
-        timeout_ms: u64,
+        deadline: Option<nixie_time::Instant>,
         logic: Option<&str>,
         pure_dl: bool,
         sparse_dl: bool,
         has_injective_distinct: bool,
         injective_specs: &'a [(TermId, Vec<TermId>)],
     ) -> Self {
-        #[cfg(feature = "std")]
-        let deadline = if timeout_ms > 0 {
-            nixie_time::Instant::now().checked_add(core::time::Duration::from_millis(timeout_ms))
-        } else {
-            None
-        };
         #[cfg(not(feature = "std"))]
-        let _ = timeout_ms;
+        let _ = deadline;
         let mut this = Self {
             has_injective_distinct,
             injective_specs,
@@ -712,6 +709,9 @@ impl<'a> TheoryManager<'a> {
             bool_true_node: None,
             bool_false_node: None,
             resource_exhausted: false,
+            bv_embedded_check_ceiling: bv_budget::effective_bv_embedded_check_ceiling(
+                max_bv_embedded_checks,
+            ),
             unjustified_conflict: false,
             abstention_exhausted: false,
             array_theory,
@@ -3336,6 +3336,10 @@ impl<'a> TheoryManager<'a> {
         use nixie_theories::Theory;
         use nixie_theories::TheoryCheckResult as TheoryCheckResultEnum;
         self.bv.record_constraint_term(constraint_term);
+        if self.charge_bv_embedded_check() {
+            self.resource_exhausted = true;
+            return None;
+        }
         match self.bv.check() {
             Ok(TheoryCheckResultEnum::Unsat(conflict_terms)) => {
                 Some(self.conflict_from_terms(&conflict_terms))
@@ -4090,7 +4094,7 @@ impl TheoryCallback for TheoryManager<'_> {
         let var = lit.var();
         let is_positive = !lit.is_neg();
 
-        if self.timed_out() {
+        if self.timed_out() || self.bv_embedded_budget_spent() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
         }
@@ -4319,7 +4323,7 @@ impl TheoryCallback for TheoryManager<'_> {
     }
 
     fn final_check(&mut self) -> TheoryCheckResult {
-        if self.timed_out() {
+        if self.timed_out() || self.bv_embedded_budget_spent() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
         }
@@ -4350,6 +4354,10 @@ impl TheoryCallback for TheoryManager<'_> {
         // and all current assumptions, so this adds no redundant SAT search.
         if !self.bv.is_unified() && self.bv.has_circuits() {
             use nixie_theories::Theory;
+            if self.charge_bv_embedded_check() {
+                self.resource_exhausted = true;
+                return TheoryCheckResult::Sat;
+            }
             match self.bv.check() {
                 Ok(nixie_theories::TheoryCheckResult::Unsat(terms)) => {
                     return self.conflict_from_terms(&terms);

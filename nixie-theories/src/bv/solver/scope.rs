@@ -312,7 +312,10 @@ impl BvSolver {
             }
             return (SolverResult::Sat, None);
         }
+        self.apply_budget_to_embedded(self.remaining_conflict_budget());
+        let conflicts_before = self.sat.stats().conflicts;
         let (result, core) = self.sat.solve_with_assumptions(&assumptions);
+        self.charge_embedded_conflicts(conflicts_before);
         if result == SolverResult::Sat {
             self.last_sat_model = self.sat.model().to_vec();
             self.model_is_current = true;

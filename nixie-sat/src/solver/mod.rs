@@ -2071,6 +2071,11 @@ pub struct Solver {
     /// the resource budget consulted by the CDCL loop and drives, e.g.,
     /// `nixie-cli --timeout`-style bounded solving.
     pub(super) max_conflicts: Option<u64>,
+    /// Cumulative decision ceiling; reset preserves the configured limit.
+    pub(super) max_decisions: Option<u64>,
+    /// Explicit caller deadline; never used as a search heuristic.
+    pub(super) deadline: Option<nixie_time::Instant>,
+    pub(super) deadline_poll_countdown: u16,
     /// Proof dispatcher (`class Proof`). When `Some`, every proof event the
     /// CDCL loop / inprocessing emits (learned/original/deleted clause, empty
     /// clause, in-place strengthen/flush) is fanned out to the attached
@@ -2533,6 +2538,9 @@ impl Solver {
             equiv_subst_inited: false,
             interrupt: None,
             max_conflicts: None,
+            max_decisions: None,
+            deadline: None,
+            deadline_poll_countdown: 0,
             proof: None,
             lrat: false,
             pending_parse_unit_flushes: Vec::new(),
@@ -3182,6 +3190,34 @@ impl Solver {
         self.eager_sub_override = Some(on);
     }
 
+    /// Set the decision budget (`None` clears it). When set, the CDCL search
+    /// loop returns [`SolverResult::Unknown`] once the budget is reached.
+    ///
+    /// Same cumulative-counter caveat as [`Solver::set_max_conflicts`]: the
+    /// budget is compared against [`SolverStats::decisions`].
+    pub fn set_max_decisions(&mut self, max_decisions: Option<u64>) {
+        self.max_decisions = max_decisions;
+    }
+
+    /// Set a wall-clock deadline for the search (`None` clears it).
+    ///
+    /// Polled from `should_stop_search`, at most once per
+    /// 256 polls so the hot loop does not read the clock
+    /// on every iteration; the throttle is reset here so a freshly-set deadline
+    /// is checked on the very first poll. When the deadline has passed, the
+    /// search returns [`SolverResult::Unknown`].
+    ///
+    /// Deliberately **not** `cfg`-gated on `std`: `nixie_time::Instant` exists on
+    /// every target. Where no clock exists (`wasm32-unknown-unknown`, or a
+    /// `--no-default-features` build) the clock is frozen at t = 0, so the
+    /// deadline never fires and this is a documented no-op — such callers
+    /// should bound the search with [`Solver::set_max_conflicts`] /
+    /// [`Solver::set_max_decisions`] instead. See the `nixie_time` crate docs.
+    pub fn set_deadline(&mut self, deadline: Option<nixie_time::Instant>) {
+        self.deadline = deadline;
+        self.deadline_poll_countdown = 0;
+    }
+
     /// The current conflict budget ([`Self::set_max_conflicts`]); `None`
     /// means unlimited.  Portfolio drivers use it to compose per-arm caps
     /// with a caller-supplied global budget.
@@ -3371,11 +3407,16 @@ impl Solver {
     }
 
     /// Returns `true` when the search must stop early: the conflict budget has
-    /// been reached or an external interrupt flag has been raised.
+    /// been reached, a caller deadline expired, or an interrupt was raised.
     #[inline]
-    pub(super) fn should_stop_search(&self) -> bool {
+    pub(super) fn should_stop_search(&mut self) -> bool {
         if let Some(max) = self.max_conflicts
             && self.stats.conflicts >= max
+        {
+            return true;
+        }
+        if let Some(max) = self.max_decisions
+            && self.stats.decisions >= max
         {
             return true;
         }
@@ -3383,6 +3424,16 @@ impl Solver {
             && flag.load(Ordering::Relaxed)
         {
             return true;
+        }
+        if let Some(deadline) = self.deadline {
+            if self.deadline_poll_countdown == 0 {
+                self.deadline_poll_countdown = 255;
+                if nixie_time::Instant::now() >= deadline {
+                    return true;
+                }
+            } else {
+                self.deadline_poll_countdown -= 1;
+            }
         }
         false
     }
