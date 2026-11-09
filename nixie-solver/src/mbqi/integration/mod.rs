@@ -1056,10 +1056,10 @@ impl MBQIIntegration {
         #[cfg(feature = "std")]
         let cex_start = Instant::now();
         let mut all_instantiations = Vec::new();
-        // Track whether ALL quantifier evaluations resolved to concrete
-        // boolean values.  We can only claim Satisfied when every evaluation
-        // across every quantifier was fully ground (i.e. concrete True).
-        let mut all_evaluations_fully_ground = true;
+        // Track inconclusive samples per quantifier. Unresolved quantifiers
+        // need fully concrete, exhaustive evaluations; a complete certificate
+        // for this same model supersedes sampling for the certified quantifier.
+        let mut evaluations_not_ground: FxHashSet<TermId> = FxHashSet::default();
         // Quantifiers the nested model checker certified against a total
         // completed interpretation this round.  Their satisfaction does not
         // depend on the finite-domain enumeration below, so they are exempt
@@ -1172,7 +1172,7 @@ impl MBQIIntegration {
                     );
                 }
                 if !quantifier.guard_inactive && !satisfied_by_checker.contains(&quantifier.term) {
-                    all_evaluations_fully_ground = false;
+                    evaluations_not_ground.insert(quantifier.term);
                 }
                 continue;
             }
@@ -1203,7 +1203,7 @@ impl MBQIIntegration {
                 .generate(quantifier, &completed_model, manager);
 
             if !cex_result.all_evaluations_ground {
-                all_evaluations_fully_ground = false;
+                evaluations_not_ground.insert(quantifier.term);
             }
 
             self.stats.num_counterexamples += cex_result.counterexamples.len();
@@ -1268,7 +1268,7 @@ impl MBQIIntegration {
             } else if cex_result.counterexamples.is_empty() && !quantifier.is_universal {
                 // For existentials with no witness found, mark as not-all-ground so
                 // we return Unknown rather than Satisfied (we couldn't verify).
-                all_evaluations_fully_ground = false;
+                evaluations_not_ground.insert(quantifier.term);
             }
 
             // Escalation: the sampling search found *no counterexample at
@@ -1295,7 +1295,7 @@ impl MBQIIntegration {
                     callback,
                 )
             {
-                all_evaluations_fully_ground = false;
+                evaluations_not_ground.insert(quantifier.term);
             }
         }
 
@@ -1329,7 +1329,13 @@ impl MBQIIntegration {
             // 600-rerun convergence pins 20x (a nested solve per round
             // per quantifier, on goals the cheap gates disqualify anyway).
             let logic_hint = self.logic_hint.clone();
-            if all_evaluations_fully_ground
+            // A complete check of this very structure supersedes symbolic
+            // sampling for that quantifier. Only unresolved quantifiers need
+            // concrete exhaustive samples; a global sampling flag kept an
+            // independently verified model Unknown forever (set9/16/19).
+            if unresolved
+                .iter()
+                .all(|q| !evaluations_not_ground.contains(&q.term))
                 && self.all_domains_finitely_exhausted(&unresolved, &completed_model, manager)
                 && !unresolved.iter().any(|q| {
                     self.model_checker.check_veto(

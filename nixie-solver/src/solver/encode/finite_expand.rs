@@ -1,4 +1,4 @@
-//! Exact finite-range expansion of bounded integer quantifiers.
+//! Exact expansion of bounded integers and complete Boolean/bit-vector domains.
 //!
 //! # What this does
 //!
@@ -13,6 +13,10 @@
 //! (forall ((i Int)) (=> (and (>= i l) (<= i u)) C(i)))  ≡  ⋀_{v=l..u} body(v)
 //! (exists ((i Int)) (and (>= i l) (<= i u) C(i)))       ≡  ⋁_{v=l..u} body(v)
 //! ```
+//!
+//! Boolean and bit-vector binders need no guard: their entire sort is finite.
+//! `forall` becomes the conjunction and `exists` the disjunction over every
+//! value, provided the product of domain sizes fits the same budget.
 //!
 //! # Why this is an *equivalence*, not an approximation
 //!
@@ -48,7 +52,7 @@
 //! * a constant-foldable combination of those (`(+ n 1)`, `(- 0 3)`, ...).
 //!
 //! Anything else – a bound that mentions another bound variable, an
-//! unconstrained symbol, a non-Int sort – makes the quantifier ineligible and
+//! unconstrained integer symbol, or a non-enumerable sort – makes the quantifier ineligible and
 //! it falls through to the existing MBQI path completely unchanged.  Declining
 //! costs completeness only, never soundness.
 //!
@@ -276,43 +280,28 @@ fn expand_one(
         return None;
     }
 
-    let int_sort = manager.sorts.int_sort;
-    if vars.iter().any(|&(_, sort)| sort != int_sort) {
-        return None;
-    }
-
-    let bounds = extract_bounds(body, &vars, is_exists, manager, entailed)?;
-
-    // Empty interval: the quantifier is a constant.  `forall` over an empty
-    // range is vacuously true, `exists` over one has no witness.
-    if bounds.iter().any(|(lo, hi)| lo > hi) {
-        return Some(if is_exists {
-            manager.mk_false()
-        } else {
-            manager.mk_true()
-        });
-    }
-
-    let mut widths: Vec<usize> = Vec::with_capacity(bounds.len());
-    let mut product: usize = 1;
-    for (lo, hi) in &bounds {
-        let width = ((hi - lo) + 1u32).to_usize()?;
-        product = product.checked_mul(width)?;
-        if product > budget {
-            return None;
+    let domains = match variable_domains(&vars, body, is_exists, manager, budget, entailed)? {
+        // Empty range: the quantifier is a constant.  `forall` over an empty
+        // range is vacuously true, `exists` over one has no witness.
+        Domains::Empty => {
+            return Some(if is_exists {
+                manager.mk_false()
+            } else {
+                manager.mk_true()
+            });
         }
-        widths.push(width);
-    }
+        Domains::Points(points) => points,
+    };
 
     // Odometer over the box, variable 0 varying slowest.
+    let mut offsets: Vec<usize> = vec![0; domains.len()];
+    let product = domains.iter().map(Vec::len).product();
     let mut instances: Vec<TermId> = Vec::with_capacity(product);
-    let mut offsets: Vec<usize> = vec![0; bounds.len()];
     loop {
         let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
         for (index, &(name, sort)) in vars.iter().enumerate() {
-            let (lo, _) = bounds.get(index)?;
             let offset = *offsets.get(index)?;
-            let value = manager.mk_int(lo + BigInt::from(offset));
+            let value = *domains.get(index)?.get(offset)?;
             let name_str = manager.resolve_str(name).to_string();
             let var_term = manager.mk_var(&name_str, sort);
             subst.insert(var_term, value);
@@ -340,7 +329,7 @@ fn expand_one(
                 });
             }
             position -= 1;
-            let width = *widths.get(position)?;
+            let width = domains.get(position)?.len();
             let slot = offsets.get_mut(position)?;
             *slot += 1;
             if *slot < width {
@@ -348,6 +337,147 @@ fn expand_one(
             }
             *slot = 0;
         }
+    }
+}
+
+/// The ground points each bound variable ranges over.
+enum Domains {
+    /// One list of ground terms per bound variable, in the declaration order
+    /// of `vars`.  Every list is non-empty.
+    Points(Vec<Vec<TermId>>),
+    /// Some variable's range is empty, so the quantifier is a constant.
+    Empty,
+}
+
+/// The box `vars` ranges over, or `None` when the quantifier is outside the
+/// finite fragment (or its box is wider than `budget`).
+///
+/// Two disjoint fragments are recognised, and which one applies is decided by
+/// the bound sorts alone:
+///
+/// 1. **Every variable is `Int`** — the box has to be *found*, in a guard the
+///    quantifier carries (see [`extract_bounds`]).  An `Int` is infinite, so
+///    without such a guard there is no finite expansion.
+/// 2. **Every variable has a finite sort** (`Bool`, `(_ BitVec w)`) — the box
+///    *is* the sort.  Nothing has to be extracted, no guard has to exist, and
+///    no entailment has to be established: `(forall ((i (_ BitVec 1))) C(i))`
+///    **is** `(and C(#b0) C(#b1))`, by the meaning of the sort.
+///
+/// A quantifier mixing the two, or binding any other sort, is declined; that
+/// costs completeness only, and it keeps its ordinary MBQI path.
+///
+/// # Why case 2 is worth having (`#P2b-47`)
+///
+/// It is the one case where MBQI is not merely slower but *wrong about the
+/// model it publishes*.  MBQI answers `Satisfied` when no instance it chose to
+/// build is violated by the candidate, which leaves every index it did not
+/// choose unconstrained — and `(get-model)` then renders the array at those
+/// indices from the sort default.  Fourteen of the 800 paired scripts in
+/// `rc5/corpus/{q,qnoite}` answered a correct `sat` and printed a model that
+/// falsifies their own quantified assertion for exactly that reason, every one
+/// of them a single `(forall ((i (_ BitVec w))) …)` over a two- or four-element
+/// index sort.  Expanding the sort makes the quantified script *be* its own
+/// ground expansion, which is the form the same 800 scripts already decide
+/// correctly, model included.
+fn variable_domains(
+    vars: &[(Spur, SortId)],
+    body: TermId,
+    is_exists: bool,
+    manager: &mut TermManager,
+    budget: usize,
+    entailed: &FxHashMap<TermId, BigInt>,
+) -> Option<Domains> {
+    let int_sort = manager.sorts.int_sort;
+    if vars.iter().all(|&(_, sort)| sort == int_sort) {
+        let bounds = extract_bounds(body, vars, is_exists, manager, entailed)?;
+        if bounds.iter().any(|(lo, hi)| lo > hi) {
+            return Some(Domains::Empty);
+        }
+        let mut product: usize = 1;
+        for (lo, hi) in &bounds {
+            let width = ((hi - lo) + 1u32).to_usize()?;
+            product = product.checked_mul(width)?;
+            if product > budget {
+                return None;
+            }
+        }
+        let mut points: Vec<Vec<TermId>> = Vec::with_capacity(bounds.len());
+        for (lo, hi) in &bounds {
+            let width = ((hi - lo) + 1u32).to_usize()?;
+            let mut column: Vec<TermId> = Vec::with_capacity(width);
+            for offset in 0..width {
+                column.push(manager.mk_int(lo + BigInt::from(offset)));
+            }
+            points.push(column);
+        }
+        return Some(Domains::Points(points));
+    }
+
+    // Case 2: the sorts themselves are the box.
+    let mut cardinalities: Vec<usize> = Vec::with_capacity(vars.len());
+    let mut product: usize = 1;
+    for &(_, sort) in vars {
+        let card = finite_sort_cardinality(sort, manager)?;
+        product = product.checked_mul(card)?;
+        if product > budget {
+            return None;
+        }
+        cardinalities.push(card);
+    }
+    let mut points: Vec<Vec<TermId>> = Vec::with_capacity(vars.len());
+    for (index, &(_, sort)) in vars.iter().enumerate() {
+        let card = *cardinalities.get(index)?;
+        let mut column: Vec<TermId> = Vec::with_capacity(card);
+        for value in 0..card {
+            column.push(finite_sort_element(sort, value, manager)?);
+        }
+        points.push(column);
+    }
+    Some(Domains::Points(points))
+}
+
+/// How many elements `sort` has, when it has finitely many *and* each of them
+/// can be written as a ground term.
+///
+/// `Bool` and `(_ BitVec w)` are the only two sorts that qualify here.  A
+/// declared (uninterpreted) sort is finite in every finite model but has no
+/// ground spelling for its elements, so it is not enumerable and is declined;
+/// `Int`, `Real`, `String`, `FloatingPoint` (whose `NaN` payloads and infinities
+/// make the naive `2^(eb+sb)` count wrong) and `Array` are all declined too.
+///
+/// The width guard is not only about cost: `1usize << 64` is undefined, and a
+/// width at or above 64 cannot have its cardinality represented in a `usize`
+/// at all.  Every such sort is far past any sane `budget` anyway.
+fn finite_sort_cardinality(sort: SortId, manager: &TermManager) -> Option<usize> {
+    match manager.sorts.get(sort)?.kind {
+        nixie_core::sort::SortKind::Bool => Some(2),
+        nixie_core::sort::SortKind::BitVec(width) if width > 0 => 1usize.checked_shl(width),
+        _ => None,
+    }
+}
+
+/// Element number `index` of `sort`, counting from zero.
+///
+/// The order is the one the sort's own values have — `false` before `true`,
+/// and unsigned increasing for a bit-vector — so the expansion of
+/// `(forall ((i (_ BitVec 2))) C(i))` reads `#b00`, `#b01`, `#b10`, `#b11`.
+/// Nothing depends on the order (a conjunction is commutative), but a *fixed*
+/// order is what makes the expanded term identical on every run, which the
+/// determinism gate requires.
+fn finite_sort_element(sort: SortId, index: usize, manager: &mut TermManager) -> Option<TermId> {
+    let kind = manager.sorts.get(sort)?.kind.clone();
+    match kind {
+        nixie_core::sort::SortKind::Bool => match index {
+            0 => Some(manager.mk_false()),
+            1 => Some(manager.mk_true()),
+            _ => None,
+        },
+        nixie_core::sort::SortKind::BitVec(width)
+            if width > 0 && index < 1usize.checked_shl(width)? =>
+        {
+            Some(manager.mk_bitvec(BigInt::from(index), width))
+        }
+        _ => None,
     }
 }
 
@@ -788,5 +918,73 @@ mod tests {
             !free.contains(&outer),
             "the outer bound variable must not leak out as a free constant"
         );
+    }
+}
+
+#[cfg(test)]
+mod finite_sort_tests {
+    use super::*;
+
+    #[test]
+    fn complete_finite_domains_expand_at_all_polarities() {
+        let mut manager = TermManager::new();
+        for sort in [manager.sorts.bool_sort, manager.sorts.bitvec(2)] {
+            let x = manager.mk_var("x", sort);
+            let bool_sort = manager.sorts.bool_sort;
+            let px = manager.mk_apply("p", [x], bool_sort);
+            let cardinality = finite_sort_cardinality(sort, &manager).unwrap();
+            let instances: Vec<_> = (0..cardinality)
+                .map(|i| {
+                    let value = finite_sort_element(sort, i, &mut manager).unwrap();
+                    manager.mk_apply("p", [value], bool_sort)
+                })
+                .collect();
+            for exists in [false, true] {
+                let quantified = if exists {
+                    manager.mk_exists([("x", sort)], px)
+                } else {
+                    manager.mk_forall([("x", sort)], px)
+                };
+                let expanded = if exists {
+                    manager.mk_or(instances.clone())
+                } else {
+                    manager.mk_and(instances.clone())
+                };
+                for positive in [false, true] {
+                    let source = if positive {
+                        quantified
+                    } else {
+                        manager.mk_not(quantified)
+                    };
+                    let expected = if positive {
+                        expanded
+                    } else {
+                        manager.mk_not(expanded)
+                    };
+                    assert_eq!(
+                        expand_finite_quantifiers(source, &mut manager, 64, &FxHashMap::default()),
+                        Some(expected)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn finite_product_budget_is_checked_before_enumeration() {
+        let mut manager = TermManager::new();
+        let bool_sort = manager.sorts.bool_sort;
+        for width in [1, 7, 32, 64, 129] {
+            let sort = manager.sorts.bitvec(width);
+            let x = manager.mk_var("x", sort);
+            let y = manager.mk_var("y", sort);
+            let body = manager.mk_apply("p", [x, y], bool_sort);
+            let quantified = manager.mk_forall([("x", sort), ("y", sort)], body);
+            assert!(
+                expand_finite_quantifiers(quantified, &mut manager, 3, &FxHashMap::default())
+                    .is_none()
+            );
+        }
+        assert!(finite_sort_element(bool_sort, 2, &mut manager).is_none());
     }
 }

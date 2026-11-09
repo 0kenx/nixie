@@ -40,8 +40,11 @@ fn narrow_rational64(r: &BigRational) -> Option<Rational64> {
     Some(Rational64::new(n, d))
 }
 
+mod binder_row;
 mod exists_skolem;
 pub(crate) mod finite_expand;
+mod quant_guard;
+mod quant_pipeline;
 mod skolem_candidates;
 mod track_theory_vars;
 
@@ -1556,6 +1559,11 @@ impl Solver {
         // their Skolemization, so the ground solver *searches* for a witness
         // instead of MBQI guessing one.
         let term_to_encode = self.skolemize_asserted_existentials(expanded, manager);
+        let row_lemma = self.binder_row_lemma(term_to_encode, manager);
+        let (term_to_encode, mut obligations) =
+            self.guard_conditional_quantifiers(term_to_encode, manager);
+        obligations.extend(row_lemma);
+        self.assert_quantifier_obligations(obligations, manager);
 
         // Check again if simplification produced a constant
         if let Some(t) = manager.get(term_to_encode) {
@@ -2282,6 +2290,11 @@ impl Solver {
         // Replace the existentials this assertion states unconditionally by
         // their Skolemization (see `assert`).
         let term_to_encode = self.skolemize_asserted_existentials(expanded, manager);
+        let row_lemma = self.binder_row_lemma(term_to_encode, manager);
+        let (term_to_encode, mut obligations) =
+            self.guard_conditional_quantifiers(term_to_encode, manager);
+        obligations.extend(row_lemma);
+        self.assert_quantifier_obligations(obligations, manager);
 
         // Collect polarity information if polarity-aware encoding is enabled
         if self.polarity_aware {
@@ -2505,6 +2518,7 @@ impl Solver {
                         // own.  A `Forall` still gets the guarded registration
                         // (its instances are valid under its own meaning); an
                         // `Exists` stays unowned and gates `sat`.
+                        unowned_candidates.insert(current);
                         if matches!(kind, TermKind::Forall { .. }) {
                             let var = self.get_or_create_var(current);
                             self.mbqi.add_guarded_quantifier(
@@ -2536,6 +2550,7 @@ impl Solver {
                     };
                     match kind {
                         TermKind::Forall { .. } => {
+                            unowned_candidates.insert(current);
                             // A boundary *universal* is still instantiable
                             // soundly: for `q = forall x. phi` the clause
                             // `(!q | phi[t])` is valid in every model, so it

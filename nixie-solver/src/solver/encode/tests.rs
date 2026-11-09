@@ -1498,3 +1498,56 @@ fn interface_proxies_do_not_capture_source_variables() {
     let rewritten = solver.purify_numeric_uf_args(eq, &mut tm);
     assert!(!nixie_core::ast::collect_subterms(rewritten, &tm).contains(&old_numeric));
 }
+
+#[test]
+fn conditional_false_existential_is_not_satisfied() {
+    let mut manager = TermManager::new();
+    let mut solver = Solver::new();
+    let int = manager.sorts.int_sort;
+    let bool_sort = manager.sorts.bool_sort;
+    let p = manager.mk_var("p", bool_sort);
+    let q = manager.mk_exists([("x", int)], manager.mk_false());
+    let assertion = manager.mk_or([p, q]);
+    let not_p = manager.mk_not(p);
+    solver.assert(assertion, &mut manager);
+    solver.assert(not_p, &mut manager);
+    let result = solver.check(&mut manager);
+    assert_eq!(result, super::super::SolverResult::Unsat);
+}
+
+#[test]
+fn conditional_instance_preparation_is_guarded_and_scope_local() {
+    let mut manager = TermManager::new();
+    let mut solver = Solver::new();
+    let int = manager.sorts.int_sort;
+    let x = manager.mk_var("x", int);
+    let fx = manager.mk_apply("f", [x], int);
+    let zero = manager.mk_int(0);
+    let one = manager.mk_int(1);
+    let fzero = manager.mk_apply("f", [zero], int);
+    let pin = manager.mk_eq(fzero, one);
+    solver.assert(pin, &mut manager);
+    let body = manager.mk_eq(fx, zero);
+    let quantified = manager.mk_forall([("x", int)], body);
+    for _ in 0..2 {
+        solver.push();
+        let prepared = solver.prepare_ground_instance(quantified, true, &mut manager);
+        assert_ne!(prepared, quantified);
+        let count = solver.next_skolem_id;
+        assert_eq!(
+            solver.prepare_ground_instance(quantified, true, &mut manager),
+            prepared
+        );
+        assert_eq!(solver.next_skolem_id, count);
+        let inactive = manager.mk_not(prepared);
+        solver.assert(inactive, &mut manager);
+        assert_eq!(solver.check(&mut manager), super::super::SolverResult::Sat);
+        solver.pop();
+        assert!(
+            !solver
+                .prepared_ground_instances
+                .contains_key(&(quantified, true))
+        );
+    }
+    assert_eq!(solver.check(&mut manager), super::super::SolverResult::Sat);
+}

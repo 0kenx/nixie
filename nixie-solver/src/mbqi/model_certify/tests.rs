@@ -260,3 +260,34 @@ fn quantified_goal_with_real_values_still_declines() {
     let q_var = manager.mk_forall([("yi", int)], body_var);
     assert!(super::prepare(&[q_var], &FxHashMap::default(), &manager).is_none());
 }
+
+#[test]
+fn distinct_certification_requires_every_pair_to_differ() {
+    let mut manager = TermManager::new();
+    let int = manager.sorts.int_sort;
+    let x = manager.mk_var("x", int);
+    let zero = manager.mk_int(0);
+    let one = manager.mk_int(1);
+    let two = manager.mk_int(2);
+    let truth = manager.mk_true();
+    let falsity = manager.mk_false();
+    for (args, expected) in [
+        (vec![zero, zero], false),
+        (vec![zero, one], true),
+        (vec![zero, one, two], true),
+        (vec![zero, one, zero], false),
+        (vec![truth, truth], false),
+        (vec![truth, falsity], true),
+    ] {
+        let distinct = manager.mk_distinct(args);
+        // Force the integer engine: the real certifier declines Int binders.
+        let assertion = manager.mk_forall([("x", int)], distinct);
+        assert_eq!(
+            certify(&[assertion], &FxHashMap::default(), &manager),
+            expected
+        );
+    }
+    let duplicate = manager.mk_distinct([x, x]);
+    let exists = manager.mk_exists([("x", int)], duplicate);
+    assert!(!certify(&[exists], &FxHashMap::default(), &manager));
+}

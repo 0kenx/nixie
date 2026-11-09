@@ -100,6 +100,8 @@ pub(crate) enum TrailOp {
     DtAxiomInstanceAdded { term: TermId },
     /// A ground array/datatype root entered the current assertion scope.
     GroundInstanceRootAdded { term: TermId },
+    /// A quantified ground instance's complete rewrite was installed.
+    GroundInstancePrepared { term: TermId, conditional: bool },
     /// A Tseitin-memo entry was written by [`super::Solver::encode`].
     ///
     /// `previous` carries the value the write displaced (`None` when the term
@@ -204,12 +206,6 @@ impl super::Solver {
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.
-            lemma_binder_registered: _, // NOT trailed: monotone dedup of
-            // already-registered lemma binders; a popped scope un-registers
-            // the binder from MBQI while the dedup entry merely prevents a
-            // redundant re-registration (completeness only, never a wrong
-            // verdict — the guarded clause is a valid consequence either
-            // way).
             has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
             // `true` after pop only keeps the lazy route.
             has_set_or_bag_terms: _, // NOT trailed: monotonic survey gate; a
@@ -386,9 +382,10 @@ impl super::Solver {
             numeric_eq_split_pairs: _,  // dedup across `check`s; SAT base
             // clauses survive `pop`, so a stale entry only suppresses re-emitting
             // a clause that is still present (sound).
-            ground_instance_roots: _,    // TRAIL: GroundInstanceRootAdded
-            dt_axiom_instances: _,       // TRAIL: DtAxiomInstanceAdded
-            dt_axioms_incomplete: _,     // SNAPSHOT
+            prepared_ground_instances: _, // TRAIL: GroundInstancePrepared
+            ground_instance_roots: _,     // TRAIL: GroundInstanceRootAdded
+            dt_axiom_instances: _,        // TRAIL: DtAxiomInstanceAdded
+            dt_axioms_incomplete: _,      // SNAPSHOT
             entailed_int_consts: _, // cleared wholesale by `pop` (see the field doc); empty = re-fold, never stale
             entailed_int_consts_upto: _, // reset to 0 with the map above
             #[cfg(test)]

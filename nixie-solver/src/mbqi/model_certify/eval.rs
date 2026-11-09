@@ -321,8 +321,8 @@ fn combine(
             let mut all_distinct = true;
             for (i, l) in args.iter().enumerate() {
                 for r in args.iter().skip(i + 1) {
-                    let ne = l.numeric_eq(r).ok_or(EvalError::Unsupported)?;
-                    if !ne {
+                    let equal = l.numeric_eq(r).ok_or(EvalError::Unsupported)?;
+                    if equal {
                         all_distinct = false;
                     }
                 }
