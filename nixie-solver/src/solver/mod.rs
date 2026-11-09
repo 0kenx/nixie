@@ -25,6 +25,7 @@ pub(super) mod check_string;
 pub(super) mod check_trans;
 pub(super) mod config;
 pub(super) mod dt_axioms;
+mod dt_refinement;
 pub(super) mod encode;
 pub(super) mod encode_guards;
 pub(super) mod equality_graph;
@@ -3368,7 +3369,19 @@ impl Solver {
                     // array terms in this candidate model and assert every
                     // axiom instance it does not already satisfy as a lemma,
                     // then re-solve.  Only genuine array models survive.
-                    let set_refined = match self.refine_set_membership(manager) {
+                    let dt_refined = match self.refine_datatype_classes(manager) {
+                        Ok(refined) => refined,
+                        Err(()) => {
+                            self.model = None;
+                            self.unsat_core = None;
+                            return SolverResult::Unknown;
+                        }
+                    };
+                    let set_refined = match if dt_refined {
+                        Ok(false)
+                    } else {
+                        self.refine_set_membership(manager)
+                    } {
                         Ok(refined) => refined,
                         Err(()) => {
                             self.model = None;
@@ -3378,7 +3391,8 @@ impl Solver {
                     };
                     // A set lemma may backtrack the candidate. Read array
                     // model facts only on a round where that did not happen.
-                    let array_refined = !set_refined
+                    let array_refined = !dt_refined
+                        && !set_refined
                         && self.has_array_ops
                         && self.instantiate_array_axioms(manager);
                     if array_refined {
@@ -3437,14 +3451,16 @@ impl Solver {
                     // Context-level array honesty gate asks for has been
                     // checked axiom by axiom.  Only the budget-exhausted
                     // exit keeps this `false` (see the field's doc).
-                    self.array_axioms_saturated =
-                        !array_refined && !set_refined && !self.array_witness_budget_exhausted;
+                    self.array_axioms_saturated = !dt_refined
+                        && !array_refined
+                        && !set_refined
+                        && !self.array_witness_budget_exhausted;
                     if !array_refined && self.array_witness_budget_exhausted {
                         self.model = None;
                         self.unsat_core = None;
                         return SolverResult::Unknown;
                     }
-                    if array_refined || set_refined {
+                    if dt_refined || array_refined || set_refined {
                         theory_refinement_rounds += 1;
                         if theory_refinement_rounds >= max_theory_refinement_rounds {
                             // Could not saturate set/array axioms within the

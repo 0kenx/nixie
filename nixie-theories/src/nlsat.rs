@@ -2140,11 +2140,13 @@ pub(crate) fn solve_conjunction_nia(
                             }
                         }
                         augment_select_values(&mut env, raw_assertions, manager);
-                        Some(NlDispatchResult::sat_with(
-                            env.into_iter()
-                                .map(|(t, v)| (t, BigRational::from(v)))
-                                .collect(),
-                        ))
+                        let mut assignments = model;
+                        for (term, value) in env {
+                            assignments
+                                .entry(term)
+                                .or_insert_with(|| BigRational::from(value));
+                        }
+                        Some(NlDispatchResult::sat_with(assignments))
                     } else {
                         None
                     }
@@ -2411,8 +2413,12 @@ fn verify_nl_model(
     let mut renv: HashMap<TermId, BigRational> = HashMap::new();
     let int_sort = manager.sorts.int_sort;
     for (&term, value) in model {
-        let term_is_int = manager.get(term).is_none_or(|t| t.sort == int_sort);
-        if term_is_int && !value.is_integer() {
+        let Some(node) = manager.get(term) else {
+            return ModelCheck::Refuted;
+        };
+        if (node.sort != int_sort && node.sort != manager.sorts.real_sort)
+            || (node.sort == int_sort && !value.is_integer())
+        {
             return ModelCheck::Refuted;
         }
         renv.insert(term, value.clone());
@@ -2454,29 +2460,21 @@ fn verify_nl_model(
             None => return ModelCheck::Undecidable,
         }
     }
-    let mut env: HashMap<TermId, BigInt> = bigint_env;
-    augment_select_values(&mut env, assertions, manager);
-    for (&t, v) in &renv {
-        if v.is_integer() {
-            env.entry(t).or_insert_with(|| v.to_integer());
-        }
+    augment_select_values(&mut bigint_env, assertions, manager);
+    // Preserve the exact environment just verified, including fractional Real
+    // witnesses. Integer elimination/read augmentation contributes only missing
+    // entries; rebuilding from that projection loses every non-integral value.
+    for (term, value) in bigint_env {
+        renv.entry(term).or_insert_with(|| BigRational::from(value));
     }
-    let mut result = NlDispatchResult::sat_with(
-        env.into_iter()
-            .map(|(t, v)| (t, BigRational::from(v)))
-            .collect(),
-    );
-    // Complete the witness's Boolean half: the verification above ran on the
-    // GROUNDED assertions (definition Booleans substituted away), so the
-    // returned model must re-derive their values (`φ` under the numeric
-    // witness) or downstream model printing completes them with a default
-    // that contradicts the definition conjunct (the QF_NIA/VeryMax
-    // invalid-model class).
-    let NlDispatchResult::Sat(model) = &mut result else {
-        unreachable!("just constructed Sat");
+    let mut verified = NlSatModel {
+        assignments: renv,
+        ..NlSatModel::default()
     };
-    crate::nl_model_search::attach_definition_truths_to(model, &bool_defs, manager);
-    ModelCheck::Verified(result)
+    // Grounding removed definition Booleans, so restore their values under this
+    // same rational interpretation before handing the witness to the caller.
+    crate::nl_model_search::attach_definition_truths_to(&mut verified, &bool_defs, manager);
+    ModelCheck::Verified(NlDispatchResult::Sat(verified))
 }
 
 /// Augment a model environment with *select-term* values read through the
@@ -2488,48 +2486,45 @@ fn augment_select_values(
     assertions: &[TermId],
     manager: &TermManager,
 ) {
-    for &a in assertions {
-        for st in nixie_core::ast::collect_subterms(a, manager) {
-            let Some(n) = manager.get(st) else { continue };
-            if let TermKind::Select(_, _) = &n.kind
-                && let Some(v) = select_value_via_interface(st, assertions, env, manager)
-            {
-                env.entry(st).or_insert(v);
-            }
+    // Interface definitions are asserted facts, not every equality occurring
+    // somewhere in the formula. An equality below Not/Or/Implies cannot pin a
+    // read; harvesting it used to overwrite the interpretation with an inactive
+    // branch's value after verification had already finished.
+    let mut pending = assertions.to_vec();
+    let mut seen = std::collections::HashSet::new();
+    let mut interfaces = Vec::new();
+    while let Some(term) = pending.pop() {
+        if !seen.insert(term) {
+            continue;
         }
-    }
-}
-
-/// Value of a `select` term under `env`, read through its purification
-/// interface definition (`c = select(A, i)`): the spur `c`'s value if
-/// present, else the select term's own entry, else `None`.
-fn select_value_via_interface(
-    select_term: TermId,
-    assertions: &[TermId],
-    env: &HashMap<TermId, BigInt>,
-    manager: &TermManager,
-) -> Option<BigInt> {
-    if let Some(v) = env.get(&select_term) {
-        return Some(v.clone());
-    }
-    for &a in assertions {
-        for st in nixie_core::ast::collect_subterms(a, manager) {
-            let Some(n) = manager.get(st) else { continue };
-            if let TermKind::Eq(l, r) = &n.kind {
-                for (v, sel) in [(*l, *r), (*r, *l)] {
-                    if sel == select_term
-                        && manager
-                            .get(v)
-                            .is_some_and(|vn| matches!(vn.kind, TermKind::Var(_)))
-                        && let Some(val) = env.get(&v)
+        match manager.get(term).map(|node| &node.kind) {
+            Some(TermKind::And(args)) => pending.extend(args.iter().copied()),
+            Some(TermKind::Eq(left, right)) => {
+                for (source, target) in [(*left, *right), (*right, *left)] {
+                    if manager
+                        .get(target)
+                        .is_some_and(|node| matches!(node.kind, TermKind::Select(_, _)))
                     {
-                        return Some(val.clone());
+                        interfaces.push((source, target));
                     }
                 }
             }
+            _ => {}
         }
     }
-    None
+    for _ in 0..interfaces.len() {
+        let before = env.len();
+        for &(source, target) in &interfaces {
+            if !env.contains_key(&target)
+                && let Some(value) = env.get(&source).cloned()
+            {
+                env.insert(target, value);
+            }
+        }
+        if env.len() == before {
+            break;
+        }
+    }
 }
 
 /// Map NIA poly-var indices back to TermIds via the translator cache.
@@ -3098,6 +3093,58 @@ mod tests {
 
     fn rat(n: i64) -> BigRational {
         BigRational::from_integer(n.into())
+    }
+
+    #[test]
+    fn verified_nira_witness_preserves_fractions_and_boolean_definitions() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let y = m.mk_var("y", m.sorts.real_sort);
+        let b = m.mk_var("b", m.sorts.bool_sort);
+        let one = m.mk_real(num_rational::Rational64::from_integer(1));
+        let two = m.mk_real(num_rational::Rational64::from_integer(2));
+        let lower = m.mk_gt(y, one);
+        let upper = m.mk_lt(y, two);
+        let definition = m.mk_eq(b, lower);
+        let fraction = BigRational::new(3.into(), 2.into());
+        let candidate = HashMap::from([(x, rat(2)), (y, fraction.clone())]);
+        let ModelCheck::Verified(NlDispatchResult::Sat(verified)) =
+            verify_nl_model(&candidate, &[], &[lower, upper, definition], &mut m)
+        else {
+            panic!("exact witness must verify");
+        };
+        assert_eq!(verified.assignments.get(&y), Some(&fraction));
+        assert_eq!(verified.assignments.get(&x), Some(&rat(2)));
+        assert_eq!(verified.truths.get(&b), Some(&true));
+        for bad in [x, b, TermId::new(u32::MAX)] {
+            let candidate = HashMap::from([(bad, fraction.clone())]);
+            assert!(matches!(
+                verify_nl_model(&candidate, &[], &[], &mut m),
+                ModelCheck::Refuted
+            ));
+        }
+    }
+
+    #[test]
+    fn nonlinear_read_augmentation_uses_only_asserted_equalities() {
+        let mut m = TermManager::new();
+        let sort = m.sorts.array(m.sorts.int_sort, m.sorts.int_sort);
+        let array = m.mk_var("a", sort);
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let zero = m.mk_int(0);
+        let read = m.mk_select(array, zero);
+        let equality = m.mk_eq(x, read);
+        let negated = m.mk_not(equality);
+        let b = m.mk_var("b", m.sorts.bool_sort);
+        let choice = m.mk_or([equality, b]);
+        for assertion in [negated, choice] {
+            let mut env = HashMap::from([(x, BigInt::from(1))]);
+            augment_select_values(&mut env, &[assertion], &m);
+            assert!(!env.contains_key(&read));
+        }
+        let mut env = HashMap::from([(x, BigInt::from(1))]);
+        augment_select_values(&mut env, &[equality], &m);
+        assert_eq!(env.get(&read), Some(&BigInt::from(1)));
     }
 
     // ======== Theory trait tests ========

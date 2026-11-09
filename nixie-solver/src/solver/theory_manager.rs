@@ -3270,10 +3270,12 @@ impl<'a> TheoryManager<'a> {
         if let (Some(t), Some(f)) = (self.bool_true_node, self.bool_false_node) {
             return (t, f);
         }
-        // Use sentinel TermIds that will never collide with real terms.
-        // TermId(u32::MAX) and TermId(u32::MAX - 1) are reserved for this.
-        let true_term = TermId::new(u32::MAX);
-        let false_term = TermId::new(u32::MAX - 1);
+        // The graph is also read by datatype refinement and model extraction.
+        // Use actual typed Boolean constants, not out-of-manager sentinel
+        // TermIds which those consumers cannot interpret. This also makes the
+        // predicate and Boolean-argument bridges share the literal nodes.
+        let true_term = self.manager.true_id;
+        let false_term = self.manager.false_id;
         let t = self.euf.intern(true_term);
         let f = self.euf.intern(false_term);
         // `true ≠ false` holds in every model and rests on no literal.

@@ -742,7 +742,7 @@ impl Solver {
     /// [`Solver::array_axiom_instances`]: the clause is retracted with the
     /// scope's clauses, so the mark has to go with it or a later scope would
     /// never re-assert an axiom it still needs.
-    fn assert_dt_lemma(&mut self, lemma: TermId, manager: &mut TermManager) {
+    pub(super) fn assert_dt_lemma(&mut self, lemma: TermId, manager: &mut TermManager) {
         // The builders fold trivial instances (`(= x x)`, a one-constructor
         // exhaustiveness disjunction under an already-true guard) straight to
         // `true`; asserting those would only burn a lemma slot.

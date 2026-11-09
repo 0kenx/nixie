@@ -866,24 +866,12 @@ impl Solver {
         //   pre-minted witness with a fresh collision (the old behavior:
         //   re-minted against the tuple-level `used`, reinstating the
         //   constant the pre-mint had just avoided).
-        let mut comp_used: FxHashSet<TermId> = FxHashSet::default();
+        // Include current scalar assignments as well as cached tuple values.
+        // A cached constructor can predate an equality/refinement that pins a
+        // component. Minting against that stale tuple alone can choose exactly
+        // the newly pinned scalar and collapse two different membership rows.
+        let mut comp_used = tuple_component_values(elements, model, manager);
         let mut minted: FxHashSet<TermId> = FxHashSet::default();
-        for &e in elements {
-            let Some(Some(v)) = elem_values.get(&e).copied() else {
-                continue;
-            };
-            let mut stack = vec![v];
-            while let Some(t) = stack.pop() {
-                match manager.get(t).map(|d| d.kind.clone()) {
-                    Some(TermKind::DtConstructor { args, .. }) => {
-                        stack.extend(args.iter().copied());
-                    }
-                    _ => {
-                        comp_used.insert(t);
-                    }
-                }
-            }
-        }
         for &e in elements {
             if !matches!(
                 manager.get(e).map(|d| &d.kind),
@@ -2472,5 +2460,54 @@ impl Solver {
                 model.set(term, value);
             }
         }
+    }
+}
+
+/// All current scalar component values reachable through tuple spellings and
+/// their cached model values. DAG sharing and model aliases are visited once.
+fn tuple_component_values(
+    elements: &[TermId],
+    model: &Model,
+    manager: &TermManager,
+) -> FxHashSet<TermId> {
+    let mut used = FxHashSet::default();
+    let mut seen = FxHashSet::default();
+    let mut pending = elements.to_vec();
+    while let Some(term) = pending.pop() {
+        if !seen.insert(term) {
+            continue;
+        }
+        if let Some(value) = model.get(term) {
+            pending.push(value);
+        }
+        match manager.get(term).map(|node| &node.kind) {
+            Some(TermKind::DtConstructor { args, .. }) => pending.extend(args.iter().copied()),
+            Some(_) if is_value_term(term, manager) => {
+                used.insert(term);
+            }
+            _ => {}
+        }
+    }
+    used
+}
+
+#[cfg(test)]
+mod component_value_tests {
+    use super::*;
+
+    #[test]
+    fn tuple_mint_excludes_newly_pinned_components_even_with_stale_cached_tuple() {
+        let mut manager = TermManager::new();
+        let k = manager.mk_var("k", manager.sorts.int_sort);
+        let zero = manager.mk_int(0);
+        let four = manager.mk_int(4);
+        let tuple = manager.mk_tuple(&[k]);
+        let old = manager.mk_tuple(&[zero]);
+        let mut model = Model::new();
+        model.set(tuple, old);
+        model.set(k, four);
+        let used = tuple_component_values(&[tuple], &model, &manager);
+        assert!(used.contains(&zero));
+        assert!(used.contains(&four));
     }
 }
