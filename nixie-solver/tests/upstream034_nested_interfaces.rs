@@ -313,3 +313,32 @@ fn a_fresh_bv_argument_only_goal_uses_the_theory_bridge() {
         (assert (distinct (f x) (f y) (f z)))(check-sat)";
     assert_eq!(Context::new().execute_script(script).unwrap(), ["unsat"]);
 }
+
+/// Quantified model ownership never removes a ground congruence obligation.
+#[test]
+fn live_vacuous_quantifiers_preserve_finite_ground_domains() {
+    for mode in ["eager", "lazy"] {
+        for (sort, binder, application) in [
+            ("(_ BitVec 1)", "t", "x"),
+            ("(_ BitVec 1)", "(bvnot t)", "(bvnot x)"),
+            ("Bool", "t", "x"),
+        ] {
+            let script = format!(
+                "(set-logic ALL)(set-option :theory-mode {mode})
+                (declare-sort U 0)(declare-fun f ({sort}) U)
+                (declare-const x {sort})(declare-const y {sort})(declare-const z {sort})
+                (declare-const u U)(declare-const p Bool)
+                (assert (forall ((t {sort})) (=> p (= (f {binder}) u))))
+                (assert (not p))
+                (assert (distinct (f {application}) (f y)))(check-sat)
+                (push 1)(assert (distinct (f {application}) (f y) (f z)))(check-sat)
+                (pop 1)(check-sat)"
+            );
+            assert_eq!(
+                Context::new().execute_script(&script).unwrap(),
+                ["sat", "unsat", "sat"],
+                "{script}"
+            );
+        }
+    }
+}

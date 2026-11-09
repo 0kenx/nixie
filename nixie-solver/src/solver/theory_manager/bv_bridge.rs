@@ -425,15 +425,13 @@ impl TheoryManager<'_> {
         use nixie_theories::Theory;
         use nixie_theories::TheoryCheckResult as TheoryCheckResultEnum;
 
-        let forbidden_func_ids: FxHashSet<u32> = self
-            .quantifier_uf_funcs
-            .iter()
-            .flat_map(|functions| functions.iter())
-            .map(|spur| spur.into_inner().get())
-            .collect();
+        // Quantifier completion can choose a function's unobserved rows, but
+        // every ground application still has to respect the finite BV domain.
+        // Excluding a function mentioned by even a vacuous quantifier permits
+        // three distinct results over BV1, which has only two arguments.
         let mut candidates: Vec<TermId> = self
             .euf
-            .app_argument_terms_excluding_funcs(&forbidden_func_ids)
+            .app_argument_terms()
             .into_iter()
             .filter(|&term| self.bv_width_of(term, manager).is_some())
             .collect();

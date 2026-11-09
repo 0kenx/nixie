@@ -499,7 +499,6 @@ pub(crate) struct TheoryManager<'a> {
     bv_atom_unmodelled: bool,
     bv_relevant: bool,
     bv_euf_undecided: bool,
-    quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
     boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
     bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
@@ -657,7 +656,6 @@ impl<'a> TheoryManager<'a> {
         max_bv_embedded_checks: u64,
         has_bv_arith_ops: bool,
         has_array_ops: bool,
-        quantifier_uf_funcs: Option<&'a FxHashSet<nixie_core::interner::Spur>>,
         boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
         deadline: Option<nixie_time::Instant>,
         logic: Option<&str>,
@@ -741,7 +739,6 @@ impl<'a> TheoryManager<'a> {
             bv_atom_unmodelled: false,
             bv_relevant,
             bv_euf_undecided: false,
-            quantifier_uf_funcs,
             boolean_encodings,
             bv_embedded_check_ceiling: bv_budget::effective_bv_embedded_check_ceiling(
                 max_bv_embedded_checks,
