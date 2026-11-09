@@ -2045,6 +2045,14 @@ impl Solver {
         if is_value_term(term, manager) {
             return Some(term);
         }
+        // Compound fields have no tableau column of their own. Recompute
+        // from candidate leaves before considering a cached compound entry;
+        // this also keeps wide Real/BV values exact and typed.
+        if let Some(value) = self.model_value_in(term, model, manager)
+            && manager.get(value).is_some_and(|node| node.sort == sort)
+        {
+            return Some(value);
+        }
         // A direct entry already went through the theory-ownership rules above
         // (Boolean atoms from the SAT assignment, arithmetic from the tableau,
         // bit-vectors from the bit-blaster, strings from the ground solver).
@@ -2949,6 +2957,40 @@ mod publication_field_regressions {
             solver
                 .scalar_value(field, sort, &model, &mut manager)
                 .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod compound_field_regressions {
+    use super::*;
+
+    #[test]
+    fn compound_fields_recompute_exact_values_instead_of_cached_defaults() {
+        let solver = Solver::new();
+        let mut tm = TermManager::new();
+        let real = tm.sorts.real_sort;
+        let x = tm.mk_var("x", real);
+        let integer = tm.mk_int((num_bigint::BigInt::from(1) << 160usize) + 3);
+        let three = tm.mk_int(3);
+        let value = tm.mk_rdiv(integer, three);
+        let one = tm.mk_real(num_rational::Rational64::from_integer(1));
+        let compound = tm.mk_add([x, one]);
+        let mut model = Model::new();
+        model.set(x, value);
+        model.set(compound, one);
+        let folded = solver
+            .scalar_value(compound, real, &model, &mut tm)
+            .expect("folded Real");
+        let exact = super::super::array_completion_certify::evaluate_closed_value_pure(
+            &solver, folded, &tm,
+        )
+        .expect("literal")
+        .to_big()
+        .expect("number");
+        assert_eq!(
+            exact,
+            num_rational::BigRational::new((num_bigint::BigInt::from(1) << 160usize) + 6, 3.into())
         );
     }
 }

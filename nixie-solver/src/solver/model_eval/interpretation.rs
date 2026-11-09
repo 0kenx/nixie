@@ -173,6 +173,9 @@ impl Solver {
         manager: &TermManager,
     ) -> EvalOutcome {
         Self::eval_with_reader(term, 0, |term, depth| {
+            if depth > ENCODE_DEPTH_LIMIT {
+                return Opened::Done(EvalOutcome::UNDETERMINED);
+            }
             if let Some(data) = manager.get(term)
                 && matches!(data.kind, TermKind::DtSelector { .. })
                 && let Some(sort) = ScalarSort::of(data.sort, manager)
@@ -487,6 +490,28 @@ mod tests {
         assert_eq!(
             Solver::new().eval_under_interpretation(int, &model, &tm),
             EvalOutcome::UNDETERMINED
+        );
+    }
+}
+
+#[cfg(test)]
+mod repair_cycle_regression {
+    use super::*;
+
+    #[test]
+    fn cyclic_selector_candidate_declines_without_unbounded_work() {
+        let solver = Solver::new();
+        let mut tm = TermManager::new();
+        let sort = tm.sorts.mk_datatype_sort("T");
+        let record = tm.mk_var("record", sort);
+        let selector = tm.mk_dt_selector("field", record, tm.sorts.int_sort);
+        let mut model = Model::new();
+        model.set(selector, selector);
+        assert!(
+            solver
+                .eval_datatype_repair(selector, &model, &tm)
+                .value_owned()
+                .is_none()
         );
     }
 }
