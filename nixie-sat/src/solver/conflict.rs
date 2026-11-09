@@ -2848,34 +2848,6 @@ impl Solver {
         self.analyze_final_core(&[failed], &[failed], &assumptions[..=conflict_idx])
     }
 
-    /// Analyze a propagation conflict encountered while (or after) asserting the
-    /// assumptions, returning every assumption in the unsat core.
-    ///
-    /// Seeds the analysis from the literals of the actual conflict clause and
-    /// walks the implication graph back to the assumption (decision) roots. The
-    /// previous implementation inspected only each assumption's *own* trail value
-    /// and a never-populated `seen` array, so it systematically dropped
-    /// assumptions that contributed only indirectly (through propagated literals)
-    /// and, when it found nothing, fell back to returning *every* assumption –
-    /// a safe but maximally imprecise core.
-    pub(super) fn analyze_assumption_conflict(
-        &mut self,
-        assumptions: &[Lit],
-        conflict: ClauseId,
-    ) -> Vec<Lit> {
-        let seed: SmallVec<[Lit; 32]> = match self.clauses.get(conflict) {
-            Some(c) => c.lits.iter().copied().collect(),
-            None => SmallVec::new(),
-        };
-        let core = self.analyze_final_core(&seed, &[], assumptions);
-        if core.is_empty() {
-            // Defensive fallback: never return an empty core for an UNSAT result;
-            // conservatively blame all assumptions rather than lose soundness.
-            return assumptions.to_vec();
-        }
-        core
-    }
-
     /// Shared "analyze final" implementation (à la MiniSat `analyzeFinal`).
     ///
     /// Marks the `seed` literals' variables, walks the trail from newest to
@@ -2903,9 +2875,9 @@ impl Solver {
         }
 
         let mut core: Vec<Lit> = Vec::new();
-        let mut in_core: HashSet<usize> = HashSet::new();
+        let mut in_core: HashSet<Lit> = HashSet::new();
         for &lit in include {
-            if in_core.insert(lit.var().index()) {
+            if in_core.insert(lit) {
                 core.push(lit);
             }
         }
@@ -2941,7 +2913,7 @@ impl Solver {
                     // A decision root above level 0: if it is one of our
                     // assumptions, it belongs in the core.
                     if let Some(&alit) = assumption_of.get(&vi)
-                        && in_core.insert(vi)
+                        && in_core.insert(alit)
                     {
                         core.push(alit);
                     }
@@ -2979,24 +2951,6 @@ impl Solver {
         }
 
         core
-    }
-
-    /// Get the minimum backtrack level for a conflict
-    pub(super) fn analyze_conflict_level(&self, conflict: ClauseId) -> u32 {
-        let clause = match self.clauses.get(conflict) {
-            Some(c) => c,
-            None => return 0,
-        };
-
-        let mut min_level = u32::MAX;
-        for lit in clause.lits.iter().copied() {
-            let level = self.trail.level(lit.var());
-            if level > 0 && level < min_level {
-                min_level = level;
-            }
-        }
-
-        if min_level == u32::MAX { 0 } else { min_level }
     }
 }
 

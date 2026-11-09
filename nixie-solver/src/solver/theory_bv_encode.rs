@@ -478,7 +478,9 @@ pub(super) fn encode_bv_term_recursive(
                     if !bit_blast_cond_operands(bv, *cond, mgr) {
                         return false;
                     }
-                    bv.bv_ite(tid, *cond, *then_t, *else_t, mgr);
+                    if !bv.bv_ite(tid, *cond, *then_t, *else_t, mgr) {
+                        return false;
+                    }
                 }
                 TermKind::BvUdiv(a, b) => {
                     if !operands_have_width(mgr, &[*a, *b], width) {
@@ -557,7 +559,7 @@ pub(super) fn encode_bv_term_recursive(
                         // its magnitude would assert a different value.
                         return false;
                     };
-                    if !bv.assert_const_big(tid, &magnitude, width) {
+                    if !bv.define_const_big(tid, &magnitude, width) {
                         return false;
                     }
                 }

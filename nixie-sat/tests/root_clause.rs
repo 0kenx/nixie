@@ -414,3 +414,30 @@ fn popped_pending_propagations_are_not_proved_from_deleted_clauses() {
     let report = check_lrat_proof(&original, &proof);
     assert!(report.verified, "failure: {:?}\n{proof}", report.failure);
 }
+
+#[test]
+fn restoring_a_probe_trail_preserves_permanent_units() {
+    let mut solver = Solver::new();
+    let mark = solver.trail_size();
+    solver.add_clause_at_root([pos(0)]);
+    solver.restore_to_trail_size(mark);
+    solver.add_clause([neg(0)]);
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+}
+
+#[test]
+fn assumption_search_proves_a_base_conflict_and_retains_it() {
+    let original = vec![vec![1, 2], vec![-1, 2], vec![1, -2], vec![-1, -2]];
+    let proof = refute_with_lrat("assumption_base_conflict", |solver| {
+        for clause in &original {
+            solver.add_clause_dimacs(clause);
+        }
+        for _ in 0..3 {
+            let (result, core) = solver.solve_with_assumptions(&[]);
+            assert_eq!(result, SolverResult::Unsat);
+            assert_eq!(core, Some(Vec::new()));
+        }
+    });
+    let report = check_lrat_proof(&original, &proof);
+    assert!(report.verified, "failure: {:?}\n{proof}", report.failure);
+}

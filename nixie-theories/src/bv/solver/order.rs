@@ -168,7 +168,7 @@ impl BvSolver {
             None => {
                 // Degenerate: a single wire is vacuously "strictly
                 // increasing"; `distinct` of one argument is true.
-                self.sat.add_clause([Lit::pos(out)]);
+                self.define([Lit::pos(out)]);
             }
         }
 
@@ -246,7 +246,7 @@ impl BvSolver {
         // arguments refutes the pinned-true distinct outright.
         for &(a, b) in &self.asserted_eq_pairs {
             if arg_set.contains(&a) && arg_set.contains(&b) {
-                let _ = self.sat.add_clause([]);
+                self.assert_lit(Lit::pos(self.const_false));
                 self.order_distinct_argsets.push(arg_set);
                 return true;
             }

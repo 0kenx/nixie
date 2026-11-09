@@ -1176,7 +1176,7 @@ impl<'a> TheoryManager<'a> {
         if self.bv.is_unified() {
             self.bv.reset_embedded_state();
         } else {
-            self.bv.reset();
+            self.bv.retract_assertions();
         }
         self.diff.reset();
         self.interned_bv_constants.clear();
@@ -3345,7 +3345,10 @@ impl<'a> TheoryManager<'a> {
                 debug_verify_bv_circuits(self.bv, operands.1, manager);
                 None
             }
-            _ => None,
+            Ok(TheoryCheckResultEnum::Unknown | TheoryCheckResultEnum::Propagate(_)) | Err(_) => {
+                self.resource_exhausted = true;
+                None
+            }
         }
     }
 
@@ -4105,14 +4108,34 @@ impl TheoryCallback for TheoryManager<'_> {
         self.set_assigned_polarity(var, is_positive);
         self.set_assigned_level(var, self.current_level);
 
-        if !self.var_to_constraint.contains_key(&var) {
-            return TheoryCheckResult::Sat;
-        }
-
         if !self.bv_terms.is_empty()
             && let Some(term) = self.var_to_term.get(var.index()).copied()
         {
             self.bv.assert_bool_value(term, is_positive);
+        }
+
+        if !self.var_to_constraint.contains_key(&var) {
+            // Plain Boolean selectors also constrain BV circuits. Retain them
+            // in the shadow trail so a lazy replay restores their exact scope.
+            if !self.bv_terms.is_empty()
+                && !self.bv.is_unified()
+                && self.var_to_term.get(var.index()).is_some()
+            {
+                let atom = TrailAtom {
+                    var,
+                    is_positive,
+                    level: self.current_level,
+                };
+                match self.trail_idx_of(var) {
+                    Some(index) => self.assignment_trail[index] = atom,
+                    None => {
+                        let index = self.assignment_trail.len();
+                        self.assignment_trail.push(atom);
+                        self.trail_idx_set(var, index);
+                    }
+                }
+            }
+            return TheoryCheckResult::Sat;
         }
 
         // Track propagation
@@ -4318,6 +4341,28 @@ impl TheoryCallback for TheoryManager<'_> {
                     return TheoryCheckResult::Sat;
                 }
                 return TheoryCheckResult::Conflict(conflict);
+            }
+        }
+
+        // A selector may be assigned after the last BV atom was checked.
+        // Check the full current scope before accepting a candidate. The BV
+        // solver reuses its last model when it satisfies the same definitions
+        // and all current assumptions, so this adds no redundant SAT search.
+        if !self.bv.is_unified() && self.bv.has_circuits() {
+            use nixie_theories::Theory;
+            match self.bv.check() {
+                Ok(nixie_theories::TheoryCheckResult::Unsat(terms)) => {
+                    return self.conflict_from_terms(&terms);
+                }
+                Ok(nixie_theories::TheoryCheckResult::Sat) => {}
+                Ok(
+                    nixie_theories::TheoryCheckResult::Unknown
+                    | nixie_theories::TheoryCheckResult::Propagate(_),
+                )
+                | Err(_) => {
+                    self.resource_exhausted = true;
+                    return TheoryCheckResult::Sat;
+                }
             }
         }
 

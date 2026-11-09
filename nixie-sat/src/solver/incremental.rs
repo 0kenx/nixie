@@ -104,6 +104,7 @@ impl Solver {
             // `solve()` re-derives the whole prefix's consequences whatever the
             // previous probe did.
             self.trail.reset_propagation_head();
+            self.replay_root_units();
             return;
         }
 
@@ -140,6 +141,8 @@ impl Solver {
         self.trail.reset_propagation_head();
 
         for var in unassigned_vars {
+            self.proof_set_unit_id(Lit::pos(var).to_dimacs(), 0);
+            self.proof_set_unit_id(Lit::neg(var).to_dimacs(), 0);
             if !self.vsids.contains(var) {
                 self.vsids.insert(var);
             }
@@ -148,6 +151,7 @@ impl Solver {
             }
             self.lrb.unassign(var);
         }
+        self.replay_root_units();
     }
 
     /// Assign `lits` at decision level 0 and propagate to a fixpoint,

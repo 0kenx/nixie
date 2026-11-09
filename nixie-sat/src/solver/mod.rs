@@ -4882,6 +4882,7 @@ impl Solver {
         }
         // Rewrite any assumption literal naming an ELS-eliminated variable
         // through the substitution map (same sound fix as `add_clause`).
+        let original_assumptions = assumptions;
         let mut assumptions: Vec<Lit> = assumptions.to_vec();
         for l in assumptions.iter_mut() {
             *l = self.resolve_reintroduced_literal(*l);
@@ -4897,148 +4898,116 @@ impl Solver {
         self.assumptions_active = true;
         let (res, core) = self.solve_with_assumptions_inner(assumptions);
         self.assumptions_active = false;
+        let core = match core {
+            Some(core) => {
+                let translated: Option<Vec<Lit>> = core
+                    .into_iter()
+                    .map(|lit| {
+                        assumptions
+                            .iter()
+                            .position(|&resolved| resolved == lit)
+                            .map(|index| original_assumptions[index])
+                    })
+                    .collect();
+                let Some(translated) = translated else {
+                    return (SolverResult::Unknown, None);
+                };
+                Some(translated)
+            }
+            None => None,
+        };
         (res, core)
     }
 
+    // Each assumption owns a decision level, including an empty level when
+    // already implied. After a backjump/restart, re-install the next assumption
+    // before a free decision (CaDiCaL decide.cpp / upstream assumption_search).
     fn solve_with_assumptions_inner(
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
+        self.backtrack_with_phase_saving(0);
+        self.flush_pending_parse_units();
         if self.fatal_error.is_some() {
             return (SolverResult::Unknown, None);
         }
         if self.trivially_unsat {
             return (SolverResult::Unsat, Some(Vec::new()));
         }
-
-        // Ensure all assumption variables exist
         for &lit in assumptions {
-            while self.num_vars <= lit.var().index() {
-                self.new_var();
-            }
+            self.ensure_vars(lit.var().index() + 1);
         }
-
-        // A prior solve() may have returned Sat while leaving its full model on the
-        // trail (decisions at levels > 0). Fully restart the search state by
-        // backtracking to the root BEFORE capturing `assumption_level_start` and
-        // testing the assumptions. Otherwise leftover model decisions masquerade as
-        // fixed level-0 facts: an assumption that merely disagrees with the previous
-        // arbitrary model would hit `value.is_false()` below and be reported as a
-        // false UNSAT (e.g. (a∨b); solve() picks ¬a,b; then assumptions=[a] must be
-        // SAT, not UNSAT). This is the standard incremental / MaxSAT entry protocol.
-        self.backtrack_with_phase_saving(0);
-
-        // Clear conflict-analysis marks so a stale `seen` array left by a previous
-        // solve cannot pollute the extracted assumption core.
-        for s in &mut self.seen {
-            *s = false;
-        }
-
-        // Initial propagation at level 0
-        if self.propagate().is_some() {
-            return (SolverResult::Unsat, Some(Vec::new()));
-        }
-
-        // Create a new decision level for assumptions
-        let assumption_level_start = self.trail.decision_level();
-
-        // Assign assumptions as decisions
-        for (i, &lit) in assumptions.iter().enumerate() {
-            // Check if already assigned
-            let value = self.trail.lit_value(lit);
-            if value.is_true() {
-                continue; // Already satisfied
-            }
-            if value.is_false() {
-                // Conflict with assumption - extract core from conflicting assumptions
-                let core = self.extract_assumption_core(assumptions, i);
-                self.backtrack(assumption_level_start);
-                return (SolverResult::Unsat, Some(core));
-            }
-
-            // Make decision for assumption
-            self.trail.new_decision_level();
-            self.trail.assign_decision(lit);
-
-            // Propagate after each assumption
-            if let Some(conflict) = self.propagate() {
-                // Conflict during assumption propagation: collect the full set of
-                // contributing assumptions from the conflict clause.
-                let core = self.analyze_assumption_conflict(assumptions, conflict);
-                self.backtrack(assumption_level_start);
-                return (SolverResult::Unsat, Some(core));
-            }
-        }
-
-        // Now solve normally
+        self.seen.fill(false);
         loop {
-            // Resource budget / interrupt check: abandon under-assumption search
-            // and report Unknown when the conflict budget or interrupt fires.
             if self.should_stop_search() {
-                self.backtrack(assumption_level_start);
+                self.backtrack_with_phase_saving(0);
                 return (SolverResult::Unknown, None);
             }
-
             if let Some(conflict) = self.propagate() {
                 self.debug_check_conflict_clause(conflict);
                 self.stats.conflicts += 1;
-
-                // Check if conflict involves assumptions
-                let backtrack_level = self.analyze_conflict_level(conflict);
-
-                if backtrack_level <= assumption_level_start {
-                    // Conflict forces backtracking past assumptions - UNSAT
-                    let core = self.analyze_assumption_conflict(assumptions, conflict);
-                    self.backtrack(assumption_level_start);
-                    return (SolverResult::Unsat, Some(core));
+                if self.trail.decision_level() == 0 {
+                    self.trivially_unsat = true;
+                    self.drat_emit_empty(Some(conflict));
+                    return (SolverResult::Unsat, Some(Vec::new()));
                 }
-
                 let (bt_level, learnt_clause) = self.analyze(conflict);
-
-                // Empty learned clause = genuine root-level (level-0) refutation.
-                // The `backtrack_level <= assumption_level_start` guard above
-                // already routes all-level-0 conflicts to the UNSAT-core path, so
-                // this is a belt-and-braces guard that also avoids an empty-clause
-                // index panic in `learn_clause`.
                 if learnt_clause.is_empty() {
-                    let core = self.analyze_assumption_conflict(assumptions, conflict);
-                    self.backtrack(assumption_level_start);
-                    return (SolverResult::Unsat, Some(core));
+                    self.trivially_unsat = true;
+                    self.drat_emit_empty(Some(conflict));
+                    self.backtrack_with_phase_saving(0);
+                    return (SolverResult::Unsat, Some(Vec::new()));
                 }
-
-                self.backtrack_with_phase_saving(bt_level.max(assumption_level_start + 1));
+                self.backtrack_with_phase_saving(bt_level);
                 self.debug_check_invariants("after backtrack (assumptions)");
                 self.learn_clause(learnt_clause);
-
                 self.decay_vsids();
                 self.decay_clause_activity();
-                self.handle_clause_deletion_and_restart_limited(assumption_level_start);
-            } else {
-                // No conflict - try to decide. `propagate()` just returned `None`,
-                // i.e. reached a fixpoint.
-                self.debug_check_fixpoint_invariants("after propagation fixpoint (assumptions)");
-                if let Some(var) = self.pick_branch_var() {
-                    self.stats.decisions += 1;
-                    self.trail.new_decision_level();
-
-                    let polarity = self.decision_polarity(var);
-                    let lit = if polarity {
-                        Lit::pos(var)
-                    } else {
-                        Lit::neg(var)
-                    };
-                    self.trail.assign_decision(lit);
-                } else {
-                    // All variables assigned - SAT
-                    self.save_model();
-                    self.debug_verify_model();
-                    self.debug_check_invariants("at SAT (assumptions)");
-                    self.backtrack(assumption_level_start);
-                    return (SolverResult::Sat, None);
+                self.handle_clause_deletion_and_restart_limited(0);
+                continue;
+            }
+            let mut next = None;
+            while (self.trail.decision_level() as usize) < assumptions.len() {
+                let index = self.trail.decision_level() as usize;
+                let lit = assumptions[index];
+                match self.trail.lit_value(lit) {
+                    LBool::True => self.trail.new_decision_level(),
+                    LBool::False => {
+                        let core = self.extract_assumption_core(assumptions, index);
+                        self.backtrack_with_phase_saving(0);
+                        return (SolverResult::Unsat, Some(core));
+                    }
+                    LBool::Undef => {
+                        next = Some(lit);
+                        break;
+                    }
                 }
             }
+            let decision = match next {
+                Some(lit) => lit,
+                None => match self.pick_branch_var() {
+                    Some(var) => {
+                        self.stats.decisions += 1;
+                        if self.decision_polarity(var) {
+                            Lit::pos(var)
+                        } else {
+                            Lit::neg(var)
+                        }
+                    }
+                    None => {
+                        self.debug_check_fixpoint_invariants("at SAT (assumptions)");
+                        self.save_model();
+                        self.debug_verify_model();
+                        self.debug_check_invariants("at SAT (assumptions)");
+                        self.backtrack_with_phase_saving(0);
+                        return (SolverResult::Sat, None);
+                    }
+                },
+            };
+            self.trail.new_decision_level();
+            self.trail.assign_decision(decision);
         }
     }
 

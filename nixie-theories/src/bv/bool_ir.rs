@@ -451,17 +451,17 @@ impl BoolIr {
                 IrNode::And(a, b) => {
                     let out_l = Lit::pos(v);
                     let (x, y) = (self.sat_lit(&slot, a), self.sat_lit(&slot, b));
-                    sat.add_clause([out_l.negate(), x]);
-                    sat.add_clause([out_l.negate(), y]);
-                    sat.add_clause([out_l, x.negate(), y.negate()]);
+                    sat.add_clause_at_root([out_l.negate(), x]);
+                    sat.add_clause_at_root([out_l.negate(), y]);
+                    sat.add_clause_at_root([out_l, x.negate(), y.negate()]);
                 }
                 IrNode::Xor(a, b) => {
                     let out_l = Lit::pos(v);
                     let (x, y) = (self.sat_lit(&slot, a), self.sat_lit(&slot, b));
-                    sat.add_clause([out_l.negate(), x.negate(), y.negate()]);
-                    sat.add_clause([out_l.negate(), x, y]);
-                    sat.add_clause([out_l, x.negate(), y]);
-                    sat.add_clause([out_l, x, y.negate()]);
+                    sat.add_clause_at_root([out_l.negate(), x.negate(), y.negate()]);
+                    sat.add_clause_at_root([out_l.negate(), x, y]);
+                    sat.add_clause_at_root([out_l, x.negate(), y]);
+                    sat.add_clause_at_root([out_l, x, y.negate()]);
                 }
                 IrNode::Mux(s, t, f) => {
                     let out_l = Lit::pos(v);
@@ -470,10 +470,10 @@ impl BoolIr {
                         self.sat_lit(&slot, t),
                         self.sat_lit(&slot, f),
                     );
-                    sat.add_clause([sl.negate(), tl.negate(), out_l]);
-                    sat.add_clause([sl.negate(), tl, out_l.negate()]);
-                    sat.add_clause([sl, fl.negate(), out_l]);
-                    sat.add_clause([sl, fl, out_l.negate()]);
+                    sat.add_clause_at_root([sl.negate(), tl.negate(), out_l]);
+                    sat.add_clause_at_root([sl.negate(), tl, out_l.negate()]);
+                    sat.add_clause_at_root([sl, fl.negate(), out_l]);
+                    sat.add_clause_at_root([sl, fl, out_l.negate()]);
                 }
             }
         }
@@ -561,7 +561,7 @@ mod tests {
         let mut sat = nixie_sat::Solver::new();
         let ct = {
             let v = sat.new_var();
-            sat.add_clause([nixie_sat::Lit::pos(v)]);
+            sat.add_clause_at_root([nixie_sat::Lit::pos(v)]);
             nixie_sat::Lit::pos(v)
         };
         let [root] = ir

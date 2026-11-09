@@ -277,7 +277,7 @@ fn extract_model_equalities_handles_width_over_64() {
         }
     }
 
-    assert!(matches!(solver.sat.solve(), SolverResult::Sat));
+    assert!(matches!(solver.check().expect("check"), TheoryResult::Sat));
 
     // Must not panic (previously `1u64 << 69` would panic in debug /
     // silently wrap -- and possibly corrupt equality detection -- in
@@ -545,8 +545,8 @@ fn unified_const_results_flow_as_reserved_constants() {
     let three = nixie_core::ast::TermId::new(2);
     let five = nixie_core::ast::TermId::new(3);
     bv.build_with(&mut sat, |bv| {
-        assert!(bv.assert_const(two, 2, 8));
-        assert!(bv.assert_const(three, 3, 8));
+        assert!(bv.define_const_big(two, &BigUint::from(2_u64), 8));
+        assert!(bv.define_const_big(three, &BigUint::from(3_u64), 8));
         assert!(bv.bv_add(five, two, three));
     });
     // Every bit of the sum must be a reserved constant (5 = 0b101).
@@ -582,11 +582,11 @@ fn unified_const_chain_preserves_semantics() {
         bv.enter_unified();
         let mut sat = SatSolver::new();
         bv.build_with(&mut sat, |bv| {
-            assert!(bv.assert_const(a, 0xF0, 8));
-            assert!(bv.assert_const(b, 0x23, 8));
+            assert!(bv.define_const_big(a, &BigUint::from(0xF0_u64), 8));
+            assert!(bv.define_const_big(b, &BigUint::from(0x23_u64), 8));
             assert!(bv.bv_sub(s, a, b));
             assert!(bv.bv_and(m, s, b));
-            assert!(bv.assert_const(k, claim, 8));
+            assert!(bv.define_const_big(k, &BigUint::from(claim), 8));
             assert!(bv.assert_eq(m, k));
         });
         let mut dummy = SatSolver::new();
@@ -640,10 +640,10 @@ fn unified_const_shift_collapses_to_constants() {
     let res = nixie_core::ast::TermId::new(3);
     let res2 = nixie_core::ast::TermId::new(4);
     bv.build_with(&mut sat, |bv| {
-        assert!(bv.assert_const(val, 0x80, 8));
-        assert!(bv.assert_const(amt, 4, 8));
+        assert!(bv.define_const_big(val, &BigUint::from(0x80_u64), 8));
+        assert!(bv.define_const_big(amt, &BigUint::from(4_u64), 8));
         assert!(bv.bv_lshr(res, val, amt));
-        assert!(bv.assert_const(amt2(), 12, 8));
+        assert!(bv.define_const_big(amt2(), &BigUint::from(12_u64), 8));
         assert!(bv.bv_lshr(res2, val, amt2()));
     });
     for (i, bit) in bv.debug_bits(res).unwrap().iter().enumerate() {
@@ -658,4 +658,77 @@ fn unified_const_shift_collapses_to_constants() {
 /// Test helper: the TermId used for the second (overshift) amount above.
 fn amt2() -> nixie_core::ast::TermId {
     nixie_core::ast::TermId::new(5)
+}
+
+#[test]
+fn boolean_circuit_negations_use_a_heap_worklist() {
+    use nixie_core::ast::{TermKind, TermManager};
+    let mut manager = TermManager::new();
+    let base = manager.mk_var("deep", manager.sorts.bool_sort);
+    let mut root = base;
+    for _ in 0..20_000 {
+        root = manager.intern_term(TermKind::Not(root), manager.sorts.bool_sort);
+    }
+    let mut solver = BvSolver::new();
+    assert!(solver.encode_bool_node(root, &manager).is_some());
+    solver.pin_bool_term(root, true);
+    solver.pin_bool_term(base, false);
+    assert!(matches!(
+        solver.check().expect("check"),
+        TheoryResult::Unsat(_)
+    ));
+}
+
+#[test]
+fn the_first_scoped_constant_does_not_define_a_variable_permanently() {
+    let mut solver = BvSolver::new();
+    let x = TermId::new(100);
+    solver.push();
+    assert!(solver.assert_const(x, 5, 8));
+    assert!(matches!(solver.check().expect("check"), TheoryResult::Sat));
+    solver.pop();
+    assert!(solver.assert_const(x, 7, 8));
+    assert!(matches!(solver.check().expect("check"), TheoryResult::Sat));
+    assert_eq!(solver.get_value(x), Some(7));
+}
+
+#[test]
+fn order_encoding_shortcuts_retract_with_their_assertions() {
+    use nixie_core::ast::TermManager;
+    let mut manager = TermManager::new();
+    let sort = manager.sorts.bitvec(4);
+    let args: Vec<_> = (0..3)
+        .map(|i| manager.mk_var(&format!("a{i}"), sort))
+        .collect();
+    let eq = manager.mk_eq(args[0], args[1]);
+    let mut solver = BvSolver::new();
+    for &arg in &args {
+        solver.new_bv(arg, 4);
+    }
+    solver.push();
+    assert!(solver.assert_formula_true(eq, &manager));
+    solver.pop();
+    solver.push();
+    assert!(solver.assert_distinct_order_network(&args, &manager));
+    assert!(matches!(
+        solver.check().expect("distinct"),
+        TheoryResult::Sat
+    ));
+    solver.pop();
+    assert!(solver.assert_eq(args[0], args[1]));
+    assert!(matches!(solver.check().expect("equal"), TheoryResult::Sat));
+}
+
+#[test]
+fn model_equalities_never_merge_different_bitvector_sorts() {
+    let mut solver = BvSolver::new();
+    let a = TermId::new(11);
+    let b = TermId::new(12);
+    assert!(solver.assert_const(a, 1, 8));
+    assert!(solver.assert_const(b, 1, 16));
+    assert!(matches!(solver.check().expect("check"), TheoryResult::Sat));
+    solver.extract_model_equalities();
+    assert!(solver.shared_equalities.is_empty());
+    let model = solver.get_model();
+    assert!(model.contains(&(a, a)) && model.contains(&(b, b)));
 }

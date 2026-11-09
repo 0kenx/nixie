@@ -3128,3 +3128,20 @@ fn variable_limits_precede_bulk_allocation_and_state_mutation() {
     assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| solver.new_var())).is_err());
     assert_eq!(solver.num_vars(), Var::MAX_INDEX as usize + 1);
 }
+
+#[test]
+fn substituted_assumption_core_uses_the_callers_literals() {
+    let mut solver = Solver::new();
+    solver.add_clause_dimacs(&[-1, 2]);
+    solver.add_clause_dimacs(&[1, -2]);
+    solver.add_clause_dimacs(&[-1, -3]);
+    solver.add_clause_dimacs(&[1, 3]);
+    solver.substitute_equivalent_literals();
+    assert!(solver.stats().substitutions > 0);
+    let assumptions = [Lit::from_dimacs(2), Lit::from_dimacs(3)];
+    let (result, core) = solver.solve_with_assumptions(&assumptions);
+    assert_eq!(result, SolverResult::Unsat);
+    let core = core.expect("failed assumptions");
+    assert_eq!(core.len(), 2);
+    assert!(core.iter().all(|lit| assumptions.contains(lit)));
+}
