@@ -1,488 +1,437 @@
-//! Field Extensions for Algebraic Numbers.
+//! Exact arithmetic in rational algebraic extensions.
 //!
-//! Provides representation and operations on algebraic field extensions
-//! needed for advanced polynomial solving and symbolic computation.
+//! A caller supplies a nonconstant defining polynomial, irreducible for a field.
+//! The same operations also define quotient-algebra arithmetic for reducible
+//! polynomials; inversion then fails for nonunits. No irreducibility is inferred.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 
-/// Represents an element in an algebraic field extension Q(α).
-///
-/// An element is represented as a polynomial in α with rational coefficients:
-/// a₀ + a₁α + a₂α² + ... + aₙ₋₁αⁿ⁻¹
+/// Invalid defining-polynomial state.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FieldExtensionError {
+    /// A zero or constant polynomial cannot define an algebraic extension.
+    #[error("the defining polynomial must have positive degree")]
+    InvalidPolynomial,
+    /// The public degree was changed inconsistently with the defining polynomial.
+    #[error("extension degree does not match the defining polynomial")]
+    InconsistentDegree,
+}
+
+/// Coefficients of a polynomial in the generator of an extension.
 #[derive(Clone, Debug)]
 pub struct FieldElement {
-    /// Coefficients [a₀, a₁, ..., aₙ₋₁] where element = Σ aᵢαⁱ
+    /// Coefficients in ascending order of powers of the generator.
     pub coeffs: Vec<BigRational>,
-    /// Reference to the defining polynomial of α
+    /// Zero denotes the rational field; other IDs belong to a manager.
     pub extension_id: ExtensionId,
 }
 
-/// Unique identifier for a field extension.
+/// Manager-local identifier; zero is reserved for the rational field.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ExtensionId(pub usize);
 
-/// A field extension Q(α) where α is a root of a minimal polynomial.
+/// The rational quotient algebra defined by a nonconstant polynomial.
+///
+/// For an irreducible polynomial this is a field. Fields remain public for API
+/// compatibility, but modifying them requires preserving [`Self::validate`].
+/// Infallible arithmetic methods panic on invalid state rather than fabricate a
+/// value; fallible inversion and manager operations decline invalid state.
 #[derive(Clone, Debug)]
 pub struct FieldExtension {
-    /// Minimal polynomial p(x) such that p(α) = 0
+    /// Defining polynomial, with coefficients in ascending power order.
     pub minimal_poly: Vec<BigRational>,
-    /// Degree of the extension [Q(α):Q]
+    /// Degree of the defining polynomial, ignoring trailing zeros.
     pub degree: usize,
-    /// Cached multiplication table for efficiency
-    mult_table: HashMap<(usize, usize), Vec<BigRational>>,
-    /// Cached inverse table
-    inv_table: HashMap<Vec<BigRational>, Vec<BigRational>>,
+}
+
+fn normalized(mut coefficients: Vec<BigRational>) -> Vec<BigRational> {
+    while coefficients.last().is_some_and(Zero::is_zero) {
+        coefficients.pop();
+    }
+    if coefficients.is_empty() {
+        coefficients.push(BigRational::zero());
+    }
+    coefficients
+}
+
+fn require_valid<T>(value: Result<T, FieldExtensionError>) -> T {
+    match value {
+        Ok(value) => value,
+        Err(error) => panic!("invalid field extension: {error}"),
+    }
 }
 
 impl FieldExtension {
-    /// Create a new field extension from a minimal polynomial.
-    ///
-    /// The polynomial should be irreducible over Q.
-    pub fn new(minimal_poly: Vec<BigRational>) -> Self {
-        let degree = minimal_poly.len().saturating_sub(1);
-
-        Self {
+    /// Construct an extension, rejecting zero and constant defining polynomials.
+    pub fn try_new(minimal_poly: Vec<BigRational>) -> Result<Self, FieldExtensionError> {
+        let minimal_poly = normalized(minimal_poly);
+        if minimal_poly.len() < 2 {
+            return Err(FieldExtensionError::InvalidPolynomial);
+        }
+        Ok(Self {
+            degree: minimal_poly.len() - 1,
             minimal_poly,
-            degree,
-            mult_table: HashMap::new(),
-            inv_table: HashMap::new(),
-        }
+        })
     }
 
-    /// Check if the minimal polynomial is monic.
+    /// Construct an extension. The caller supplies an irreducible polynomial
+    /// when field (rather than quotient-algebra) semantics are required.
+    ///
+    /// # Panics
+    /// Panics for a zero or constant polynomial; use [`Self::try_new`] to handle
+    /// invalid input as an error.
+    pub fn new(minimal_poly: Vec<BigRational>) -> Self {
+        require_valid(Self::try_new(minimal_poly))
+    }
+
+    /// Validate the defining polynomial and its public degree metadata.
+    pub fn validate(&self) -> Result<(), FieldExtensionError> {
+        self.modulus().map(|_| ())
+    }
+
+    fn modulus(&self) -> Result<&[BigRational], FieldExtensionError> {
+        let degree = self
+            .minimal_poly
+            .iter()
+            .rposition(|c| !c.is_zero())
+            .filter(|&degree| degree > 0)
+            .ok_or(FieldExtensionError::InvalidPolynomial)?;
+        if degree != self.degree {
+            return Err(FieldExtensionError::InconsistentDegree);
+        }
+        Ok(&self.minimal_poly[..=degree])
+    }
+
+    /// Whether the actual leading coefficient of a valid defining polynomial is one.
     pub fn is_monic(&self) -> bool {
-        if let Some(lead) = self.minimal_poly.last() {
-            lead.is_one()
-        } else {
-            false
-        }
+        self.modulus()
+            .is_ok_and(|p| p.last().is_some_and(One::is_one))
     }
 
-    /// Reduce a polynomial modulo the minimal polynomial.
+    /// Reduce coefficients modulo the defining polynomial.
     ///
-    /// Returns coefficients of the reduced polynomial of degree < extension degree.
+    /// # Panics
+    /// Panics if public state no longer satisfies [`Self::validate`].
     pub fn reduce(&self, coeffs: &[BigRational]) -> Vec<BigRational> {
-        if coeffs.len() <= self.degree {
-            return coeffs.to_vec();
-        }
-
-        let mut result = coeffs.to_vec();
-
-        // Polynomial long division by minimal_poly
-        while result.len() > self.degree
-            && let Some(lead_coeff) = result.last().filter(|c| !c.is_zero()).cloned()
-        {
-            let deg_diff = result.len() - self.minimal_poly.len();
-            let min_lead = self
-                .minimal_poly
-                .last()
-                .cloned()
-                .expect("checked non-empty");
-
-            let quotient_coeff = &lead_coeff / &min_lead;
-
-            // Subtract quotient_coeff * x^deg_diff * minimal_poly from result
-            for (i, min_coeff) in self.minimal_poly.iter().enumerate() {
-                let idx = i + deg_diff;
-                if idx < result.len() {
-                    result[idx] = &result[idx] - &quotient_coeff * min_coeff;
-                }
-            }
-
-            result.pop();
-        }
-
-        // Remove leading zeros
-        while result.last().is_some_and(|c| c.is_zero()) {
-            result.pop();
-        }
-
-        if result.is_empty() {
-            vec![BigRational::zero()]
-        } else {
-            result
-        }
+        let modulus = require_valid(self.modulus());
+        require_valid(poly_div(coeffs, modulus)).1
     }
 
-    /// Multiply two elements in the field extension.
+    /// Multiply and reduce two elements. Panics on invalid extension state.
     pub fn multiply(&mut self, a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
-        // Check cache first
-        let key = (a.len(), b.len());
-        if let Some(cached) = self.mult_table.get(&key)
-            && (a == cached || b == cached)
-        {
-            // Simple case, use cache if applicable
-        }
-
-        // Polynomial multiplication
-        let mut product = vec![BigRational::zero(); a.len() + b.len() - 1];
-
-        for (i, a_coeff) in a.iter().enumerate() {
-            for (j, b_coeff) in b.iter().enumerate() {
-                product[i + j] = &product[i + j] + a_coeff * b_coeff;
-            }
-        }
-
-        // Reduce modulo minimal polynomial
-        let reduced = self.reduce(&product);
-
-        // Cache the result for small degrees
-        if a.len() <= 3 && b.len() <= 3 {
-            self.mult_table.insert(key, reduced.clone());
-        }
-
-        reduced
+        self.reduce(&poly_mult(a, b))
     }
 
-    /// Add two elements in the field extension.
+    /// Add and reduce two elements. Panics on invalid extension state.
     pub fn add(&self, a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
-        let max_len = a.len().max(b.len());
-        let mut result = vec![BigRational::zero(); max_len];
-
-        for (i, coeff) in a.iter().enumerate() {
-            result[i] = coeff.clone();
+        let mut sum = vec![BigRational::zero(); a.len().max(b.len())];
+        for (i, coefficient) in a.iter().enumerate() {
+            sum[i] += coefficient;
         }
-
-        for (i, coeff) in b.iter().enumerate() {
-            result[i] = &result[i] + coeff;
+        for (i, coefficient) in b.iter().enumerate() {
+            sum[i] += coefficient;
         }
-
-        // Remove trailing zeros
-        while result.len() > 1 && result.last().is_some_and(|c| c.is_zero()) {
-            result.pop();
-        }
-
-        result
+        self.reduce(&sum)
     }
 
-    /// Negate an element in the field extension.
+    /// Negate and reduce an element. Panics on invalid extension state.
     pub fn negate(&self, a: &[BigRational]) -> Vec<BigRational> {
-        a.iter().map(|c| -c).collect()
+        self.reduce(&a.iter().map(|coefficient| -coefficient).collect::<Vec<_>>())
     }
 
-    /// Compute the multiplicative inverse of an element.
-    ///
-    /// Uses extended Euclidean algorithm in Q\[x\] modulo minimal polynomial.
+    /// Invert a unit by iterative polynomial extended Euclid.
+    /// Returns `None` for nonunits or invalid extension state.
     pub fn inverse(&mut self, a: &[BigRational]) -> Option<Vec<BigRational>> {
-        // Check cache
-        if let Some(cached) = self.inv_table.get(a) {
-            return Some(cached.clone());
-        }
-
-        // Extended GCD in polynomial ring
-        let (gcd, s, _t) = self.extended_gcd(a, &self.minimal_poly.clone());
-
-        // Check if GCD is a non-zero constant (element is invertible)
-        if gcd.len() == 1 && !gcd[0].is_zero() {
-            let inv_gcd = BigRational::one() / &gcd[0];
-            let result: Vec<BigRational> = s.iter().map(|c| c * &inv_gcd).collect();
-            let reduced = self.reduce(&result);
-
-            // Cache the result
-            self.inv_table.insert(a.to_vec(), reduced.clone());
-
-            Some(reduced)
-        } else {
-            None // Element is not invertible
-        }
-    }
-
-    /// Extended Euclidean algorithm for polynomials.
-    ///
-    /// Returns (gcd, s, t) such that s*a + t*b = gcd(a, b).
-    ///
-    /// Iterative rather than recursive: the recursion was one level per
-    /// Euclidean division step, i.e. O(degree) deep on an attacker-supplied
-    /// polynomial, carrying three `Vec<BigRational>`s per frame – and the
-    /// `(Vec, Vec, Vec)` return type has no channel through which a depth
-    /// cap could report giving up. This is the standard forward
-    /// accumulation of the same recurrence (`s ← old_s − q·s`), so it
-    /// produces the same Bézout coefficients.
-    fn extended_gcd(
-        &self,
-        a: &[BigRational],
-        b: &[BigRational],
-    ) -> (Vec<BigRational>, Vec<BigRational>, Vec<BigRational>) {
-        let mut old_r = a.to_vec();
-        let mut r = b.to_vec();
+        let modulus = self.modulus().ok()?;
+        let mut old_r = poly_div(a, modulus).ok()?.1;
+        let mut r = modulus.to_vec();
         let mut old_s = vec![BigRational::one()];
         let mut s = vec![BigRational::zero()];
-        let mut old_t = vec![BigRational::zero()];
-        let mut t = vec![BigRational::one()];
-
-        while !(r.is_empty() || r.iter().all(|c| c.is_zero())) {
-            let (q, next_r) = self.poly_div(&old_r, &r);
-
-            let next_s = self.poly_sub(&old_s, &self.poly_mult(&q, &s));
-            let next_t = self.poly_sub(&old_t, &self.poly_mult(&q, &t));
-
-            old_r = core::mem::replace(&mut r, next_r);
+        while r.iter().any(|c| !c.is_zero()) {
+            let (quotient, remainder) = poly_div(&old_r, &r).ok()?;
+            let next_s = poly_sub(&old_s, &poly_mult(&quotient, &s));
+            old_r = core::mem::replace(&mut r, remainder);
             old_s = core::mem::replace(&mut s, next_s);
-            old_t = core::mem::replace(&mut t, next_t);
         }
-
-        (old_r, old_s, old_t)
-    }
-
-    /// Polynomial division: returns (quotient, remainder).
-    fn poly_div(
-        &self,
-        a: &[BigRational],
-        b: &[BigRational],
-    ) -> (Vec<BigRational>, Vec<BigRational>) {
-        // `b.last()` is `None` exactly when `b` is empty, so this one match is
-        // the old "empty or all zero" early return and the leading-coefficient
-        // read together.
-        let b_lead = match b.last() {
-            Some(lead) if !b.iter().all(|c| c.is_zero()) => lead,
-            _ => return (vec![BigRational::zero()], a.to_vec()),
+        let [constant] = old_r.as_slice() else {
+            return None;
         };
-
-        let mut remainder = a.to_vec();
-        let mut quotient = vec![BigRational::zero(); a.len().saturating_sub(b.len()) + 1];
-
-        while remainder.len() >= b.len() {
-            let r_lead = match remainder.last() {
-                Some(c) if !c.is_zero() => c,
-                _ => break,
-            };
-
-            let deg_diff = remainder.len() - b.len();
-            let q_coeff = r_lead / b_lead;
-
-            if deg_diff < quotient.len() {
-                quotient[deg_diff] = q_coeff.clone();
-            }
-
-            // Subtract q_coeff * x^deg_diff * b from remainder
-            for (i, b_coeff) in b.iter().enumerate() {
-                let idx = i + deg_diff;
-                if idx < remainder.len() {
-                    remainder[idx] = &remainder[idx] - &q_coeff * b_coeff;
-                }
-            }
-
-            remainder.pop();
+        if constant.is_zero() {
+            return None;
         }
-
-        // Remove leading zeros
-        while quotient.last().is_some_and(|c| c.is_zero()) {
-            quotient.pop();
-        }
-        while remainder.last().is_some_and(|c| c.is_zero()) {
-            remainder.pop();
-        }
-
-        if quotient.is_empty() {
-            quotient.push(BigRational::zero());
-        }
-        if remainder.is_empty() {
-            remainder.push(BigRational::zero());
-        }
-
-        (quotient, remainder)
+        let inverse = self.reduce(&old_s.iter().map(|c| c / constant).collect::<Vec<_>>());
+        // Check the original operand, independently of the Euclidean updates.
+        (self.reduce(&poly_mult(a, &inverse)) == vec![BigRational::one()]).then_some(inverse)
     }
 
-    /// Polynomial multiplication.
-    fn poly_mult(&self, a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
-        if a.is_empty() || b.is_empty() {
-            return vec![BigRational::zero()];
-        }
-
-        let mut result = vec![BigRational::zero(); a.len() + b.len() - 1];
-
-        for (i, a_coeff) in a.iter().enumerate() {
-            for (j, b_coeff) in b.iter().enumerate() {
-                result[i + j] = &result[i + j] + a_coeff * b_coeff;
+    /// Matrix of multiplication by `a` in the basis 1, alpha, ..., alpha^(n-1).
+    // Iterate columns of a row-major matrix: iterating its rows instead would
+    // transpose the linear operator and obscure the basis convention.
+    #[allow(clippy::needless_range_loop)]
+    fn multiplication_matrix(&self, a: &[BigRational]) -> Vec<Vec<BigRational>> {
+        require_valid(self.validate());
+        let mut matrix = vec![vec![BigRational::zero(); self.degree]; self.degree];
+        let mut column = self.reduce(a);
+        for j in 0..self.degree {
+            for (i, coefficient) in column.iter().enumerate() {
+                matrix[i][j] = coefficient.clone();
             }
+            column.insert(0, BigRational::zero());
+            column = self.reduce(&column);
         }
-
-        result
+        matrix
     }
 
-    /// Polynomial subtraction.
-    fn poly_sub(&self, a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
-        let max_len = a.len().max(b.len());
-        let mut result = vec![BigRational::zero(); max_len];
-
-        for (i, coeff) in a.iter().enumerate() {
-            result[i] = coeff.clone();
-        }
-
-        for (i, coeff) in b.iter().enumerate() {
-            result[i] = &result[i] - coeff;
-        }
-
-        while result.len() > 1 && result.last().is_some_and(|c| c.is_zero()) {
-            result.pop();
-        }
-
-        if result.is_empty() {
-            vec![BigRational::zero()]
-        } else {
-            result
-        }
-    }
-
-    /// Compute the norm of an element.
-    ///
-    /// The norm is the product of all conjugates of the element.
+    /// Exact norm: determinant of multiplication by the element.
+    /// Panics on invalid extension state.
     pub fn norm(&mut self, a: &[BigRational]) -> BigRational {
-        // For now, compute as determinant of multiplication matrix
-        // This is a simplified implementation
-        if a.is_empty() || (a.len() == 1 && a[0].is_zero()) {
-            return BigRational::zero();
-        }
-
-        // If element is a rational, norm is just the element to the power of degree
-        if a.len() == 1 {
-            let mut result = a[0].clone();
-            for _ in 1..self.degree {
-                result = &result * &a[0];
-            }
-            return result;
-        }
-
-        // General case: use characteristic polynomial
-        BigRational::one() // Placeholder
+        determinant(self.multiplication_matrix(a))
     }
 
-    /// Compute the trace of an element.
-    ///
-    /// The trace is the sum of all conjugates of the element.
+    /// Exact trace: trace of multiplication by the element.
+    /// Panics on invalid extension state.
     pub fn trace(&self, a: &[BigRational]) -> BigRational {
-        // For element a₀ + a₁α + ..., trace is degree * a₀
-        if a.is_empty() {
-            BigRational::zero()
-        } else {
-            &a[0] * &BigRational::from_integer((self.degree as i32).into())
-        }
+        self.multiplication_matrix(a)
+            .iter()
+            .enumerate()
+            .fold(BigRational::zero(), |sum, (i, row)| sum + &row[i])
     }
 
-    /// Check if an element is a primitive element (generates the extension).
+    /// Whether 1, a, ..., a^(n-1) span the algebra over Q.
+    /// For a field this is exactly whether `a` is a primitive element.
+    /// Panics on invalid extension state.
+    // Each successive power supplies a column, not a row.
+    #[allow(clippy::needless_range_loop)]
     pub fn is_primitive(&mut self, a: &[BigRational]) -> bool {
-        // Element is primitive if its minimal polynomial has degree equal to extension degree
-        // For now, simplified check
-        a.len() >= self.degree
+        require_valid(self.validate());
+        let a = self.reduce(a);
+        let mut powers = vec![vec![BigRational::zero(); self.degree]; self.degree];
+        let mut power = vec![BigRational::one()];
+        for j in 0..self.degree {
+            for (i, coefficient) in power.iter().enumerate() {
+                powers[i][j] = coefficient.clone();
+            }
+            power = self.reduce(&poly_mult(&power, &a));
+        }
+        !determinant(powers).is_zero()
     }
 }
 
+/// Normalized polynomial long division over Q. Trimming at every iteration is
+/// essential: cancellation can remove several leading terms in one step.
+fn poly_div(
+    a: &[BigRational],
+    b: &[BigRational],
+) -> Result<(Vec<BigRational>, Vec<BigRational>), FieldExtensionError> {
+    let divisor = normalized(b.to_vec());
+    let Some(leading) = divisor.last().filter(|c| !c.is_zero()) else {
+        return Err(FieldExtensionError::InvalidPolynomial);
+    };
+    let mut remainder = normalized(a.to_vec());
+    let mut quotient = vec![BigRational::zero(); remainder.len().saturating_sub(divisor.len()) + 1];
+    while remainder.len() >= divisor.len() && remainder.iter().any(|c| !c.is_zero()) {
+        let offset = remainder.len() - divisor.len();
+        let top = remainder
+            .last()
+            .ok_or(FieldExtensionError::InvalidPolynomial)?;
+        let coefficient = top / leading;
+        quotient[offset] += &coefficient;
+        for (i, value) in divisor.iter().enumerate() {
+            remainder[offset + i] -= &coefficient * value;
+        }
+        remainder = normalized(remainder);
+    }
+    Ok((normalized(quotient), remainder))
+}
+
+fn poly_mult(a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
+    if a.is_empty() || b.is_empty() {
+        return vec![BigRational::zero()];
+    }
+    let mut result = vec![BigRational::zero(); a.len() + b.len() - 1];
+    for (i, x) in a.iter().enumerate() {
+        for (j, y) in b.iter().enumerate() {
+            result[i + j] += x * y;
+        }
+    }
+    normalized(result)
+}
+
+fn poly_sub(a: &[BigRational], b: &[BigRational]) -> Vec<BigRational> {
+    let mut result = vec![BigRational::zero(); a.len().max(b.len())];
+    for (i, value) in a.iter().enumerate() {
+        result[i] += value;
+    }
+    for (i, value) in b.iter().enumerate() {
+        result[i] -= value;
+    }
+    normalized(result)
+}
+
+/// Exact rational Gaussian elimination. Row subtraction preserves determinant;
+/// a pivot swap changes its sign; a missing pivot proves determinant zero.
+fn determinant(mut matrix: Vec<Vec<BigRational>>) -> BigRational {
+    let mut result = BigRational::one();
+    for column in 0..matrix.len() {
+        let Some(pivot) = (column..matrix.len()).find(|&i| !matrix[i][column].is_zero()) else {
+            return BigRational::zero();
+        };
+        if pivot != column {
+            matrix.swap(pivot, column);
+            result = -result;
+        }
+        let pivot_value = matrix[column][column].clone();
+        result *= &pivot_value;
+        let (upper, lower) = matrix.split_at_mut(column + 1);
+        let pivot_row = &upper[column];
+        for row in lower {
+            let factor = &row[column] / &pivot_value;
+            for j in column + 1..row.len() {
+                row[j] -= &factor * &pivot_row[j];
+            }
+            row[column] = BigRational::zero();
+        }
+    }
+    result
+}
+
 impl FieldElement {
-    /// Create a new field element from coefficients.
+    /// Construct an element, normalizing its coefficient representation.
     pub fn new(coeffs: Vec<BigRational>, extension_id: ExtensionId) -> Self {
         Self {
-            coeffs,
+            coeffs: normalized(coeffs),
             extension_id,
         }
     }
-
-    /// Create a rational element (no extension).
+    /// Construct an element of Q, whose reserved extension ID is zero.
     pub fn from_rational(r: BigRational) -> Self {
-        Self {
-            coeffs: vec![r],
-            extension_id: ExtensionId(0), // 0 represents Q itself
-        }
+        Self::new(vec![r], ExtensionId(0))
     }
-
-    /// Check if this element is actually rational.
+    /// Whether this polynomial representation is constant (including empty zero).
     pub fn is_rational(&self) -> bool {
-        self.coeffs.len() == 1 || self.coeffs[1..].iter().all(|c| c.is_zero())
+        self.coeffs.iter().skip(1).all(Zero::is_zero)
     }
-
-    /// Get the rational part (constant term).
+    /// Constant coefficient, with the empty polynomial interpreted as zero.
     pub fn rational_part(&self) -> BigRational {
         self.coeffs
             .first()
             .cloned()
             .unwrap_or_else(BigRational::zero)
     }
-
-    /// Get the degree of the element (highest non-zero coefficient index).
+    /// Highest nonzero exponent; zero has degree zero by this API's convention.
     pub fn degree(&self) -> usize {
         self.coeffs.iter().rposition(|c| !c.is_zero()).unwrap_or(0)
     }
 }
 
-/// Manager for multiple field extensions.
+/// Manager of non-rational extension IDs; zero remains reserved for Q.
 pub struct FieldExtensionManager {
     extensions: Vec<FieldExtension>,
-    /// Map from minimal polynomial to extension ID
-    poly_to_id: HashMap<Vec<BigRational>, ExtensionId>,
 }
 
 impl FieldExtensionManager {
-    /// Create a new field extension manager.
+    /// Construct an empty manager.
     pub fn new() -> Self {
         Self {
             extensions: Vec::new(),
-            poly_to_id: HashMap::new(),
         }
     }
 
-    /// Register a new field extension or get existing one.
+    /// Intern a defining polynomial up to a nonzero rational scalar.
+    ///
+    /// The lookup examines current defining polynomials because callers can
+    /// mutate extensions through [`Self::get_extension`]. Cached polynomial-to-ID
+    /// maps would otherwise return IDs belonging to a different polynomial.
+    /// Panics for zero or constant polynomials.
     pub fn get_or_create(&mut self, minimal_poly: Vec<BigRational>) -> ExtensionId {
-        if let Some(&ext_id) = self.poly_to_id.get(&minimal_poly) {
-            return ext_id;
+        let extension = FieldExtension::new(minimal_poly);
+        let monic = |p: &[BigRational]| -> Result<Vec<BigRational>, FieldExtensionError> {
+            let lead = p
+                .last()
+                .filter(|c| !c.is_zero())
+                .ok_or(FieldExtensionError::InvalidPolynomial)?;
+            Ok(p.iter().map(|c| c / lead).collect())
+        };
+        let key = require_valid(extension.modulus().and_then(monic));
+        for (index, existing) in self.extensions.iter().enumerate() {
+            if existing.modulus().and_then(monic).is_ok_and(|p| p == key) {
+                return ExtensionId(index + 1);
+            }
         }
-
-        let ext_id = ExtensionId(self.extensions.len());
-        let extension = FieldExtension::new(minimal_poly.clone());
-
         self.extensions.push(extension);
-        self.poly_to_id.insert(minimal_poly, ext_id);
-
-        ext_id
+        ExtensionId(self.extensions.len())
     }
 
-    /// Get a field extension by ID.
-    pub fn get_extension(&mut self, ext_id: ExtensionId) -> Option<&mut FieldExtension> {
-        self.extensions.get_mut(ext_id.0)
+    /// Access a registered extension. Zero denotes Q and has no mutable entry.
+    pub fn get_extension(&mut self, id: ExtensionId) -> Option<&mut FieldExtension> {
+        self.extensions.get_mut(id.0.checked_sub(1)?)
     }
 
-    /// Add two field elements (must be in same extension).
+    /// Add two elements in the same field.
     pub fn add(&mut self, a: &FieldElement, b: &FieldElement) -> Option<FieldElement> {
         if a.extension_id != b.extension_id {
-            return None; // Different extensions
+            return None;
         }
-
+        if a.extension_id == ExtensionId(0) {
+            return (a.is_rational() && b.is_rational())
+                .then(|| FieldElement::from_rational(a.rational_part() + b.rational_part()));
+        }
         let ext = self.get_extension(a.extension_id)?;
-        let coeffs = ext.add(&a.coeffs, &b.coeffs);
-
-        Some(FieldElement::new(coeffs, a.extension_id))
+        ext.validate().ok()?;
+        Some(FieldElement::new(
+            ext.add(&a.coeffs, &b.coeffs),
+            a.extension_id,
+        ))
     }
 
-    /// Multiply two field elements.
+    /// Multiply two elements in the same field.
     pub fn multiply(&mut self, a: &FieldElement, b: &FieldElement) -> Option<FieldElement> {
         if a.extension_id != b.extension_id {
-            return None; // Different extensions
+            return None;
         }
-
+        if a.extension_id == ExtensionId(0) {
+            return (a.is_rational() && b.is_rational())
+                .then(|| FieldElement::from_rational(a.rational_part() * b.rational_part()));
+        }
         let ext = self.get_extension(a.extension_id)?;
-        let coeffs = ext.multiply(&a.coeffs, &b.coeffs);
-
-        Some(FieldElement::new(coeffs, a.extension_id))
+        ext.validate().ok()?;
+        Some(FieldElement::new(
+            ext.multiply(&a.coeffs, &b.coeffs),
+            a.extension_id,
+        ))
     }
 
-    /// Compute multiplicative inverse.
+    /// Invert an element; nonunits and invalid field state return `None`.
     pub fn inverse(&mut self, a: &FieldElement) -> Option<FieldElement> {
-        let ext = self.get_extension(a.extension_id)?;
-        let coeffs = ext.inverse(&a.coeffs)?;
-
+        if a.extension_id == ExtensionId(0) {
+            let rational = a.rational_part();
+            return (a.is_rational() && !rational.is_zero())
+                .then(|| FieldElement::from_rational(rational.recip()));
+        }
+        let coeffs = self.get_extension(a.extension_id)?.inverse(&a.coeffs)?;
         Some(FieldElement::new(coeffs, a.extension_id))
     }
 
-    /// Compute norm of a field element.
+    /// Exact field norm, or `None` for invalid field state.
     pub fn norm(&mut self, a: &FieldElement) -> Option<BigRational> {
+        if a.extension_id == ExtensionId(0) {
+            return a.is_rational().then(|| a.rational_part());
+        }
         let ext = self.get_extension(a.extension_id)?;
+        ext.validate().ok()?;
         Some(ext.norm(&a.coeffs))
     }
 
-    /// Compute trace of a field element.
+    /// Exact field trace, or `None` for invalid field state.
     pub fn trace(&mut self, a: &FieldElement) -> Option<BigRational> {
+        if a.extension_id == ExtensionId(0) {
+            return a.is_rational().then(|| a.rational_part());
+        }
         let ext = self.get_extension(a.extension_id)?;
+        ext.validate().ok()?;
         Some(ext.trace(&a.coeffs))
     }
 }
@@ -500,6 +449,208 @@ mod tests {
 
     fn rat(n: i64) -> BigRational {
         BigRational::from_integer(BigInt::from(n))
+    }
+
+    #[test]
+    fn reduction_and_division_remove_all_cancelled_leading_terms() {
+        let mut extension = FieldExtension::new(vec![rat(-2), rat(0), rat(1), rat(0)]);
+        assert_eq!(extension.degree, 2);
+        assert_eq!(
+            extension.reduce(&[rat(0), rat(0), rat(0), rat(0), rat(1), rat(0)]),
+            vec![rat(4)]
+        );
+        assert_eq!(extension.add(&[rat(0), rat(0), rat(1)], &[]), vec![rat(2)]);
+        assert_eq!(extension.negate(&[rat(0), rat(0), rat(1)]), vec![rat(-2)]);
+        assert_eq!(extension.multiply(&[], &[]), vec![rat(0)]);
+        let (q, r) = poly_div(
+            &[rat(1), rat(0), rat(0), rat(0), rat(1)],
+            &[rat(-2), rat(0), rat(1), rat(0)],
+        )
+        .expect("division");
+        assert_eq!(q, vec![rat(2), rat(0), rat(1)]);
+        assert_eq!(r, vec![rat(5)]);
+        assert!(poly_div(&[rat(1)], &[rat(0), rat(0)]).is_err());
+    }
+
+    #[test]
+    fn norm_and_trace_use_every_coefficient_and_nonmonic_moduli() {
+        // alpha^2 - alpha - 1 = 0: Tr(alpha)=1, N(alpha)=-1.
+        let mut extension = FieldExtension::new(vec![rat(-2), rat(-2), rat(2)]);
+        assert!(!extension.is_monic());
+        assert_eq!(extension.trace(&[rat(0), rat(1)]), rat(1));
+        assert_eq!(extension.norm(&[rat(0), rat(1)]), rat(-1));
+        assert_eq!(extension.trace(&[rat(1), rat(1)]), rat(3));
+        assert_eq!(extension.norm(&[rat(1), rat(1)]), rat(1));
+        assert_eq!(extension.trace(&[rat(0), rat(0), rat(1)]), rat(3));
+        assert_eq!(extension.norm(&[rat(0), rat(0), rat(1)]), rat(1));
+        let huge = BigRational::from_integer(BigInt::from(1u8) << 160usize);
+        assert_eq!(extension.norm(core::slice::from_ref(&huge)), &huge * &huge);
+        assert_eq!(
+            extension.trace(core::slice::from_ref(&huge)),
+            &huge * rat(2)
+        );
+        assert_eq!(extension.norm(&[]), rat(0));
+    }
+
+    #[test]
+    fn primitive_element_requires_a_full_power_basis() {
+        // x^4 - 2 is irreducible (Eisenstein); alpha^2 lies in a degree-two subfield.
+        let mut extension = FieldExtension::new(vec![rat(-2), rat(0), rat(0), rat(0), rat(1)]);
+        assert!(extension.is_primitive(&[rat(0), rat(1)]));
+        assert!(!extension.is_primitive(&[rat(0), rat(0), rat(1), rat(0)]));
+        assert!(!extension.is_primitive(&[rat(3), rat(0), rat(0), rat(0)]));
+        assert!(FieldExtension::new(vec![rat(-3), rat(1)]).is_primitive(&[]));
+    }
+
+    #[test]
+    fn inverse_and_manager_lookup_follow_mutated_moduli() {
+        let mut extension = FieldExtension::new(vec![rat(-2), rat(0), rat(1)]);
+        assert_eq!(
+            extension.inverse(&[rat(0), rat(1)]),
+            Some(vec![rat(0), BigRational::new(1.into(), 2.into())])
+        );
+        extension.minimal_poly[0] = rat(-3);
+        assert_eq!(
+            extension.inverse(&[rat(0), rat(1)]),
+            Some(vec![rat(0), BigRational::new(1.into(), 3.into())])
+        );
+        extension.degree = 7;
+        assert_eq!(
+            extension.validate(),
+            Err(FieldExtensionError::InconsistentDegree)
+        );
+        assert!(extension.inverse(&[rat(1)]).is_none());
+        let mut manager = FieldExtensionManager::new();
+        let first = manager.get_or_create(vec![rat(-2), rat(0), rat(1)]);
+        assert_ne!(first, ExtensionId(0));
+        manager
+            .get_extension(first)
+            .expect("extension")
+            .minimal_poly[0] = rat(-3);
+        let second = manager.get_or_create(vec![rat(-2), rat(0), rat(1)]);
+        assert_ne!(first, second);
+        assert_eq!(
+            second,
+            manager.get_or_create(vec![rat(-4), rat(0), rat(2), rat(0)])
+        );
+        manager
+            .get_extension(first)
+            .expect("extension")
+            .minimal_poly
+            .clear();
+        assert!(
+            manager
+                .norm(&FieldElement::new(vec![rat(1)], first))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn invalid_moduli_and_rational_field_are_distinct() {
+        for polynomial in [vec![], vec![rat(0)], vec![rat(5)], vec![rat(0), rat(0)]] {
+            assert!(matches!(
+                FieldExtension::try_new(polynomial),
+                Err(FieldExtensionError::InvalidPolynomial)
+            ));
+        }
+        let mut manager = FieldExtensionManager::new();
+        let a = FieldElement::from_rational(rat(2));
+        let b = FieldElement::from_rational(rat(3));
+        assert_eq!(
+            manager.add(&a, &b).expect("Q addition").coeffs,
+            vec![rat(5)]
+        );
+        assert_eq!(
+            manager.multiply(&a, &b).expect("Q multiplication").coeffs,
+            vec![rat(6)]
+        );
+        assert_eq!(manager.norm(&a), Some(rat(2)));
+        assert_eq!(manager.trace(&a), Some(rat(2)));
+        assert_eq!(
+            manager.inverse(&a).expect("Q inverse").coeffs,
+            vec![BigRational::new(1.into(), 2.into())]
+        );
+        assert!(
+            manager
+                .inverse(&FieldElement::from_rational(rat(0)))
+                .is_none()
+        );
+        assert!(manager.get_extension(ExtensionId(0)).is_none());
+        let empty = FieldElement {
+            coeffs: vec![],
+            extension_id: ExtensionId(0),
+        };
+        assert!(empty.is_rational());
+        assert_eq!(manager.norm(&empty), Some(rat(0)));
+    }
+
+    #[test]
+    fn exact_arithmetic_identities_hold_beyond_quadratic_fields() {
+        // x^3 - 2 is irreducible; all nonzero representatives are units.
+        let mut extension = FieldExtension::new(vec![rat(-2), rat(0), rat(0), rat(1)]);
+        assert_eq!(extension.norm(&[rat(0), rat(1)]), rat(2));
+        assert_eq!(extension.trace(&[rat(0), rat(1)]), rat(0));
+        for constant in -3..=3 {
+            for coefficient in -3..=3 {
+                // Product over the three conjugates of alpha, alpha^3 = 2.
+                let a = [rat(constant), rat(coefficient)];
+                assert_eq!(
+                    extension.norm(&a),
+                    rat(constant.pow(3) + 2 * coefficient.pow(3))
+                );
+                assert_eq!(extension.trace(&a), rat(3 * constant));
+            }
+        }
+        for a0 in -2..=2 {
+            for a1 in -2..=2 {
+                for a2 in -2..=2 {
+                    let a = vec![rat(a0), rat(a1), rat(a2), rat(0)];
+                    if a.iter().all(Zero::is_zero) {
+                        assert!(extension.inverse(&a).is_none());
+                        continue;
+                    }
+                    let inverse = extension.inverse(&a).expect("nonzero field element");
+                    assert_eq!(extension.multiply(&a, &inverse), vec![rat(1)]);
+                    assert_eq!(extension.norm(&a) * extension.norm(&inverse), rat(1));
+                    let b = [rat(1), rat(-1)];
+                    let product = extension.multiply(&a, &b);
+                    assert_eq!(
+                        extension.norm(&product),
+                        extension.norm(&a) * extension.norm(&b)
+                    );
+                    let sum = extension.add(&a, &b);
+                    assert_eq!(
+                        extension.trace(&sum),
+                        extension.trace(&a) + extension.trace(&b)
+                    );
+                }
+            }
+        }
+        let mut quotient = FieldExtension::new(vec![rat(-1), rat(0), rat(1)]);
+        assert!(quotient.inverse(&[rat(-1), rat(1)]).is_none());
+        assert_eq!(quotient.norm(&[rat(-1), rat(1)]), rat(0));
+    }
+
+    #[test]
+    fn long_division_has_a_strictly_smaller_remainder_and_reconstructs_input() {
+        for degree in 1..=9 {
+            for gap in 0..=5 {
+                let mut divisor = vec![rat(0); degree + 3];
+                divisor[0] = rat(-3);
+                divisor[degree] = BigRational::new(2.into(), 3.into());
+                let mut dividend = vec![rat(0); degree + gap + 4];
+                dividend[0] = rat(7);
+                dividend[degree + gap] = BigRational::new(5.into(), 7.into());
+                let (quotient, remainder) = poly_div(&dividend, &divisor).expect("division");
+                assert!(remainder.len() <= degree);
+                let product = poly_mult(&quotient, &divisor);
+                let negative_remainder: Vec<_> = remainder.iter().map(|x| -x).collect();
+                assert_eq!(
+                    poly_sub(&product, &negative_remainder),
+                    normalized(dividend)
+                );
+            }
+        }
     }
 
     #[test]
@@ -566,8 +717,6 @@ mod tests {
 
         // Check: (1 + √2) * inv = 1
         let product = ext.multiply(&a, &inv);
-        assert!(
-            product.len() == 1 || (product.len() > 1 && product[1..].iter().all(|c| c.is_zero()))
-        );
+        assert_eq!(product, vec![rat(1)]);
     }
 }

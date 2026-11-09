@@ -12,7 +12,9 @@ pub mod galois_theory;
 pub mod isolate;
 pub mod number;
 
-pub use field_extension::{ExtensionId, FieldElement, FieldExtension, FieldExtensionManager};
+pub use field_extension::{
+    ExtensionId, FieldElement, FieldExtension, FieldExtensionError, FieldExtensionManager,
+};
 pub use galois_theory::{Automorphism, Discriminant, GaloisComputation, GaloisGroup};
 pub use isolate::{IntervalRefinement, RootIsolator};
 pub use number::{AlgebraicNumber, AlgebraicNumberError};
