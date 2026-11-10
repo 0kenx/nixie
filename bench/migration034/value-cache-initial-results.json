@@ -1,0 +1,29 @@
+[
+  {
+    "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+    "baseline": "sat",
+    "candidate": "sat",
+    "ratio": 0.9668052875767804,
+    "baseline_instructions": 71743866,
+    "candidate_instructions": 69362349,
+    "candidate_artifacts": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/benchmark/migration034-satlib-smtlib-30s/ef96d76efb24a1107b4c20c3"
+  },
+  {
+    "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+    "baseline": "unsat",
+    "candidate": "unsat",
+    "ratio": 1.0000453672078051,
+    "baseline_instructions": 14067363430,
+    "candidate_instructions": 14068001627,
+    "candidate_artifacts": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/benchmark/migration034-satlib-smtlib-30s/0e02aa901e4ae1a6d5164d13"
+  },
+  {
+    "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+    "baseline": "unsat",
+    "candidate": "unsat",
+    "ratio": 1.0000186446642012,
+    "baseline_instructions": 31558090489,
+    "candidate_instructions": 31558678879,
+    "candidate_artifacts": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/benchmark/migration034-satlib-smtlib-30s/51ea62f9c3128ac27410fddb"
+  }
+]

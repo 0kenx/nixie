@@ -806,11 +806,6 @@
       "expected": "sat"
     }
   ],
-  "results": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/benchmark/migration034-satlib-smtlib-30s/value-cache-initial.json",
-  "selected_indices": [
-    54,
-    60,
-    62
-  ],
-  "experiment": "Equivalent per-reading successful-value parse cache. Initial attribution gate on three previously identified outliers; require a reduction on CLEARSY and no >5% cost increase on the two UFLIA controls before full cohort and release checks. No altered model certificate or search choices."
+  "results": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/benchmark/migration034-satlib-smtlib-30s/value-cache-full.json",
+  "experiment": "Equivalent per-reading successful-value parse cache. Initial attribution gate on three previously identified outliers; require a reduction on CLEARSY and no >5% cost increase on the two UFLIA controls before full cohort and release checks. No altered model certificate or search choices. Initial attribution passed: CLEARSY 0.966805x, both UFLIA controls within 0.005%. Proceed to the entire preselected cohort without rerunning the three completed cells."
 }
