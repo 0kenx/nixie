@@ -125,7 +125,7 @@ full gates and unchanged 72-instance snapshot.
 All 66 cells completed with Unsat, matching the original Z3 4.16.0 evidence
 and corpus labels. On the ten registered seeds, real/null whole-process
 instruction geomeans are **11.19348 on Wisa** and **4.29175 on wisas**.
-The held-back seed is independently **5.54626** and **3.72814**, respectively.
+The held-back seed is independently **5.54625** and **3.72814**, respectively.
 Initial CNF is byte-identical across all three arms at every seed; real and
 null each trace exactly one value-4 pin, and off traces none. The null changes
 SAT counters relative to off on nine of eleven seeds for each case, so it is
@@ -181,3 +181,21 @@ obligations in place:
 
 Final verification and the unchanged 72-instance snapshot are pending; these
 edits are not yet a landed performance claim.
+
+An additional 18-script correctness matrix varies Int/Real arguments,
+Int/Bool/uninterpreted results, point bounds, coupled linear equations and a
+bounded-domain collision. With the isolated pin disabled, four Real cases
+change from Unsat to Unknown; no wrong decisive answer is observed. The pin
+therefore demonstrates additional solving coverage on those cases. This is
+not evidence that the full measured performance penalty prevents wrong
+answers. Two satisfiable Real cases remain Unknown in both arms; Z3 4.16.0
+provides the same comparator throughout. Inputs, full outputs and the driver
+are archived under the `99005ad2` diagnostic cache's
+`benchmark/migration034-cost-attribution/correctness-probes/`.
+
+The archived Wisa sampling record cannot provide reliable caller attribution:
+its user call chains mostly contain only the leaf frame. Reprocessing it with
+inclusive children does not recover the missing ancestry. Do not use that
+profile to claim that all simplex work is specifically entailment probing.
+Its flat samples motivated the cache-copy reduction; the controlled instruction
+measurements, not sampling percentages, determine the final cost result.
