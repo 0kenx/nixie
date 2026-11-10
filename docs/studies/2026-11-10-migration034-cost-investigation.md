@@ -75,3 +75,47 @@ That slice introduces published-model certification. The pipeline timeout is
 already present at `68c36c44`, before the interface changes. Neither is attributed
 to slice nine. Exact diagnostic costs and artifact paths are recorded in
 [`cost-localization.json`](../../bench/migration034/cost-localization.json).
+
+## Numeric-pin matched control (registered before measurement)
+
+The isolated ablation `99005ad2` traces exactly one new fact on both UFLIA
+inputs: the literal `4` is introduced into the arithmetic tableau as a fixed
+interface variable. Disabling only the new shared-interface pin loop restores
+the original decisions, propagations, conflicts and restarts on both inputs.
+The unrelated FISCHER and CLEARSY controls are unchanged. One instrumented Wisa
+run hits the 30-second cap; its partial instruction count is censored, not a
+completed-cost comparison. This identifies the intervention but does not prove
+its semantic benefit or justify its default activation.
+
+Use the isolated `83cdf7be` diagnostic for a matched control, never as a
+production solver. All arms create the same reserved, otherwise unused numeric
+alias at the same intervention point. The real arm adds the literal's fixed
+column; the null adds the same-valued fixed column for that alias, which has no
+function-argument meaning. Thus the injected column count, value, insertion
+point and code path match; only its connection to the user function differs.
+The off arm adds neither column. Pre-existing pins are untouched. This is a
+single-check diagnostic: its auxiliary registration set is not a production
+scope-state design.
+
+Measure the two identified UFLIA inputs with all three arms at the ten common
+SMT-LIB seeds `7919 * i`, for `i = 1..10`. Reserve seed `87109` (`i = 11`) for
+fresh-seed replay, with no intervening parameter selection. Seeds are inserted
+as `(set-option :random-seed N)` into frozen copies; `Context::set_option`
+forwards them to the embedded SAT engine. Store the actual seed in each record,
+not merely in a filename. Use 30 seconds, 8 GiB, the same physical CPU per input,
+and complete-process instructions. Rotate arm order, retain all censored runs,
+and run no other task-owned compilation/tests during measurement.
+
+Check that the initial CNF agrees across arms and that the real/null fact traces
+have the same pin count/value. Verify that the null actually changes trajectories
+relative to off; an inert null invalidates the control. Report real/null cost on
+jointly solved agreeing runs, solved-at-cap for every arm, the off distribution,
+and the held-back seed separately. These two retrospectively selected cases
+cannot support a general speedup claim or justify a new default heuristic.
+
+Correctness is a separate veto: inspect the existing ground-function consistency
+and candidate validation paths, and probe the missing-interface counterexamples.
+A necessary pin is retained even when expensive. An eager activation with no
+correctness dependency and no demonstrated semantic benefit is withdrawn rather
+than tuned to these two inputs. Any resulting production change still needs the
+full gates and unchanged 72-instance snapshot.

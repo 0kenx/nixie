@@ -33,7 +33,8 @@ def main():
             arms = [a for a in manifest['arms'] if instance['kind'] in a['kinds']]
             shift = index % len(arms)
             for arm in arms[shift:] + arms[:shift]:
-                results.append(run.run_cell(manifest, arm, instance, manifest['cpus'][number]))
+                results.append(run.run_cell(
+                    manifest, arm, instance, manifest['cpus'][number], instance.get('seed', 0)))
         return results
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:

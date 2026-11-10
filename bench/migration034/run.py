@@ -69,18 +69,21 @@ def command(arm, instance):
     return [binary, '--statistics', path]
 
 
-def run_cell(manifest, arm, instance, cpu):
+def run_cell(manifest, arm, instance, cpu, seed=0):
     flags = {'timeout_s': 30, 'memory_bytes': 8589934592, 'cpu': cpu,
              'engine': arm['engine'], 'version': arm['version'],
              'argv_options': command(arm, instance)[1:-1],
              'measurement': 'perf-instructions-u-with-timeout-prlimit-v1',
              'configuration': 'default', 'environment': 'clean-nixie-variables'}
+    if seed:
+        flags['configuration'] = 'smtlib-random-seed'
+        flags['smt_random_seed'] = seed
     diagnostic_environment = arm.get('diagnostic_environment', {})
     if diagnostic_environment:
         flags['diagnostic_environment'] = [f'{k}={v}' for k, v in sorted(diagnostic_environment.items())]
     key = {'host': manifest['host']['id'], 'sha': arm['sha'],
            'binary': arm['sha256'], 'instance': instance['sha256'],
-           'suite': manifest['suite'], 'flags': flags, 'seed': 0}
+           'suite': manifest['suite'], 'flags': flags, 'seed': seed}
     ident = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:24]
     directory = ROOT / 'precompile' / arm['sha'] / 'benchmark' / manifest['suite'] / ident
     result_path = directory / 'result.json'
@@ -138,7 +141,7 @@ def run_cell(manifest, arm, instance, cpu):
                            'family': instance['family'], 'sat_expected': instance['expected']},
               'config': {'id': arm['name'], 'flags': flags,
                          'features': arm.get('build', 'external reference'), 'cmdline': argv},
-              'seed': 0, 'arm': {'role': arm['role']},
+              'seed': seed, 'arm': {'role': arm['role']},
               'metrics': {'primary': {'name': 'instructions', 'value': instructions},
                           'secondary': {'raw_answer': answer, 'outcome': outcome,
                                         'exit_code': status, 'censored': timed_out},
