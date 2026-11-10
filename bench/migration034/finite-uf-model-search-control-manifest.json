@@ -1,0 +1,308 @@
+{
+  "timeout_s": 30,
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "suite": "migration034-policy-controls-30s",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "feature": "finite-uf-model-search",
+  "arms": [
+    {
+      "name": "off",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "baseline",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "off",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "real",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "treatment",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "finite-uf-model-search",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "null",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "null",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "finite-uf-model-search",
+        "NIXIE_POLICY_CONTROL": "null"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-7919.smt2",
+      "sha256": "d26e8844eaf8543c85767145927359e5fbd2883ee5ccc864ef7d50083e8ea8ba",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-15838.smt2",
+      "sha256": "30a6d17a0ec686244a32a6ea82ac7392630975adeafe7ef53b480928d4530b14",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-23757.smt2",
+      "sha256": "57d94dbff5c5aa4038d8a287f65dda52e4fc268e8e0a23a66a1dd17a0aadb022",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-31676.smt2",
+      "sha256": "c88354ca8fd105af7d3e5cd9e35cb3d8428ffbdfc8f4629e288ceb09fde3809e",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-39595.smt2",
+      "sha256": "293c0e57f17e5775496eb0c05eb19ead735b532a002011de8fd0c9b4ff46ae32",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-47514.smt2",
+      "sha256": "171d7857e077f8f6b90835aef276435c77db8b87341870cbf7ed39394d57758d",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-55433.smt2",
+      "sha256": "d9fa0e4209dc9379002b9ddaad22fb4e42e358729574ea9671427cefefdf26c8",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-63352.smt2",
+      "sha256": "a94e1f6b1f6b62e2fc21983b047956e53484d3f4e648ffdaf29730c6c5b33189",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-71271.smt2",
+      "sha256": "48d3c92147be25bcc0502ffb4dc012ee3b909ac00841454f505c4c9bbecb0ed9",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-79190.smt2",
+      "sha256": "684aff8fbdb37ba2f43c78cb1cefca9a7203a033265fe917763768b9d4c08917",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-87109.smt2",
+      "sha256": "d65b2e7bd642f3566e755b24a9dbfbe98ecbc08a3f0bb064cfc5bb52ab8d968f",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "model-set9_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-7919.smt2",
+      "sha256": "b2cd8881048c29764117f3827a66c561ff359257609f319cb96e3d70da73167b",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-15838.smt2",
+      "sha256": "0d9b73dbe274792b2f8d48044c311183a06c4f97406911157c1e9e330d2c0b09",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-23757.smt2",
+      "sha256": "ea376bcea448b3cf6ef383ee301aaaa15a5153e3a786aca41d4a8d49788192b7",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-31676.smt2",
+      "sha256": "c4991d2000efe76ad19e3a04bdee20753eb8b81c10fc2dc58939be1e6f6f1b36",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-39595.smt2",
+      "sha256": "303ccf26a9254414f4f308d67d47349aed6604dfd2b408077e1598df8b91cd2e",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-47514.smt2",
+      "sha256": "b2d6687af5fc02121fc0805381f361f0ee2b1747af2e5d3ec73edc790b41ecf4",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-55433.smt2",
+      "sha256": "ad61d820bc1203f6a02917f75b0d99fb620af3f65f51f1a30a5668bd802d7a84",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-63352.smt2",
+      "sha256": "859ce831361c39c4666aceb65c941d14926d69178d232fec0916875fe6af1fb2",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-71271.smt2",
+      "sha256": "b83bc952dfcf66302056213f1fe7397f6c8389023bee03dfb00f55d377f2513a",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-79190.smt2",
+      "sha256": "75fe43255236dfd54b737f3aff2e9ab2496df193df3124885389268d74d20809",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "model-set16_family_answers_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-87109.smt2",
+      "sha256": "330a31ce0085b25623293a5d5398f6e9464de333392ff5e0f0c9cd11df7eff97",
+      "kind": "SMT",
+      "family": "finite-uf-model-search",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "model-set16_family_answers_sat"
+    }
+  ],
+  "plan": "bench/migration034/candidates/policy-control-plan.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+  ],
+  "results": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/finite-uf-model-search.json"
+}

@@ -1,0 +1,308 @@
+{
+  "timeout_s": 30,
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "suite": "migration034-policy-controls-30s",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "feature": "numeric-projection-proposals",
+  "arms": [
+    {
+      "name": "off",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "baseline",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "off",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "real",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "treatment",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "numeric-projection-proposals",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "null",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "null",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "numeric-projection-proposals",
+        "NIXIE_POLICY_CONTROL": "null"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-7919.smt2",
+      "sha256": "b35089e399e9ff302b33f594c924d77afcdfb82f34112bec3a6b123b72a92d01",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-15838.smt2",
+      "sha256": "8121a85be103da25adc537a3fd074209c1e1fc307ad3a6bd64a8012cfb14624b",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-23757.smt2",
+      "sha256": "19f6b3ea1e5706da8a45f4fe53cbf7d2db8c65bd6c41b05f7447a2f6efdd8f20",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-31676.smt2",
+      "sha256": "90bf3d612ee5056913666e861479e79af4884d47642922bc22cb25a61b2a1a8d",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-39595.smt2",
+      "sha256": "51a3f479434a48ed49a9674b0e4b06d278b3c1f833dbd9f66ecf316e99d83497",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-47514.smt2",
+      "sha256": "c22deca758af62cc0eeb0c8e981a4ed411113970bc7ed4ee119db510104471b8",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-55433.smt2",
+      "sha256": "5d692710e0eaaccccd5947ab4f1d036e502e96145eeabc9f32db10f89f4e31cc",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-63352.smt2",
+      "sha256": "a97d359c3729b4d146585df17792be558ce21dc7c75e9d79c1d6fc781bb5a929",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-71271.smt2",
+      "sha256": "9ad32b458808a411120aaac2dffc62e9c1fbc8b147a546a186957f8d8970588e",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-79190.smt2",
+      "sha256": "8bbee21546a92c54446e4132e9b3954bf6e25d8f720ec3b78d1bf9548e2e9844",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-87109.smt2",
+      "sha256": "4d1b24fe06c5d0669f7ba486983b0fea5efb1cd9ba0c6f28ffc40a750c871069",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "model-uflia_monotone_relevant_terms_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-7919.smt2",
+      "sha256": "d46bf2388aa5e888715f102e8fd2524f809d58881a2d894c20060aacec526c48",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-15838.smt2",
+      "sha256": "e9a51466594f844134a9434df1574334972c3d4df630b094000cfed611a7ae53",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-23757.smt2",
+      "sha256": "fa8926c114be622825f2ccf1cf48810d7eb1c9c920ab6c2c49290a31993451d5",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-31676.smt2",
+      "sha256": "e86857861775e0197b2193a2b3c4092b929ccd81a3acbd39ef7ef5c663260ea8",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-39595.smt2",
+      "sha256": "f465163c94050a620fb3aba97a06b69931d788753207644f0ef446094508a611",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-47514.smt2",
+      "sha256": "6b6173611481bf36b0af151b7bf345c8848b3ccac0b1288d531faabf998afdd9",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-55433.smt2",
+      "sha256": "b70c085d533084200fc5bf3baf187b2a3a470e0f950bca92f10b148044d44258",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-63352.smt2",
+      "sha256": "d55dafd50d3e21207df6b4b8cecac72c6925c759ff929dd7e854c39747fc509d",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-71271.smt2",
+      "sha256": "b47149faa975406ec13ddce29a71035ca1165b807f386ff5a77709c2e7ad1c98",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-79190.smt2",
+      "sha256": "f0c4943a93eb8afa56907bbf13a1cbdde6dc41876f405e6d5ab8f737bda7588a",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-87109.smt2",
+      "sha256": "871266277e1df12650567c02ef04081cbf7aa732b13811ded5a21fab0b720e2a",
+      "kind": "SMT",
+      "family": "numeric-projection-proposals",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "model-uflra_monotone_var_var_guard_sat"
+    }
+  ],
+  "plan": "bench/migration034/candidates/policy-control-plan.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+  ],
+  "results": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/numeric-projection-proposals.json"
+}

@@ -1,0 +1,308 @@
+{
+  "timeout_s": 30,
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "suite": "migration034-policy-controls-30s",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "feature": "guard-boundary-sampler",
+  "arms": [
+    {
+      "name": "off",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "baseline",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "off",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "real",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "treatment",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "guard-boundary-sampler",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "null",
+      "engine": "nixie",
+      "sha": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "version": "022978adcb0ce3cba4564deef04e6c5ee038273c",
+      "binary": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/nixie-diagnostic",
+      "sha256": "ec8656ad55af8926ea1e1e7c4da83f2aa9d766e20a27ef9d5925c0dbdcf22464",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "null",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "guard-boundary-sampler",
+        "NIXIE_POLICY_CONTROL": "null"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-7919.smt2",
+      "sha256": "ffe79fac14ae774cbff9b8ef52626d66f11526bf70ff88c49181b9acf9e30895",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-15838.smt2",
+      "sha256": "880a6f7238e91b65a224d75642f127b1e812e0188b5153610096cba106273ce4",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-23757.smt2",
+      "sha256": "fe3baa9e228f0ce7b22502eae7cad909871c34dc2f0f72f66a59de297072aef7",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-31676.smt2",
+      "sha256": "55009fe5806563fa3889097ce347df313c9eada11ccd0fe3fe81d66bb4e8c158",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-39595.smt2",
+      "sha256": "79a0dffc12cefe33ef2a38c3e5b6be8c6df71a264513bd01a5e5274a576295d1",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-47514.smt2",
+      "sha256": "2661772cbd72789b311dfbe8e0fc802f4d7f0f63201a35611078427c848dbd10",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-55433.smt2",
+      "sha256": "9c6d088a250431d609482fa5daae998adbf218c49ce2e029a4b1affd8e654037",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-63352.smt2",
+      "sha256": "c96c36a98c824e488d0d23aeb67d4c5a544eb042b06d48c27204d2d850a12169",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-71271.smt2",
+      "sha256": "58abce08bdbb6c965a54090dc22d8d1657816f81b76420f52d6ece8043950b36",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-79190.smt2",
+      "sha256": "d679ae80fc056d09c224e5e193f61b472bd318872fb8d348ac45e2b1514e932d",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-87109.smt2",
+      "sha256": "d1138d15a352217876a7e120291fae8f4afd6444add8272086d0faf45fdeb50d",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "guard-boundary-2"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-7919.smt2",
+      "sha256": "58f99c2d7dc9ba5691af2ffed0aaeaacc98cea469f398f2e46623dd8d70162ef",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-15838.smt2",
+      "sha256": "6863a6884bed056fddd1dcb4c5d63a85efc25c602b25ecb20e0596d12a4a47f6",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-23757.smt2",
+      "sha256": "30514192e9855f013d4478e592bb57030137a169816dd40aceed46fb3b36d883",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-31676.smt2",
+      "sha256": "0cb8f6bdf32306a562fdd203bac05b2faa5467145858362fa32a996b3bce3ab2",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-39595.smt2",
+      "sha256": "0f8238d039d691c30239867a0a630ce54710f479bdc8edccf5f67bdc90eb4d6c",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-47514.smt2",
+      "sha256": "3f90e56f71b6be16bf8066962d2dc5d3cec6b8ef8e673cb8628834b9f27320a3",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-55433.smt2",
+      "sha256": "e024a3a5ca536b776866e65099b888f0310828bc096ad3cc69ad2fde1e6198e9",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-63352.smt2",
+      "sha256": "49b5f91f2ddf6b787600fc7ba09a5346f0b91deec80702877a677394b26fe644",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-71271.smt2",
+      "sha256": "cbdc495312067ecbd80e8145a19d5d3552e74692ebda88a8917be6821901d06b",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-79190.smt2",
+      "sha256": "1befaf4e75a89e4f0749731c16176446f5b83a623107aa56ac2ae60f24f75fc4",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "guard-scopes"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/guard-scopes-87109.smt2",
+      "sha256": "e46f257c6cabf28fe3fcfcbadd9b33b42a8559cb5fd69f4622b1336fec89e85d",
+      "kind": "SMT",
+      "family": "guard-boundary-sampler",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "guard-scopes"
+    }
+  ],
+  "plan": "bench/migration034/candidates/policy-control-plan.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+  ],
+  "results": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/guard-boundary-sampler.json"
+}

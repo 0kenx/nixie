@@ -1,0 +1,13 @@
+(set-logic ALL)
+(set-option :random-seed 79190)
+
+        (declare-datatype C ((red) (green) (blue)))
+        (declare-datatype B ((empty) (full (item C))))
+        (declare-const b B)
+        (assert (not ((_ is empty) b)))
+        (assert (distinct b (full red)))
+        (check-sat)(get-model) (get-value ((distinct b (full red))))
+        (push 1) (assert (distinct b (full green)))
+        (check-sat)(get-model) (get-value ((= b (full blue))))
+        (assert (= b (full red))) (check-sat)(get-model)
+        (pop 1) (check-sat)(get-model)

@@ -1,0 +1,8 @@
+(set-option :random-seed 39595)
+(declare-datatypes ((E2 0)) (((e1) (e2))))
+    (declare-datatypes ((E3 0)) (((f1) (f2) (f3))))
+    (declare-datatypes ((Pair 0)) (((mk (a E2) (b E3)))))
+    (declare-const p1 Pair)(declare-const p2 Pair)(declare-const p3 Pair)
+    (declare-const p4 Pair)(declare-const p5 Pair)(declare-const p6 Pair)
+    (assert (distinct p1 p2 p3 p4 p5 p6))
+    (check-sat)(get-model)(get-model)
