@@ -1,0 +1,236 @@
+{
+  "suite": "migration034-retry-control-30s",
+  "timeout_s": 30,
+  "selection_salt": "nixie-migration034-20261110:",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "seed_note": "Ten common actual SMT-LIB seeds plus held-out 87109",
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "smt_eligible_pools": {
+    "AUFLIA": {
+      "eligible_files": 3327,
+      "families": 3
+    },
+    "QF_ANIA": {
+      "eligible_files": 152,
+      "families": 5
+    },
+    "QF_AUFLIA": {
+      "eligible_files": 1303,
+      "families": 7
+    },
+    "QF_BV": {
+      "eligible_files": 39467,
+      "families": 54
+    },
+    "QF_IDL": {
+      "eligible_files": 1985,
+      "families": 21
+    },
+    "QF_LIA": {
+      "eligible_files": 12644,
+      "families": 32
+    },
+    "QF_NIA": {
+      "eligible_files": 24993,
+      "families": 15
+    },
+    "QF_UF": {
+      "eligible_files": 7406,
+      "families": 9
+    },
+    "QF_UFIDL": {
+      "eligible_files": 552,
+      "families": 11
+    },
+    "QF_UFLIA": {
+      "eligible_files": 640,
+      "families": 4
+    },
+    "UF": {
+      "eligible_files": 7590,
+      "families": 7
+    },
+    "UFLRA": {
+      "eligible_files": 15,
+      "families": 2
+    }
+  },
+  "arms": [
+    {
+      "name": "retry-off",
+      "engine": "nixie",
+      "sha": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "binary": "precompile/487d19b3854e3450ac28d9c3d1d1e44584b5e81f/nixie-diagnostic",
+      "version": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "role": "baseline",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "de5f0f197d301d73df4bd2b099c3aa2b70d671d828c0c0991c958bb3708f462b",
+      "diagnostic_environment": {
+        "NIXIE_RETRY_CONTROL": "off"
+      }
+    },
+    {
+      "name": "retry-real",
+      "engine": "nixie",
+      "sha": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "binary": "precompile/487d19b3854e3450ac28d9c3d1d1e44584b5e81f/nixie-diagnostic",
+      "version": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "de5f0f197d301d73df4bd2b099c3aa2b70d671d828c0c0991c958bb3708f462b",
+      "diagnostic_environment": {
+        "NIXIE_RETRY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "retry-null",
+      "engine": "nixie",
+      "sha": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "binary": "precompile/487d19b3854e3450ac28d9c3d1d1e44584b5e81f/nixie-diagnostic",
+      "version": "487d19b3854e3450ac28d9c3d1d1e44584b5e81f",
+      "role": "null",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "de5f0f197d301d73df4bd2b099c3aa2b70d671d828c0c0991c958bb3708f462b",
+      "diagnostic_environment": {
+        "NIXIE_RETRY_CONTROL": "null"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-7919.smt2",
+      "sha256": "796083645d819524f30be169e0c5428e7ce08a956fc73f1df8998c68fdb56918",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 7919
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-15838.smt2",
+      "sha256": "9a8a75046f3b5280d6742b7ec49d0cd2dc7506a0d5973ed63796994e393a0a23",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 15838
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-23757.smt2",
+      "sha256": "9145b351a17b7a08ebdd640f3e35de2eea28377ee6094bf383cebefa77099edd",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 23757
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-31676.smt2",
+      "sha256": "5e9ee9f1d15e8d5065662d3009927e6822b142a9948e38038c48a3424e5a59cc",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 31676
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-39595.smt2",
+      "sha256": "d9506513865ad50c211963d5c1e477f7494ee1e429b2c1cbe6f79db1ca24610f",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 39595
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-47514.smt2",
+      "sha256": "b59e9e147a809d6ba5f742c3836ef064fd61426675e4850bf5c8ef869c030117",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 47514
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-55433.smt2",
+      "sha256": "10f7229a09ca80552a4ffa925272b9b967240b3da4f62d2ce77ac0e827792d6f",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 55433
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-63352.smt2",
+      "sha256": "af22403c474e9ee3cd8936d25e32b9f8139b6ad55092177b394137ca68b0cc52",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 63352
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-71271.smt2",
+      "sha256": "d7bea71aeb93dffe331fa111b514a25b325d06a54e529ce174c83b0dd8cf984d",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 71271
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-79190.smt2",
+      "sha256": "61bd0f341c6c7575c69e237b01b224910d1ed2722e5c527a17b23154f14d3c1f",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 79190
+    },
+    {
+      "path": "bench/migration034/candidates/retry-seeds/sum-87109.smt2",
+      "sha256": "0309ec4480afd03244e91dc67e5f143acef887a888c45ca0b830381bdb28cc64",
+      "kind": "SMT",
+      "family": "recursive-function-retry",
+      "expected": "sat",
+      "seed": 87109
+    }
+  ],
+  "results": "precompile/487d19b3854e3450ac28d9c3d1d1e44584b5e81f/benchmark/migration034-retry-control-30s/results.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}
