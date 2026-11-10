@@ -44,3 +44,34 @@ parity, and the pinned SAT gate, plus the same full SMT sample for any resulting
 binary. Report all gained/lost solves and disagreements alongside costs. Never
 justify the aggregate increase solely by saying the migration contains soundness
 fixes. Record unresolved costs and negative experiments explicitly.
+
+## Initial localization
+
+The rollback snapshot completes all 72 new cells and reuses all 264 existing
+cells. SAT remains 24/24; SMT remains 24/48 (18 Unsat, 6 Sat, 10 Unknown,
+13 timeouts, one allocation failure). There are no decisive disagreements with
+available labels/references. On the same 23 common SMT solves the instruction
+ratio is **1.36965**. The policy rollback therefore does not explain or fix the
+1.3678 observation. The SAT ratio is 1.00208 on 24 pairs.
+
+Cached adjacent revisions localize the large UFLIA costs and pure-arithmetic
+overhead to slice nine, `1106bd4d` → `c8abf146`. Wisa rises from about 32.0 to
+393.7 billion instructions; wisas rises from 14.25 to 66.30 billion. FISCHER
+and plan-16 retain identical SAT decisions/propagations/conflicts/restarts while
+their instruction costs increase. A scan-based `EufSolver::has_app_nodes` is now
+called on every assignment, even on graphs containing only leaves. Tracking the
+first live application can answer the exact same question without scanning;
+this implementation change is under verification, not yet a landed result.
+
+Separate, registered dump configurations show byte-identical initial CNF and
+term-to-variable sidecars on both UFLIA cases across the adjacent interface
+commits. Their changed search therefore begins after that initial encoding.
+The new shared-interface bookkeeping and theory facts still require attribution;
+the existence of correctness regressions in that slice does not settle it.
+
+CLEARSY's increase is separate: `029ce7ad` costs 11.25 million instructions and
+the next slice, `8ca3622a`, costs 110.36 million, with unchanged SAT counters.
+That slice introduces published-model certification. The pipeline timeout is
+already present at `68c36c44`, before the interface changes. Neither is attributed
+to slice nine. Exact diagnostic costs and artifact paths are recorded in
+[`cost-localization.json`](../../bench/migration034/cost-localization.json).

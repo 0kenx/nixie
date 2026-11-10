@@ -1,0 +1,171 @@
+{
+  "rollback_revision": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+  "new_cells": 72,
+  "reused_cells": 264,
+  "totals": {
+    "SAT": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SMT": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    }
+  },
+  "paired": {
+    "SAT": {
+      "pairs": 24,
+      "rollback_before_instructions": 1.0020778987640044
+    },
+    "SMT": {
+      "pairs": 23,
+      "rollback_before_instructions": 1.3696516160159375
+    }
+  },
+  "disagreements": [],
+  "historical_diagnostics": [
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 420178452092,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/3c8f5930d06797f1304aa2a3"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 423102267177,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/a54c0a9cd8c638f375bc6d65"
+    },
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_IDL/mathsat/fischer/FISCHER7-8-ninc.smt2",
+      "outcome": "sat",
+      "instructions": 816218977,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/5977f5bf201b766d77e6a2f2"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_IDL/mathsat/fischer/FISCHER7-8-ninc.smt2",
+      "outcome": "sat",
+      "instructions": 1216784438,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/0c6ccec03353dbb1ff4be455"
+    },
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 11031649,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/31c49b856f950e1cf7fb16b8"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 11111052,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/1e39481a16a6c36b5c46a327"
+    },
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "outcome": "unsat",
+      "instructions": 14245841108,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/7f55be3cca17c5c6235b6562"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "outcome": "unsat",
+      "instructions": 66303444321,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/fc067c41a526eda284ef8090"
+    },
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "outcome": "unsat",
+      "instructions": 32017747517,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/467ddf44d6b2e7a2d16b5b9a"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "outcome": "unsat",
+      "instructions": 393740862356,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/cf4982e9d7bc48c922748e35"
+    },
+    {
+      "revision": "c8abf146",
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-16.cvc.smt2",
+      "outcome": "unsat",
+      "instructions": 1022720931,
+      "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/364dd50daf7204e1edbea349"
+    },
+    {
+      "revision": "1106bd4d",
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-16.cvc.smt2",
+      "outcome": "unsat",
+      "instructions": 713994313,
+      "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/2764bd753cad448f6b20c70b"
+    },
+    {
+      "revision": "68c36c44",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 424262030123,
+      "artifacts": "precompile/68c36c4491fcf20232bcae61292e64e6c1425994/benchmark/migration034-satlib-smtlib-30s/ec7b3e72586dc7e83f0a6d21"
+    },
+    {
+      "revision": "d280e0a4",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 424790089118,
+      "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/ad225020a6439d21184ccaf3"
+    },
+    {
+      "revision": "029ce7ad",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 425326926403,
+      "artifacts": "precompile/029ce7adb9bcbbdd7398177c0654d84edace61a7/benchmark/migration034-satlib-smtlib-30s/5a2c47e9ad4110015b7b481e"
+    },
+    {
+      "revision": "8ca3622a",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "outcome": "timeout",
+      "instructions": 429061054189,
+      "artifacts": "precompile/8ca3622a8e20a829a5105c670456ca87373e8b61/benchmark/migration034-satlib-smtlib-30s/fae1d6d8657636a163d5c4bf"
+    },
+    {
+      "revision": "029ce7ad",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 11253760,
+      "artifacts": "precompile/029ce7adb9bcbbdd7398177c0654d84edace61a7/benchmark/migration034-satlib-smtlib-30s/c372fc35339c3805197e35c8"
+    },
+    {
+      "revision": "8ca3622a",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 110355848,
+      "artifacts": "precompile/8ca3622a8e20a829a5105c670456ca87373e8b61/benchmark/migration034-satlib-smtlib-30s/1f5cfae094467bf0900b7275"
+    },
+    {
+      "revision": "68c36c44",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 11030347,
+      "artifacts": "precompile/68c36c4491fcf20232bcae61292e64e6c1425994/benchmark/migration034-satlib-smtlib-30s/0fd785253af1e1afcc01a5c3"
+    },
+    {
+      "revision": "d280e0a4",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "outcome": "sat",
+      "instructions": 11030487,
+      "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/2bff470f82c58161c61c78a5"
+    }
+  ]
+}
