@@ -184,5 +184,63 @@
       }
     },
     "decision": "provisional-apply-awaiting-final-full-suite"
+  },
+  {
+    "feature": "qf-auf-alias",
+    "source": "0585a830a3a54b8d045716c1673dafee57ccef26",
+    "previous": "finite-array-completeness",
+    "steps": [
+      {
+        "step": "focused",
+        "exit_code": 0
+      },
+      {
+        "step": "build-cli",
+        "exit_code": 0
+      },
+      {
+        "step": "cost",
+        "exit_code": 0
+      },
+      {
+        "step": "report",
+        "exit_code": 0
+      },
+      {
+        "step": "parity",
+        "exit_code": 0
+      },
+      {
+        "step": "perf-gate",
+        "exit_code": 0
+      }
+    ],
+    "cost": {
+      "SMT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.997996747123067,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:finite-array-completeness": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.000011620177151,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:finite-array-completeness": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.000038695953365,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0001296213437663,
+        "gained": [],
+        "lost": []
+      }
+    },
+    "decision": "provisional-apply-awaiting-final-full-suite"
   }
 ]
