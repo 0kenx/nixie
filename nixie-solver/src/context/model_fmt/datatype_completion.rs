@@ -117,9 +117,7 @@ impl Context {
         let saved = self.published.model.take();
         let mut distinct = original.clone();
         for (index, ((term, _), domain)) in declarations.iter().zip(&domains).enumerate() {
-            let chosen =
-                crate::policy_control::index(index % domain.len(), domain.len(), index as u64);
-            let Some(&value) = domain.get(chosen) else {
+            let Some(&value) = domain.get(index % domain.len()) else {
                 self.published.model = saved;
                 return false;
             };
@@ -137,17 +135,9 @@ impl Context {
             return false;
         };
         for mut ordinal in 0..total {
-            let proposal = ordinal;
             let mut model = original.clone();
             for ((term, _), domain) in declarations.iter().zip(&domains) {
-                let chosen = crate::policy_control::index(
-                    ordinal % domain.len(),
-                    domain.len(),
-                    (proposal as u64)
-                        .wrapping_mul(64)
-                        .wrapping_add(u64::from(term.raw())),
-                );
-                let Some(&value) = domain.get(chosen) else {
+                let Some(&value) = domain.get(ordinal % domain.len()) else {
                     self.published.model = saved;
                     return false;
                 };

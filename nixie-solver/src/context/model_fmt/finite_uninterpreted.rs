@@ -193,10 +193,7 @@ impl Context {
                     .copied()
                     .find(|&v| solver.euf_class_representative(v) == Some(class))?
             };
-            let domain = domains.get(&sort)?;
-            let index = domain.iter().position(|&v| v == value)?;
-            let selected = crate::policy_control::index(index, domain.len(), u64::from(term.raw()));
-            values.insert(term, *domain.get(selected)?);
+            values.insert(term, value);
         }
         let mut proposed = PublishedModel::default();
         let mut model = crate::solver::Model::new();

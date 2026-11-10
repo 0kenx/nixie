@@ -787,7 +787,6 @@ impl Context {
     /// strictly weaker problem (every `f(x)` unconstrained), so the
     /// fuel-bounded unfolding driver takes over.
     pub fn check_sat(&mut self) -> SolverResult {
-        let _report = crate::policy_control::Report;
         // FSM declarations must be live before solving; a registration
         // failure cannot be silent (unconstrained acceptance constants
         // would admit false `sat`) — surface it as an honest Unknown.

@@ -5634,7 +5634,9 @@ mod tests;
 
 pub(crate) fn optional_probe_enabled(name: &str) -> bool {
     static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default()) == name
+    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default())
+        .split(',')
+        .any(|selected| selected == name)
 }
 
 pub(crate) fn array_probe_enabled() -> bool {

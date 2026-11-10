@@ -125,10 +125,6 @@ impl Solver {
         let mut symbols = defaults.clone();
         symbols.extend(slots.iter().map(|&(_, _, symbol)| symbol));
         let values = run_fill_query(fill, &symbols, manager, logic, queries)?;
-        let values: Vec<_> = values
-            .into_iter()
-            .map(|value| value.map(|v| crate::policy_control::value(v, manager)))
-            .collect();
         let (default_values, pin_values) = values.split_at(defaults.len());
 
         let mut completion: FxHashMap<TermId, TermId> = FxHashMap::default();
