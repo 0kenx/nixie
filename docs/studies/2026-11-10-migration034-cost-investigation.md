@@ -267,7 +267,7 @@ No timed-out partial instruction count enters a solved-cost ratio.
 | wisas `xs_8_13` | 4.698 | 4.693 | 0.9983 |
 | CLEARSY `00194` | 10.156 | 6.677 | 0.6575 |
 | FISCHER7-8-ninc | 1.595 | 1.087 | 0.6817 |
-| plan-16.cvc | 1.461 | 1.023 | 0.7001 |
+| plan-16.cvc | 1.461 | 1.025 | 0.7001 |
 
 Thus repeated scans/readings were avoidable overhead: the targeted three
 cases drop approximately 30–34%. The arithmetic witness-copy reduction does
