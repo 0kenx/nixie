@@ -397,7 +397,6 @@ impl Solver {
 }
 
 impl Solver {
-    #[cfg(test)]
     pub(super) fn assert_functional_consistency(
         &mut self,
         manager: &mut TermManager,
