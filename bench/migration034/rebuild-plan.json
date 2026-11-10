@@ -1,0 +1,228 @@
+{
+  "baseline": "af14b6d2f800685b2737b02189cdae44d23f5459",
+  "rejected_migration_head": "24d06dac3893a97d8b962aed143caedc1089a366",
+  "intent": "Reconstruct pre-migration source plus correctness-only patches, measure it, then gate each optional capability independently.",
+  "preserve": [
+    "historical benchmark records",
+    "regression evidence",
+    "unrelated pre-migration work"
+  ],
+  "changes": [
+    {
+      "commit": "6f3334bd89b80223f614af317f63be09940e7cbc",
+      "subject": "Migrate upstream 0.3.4 overflow predicates and quantified theory certification",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "2e06106ebbbd7ab203508192667ebdfc8331c75f",
+      "subject": "Migrate upstream array discovery and SMT-LIB symbol handling",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "6b7bf10eb79becf23c4c6c1b130ece81b2c34d22",
+      "subject": "Migrate upstream allocator alignment fixes and enforce handle ownership",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "68c36c4491fcf20232bcae61292e64e6c1425994",
+      "subject": "Migrate datatype construction and close set/model integration gaps",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
+      "subject": "Migrate permanent SAT clauses and preserve restored obligations across scopes",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "6da0820976d9258166688462e2e0a598d3568ace",
+      "subject": "Migrate persistent BV definitions and sound scoped assumption search",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "d48d98826982710379182459a4e92502ff7778ff",
+      "subject": "Migrate query-wide SAT and embedded bit-vector resource budgets",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
+      "subject": "Migrate explained BV/EUF exchange and joint model validation",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "c8abf146a836e96b0d071594452519fd3403c749",
+      "subject": "Migrate nested array and finite theory interfaces",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "ed02c41ab1786903d153be6c07c47ee50e8fa0ee",
+      "subject": "Isolate generated symbols and expose refinement diagnostics",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "7e696bdf1fee5b252f8f2880f07c4f3048a8c2fb",
+      "subject": "Preserve ground finite domains for quantified functions",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "235e64afef8536dbbc2509d2003aaa5453a0d154",
+      "subject": "Migrate complete quantifier positions and finite expansion",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "faeef968761f4282c4d608a814dee4ffd42da54c",
+      "subject": "Preserve array ITE identities and import facade terms safely",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "e715b10416d9cd86636378a749f76c34d5f6ca57",
+      "subject": "Migrate exact BV values into the shared model evaluator",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
+      "subject": "Migrate certified array completion and structural model reads",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "8ca3622a8e20a829a5105c670456ca87373e8b61",
+      "subject": "Migrate certified model publication and exact completion from upstream 0.3.4",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "6be88b3395f9acc4bfb80984ec3198f07d473342",
+      "subject": "Migrate guarded datatype refinement and preserve exact nonlinear witnesses",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "7034f149395c2d7b45378a6aca11b3df45935d8b",
+      "subject": "Migrate bounded guard-boundary counterexample proposals",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "59af866b4498699866247bd9dd411431a8208b74",
+      "subject": "Migrate standalone literal formal obligations with explicit verifier setup",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "92fd8e2f95406c67d8aa86b34cc7e3fbca37deb5",
+      "subject": "Migrate robustness changes and validate CAD cache and optimizer results",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "167e3dafe25771c2c225cc853ad9e2d6402438ad",
+      "subject": "Replace algebraic extension placeholders with exact quotient arithmetic",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "1da2864c8acee5786e74b0281ebe305c5cb45f1f",
+      "subject": "Migrate exact finite-array cardinality and extensionality domains",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "93fcd2ce3e03f7a0dd7d9b9915d52b3fe5ef1c2d",
+      "subject": "Migrate bounded exact datatype model separation from upstream 0.3.4",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "5a5ed86dfe4d63d51a618d8e750d8ac8214e6944",
+      "subject": "Migrate exact function consistency and compound datatype field models",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "8b564255ebc4d57741fed1145914ddc87f76a6ad",
+      "subject": "Migrate upstream model interfaces and keep finite-field completion in range",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+      "subject": "Complete generated datatype models and restore rejected repair snapshots",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    },
+    {
+      "commit": "5c2b6bed1e77bc4020efb6849c9a0b32d301416c",
+      "subject": "Migrate upstream differential tools and complete the 0.3.4 capability audit",
+      "status": "audit-required",
+      "correctness_obligations": [],
+      "optional_capabilities": [],
+      "decision": null
+    }
+  ]
+}
