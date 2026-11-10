@@ -497,3 +497,16 @@ rejected for +10.84% unchanged-work cost with no observed coverage benefit.
 Zero-division alone has no isolated benefit. Expanded datatype separation has
 no observed coverage beyond the stronger publication candidate; its selector
 models also require partial-model treatment.
+
+### Printed-value cache: drop at the practical-benefit gate
+
+The `db1aaf21` cache remains an experiment, not an accepted optimization.
+Its 0.997575x whole-sample ratio and 0.966805x targeted-case ratio both lie
+inside the five-percent neutrality band. It restores no capability. The
+additional mutable parse-cache state is therefore not justified by the observed
+benefit. The final production candidate removes it while retaining both
+independent validators and the earlier correctness-only reader. Earlier public
+and cumulative-policy gates include this cache and remain accurately labeled;
+the final production measurement must check the actual cache-free executable.
+Do not retry the same optimization on these measurements or describe the
+neutral result as an aggregate speedup.
