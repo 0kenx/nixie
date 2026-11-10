@@ -1,0 +1,3687 @@
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/finite_uninterpreted.rs
+@@ -0,0 +1,345 @@
++//! Bounded finite interpretations for pure quantified UF.
++//!
++//! Following CVC5's finite-model checking, enumerate every tuple of each
++//! chosen universe, including function closure. Unsatisfiability at a bound
++//! says nothing about larger models. A successful proposal is independently
++//! evaluated against all original assertions before publication.
++use super::*;
++
++const MAX_POINTS: usize = 4096;
++
++fn tuples(sorts: &[SortId], domains: &FxHashMap<SortId, Vec<TermId>>) -> Option<Vec<Vec<TermId>>> {
++    let mut rows = vec![Vec::new()];
++    for sort in sorts {
++        let domain = domains.get(sort)?;
++        if rows.len().checked_mul(domain.len())? > MAX_POINTS {
++            return None;
++        }
++        rows = rows
++            .into_iter()
++            .flat_map(|row| {
++                domain.iter().map(move |&value| {
++                    let mut next = row.clone();
++                    next.push(value);
++                    next
++                })
++            })
++            .collect();
++    }
++    Some(rows)
++}
++
++impl Context {
++    pub(super) fn publish_finite_uninterpreted(&mut self) -> bool {
++        let goal = self.certified_goal();
++        let mut sorts = FxHashSet::default();
++        let mut seen = FxHashSet::default();
++        let mut stack = goal.clone();
++        let mut quantified = false;
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            if seen.len() > 4096 {
++                return false;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return false;
++            };
++            sorts.insert(node.sort);
++            match &node.kind {
++                TermKind::Forall { vars, .. } | TermKind::Exists { vars, .. } => {
++                    quantified = true;
++                    sorts.extend(vars.iter().map(|(_, sort)| *sort));
++                }
++                TermKind::True
++                | TermKind::False
++                | TermKind::Var(_)
++                | TermKind::Apply { .. }
++                | TermKind::Eq(..)
++                | TermKind::Distinct(_)
++                | TermKind::And(_)
++                | TermKind::Or(_)
++                | TermKind::Not(_)
++                | TermKind::Implies(..)
++                | TermKind::Xor(..)
++                | TermKind::Ite(..) => {}
++                _ => return false,
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++        }
++        if !quantified {
++            return false;
++        }
++        for decl in &self.declared_consts {
++            sorts.insert(decl.sort);
++        }
++        for decl in &self.declared_funs {
++            if decl.interpreted {
++                continue;
++            }
++            sorts.insert(decl.ret_sort);
++            sorts.extend(decl.arg_sorts.iter().copied());
++        }
++        if sorts
++            .iter()
++            .any(|&s| s != self.terms.sorts.bool_sort && !self.is_uninterpreted_sort(s))
++        {
++            return false;
++        }
++        let mut sorts: Vec<_> = sorts.into_iter().collect();
++        sorts.sort_unstable_by_key(|s| s.0);
++        let saved = self.published.clone();
++        for size in 1..=4 {
++            let mut domains = FxHashMap::default();
++            let mut symbols = FxHashMap::default();
++            for &sort in &sorts {
++                let values = if sort == self.terms.sorts.bool_sort {
++                    vec![self.terms.mk_false(), self.terms.mk_true()]
++                } else {
++                    (0..size)
++                        .map(|i| {
++                            let name = self.format_uninterpreted_witness(sort, i);
++                            let name = name
++                                .strip_prefix('|')
++                                .and_then(|s| s.strip_suffix('|'))
++                                .unwrap_or(&name);
++                            symbols.insert(name.to_string(), sort);
++                            self.terms.mk_var(name, sort)
++                        })
++                        .collect()
++                };
++                domains.insert(sort, values);
++            }
++            if let Some(proposal) = self.finite_uf_proposal(&goal, &domains, symbols) {
++                self.published = proposal;
++                // This independent, query-free certificate checks the actual
++                // rendered functions, constants, and chosen finite universes.
++                if self.datatype_proposal_holds() {
++                    return true;
++                }
++            }
++            self.published = saved.clone();
++        }
++        false
++    }
++
++    fn finite_uf_proposal(
++        &mut self,
++        goal: &[TermId],
++        domains: &FxHashMap<SortId, Vec<TermId>>,
++        symbols: FxHashMap<String, SortId>,
++    ) -> Option<PublishedModel> {
++        let mut constraints = Vec::new();
++        let mut work = MAX_POINTS;
++        for &assertion in goal {
++            constraints.push(expand(assertion, domains, &mut work, &mut self.terms)?);
++        }
++        for (&sort, values) in domains {
++            if sort != self.terms.sorts.bool_sort {
++                constraints.push(self.terms.mk_distinct(values.clone()));
++            }
++        }
++        let mut observations = self
++            .declared_consts
++            .iter()
++            .map(|d| (d.term, d.sort))
++            .collect::<Vec<_>>();
++        let mut applications = Vec::new();
++        for decl in self.declared_funs.clone() {
++            if decl.interpreted || decl.arg_sorts.is_empty() {
++                continue;
++            }
++            for args in tuples(&decl.arg_sorts, domains)? {
++                if observations.len() >= MAX_POINTS {
++                    return None;
++                }
++                let term = self.terms.mk_apply(&decl.name, args.clone(), decl.ret_sort);
++                observations.push((term, decl.ret_sort));
++                applications.push((decl.name.clone(), args, term, decl.ret_sort));
++            }
++        }
++        for &(term, sort) in &observations {
++            if sort == self.terms.sorts.bool_sort {
++                continue;
++            }
++            let choices: Vec<_> = domains
++                .get(&sort)?
++                .iter()
++                .map(|&v| self.terms.mk_eq(term, v))
++                .collect();
++            constraints.push(self.terms.mk_or(choices));
++        }
++        let query = self.terms.mk_and(constraints);
++        let solver = self
++            .solver
++            .publication_candidate_query(query, &mut self.terms)?;
++        let model = solver.model()?;
++        let mut values = FxHashMap::default();
++        for (term, sort) in observations {
++            let value = if sort == self.terms.sorts.bool_sort {
++                let Some(crate::solver::EvalVal::Bool(value)) = solver
++                    .eval_under_interpretation(term, model, &self.terms)
++                    .value_owned()
++                else {
++                    return None;
++                };
++                self.terms.mk_bool(value)
++            } else {
++                let class = solver.euf_class_representative(term)?;
++                domains
++                    .get(&sort)?
++                    .iter()
++                    .copied()
++                    .find(|&v| solver.euf_class_representative(v) == Some(class))?
++            };
++            values.insert(term, value);
++        }
++        let mut proposed = PublishedModel::default();
++        let mut model = crate::solver::Model::new();
++        for decl in &self.declared_consts {
++            let value = *values.get(&decl.term)?;
++            model.set(decl.term, value);
++            proposed.literal_values.insert(
++                decl.term,
++                nixie_core::smtlib::Printer::new(&self.terms).print_term(value),
++            );
++        }
++        for (name, args, term, sort) in applications {
++            let value = *values.get(&term)?;
++            let printer = nixie_core::smtlib::Printer::new(&self.terms);
++            let default = printer.print_term(*domains.get(&sort)?.first()?);
++            let table = proposed
++                .function_overrides
++                .entry(name)
++                .or_insert_with(|| (Vec::new(), default, args.len()));
++            table.0.push((
++                args.into_iter().map(|t| printer.print_term(t)).collect(),
++                printer.print_term(value),
++            ));
++        }
++        proposed.model = Some(model);
++        proposed.witness_symbols = symbols;
++        Some(proposed)
++    }
++}
++
++/// Postorder elimination also handles alternating and negated quantifiers:
++/// each binder becomes its exact finite conjunction or disjunction.
++fn expand(
++    root: TermId,
++    domains: &FxHashMap<SortId, Vec<TermId>>,
++    work: &mut usize,
++    terms: &mut nixie_core::TermManager,
++) -> Option<TermId> {
++    let mut stack = vec![(root, false)];
++    let mut done = FxHashMap::default();
++    while let Some((term, finish)) = stack.pop() {
++        if done.contains_key(&term) {
++            continue;
++        }
++        let kind = terms.get(term)?.kind.clone();
++        if !finish {
++            *work = work.checked_sub(1)?;
++            stack.push((term, true));
++            for child in nixie_core::ast::traversal::get_children(&kind) {
++                stack.push((child, false));
++            }
++            continue;
++        }
++        let result = match kind {
++            TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
++                let universal = matches!(terms.get(term)?.kind, TermKind::Forall { .. });
++                let body = *done.get(&body)?;
++                let sorts: Vec<_> = vars.iter().map(|(_, sort)| *sort).collect();
++                let mut variables = Vec::new();
++                for &(name, sort) in &vars {
++                    let name = terms.resolve_str(name).to_string();
++                    variables.push(terms.mk_var(&name, sort));
++                }
++                let rows = tuples(&sorts, domains)?;
++                *work = work.checked_sub(rows.len())?;
++                let instances: Vec<_> = rows
++                    .into_iter()
++                    .map(|row| {
++                        let substitution = variables.iter().copied().zip(row).collect();
++                        terms.substitute(body, &substitution)
++                    })
++                    .collect();
++                if universal {
++                    terms.mk_and(instances)
++                } else {
++                    terms.mk_or(instances)
++                }
++            }
++            _ => {
++                let replacements = nixie_core::ast::traversal::get_children(&kind)
++                    .into_iter()
++                    .map(|child| Some((child, *done.get(&child)?)))
++                    .collect::<Option<FxHashMap<_, _>>>()?;
++                terms.substitute(term, &replacements)
++            }
++        };
++        done.insert(term, result);
++    }
++    done.get(&root).copied()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn propose(source: &str) -> (Context, bool) {
++        let mut ctx = Context::new();
++        ctx.execute_script(source).expect("script");
++        ctx.last_result = Some(SolverResult::Sat);
++        let result = ctx.publish_finite_uninterpreted();
++        (ctx, result)
++    }
++
++    #[test]
++    fn incompatible_quantifiers_cannot_share_different_interpretations() {
++        let (_, valid) = propose(
++            "(declare-sort U 0)(declare-fun p (U) Bool)
++            (assert (forall ((x U)) (p x)))(assert (exists ((x U)) (not (p x))))",
++        );
++        assert!(!valid);
++    }
++
++    #[test]
++    fn finite_function_results_are_closed_and_queries_read_the_same_table() {
++        let (mut ctx, valid) = propose(
++            "(declare-sort U 0)(declare-const a U)(declare-fun f (U) U)
++            (assert (forall ((x U)) (= (f (f x)) x)))
++            (assert (forall ((x U)) (not (= (f x) x))))",
++        );
++        assert!(valid);
++        let a = ctx
++            .declared_consts
++            .iter()
++            .find(|d| d.name == "a")
++            .expect("a")
++            .term;
++        let sort = ctx.terms.get(a).expect("sort").sort;
++        let fa = ctx.terms.mk_apply("f", vec![a], sort);
++        let ffa = ctx.terms.mk_apply("f", vec![fa], sort);
++        let involution = ctx.terms.mk_eq(ffa, a);
++        let fixed = ctx.terms.mk_eq(fa, a);
++        let keys = ["(= (f (f a)) a)", "(= (f a) a)", "a", "(f a)"].map(str::to_owned);
++        let out = ctx.format_get_value(&[involution, fixed, a, fa], &keys);
++        assert!(out.contains("((= (f (f a)) a) true)"), "{out}");
++        assert!(out.contains("((= (f a) a) false)"), "{out}");
++        assert!(out.contains("(f a) @uc_U_"), "{out}");
++    }
++
++    #[test]
++    fn negated_alternation_is_expanded_with_its_original_polarity() {
++        let (_, valid) = propose(
++            "(declare-sort U 0)(assert (not (forall ((x U)) (exists ((y U)) (distinct x y)))))",
++        );
++        assert!(valid);
++        let (_, invalid) =
++            propose("(declare-sort U 0)(assert (not (forall ((x U)) (exists ((y U)) (= x y)))))");
++        assert!(!invalid);
++    }
++}
+--- a/nixie-solver/src/context/model_fmt.rs
++++ b/nixie-solver/src/context/model_fmt.rs
+@@ -18,6 +18,11 @@
+ 
+ use super::{Context, RawFuncInterp};
+ mod array_model;
++mod candidate_model;
++mod underspecified;
++mod projected_functions;
++mod datatype_completion;
++mod finite_uninterpreted;
+ mod certified_numeric;
+ mod class_values;
+ mod completed_candidate;
+@@ -446,6 +451,7 @@
+         // Pick `else_value`: the most common entry value (ties → first seen),
+         // matching Z3's habit of reusing an existing value as the default.
+         let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
++        let else_value = self.else_override(func_name).unwrap_or(else_value);
+ 
+         Some(((entries, else_value, arity), is_function))
+     }
+@@ -1714,7 +1720,20 @@
+         if let Some(error) = self.uncertified_model_error() {
+             return error;
+         }
+-        let func_lines = self.func_interp_lines();
++        let mut func_lines = self.func_interp_lines();
++        let mut division_sorts: Vec<_> =
++            self.published.zero_division_sorts.iter().copied().collect();
++        division_sorts.sort_unstable_by_key(|s| s.0);
++        for sort in division_sorts {
++            let (name, sort, value) = if sort == self.terms.sorts.int_sort {
++                ("div0", "Int", "0")
++            } else {
++                ("/0", "Real", "0.0")
++            };
++            func_lines.push(format!(
++                "  (define-fun {name} ((x!0 {sort}) (x!1 {sort})) {sort} {value})"
++            ));
++        }
+         match self.get_model() {
+             None => "(error \"No model available\")".to_string(),
+             Some(model) if model.is_empty() && recfun_lines.is_empty() && func_lines.is_empty() => {
+@@ -2482,3 +2501,9 @@
+         assert_eq!(sorts.get("t").copied(), Some("T"));
+     }
+ }
++
++// Experiment-only per-process selector; absent from production.
++fn publication_probe(name: &str) -> bool {
++    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default()) == name
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/datatype_completion.rs
+@@ -0,0 +1,169 @@
++//! Bounded concrete constructor proposals, accepted only by exact evaluation
++//! of every original assertion under the resulting printed interpretation.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_datatype_publication(&mut self) -> bool {
++        let declarations: Vec<_> = self
++            .declared_consts
++            .iter()
++            .filter(|d| self.terms.sorts.datatype_name(d.sort).is_some())
++            .map(|d| (d.term, d.sort))
++            .collect();
++        if declarations.is_empty() || declarations.len() > 64 {
++            return false;
++        }
++        let Some(original) = self.published_model().cloned() else {
++            return false;
++        };
++        let mut pools: FxHashMap<SortId, Vec<TermId>> = FxHashMap::default();
++        let mut definitions = Vec::new();
++        let mut stack: Vec<_> = declarations.iter().map(|(_, sort)| *sort).collect();
++        let mut seen = FxHashSet::default();
++        while let Some(sort) = stack.pop() {
++            if !seen.insert(sort) {
++                continue;
++            }
++            if seen.len() > 64 {
++                return false;
++            }
++            let constructors = self
++                .terms
++                .sorts
++                .datatype_name(sort)
++                .and_then(|name| self.terms.sorts.get_datatype(name))
++                .map(|def| {
++                    def.constructors
++                        .iter()
++                        .map(|ctor| {
++                            (
++                                self.terms.sorts.resolve_spur(ctor.name).to_string(),
++                                ctor.selectors
++                                    .iter()
++                                    .map(|(_, sort)| *sort)
++                                    .collect::<Vec<_>>(),
++                            )
++                        })
++                        .collect::<Vec<_>>()
++                });
++            if let Some(constructors) = constructors {
++                for (_, fields) in &constructors {
++                    stack.extend(fields.iter().copied());
++                }
++                definitions.push((sort, constructors));
++            } else if sort == self.terms.sorts.bool_sort {
++                pools.insert(sort, vec![self.terms.mk_false(), self.terms.mk_true()]);
++            } else if let Some(value) =
++                crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
++            {
++                pools.insert(sort, vec![value]);
++            }
++        }
++        // Monotone finite construction: recursive sorts acquire only finite
++        // values. Round/size limits restrict proposals, never certification.
++        for _ in 0..4 {
++            let mut changed = false;
++            for (sort, constructors) in &definitions {
++                for (name, fields) in constructors {
++                    let mut tuples = vec![Vec::new()];
++                    for field in fields {
++                        let Some(values) = pools.get(field) else {
++                            tuples.clear();
++                            break;
++                        };
++                        if tuples
++                            .len()
++                            .checked_mul(values.len())
++                            .is_none_or(|n| n > 128)
++                        {
++                            tuples.clear();
++                            break;
++                        }
++                        tuples = tuples
++                            .into_iter()
++                            .flat_map(|tuple| {
++                                values.iter().map(move |&value| {
++                                    let mut args = tuple.clone();
++                                    args.push(value);
++                                    args
++                                })
++                            })
++                            .collect();
++                    }
++                    for args in tuples {
++                        let value = self.terms.mk_dt_constructor(name, args, *sort);
++                        let pool = pools.entry(*sort).or_default();
++                        if pool.len() < 128 && !pool.contains(&value) {
++                            pool.push(value);
++                            changed = true;
++                        }
++                    }
++                }
++            }
++            if !changed {
++                break;
++            }
++        }
++        let domains: Option<Vec<_>> = declarations
++            .iter()
++            .map(|(_, sort)| pools.get(sort).cloned())
++            .collect();
++        let Some(domains) = domains else {
++            return false;
++        };
++        if domains.iter().any(Vec::is_empty) {
++            return false;
++        }
++        let saved = self.published.model.take();
++        let mut distinct = original.clone();
++        for (index, ((term, _), domain)) in declarations.iter().zip(&domains).enumerate() {
++            let Some(&value) = domain.get(index % domain.len()) else {
++                self.published.model = saved;
++                return false;
++            };
++            distinct.set(*term, value);
++        }
++        self.published.model = Some(distinct);
++        if self.datatype_proposal_holds() {
++            return true;
++        }
++        let Some(total) = domains
++            .iter()
++            .try_fold(1usize, |n, d| n.checked_mul(d.len()).filter(|&n| n <= 256))
++        else {
++            self.published.model = saved;
++            return false;
++        };
++        for mut ordinal in 0..total {
++            let mut model = original.clone();
++            for ((term, _), domain) in declarations.iter().zip(&domains) {
++                let Some(&value) = domain.get(ordinal % domain.len()) else {
++                    self.published.model = saved;
++                    return false;
++                };
++                ordinal /= domain.len();
++                model.set(*term, value);
++            }
++            self.published.model = Some(model);
++            if self.datatype_proposal_holds() {
++                return true;
++            }
++        }
++        self.published.model = saved;
++        false
++    }
++
++    pub(super) fn datatype_proposal_holds(&mut self) -> bool {
++        if let Some((printed, mut parse)) = self.printed_constants()
++            && let Ok(funcs) = self.printed_functions(&mut parse)
++        {
++            let goal: Vec<_> = self
++                .certified_goal()
++                .into_iter()
++                .map(|t| self.expand_printed_functions(t, &funcs))
++                .collect();
++            return self.certified_by_evaluation(&goal, &printed);
++        }
++        false
++    }
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/projected_functions.rs
+@@ -0,0 +1,93 @@
++//! Numeric projection proposals. As in MBQI's relevant-set completion, each
++//! interval maps to a representative; only an independent certificate of the
++//! entire printed interpretation can accept the proposal.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_projected_functions(&mut self) -> bool {
++        let Some(model) = self.published_model().cloned() else {
++            return false;
++        };
++        let classes = self.build_class_values(&model);
++        let names: Vec<_> = self
++            .declared_funs
++            .iter()
++            .filter(|d| {
++                !d.interpreted
++                    && d.arg_sorts.len() == 1
++                    && (d.arg_sorts[0] == self.terms.sorts.int_sort
++                        || d.arg_sorts[0] == self.terms.sorts.real_sort)
++            })
++            .map(|d| d.name.clone())
++            .collect();
++        if names.is_empty() || names.len() > 12 {
++            return false;
++        }
++        let saved = self.published.function_overrides.clone();
++        let mut replacements = Vec::new();
++        for name in names {
++            let Some(((entries, _, _), _)) =
++                self.func_interp_reading(&name, &model, &classes, false)
++            else {
++                continue;
++            };
++            if entries.is_empty() || entries.len() > 128 {
++                continue;
++            }
++            let mut points = Vec::new();
++            let mut readable = true;
++            for (args, value) in entries {
++                let [arg] = args.as_slice() else {
++                    readable = false;
++                    break;
++                };
++                let Ok(term) = nixie_core::smtlib::parse_term(arg, &mut self.terms) else {
++                    readable = false;
++                    break;
++                };
++                let number = match self
++                    .solver
++                    .eval_under_interpretation(term, &crate::solver::Model::new(), &self.terms)
++                    .value_owned()
++                {
++                    Some(crate::solver::EvalVal::Num(n)) => {
++                        num_rational::BigRational::new((*n.numer()).into(), (*n.denom()).into())
++                    }
++                    Some(crate::solver::EvalVal::NumBig(n)) => *n,
++                    _ => {
++                        readable = false;
++                        break;
++                    }
++                };
++                points.push((number, arg.clone(), value));
++            }
++            if !readable {
++                continue;
++            }
++            points.sort();
++            if points
++                .windows(2)
++                .any(|w| w[0].0 == w[1].0 && w[0].2 != w[1].2)
++            {
++                continue;
++            }
++            let Some((_, _, last)) = points.last() else {
++                continue;
++            };
++            let mut body = last.clone();
++            for (_, arg, value) in points.iter().rev().skip(1) {
++                body = format!("(ite (<= x!0 {arg}) {value} {body})");
++            }
++            replacements.push((name, (Vec::new(), body, 1)));
++        }
++        if replacements.is_empty() {
++            return false;
++        }
++        self.published.function_overrides.extend(replacements);
++        if self.certify_printed_goal().is_ok() {
++            return true;
++        }
++        self.published.function_overrides = saved;
++        false
++    }
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/underspecified.rs
+@@ -0,0 +1,106 @@
++//! Explicit total choices for SMT-LIB's underspecified division by zero.
++//! These are model proposals, never simplifications used to prove unsat.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_zero_division_publication(&mut self) -> bool {
++        let mut stack = self.certified_goal();
++        let mut seen = FxHashSet::default();
++        let mut reads = Vec::new();
++        let mut sorts = FxHashSet::default();
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return false;
++            };
++            if let TermKind::Div(_, denominator) = node.kind
++                && literal_zero(denominator, &self.terms)
++            {
++                if node.sort != self.terms.sorts.int_sort && node.sort != self.terms.sorts.real_sort
++                {
++                    return false;
++                }
++                reads.push((term, node.sort));
++                sorts.insert(node.sort);
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++        }
++        if reads.is_empty() {
++            return false;
++        }
++        for &sort in &sorts {
++            let symbol = if sort == self.terms.sorts.int_sort {
++                "div0"
++            } else {
++                "/0"
++            };
++            if self.declared_consts.iter().any(|d| d.name == symbol)
++                || self.declared_funs.iter().any(|d| d.name == symbol)
++            {
++                return false;
++            }
++        }
++        let saved = self.published.clone();
++        let Some(mut model) = self.published_model().cloned() else {
++            return false;
++        };
++        for (term, sort) in reads {
++            let value = if sort == self.terms.sorts.int_sort {
++                self.terms.mk_int(0)
++            } else {
++                self.terms
++                    .mk_real(num_rational::Rational64::from_integer(0))
++            };
++            model.set(term, value);
++        }
++        self.published.model = Some(model);
++        self.published.zero_division_sorts = sorts;
++        if self.certify_printed_goal().is_ok() {
++            return true;
++        }
++        self.published = saved;
++        false
++    }
++
++    pub(super) fn fold_published_zero_division(&mut self, root: TermId) -> TermId {
++        if self.published.zero_division_sorts.is_empty() {
++            return root;
++        }
++        let mut stack = vec![root];
++        let mut seen = FxHashSet::default();
++        let mut replacements = FxHashMap::default();
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return root;
++            };
++            if let TermKind::Div(_, denominator) = node.kind
++                && self.published.zero_division_sorts.contains(&node.sort)
++                && literal_zero(denominator, &self.terms)
++            {
++                let value = if node.sort == self.terms.sorts.int_sort {
++                    self.terms.mk_int(0)
++                } else {
++                    self.terms
++                        .mk_real(num_rational::Rational64::from_integer(0))
++                };
++                replacements.insert(term, value);
++            } else {
++                stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++            }
++        }
++        self.terms.substitute(root, &replacements)
++    }
++}
++
++fn literal_zero(term: TermId, terms: &nixie_core::TermManager) -> bool {
++    match terms.get(term).map(|t| &t.kind) {
++        Some(TermKind::IntConst(n)) => n.is_zero(),
++        Some(TermKind::RealConst(n)) => n.is_zero(),
++        _ => false,
++    }
++}
+--- a/nixie-solver/src/context/model_fmt/published.rs
++++ b/nixie-solver/src/context/model_fmt/published.rs
+@@ -49,6 +49,8 @@
+     /// The solver's model with the fresh values of `#P2b-71` added, or `None`
+     /// when nothing was minted (the solver's model is then read as is).
+     pub(super) model: Option<crate::solver::Model>,
++    pub(super) zero_division_sorts: FxHashSet<SortId>,
++    else_overrides: FxHashMap<String, String>,
+     pub(super) function_overrides: FxHashMap<String, RawFuncInterp>,
+     pub(super) witness_domains: FxHashMap<SortId, Vec<TermId>>,
+     pub(super) literal_values: FxHashMap<TermId, String>,
+@@ -86,6 +88,8 @@
+ /// spend (`Context::printed_datatype_model_refuted`); a closed assertion has
+ /// no free symbol, so a refutation is a propagation, and the budget only
+ /// bounds a pathological one.
++const MAX_ELSE_REPAIRS: usize = 12;
++
+ const DATATYPE_NET_CONFLICTS: u64 = 10_000;
+ 
+ /// Prefix used for printed uninterpreted witnesses. The parser accepts legal
+@@ -117,10 +121,16 @@
+         result: SolverResult,
+     ) -> SolverResult {
+         self.published = PublishedModel::default();
++        if publication_probe("finite-uf-model-search") && result == SolverResult::Unknown && self.pending_contract_error.is_none() {
++            self.last_result = Some(SolverResult::Sat);
++            if self.publish_finite_uninterpreted() { return SolverResult::Sat; }
++            self.last_result = Some(result);
++        }
+         if result != SolverResult::Sat || self.solver.last_answer_was_delta_sat() {
+             return result;
+         }
+ 
++        if publication_probe("array-completion-search") { self.keep_a_correct_candidate_model(); }
+         self.refresh_published_model();
+         let minted = self.published.model.is_some();
+         if self.goal_is_quantified() {
+@@ -144,6 +154,10 @@
+             // Continue through the typed-value net even if the unmodified
+             // candidate is unreadable: absence of a refutation is no certificate.
+             drop(fresh);
++            refutation = self.printed_model_falsifies();
++        }
++        if publication_probe("datatype-publication-proposals") && refutation.is_some() {
++            if self.repair_datatype_publication() { return result; }
+             refutation = self.printed_model_falsifies();
+         }
+         if let Some(reason) = refutation {
+@@ -227,6 +241,7 @@
+         match self.printed_datatype_model_refuted() {
+             NetReading::Clean => result,
+             NetReading::False(number) => {
++                if publication_probe("datatype-publication-proposals") && self.repair_datatype_publication() { return result; }
+                 let reason = format!(
+                     "model check failed: assertion {number} reads false under the candidate model"
+                 );
+@@ -236,6 +251,7 @@
+                 SolverResult::Unknown
+             }
+             NetReading::Refuted(number) => {
++                if publication_probe("datatype-publication-proposals") && self.repair_datatype_publication() { return result; }
+                 self.withhold_every_symbol(&format!("assertion {number} is false"));
+                 result
+             }
+@@ -528,7 +544,9 @@
+     /// either way, it is completed around what it got right when its arrays
+     /// allow, and withheld otherwise.
+     fn certify_published_model(&mut self) {
+-        if self.publish_numeric_certificate() || self.publish_completed_candidate() {
++        if self.publish_numeric_certificate()
++            || (publication_probe("finite-uf-model-search") && self.publish_finite_uninterpreted())
++            || self.publish_completed_candidate() {
+             return;
+         }
+         let Err(reason) = self.certify_printed_goal() else {
+@@ -539,6 +557,20 @@
+                 return;
+             }
+             self.published.model = Some(fresh);
++        }
++        if publication_probe("numeric-projection-proposals") && self.repair_projected_functions() { return; }
++        if publication_probe("function-else-search") && self.repair_else_values() { return; }
++        if publication_probe("zero-division-proposal") && self.repair_zero_division_publication() { return; }
++        if publication_probe("array-completion-search")
++            && let Some((printed, mut parse)) = self.printed_constants()
++            && let Ok(funcs) = self.printed_functions(&mut parse)
++        {
++            let goal = self.expanded_goal(&funcs);
++            let hypotheses = self.witness_hypotheses(&parse.witnesses);
++            if self.solver.complete_around_printed(&goal, &printed, &hypotheses, &mut self.terms) {
++                self.refresh_published_model();
++                if self.certify_printed_goal().is_ok() { return; }
++            }
+         }
+         self.withhold_published_model(reason);
+     }
+@@ -871,3 +903,121 @@
+ 
+ #[cfg(test)]
+ mod cost_tests;
++
++impl Context {
++    pub(in crate::context) fn else_override(&self, name: &str) -> Option<String> {
++        self.published.else_overrides.get(name).cloned()
++    }
++}
++
++impl Context {
++    fn repair_else_values(&mut self) -> bool {
++        let Some(model) = self.published_model().cloned() else {
++            return false;
++        };
++        let class_values = self.build_class_values(&model);
++        let names: Vec<String> = self
++            .declared_funs
++            .iter()
++            .filter(|d| !d.interpreted && !d.arg_sorts.is_empty())
++            .map(|d| d.name.clone())
++            .collect();
++        let mut alternatives: Vec<(String, Vec<String>)> = Vec::new();
++        for name in names {
++            let Some(((entries, else_value, _), _)) =
++                self.func_interp_reading(&name, &model, &class_values, false)
++            else {
++                continue;
++            };
++            // The table's own entry values first, then the literals the goal
++            // spells of the function's range sort (as `mbqi::model_certify`
++            // searches its defaults).
++            let mut values: Vec<String> = Vec::new();
++            for (_, value) in entries {
++                if value != else_value && !values.contains(&value) {
++                    values.push(value);
++                }
++            }
++            for literal in self.goal_literals_of_range(&name) {
++                if literal != else_value && !values.contains(&literal) {
++                    values.push(literal);
++                }
++            }
++            if !values.is_empty() {
++                alternatives.push((name, values));
++            }
++        }
++        let mut attempts = 0usize;
++        for (name, values) in &alternatives {
++            for value in values {
++                if attempts >= MAX_ELSE_REPAIRS {
++                    break;
++                }
++                attempts += 1;
++                self.published.else_overrides = FxHashMap::default();
++                self.published
++                    .else_overrides
++                    .insert(name.clone(), value.clone());
++                if self.certify_printed_goal().is_ok() {
++                    return true;
++                }
++            }
++        }
++        self.published.else_overrides = FxHashMap::default();
++        false
++    }
++}
++
++impl Context {
++    fn goal_literals_of_range(&self, name: &str) -> Vec<String> {
++        let Some(range) = self
++            .declared_funs
++            .iter()
++            .find(|d| d.name == name)
++            .map(|d| d.ret_sort)
++        else {
++            return Vec::new();
++        };
++        let mut found: Vec<TermId> = Vec::new();
++        let mut stack: Vec<TermId> = self.certified_goal();
++        let mut visited: FxHashSet<TermId> = FxHashSet::default();
++        while let Some(current) = stack.pop() {
++            if !visited.insert(current) {
++                continue;
++            }
++            let Some(data) = self.terms.get(current) else {
++                continue;
++            };
++            if data.sort == range
++                && matches!(
++                    data.kind,
++                    TermKind::IntConst(_)
++                        | TermKind::RealConst(_)
++                        | TermKind::BitVecConst { .. }
++                        | TermKind::True
++                        | TermKind::False
++                )
++            {
++                found.push(current);
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
++        }
++        found.sort_unstable_by_key(|t| t.raw());
++        found.dedup();
++        found.into_iter().map(|t| self.format_value(t)).collect()
++    }
++}
++
++impl Context {
++    pub(in crate::context) fn with_fresh_values(
++        &mut self,
++        model: &crate::solver::Model,
++    ) -> crate::solver::Model {
++        let minted = self.mint_fresh_values(model);
++        let mut out = model.clone();
++        for (term, value) in minted {
++            out.set(term, value);
++        }
++        out
++    }
++}
+--- a/nixie-solver/src/context/model_fmt/printed_check.rs
++++ b/nixie-solver/src/context/model_fmt/printed_check.rs
+@@ -443,7 +443,7 @@
+         funcs: &PrintedFunctions,
+     ) -> TermId {
+         if funcs.is_empty() {
+-            return term;
++            return self.fold_published_zero_division(term);
+         }
+         enum Frame {
+             Expand(TermId),
+@@ -577,7 +577,8 @@
+                 }
+             }
+         }
+-        done.get(&term).copied().unwrap_or(term)
++        let expanded = done.get(&term).copied().unwrap_or(term);
++        self.fold_published_zero_division(expanded)
+     }
+ 
+     /// The maximal quantifier nodes of `term` and, outside them, the
+--- a/nixie-solver/src/context/model_fmt/get_value.rs
++++ b/nixie-solver/src/context/model_fmt/get_value.rs
+@@ -180,6 +180,7 @@
+         let mut reading: Option<Option<super::printed_check::PrintedReading>> = None;
+         let mut values = Vec::with_capacity(terms.len());
+         for &term in terms {
++            let term = self.fold_published_zero_division(term);
+             let proposed = if !self.published.function_overrides.is_empty()
+                 || !self.published.literal_values.is_empty()
+             {
+--- a/nixie-solver/src/solver/array_completion_certify.rs
++++ b/nixie-solver/src/solver/array_completion_certify.rs
+@@ -1,12 +1,13 @@
+-//! Independent validity certificates for concrete model interpretations.
++//! Bounded array-model completion with independent validity certificates.
+ //!
+-//! Universals are checked by refuting their negation, existentials by verified
+-//! witnesses, and the Boolean context by exact evaluation or a validity query.
+-//! A satisfiable or unknown certificate query never licenses `Sat`. This
+-//! module does not propose replacement array interpretations.
++//! Proposals are constant arrays or finite store chains over a default. A
++//! proposal is installed only after its substituted original assertions are
++//! certified: universals by an unsatisfiable negated body, existentials by
++//! verified witnesses, and the remaining Boolean context by a validity query.
++//! A satisfiable or unknown certificate query never licenses `Sat`.
+ //!
+-//! Read-only reference: Z3's model/model_evaluator.cpp. Publication checks the
+-//! values and function tables actually emitted by the formatter.
++//! Read-only references: upstream 0.3.4 array_completion_certify and Z3's
++//! model/model_evaluator.cpp. Published-model formatting is checked separately.
+ 
+ use nixie_core::ast::{TermId, TermKind, TermManager};
+ use nixie_core::interner::Spur;
+@@ -20,13 +21,30 @@
+ use nixie_core::reserved::CONST_ARRAY_FUNC;
+ 
+ mod array_values;
++mod candidate;
++mod printed;
++pub(crate) use candidate::ReplacedCandidate;
+ mod declined;
++mod groups;
++mod infinite;
+ mod pinned;
+ mod polarity;
+-mod printed;
+ mod split;
+ #[cfg(test)]
+ mod tests;
++
++/// Array-sorted free variables one attempt may complete.
++///
++/// The search is a product over the pool below, so this is what keeps it
++/// finite.  Three covers every script `#P2b-58` names (`q0106` has three
++/// arrays under one binder) and bounds the product at `POOL^3`.
++const MAX_COMPLETED_ARRAYS: usize = 3;
++
++/// Default values tried per array.
++const MAX_DEFAULT_CANDIDATES: usize = 6;
++
++/// Default *combinations* across all completed arrays.
++const MAX_COMBINATIONS: usize = 24;
+ 
+ /// Assertion-DAG nodes above which an attempt declines before it starts.
+ ///
+@@ -234,6 +252,22 @@
+ }
+ 
+ impl Solver {
++    /// Search for one concrete publication candidate, charging the same
++    /// query budget as validity checks. Failure never proves unsatisfiability
++    /// of the original, unbounded problem.
++    pub(crate) fn publication_candidate_query(
++        &self,
++        goal: TermId,
++        manager: &mut TermManager,
++    ) -> Option<Solver> {
++        let mut budget = QueryBudget::for_solver(self);
++        let mut query = budget.start(goal, manager, Some("QF_UF"))?;
++        query.assert(goal, manager);
++        let result = query.check(manager);
++        budget.finish(&query);
++        (result == SolverResult::Sat).then_some(query)
++    }
++
+     /// A publication check shares the original check's deadline and work budget.
+     pub(crate) fn check_publication_query(
+         &self,
+@@ -253,9 +287,339 @@
+     }
+ }
+ 
+-impl Solver {}
++impl Solver {
++    /// Try to publish `Sat` for a quantified array goal by completing the
++    /// arrays the candidate model leaves partial and certifying the result.
++    ///
++    /// Returns `true` only with a *certified* completion in hand, and installs
++    /// it into [`Solver::model`] so `(get-model)` prints the interpretation the
++    /// certificate verified rather than the partial candidate.  A `false`
++    /// leaves the solver exactly as it was found.
++    pub(super) fn certify_sat_by_array_completion(&mut self, manager: &mut TermManager) -> bool {
++        let original = self.model.clone();
++        // Already completed in this check (at the MBQI saturation point, see
++        // `check_core`): the model carries the certified interpretation.
++        if original
++            .as_ref()
++            .is_some_and(|model| self.completion_already_installed(model))
++        {
++            return true;
++        }
++        let Some((goal, completion)) = self.search_certified_completion(manager) else {
++            return false;
++        };
++        self.install_completed_model(&goal, &completion, manager);
++        // The gate every quantified `Sat` exit of `check_core` passes, run on
++        // the model that will actually be published.  The certificate already
++        // implies it; a disagreement means the two readings differ, and then
++        // the original model is what stays.
++        if self.model_refutes_assertions(manager) {
++            self.model = original;
++            self.certified_array_model = None;
++            return false;
++        }
++        true
++    }
++
++    /// Whether `model` is exactly the model a completion installed earlier in
++    /// this `check` (at MBQI's saturation point, then again at the exit).
++    /// Equality of the whole assignment map, not a look at the arrays' values:
++    /// a model that merely binds an array to a value term was not certified.
++    fn completion_already_installed(&self, model: &Model) -> bool {
++        self.certified_array_model
++            .as_ref()
++            .is_some_and(|certified| certified == model.assignments())
++    }
++
++    /// The search behind [`Self::certify_sat_by_array_completion`]: the goal
++    /// and a certified completion of its arrays, or `None`.
++    ///
++    /// Two searches, cheapest first: one constant array per array over the
++    /// pooled defaults (`#P2b-58`), then a default plus pinned points
++    /// (`pinned`, decision (41)).  Every candidate is first *evaluated* on a
++    /// finite sample — the assertions, each universal replaced by its
++    /// instances at the goal's own points and at one point they do not name —
++    /// and only a candidate the evaluation cannot refute costs a certificate
++    /// query.  The evaluation only ever discards (a definite `false` at a
++    /// sampled point is a counterexample the certificate would find), so it
++    /// changes which candidates are *tried*, never what is accepted.
++    fn search_certified_completion(
++        &mut self,
++        manager: &mut TermManager,
++    ) -> Option<(Goal, FxHashMap<TermId, TermId>)> {
++        if !self.has_quantifiers || self.certificate_assertions.is_empty() {
++            return None;
++        }
++        let assignments = self
++            .model
++            .as_ref()
++            .map(|m| m.assignments().clone())
++            .unwrap_or_default();
++        let assertions = self.certificate_assertions.clone();
++        if !is_small_enough_to_certify(&assertions, manager) {
++            return None;
++        }
++        let goal = Goal::build(&assertions, &assignments, manager)?;
++        let logic = self.logic.clone();
++        let mut queries = QueryBudget::for_solver(self);
++        // The joint search first, exactly as before whenever it is within its
++        // bound, so a goal it certified keeps the interpretation it had.
++        if goal.arrays.len() <= MAX_COMPLETED_ARRAYS
++            && let Some(completion) = self.search_goal_completion(
++                &goal,
++                &assignments,
++                manager,
++                logic.as_deref(),
++                &mut queries,
++            )
++        {
++            return Some((goal, completion));
++        }
++        // Then one search per independent group (`groups`), and the one
++        // certificate over every assertion on the union of what they found.
++        let groups = groups::array_groups(&goal.arrays, &goal.assertions, manager);
++        if groups.len() < 2 {
++            return None;
++        }
++        let mut merged: FxHashMap<TermId, TermId> = FxHashMap::default();
++        for group in &groups {
++            let sub_goal = goal.restricted_to(group, manager)?;
++            let completion = self.search_goal_completion(
++                &sub_goal,
++                &assignments,
++                manager,
++                logic.as_deref(),
++                &mut queries,
++            )?;
++            merged.extend(completion);
++        }
++        goal.certificate_passes(self, &merged, manager, logic.as_deref(), &mut queries)
++            .then_some((goal, merged))
++    }
++
++    /// One search over `goal`'s arrays: a constant array per array over the
++    /// pooled defaults, then (over an `Int` / `Real` index) the candidate's
++    /// own points over a pooled default (`infinite`), then a default plus
++    /// pinned points (`pinned`).  `None` when none certifies.
++    fn search_goal_completion(
++        &self,
++        goal: &Goal,
++        assignments: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++        logic: Option<&str>,
++        queries: &mut QueryBudget,
++    ) -> Option<FxHashMap<TermId, TermId>> {
++        let pools = goal.default_pools(assignments, manager);
++        if pools.iter().any(Vec::is_empty) {
++            return None;
++        }
++        let points = goal.points_by_sort(manager);
++        let samples = goal.sample_instances(&points, manager)?;
++        for combination in Combinations::new(&pools) {
++            let mut completion: FxHashMap<TermId, TermId> = FxHashMap::default();
++            for (&array, &default) in goal.arrays.iter().zip(combination.iter()) {
++                let sort = manager.get(array).map(|d| d.sort)?;
++                let interpretation = const_array(sort, default, manager);
++                completion.insert(array, interpretation);
++            }
++            if self.completion_refuted_by_evaluation(goal, &completion, &samples, manager) {
++                continue;
++            }
++            if goal.certificate_passes(self, &completion, manager, logic, queries) {
++                return Some(completion);
++            }
++            if queries.used >= MAX_CERTIFICATE_QUERIES {
++                break;
++            }
++        }
++        if let Some(completion) = self.search_candidate_point_completion(
++            goal,
++            assignments,
++            &samples,
++            manager,
++            logic,
++            queries,
++        ) {
++            return Some(completion);
++        }
++        self.search_pinned_completion(goal, &samples, &points, manager, logic, queries)
++    }
++
++    /// Whether `completion` (with the scalar pins) makes some assertion
++    /// definitely `false` once every universal is replaced by its sampled
++    /// instances (`samples`).  See [`Self::search_certified_completion`].
++    fn completion_refuted_by_evaluation(
++        &self,
++        goal: &Goal,
++        completion: &FxHashMap<TermId, TermId>,
++        samples: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> bool {
++        let mut interpretation = Model::new();
++        for (&symbol, &value) in goal.scalar_pins.iter().chain(completion.iter()) {
++            interpretation.set(symbol, value);
++        }
++        goal.assertions.iter().any(|&assertion| {
++            let sampled = manager.substitute(assertion, samples);
++            let sampled = manager.substitute(sampled, &goal.ground_values);
++            matches!(
++                self.eval_under_interpretation(sampled, &interpretation, manager),
++                EvalOutcome::Value(EvalVal::Bool(false))
++            )
++        })
++    }
++
++    /// Record the certified interpretation in the published model.
++    ///
++    /// Each array variable is bound to the term the certificate was
++    /// discharged over — `((as const A) d)`, or a `store` chain over it — so
++    /// what `(get-model)` prints and what was verified are the same object.
++    ///
++    /// Installing *replaces* an interpretation, so every other entry whose
++    /// term mentions a completed array is dropped first: a read
++    /// `(select a k) ↦ v` or an atom over one describes the candidate model,
++    /// not the certified one, and `Solver::model_value_in` answers
++    /// `(get-value)` from an entry before it evaluates anything.  With the
++    /// entry gone the evaluator reads the term through the installed value.
++    fn install_completed_model(
++        &mut self,
++        goal: &Goal,
++        completion: &FxHashMap<TermId, TermId>,
++        manager: &TermManager,
++    ) {
++        let model = self.model.get_or_insert_with(Model::new);
++        let completed: FxHashSet<TermId> = goal.arrays.iter().copied().collect();
++        let mut stale: Vec<TermId> = model
++            .assignments()
++            .keys()
++            .copied()
++            .filter(|&term| !completed.contains(&term) && mentions_any(term, &completed, manager))
++            .collect();
++        stale.sort_unstable_by_key(|term| term.raw());
++        for term in stale {
++            model.remove(term);
++        }
++        for &array in &goal.arrays {
++            if let Some(&value) = completion.get(&array) {
++                model.set(array, value);
++            }
++        }
++        self.certified_array_model = Some(model.assignments().clone());
++    }
++}
++
++/// Whether `term` has one of `targets` as a sub-term.
++fn mentions_any(term: TermId, targets: &FxHashSet<TermId>, manager: &TermManager) -> bool {
++    let mut stack: Vec<TermId> = vec![term];
++    let mut visited: FxHashSet<TermId> = FxHashSet::default();
++    let mut children: Vec<TermId> = Vec::new();
++    while let Some(current) = stack.pop() {
++        if targets.contains(&current) {
++            return true;
++        }
++        if !visited.insert(current) {
++            continue;
++        }
++        let Some(data) = manager.get(current) else {
++            continue;
++        };
++        children.clear();
++        children.extend(nixie_core::ast::traversal::get_children(&data.kind));
++        stack.extend(children.iter().copied());
++    }
++    false
++}
++
++/// The array-sorted free variables of `assertions` in first-encounter order,
++/// and the candidate model's value of every other free symbol it gives one.
++///
++/// A scalar with no value in the candidate model is left out of the pins:
++/// the certificate is a *validity* query, so a symbol it does not interpret
++/// can only make the query harder to discharge, never the conclusion weaker.
++fn free_symbols(
++    assertions: &[TermId],
++    assignments: &FxHashMap<TermId, TermId>,
++    manager: &TermManager,
++) -> Option<(Vec<TermId>, FxHashMap<TermId, TermId>)> {
++    let mut arrays: Vec<TermId> = Vec::new();
++    let mut scalar_pins: FxHashMap<TermId, TermId> = FxHashMap::default();
++    let mut seen: FxHashSet<TermId> = FxHashSet::default();
++    for &assertion in assertions {
++        let mut free: Vec<TermId> = manager.free_vars_including_patterns(assertion);
++        // `free_vars_including_patterns` answers from a set, so order it by
++        // the id the term manager already assigned: the attempt's combination
++        // order — and hence its verdict — must not depend on a hash iteration
++        // order.
++        free.sort_unstable_by_key(|term| term.raw());
++        for var in free {
++            if !seen.insert(var) {
++                continue;
++            }
++            let data = manager.get(var)?;
++            if is_array_sort(data.sort, manager) {
++                arrays.push(var);
++            } else if let Some(&value) = assignments.get(&var) {
++                scalar_pins.insert(var, value);
++            }
++        }
++    }
++    Some((arrays, scalar_pins))
++}
+ 
+ impl Goal {
++    /// Classify the assertion set for the completion's search, or decline.
++    fn build(
++        assertions: &[TermId],
++        assignments: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> Option<Self> {
++        let quantifiers = polarity::collect_quantifiers(assertions, manager)?;
++        if quantifiers.universals.is_empty() {
++            // Nothing to complete under a binder: an `exists`-only goal keeps
++            // the candidate's Skolem witness, which the published-model
++            // certificate (`printed`) then checks as printed.
++            return None;
++        }
++        let (mut arrays, scalar_pins) = free_symbols(assertions, assignments, manager)?;
++        // Where the completion used to decline — an uninterpreted function
++        // in the goal, or more arrays than it searches over — the symbols the
++        // universals never read through a binder are interpreted from the
++        // candidate model instead (`#P2b-63`); every other goal is classified
++        // exactly as before.
++        let mut ground_values: FxHashMap<TermId, TermId> = FxHashMap::default();
++        let fix_arrays = arrays.len() > MAX_COMPLETED_ARRAYS;
++        if fix_arrays || declined::has_uninterpreted_application(assertions, manager) {
++            let (completed, values) = declined::interpret_from_candidate(
++                assertions,
++                &arrays,
++                assignments,
++                &scalar_pins,
++                fix_arrays,
++                manager,
++            )?;
++            arrays = completed;
++            ground_values = values;
++        }
++        // The bound is on a *group* of arrays some assertion mentions
++        // together (`groups`): four arrays each under its own binder are four
++        // one-array searches.
++        if arrays.is_empty()
++            || groups::largest_group(&arrays, assertions, manager) > MAX_COMPLETED_ARRAYS
++        {
++            return None;
++        }
++        Some(Self {
++            assertions: assertions.to_vec(),
++            universals: quantifiers.universals,
++            arrays,
++            scalar_pins,
++            existentials: quantifiers.existentials,
++            ground_values,
++            negations: quantifiers.negations,
++            hypotheses: Vec::new(),
++        })
++    }
++
+     /// `query` read under the goal's hypotheses.
+     fn under_hypotheses(&self, query: TermId, manager: &mut TermManager) -> TermId {
+         if self.hypotheses.is_empty() {
+@@ -264,6 +628,66 @@
+         let mut parts = self.hypotheses.clone();
+         parts.push(query);
+         manager.mk_and(parts)
++    }
++
++    /// The default values tried for each array, in a deterministic order.
++    ///
++    /// The pool is drawn from what the goal itself makes plausible — the
++    /// element-sort values the candidate model already committed to, then the
++    /// element-sort literals the script spells out, then the two ends of the
++    /// sort — which is the same "values the goal makes plausible" rule
++    /// [`crate::mbqi::model_certify`] uses for a function default.
++    fn default_pools(
++        &self,
++        assignments: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> Vec<Vec<TermId>> {
++        let mut literals: Vec<TermId> = Vec::new();
++        let mut seen: FxHashSet<TermId> = FxHashSet::default();
++        for &assertion in &self.assertions {
++            collect_constants(assertion, manager, &mut literals, &mut seen);
++        }
++        let mut model_values: Vec<TermId> = assignments.values().copied().collect();
++        model_values.sort_unstable_by_key(|term| term.raw());
++        model_values.dedup();
++
++        self.arrays
++            .iter()
++            .map(|&array| {
++                let element = element_sort(array, manager);
++                let mut pool: Vec<TermId> = Vec::new();
++                let mut pool_keys: FxHashSet<TermId> = FxHashSet::default();
++                let push = |candidate: TermId,
++                            pool: &mut Vec<TermId>,
++                            keys: &mut FxHashSet<TermId>,
++                            manager: &TermManager| {
++                    if pool.len() >= MAX_DEFAULT_CANDIDATES {
++                        return;
++                    }
++                    if !manager
++                        .get(candidate)
++                        .is_some_and(|d| Some(d.sort) == element)
++                    {
++                        return;
++                    }
++                    if keys.insert(candidate) {
++                        pool.push(candidate);
++                    }
++                };
++                for &value in &model_values {
++                    push(value, &mut pool, &mut pool_keys, manager);
++                }
++                for &literal in &literals {
++                    push(literal, &mut pool, &mut pool_keys, manager);
++                }
++                if let Some(element) = element {
++                    for extreme in sort_extremes(element, manager) {
++                        push(extreme, &mut pool, &mut pool_keys, manager);
++                    }
++                }
++                pool
++            })
++            .collect()
+     }
+ 
+     /// The quantifier-free certificate for one completion.
+@@ -622,6 +1046,46 @@
+     Some((manager.substitute(current, &rename), fresh_vars))
+ }
+ 
++/// Every constant (literal) sub-term of `term`, in first-encounter order.
++fn collect_constants(
++    term: TermId,
++    manager: &TermManager,
++    out: &mut Vec<TermId>,
++    seen: &mut FxHashSet<TermId>,
++) {
++    let mut stack: Vec<TermId> = vec![term];
++    let mut visited: FxHashSet<TermId> = FxHashSet::default();
++    let mut children: Vec<TermId> = Vec::new();
++    let mut found: Vec<TermId> = Vec::new();
++    while let Some(current) = stack.pop() {
++        if !visited.insert(current) {
++            continue;
++        }
++        let Some(data) = manager.get(current) else {
++            continue;
++        };
++        if matches!(
++            data.kind,
++            TermKind::BitVecConst { .. }
++                | TermKind::IntConst(_)
++                | TermKind::RealConst(_)
++                | TermKind::True
++                | TermKind::False
++        ) {
++            found.push(current);
++        }
++        children.clear();
++        children.extend(nixie_core::ast::traversal::get_children(&data.kind));
++        stack.extend(children.iter().copied());
++    }
++    found.sort_unstable_by_key(|term| term.raw());
++    for term in found {
++        if seen.insert(term) {
++            out.push(term);
++        }
++    }
++}
++
+ /// Whether `term` carries a quantifier anywhere in it.
+ fn contains_quantifier(term: TermId, manager: &TermManager) -> bool {
+     let mut stack: Vec<TermId> = vec![term];
+@@ -681,6 +1145,32 @@
+         .is_some_and(|s| matches!(s.kind, SortKind::Array { .. }))
+ }
+ 
++/// The element sort of an array-sorted term.
++fn element_sort(term: TermId, manager: &TermManager) -> Option<SortId> {
++    let data = manager.get(term)?;
++    match manager.sorts.get(data.sort)?.kind {
++        SortKind::Array { range, .. } => Some(range),
++        _ => None,
++    }
++}
++
++/// The two ends of a sort, as a last resort for the default pool.
++fn sort_extremes(sort: SortId, manager: &mut TermManager) -> Vec<TermId> {
++    let kind = manager.sorts.get(sort).map(|s| s.kind.clone());
++    match kind {
++        Some(SortKind::BitVec(width)) => {
++            let zero = manager.mk_bitvec(num_bigint::BigInt::from(0u8), width);
++            let ones = manager.mk_bitvec(
++                (num_bigint::BigInt::from(1u8) << width) - num_bigint::BigInt::from(1u8),
++                width,
++            );
++            vec![zero, ones]
++        }
++        Some(SortKind::Bool) => vec![manager.mk_false(), manager.mk_true()],
++        _ => Vec::new(),
++    }
++}
++
+ /// A bounded product over per-position pools (the per-array default pools,
+ /// or the per-variable instantiation points of `pinned::Goal::fill_query`).
+ struct Combinations<'a> {
+@@ -692,6 +1182,12 @@
+ }
+ 
+ impl<'a> Combinations<'a> {
++    /// The product over `pools`, at most [`MAX_COMBINATIONS`] items.
++    fn new(pools: &'a [Vec<TermId>]) -> Self {
++        Self::with_cap(pools, MAX_COMBINATIONS)
++    }
++
++    /// The product over `pools`, at most `cap` items.
+     fn with_cap(pools: &'a [Vec<TermId>], cap: usize) -> Self {
+         Self {
+             pools,
+@@ -736,7 +1232,6 @@
+ }
+ 
+ /// The interpretation a completed array is published under: `((as const A) d)`.
+-#[cfg(test)]
+ pub(super) fn const_array(
+     array_sort: SortId,
+     default: TermId,
+--- /dev/null
++++ b/nixie-solver/src/solver/array_completion_certify/candidate.rs
+@@ -0,0 +1,100 @@
++//! Decision (48): a candidate model that already satisfies every assertion is
++//! **kept**; the completion replaces only a falsifying one.
++//!
++//! On a `Sat` no honesty gate takes away, decision (40) runs the completion
++//! and installs the certified interpretation in place of the candidate's
++//! arrays (`#P2b-51`: the candidate could falsify the very universal the
++//! verdict rests on).  But a candidate that is already a model must not be
++//! swapped for a different one: `bench/extended_theories/AUFLIRA/06` printed
++//! `(store (store (store ((as const (Array Int Real)) 0.0) 0 0.0) 1 0.0) 42
++//! 0.0)` — correct — and re-fix pass 12 replaced it by the certified constant
++//! `((as const (Array Int Real)) 0.0)`, a response change that corrected
++//! nothing.
++//!
++//! # Whose interpretation is judged
++//!
++//! The one `(get-model)` *prints*.  The solver-level candidate is a partial
++//! model — reads, a class's constant, a `store`'s own writes — and pass 7's
++//! reverted `Sat`-exit gate failed exactly by judging it instead of the
++//! rendered arrays.  So the judgement is made by `Context` (which owns the
++//! renderer): it renders each completed array from the recorded candidate the
++//! same way `(get-model)` would, parses the printed value back into a term,
++//! and hands the interpretations to
++//! [`Solver::candidate_interpretation_certifies`] — the very certificate the
++//! completion itself passed (a validity query per universal, one over the
++//! assertions), discharged over the candidate's interpretation.  Only a
++//! passing certificate puts the candidate back; a failing, declined or
++//! unparseable one leaves the certified completion installed, so a model is
++//! never swapped for one nobody verified.
++
++use nixie_core::ast::{TermId, TermManager};
++use rustc_hash::FxHashMap;
++
++use super::super::Solver;
++use super::super::types::Model;
++use super::Goal;
++
++/// The candidate model a completion replaced on a `Sat` no gate took away.
++#[derive(Debug, Clone)]
++pub(crate) struct ReplacedCandidate {
++    /// The candidate model as the search left it.
++    pub(crate) model: Model,
++}
++
++impl Solver {
++    /// Take the candidate the last `check` replaced, if any (decision (48)).
++    pub(crate) fn take_replaced_candidate(&mut self) -> Option<ReplacedCandidate> {
++        self.replaced_candidate.take()
++    }
++
++    /// The arrays the installed completion interprets: every model key the
++    /// current model binds to an installed array value.
++    #[must_use]
++    pub(crate) fn completed_arrays(&self, manager: &TermManager) -> Vec<TermId> {
++        let Some(model) = self.model.as_ref() else {
++            return Vec::new();
++        };
++        let mut arrays: Vec<TermId> = model
++            .assignments()
++            .iter()
++            .filter(|&(_, &value)| super::is_array_value(value, manager))
++            .map(|(&array, _)| array)
++            .collect();
++        arrays.sort_unstable_by_key(|term| term.raw());
++        arrays
++    }
++
++    /// Whether `rendered` — the candidate's arrays as `(get-model)` prints
++    /// them — together with the candidate's scalar values satisfies every
++    /// assertion, by the completion's own certificate.  `false` whenever the
++    /// certificate cannot say so (it fails, declines, or runs out of budget).
++    pub(crate) fn candidate_interpretation_certifies(
++        &mut self,
++        candidate: &ReplacedCandidate,
++        rendered: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> bool {
++        let assertions = self.certificate_assertions.clone();
++        let Some(goal) = Goal::build(&assertions, candidate.model.assignments(), manager) else {
++            return false;
++        };
++        if goal
++            .arrays
++            .iter()
++            .any(|array| !rendered.contains_key(array))
++        {
++            return false;
++        }
++        let logic = self.logic.clone();
++        let mut queries = super::QueryBudget::for_solver(self);
++        goal.certificate_passes(self, rendered, manager, logic.as_deref(), &mut queries)
++    }
++
++    /// Put the candidate model back in place of the completion (decision
++    /// (48)); the caller has certified that it satisfies every assertion.
++    pub(crate) fn restore_candidate_model(&mut self, candidate: ReplacedCandidate) {
++        self.model = Some(candidate.model);
++        self.certified_array_model = None;
++        self.candidate_certified_as_printed = true;
++    }
++}
+--- a/nixie-solver/src/solver/array_completion_certify/declined.rs
++++ b/nixie-solver/src/solver/array_completion_certify/declined.rs
+@@ -382,7 +382,36 @@
+         false
+     }
+ 
+-    /// Enumerate at most `cap` concrete witness tuples for the certificate.
++    /// The instances of `existential`'s body at the witness tuples (the
++    /// goal's points plus one unnamed representative per bound variable's
++    /// sort), each still over the goal's free symbols; `None` when the
++    /// `exists` is not one this module handles (an alternation under it, a
++    /// sort with no point).  Shared by the certificate and by the sample the
++    /// evaluation pre-filter and the fill query read, so all three look at
++    /// the same witnesses.
++    pub(super) fn existential_witnesses(
++        &self,
++        existential: TermId,
++        position: usize,
++        manager: &mut TermManager,
++    ) -> Option<Vec<TermId>> {
++        self.existential_witnesses_with(existential, position, &FxHashMap::default(), manager)
++    }
++
++    /// [`Self::existential_witnesses`] with `extra` points tried as well —
++    /// the store indices of the interpretation being certified, which is
++    /// where a candidate's Skolem witness sits (decision (54)(ii)).
++    pub(super) fn existential_witnesses_with(
++        &self,
++        existential: TermId,
++        position: usize,
++        extra: &FxHashMap<SortId, Vec<TermId>>,
++        manager: &mut TermManager,
++    ) -> Option<Vec<TermId>> {
++        self.existential_witnesses_capped(existential, position, extra, MAX_WITNESSES, manager)
++    }
++
++    /// [`Self::existential_witnesses_with`] with at most `cap` witness tuples.
+     fn existential_witnesses_capped(
+         &self,
+         existential: TermId,
+--- /dev/null
++++ b/nixie-solver/src/solver/array_completion_certify/groups.rs
+@@ -0,0 +1,145 @@
++//! Arrays under **independent** binders are completed per group (`#P2b-51`,
++//! decision (54)(ii)).
++//!
++//! The constant search is a product over one default pool per array, which
++//! is why `MAX_COMPLETED_ARRAYS` bounds it.  But the product is only needed
++//! over arrays some assertion mentions together: four arrays each read under
++//! its own `forall` (recheck 13, `d03`) are four independent one-array
++//! searches, and declining the goal because it holds four arrays kept a
++//! candidate model that printed all four as `#b0` beside `∀i. a[i] = #b1`.
++//!
++//! So the arrays are partitioned by co-occurrence — two arrays are in one
++//! group when one assertion mentions both (an array equality `a = b` links
++//! them like a shared universal does) — the bound applies to the size of a
++//! group, and each group is searched on its own sub-goal (the assertions that
++//! mention it).  The searches only *propose*: the union of their completions
++//! goes through the one certificate over every assertion before anything is
++//! installed, and that certificate is the soundness argument, exactly as for
++//! a single search.
++
++use nixie_core::ast::{TermId, TermManager};
++use rustc_hash::{FxHashMap, FxHashSet};
++
++use super::Goal;
++
++/// The arrays of `arrays` partitioned by co-occurrence in one of
++/// `assertions`, each group in `arrays`' order and the groups ordered by
++/// their first member.
++pub(super) fn array_groups(
++    arrays: &[TermId],
++    assertions: &[TermId],
++    manager: &TermManager,
++) -> Vec<Vec<TermId>> {
++    let position: FxHashMap<TermId, usize> = arrays
++        .iter()
++        .enumerate()
++        .map(|(index, &array)| (array, index))
++        .collect();
++    let mut parent: Vec<usize> = (0..arrays.len()).collect();
++    for &assertion in assertions {
++        let mut members: Vec<usize> = manager
++            .free_vars_including_patterns(assertion)
++            .into_iter()
++            .filter_map(|var| position.get(&var).copied())
++            .collect();
++        members.sort_unstable();
++        if let Some((&first, rest)) = members.split_first() {
++            for &other in rest {
++                union(&mut parent, first, other);
++            }
++        }
++    }
++    let mut groups: Vec<Vec<TermId>> = Vec::new();
++    let mut group_of_root: FxHashMap<usize, usize> = FxHashMap::default();
++    for (index, &array) in arrays.iter().enumerate() {
++        let root = find(&mut parent, index);
++        let slot = *group_of_root.entry(root).or_insert_with(|| {
++            groups.push(Vec::new());
++            groups.len() - 1
++        });
++        if let Some(group) = groups.get_mut(slot) {
++            group.push(array);
++        }
++    }
++    groups
++}
++
++/// The size of the largest group [`array_groups`] forms.
++pub(super) fn largest_group(
++    arrays: &[TermId],
++    assertions: &[TermId],
++    manager: &TermManager,
++) -> usize {
++    array_groups(arrays, assertions, manager)
++        .iter()
++        .map(Vec::len)
++        .max()
++        .unwrap_or(0)
++}
++
++fn find(parent: &mut [usize], mut node: usize) -> usize {
++    while let Some(&up) = parent.get(node) {
++        if up == node {
++            break;
++        }
++        // Path halving.
++        let grand = parent.get(up).copied().unwrap_or(up);
++        if let Some(slot) = parent.get_mut(node) {
++            *slot = grand;
++        }
++        node = grand;
++    }
++    node
++}
++
++fn union(parent: &mut [usize], left: usize, right: usize) {
++    let left_root = find(parent, left);
++    let right_root = find(parent, right);
++    if left_root != right_root {
++        // The smaller index is the root, so the grouping is a property of the
++        // array order and not of the union order.
++        let (root, child) = if left_root < right_root {
++            (left_root, right_root)
++        } else {
++            (right_root, left_root)
++        };
++        if let Some(slot) = parent.get_mut(child) {
++            *slot = root;
++        }
++    }
++}
++
++impl Goal {
++    /// The sub-goal of one group: the assertions that mention one of its
++    /// arrays, their quantifiers, and the group as the arrays to complete.
++    /// `None` when the sub-goal's quantifiers cannot be read.
++    pub(super) fn restricted_to(
++        &self,
++        group: &[TermId],
++        manager: &mut TermManager,
++    ) -> Option<Goal> {
++        let members: FxHashSet<TermId> = group.iter().copied().collect();
++        let assertions: Vec<TermId> = self
++            .assertions
++            .iter()
++            .copied()
++            .filter(|&assertion| {
++                manager
++                    .free_vars_including_patterns(assertion)
++                    .into_iter()
++                    .any(|var| members.contains(&var))
++            })
++            .collect();
++        let quantifiers = super::polarity::collect_quantifiers(&assertions, manager)?;
++        Some(Goal {
++            assertions,
++            universals: quantifiers.universals,
++            arrays: group.to_vec(),
++            scalar_pins: self.scalar_pins.clone(),
++            existentials: quantifiers.existentials,
++            ground_values: self.ground_values.clone(),
++            negations: quantifiers.negations,
++            hypotheses: self.hypotheses.clone(),
++        })
++    }
++}
+--- /dev/null
++++ b/nixie-solver/src/solver/array_completion_certify/infinite.rs
+@@ -0,0 +1,245 @@
++//! Completing an array over an **`Int` / `Real`** index: the candidate's own
++//! points over a pooled default (`#P2b-51`, decision (54)(ii)).
++//!
++//! The pinned search (`pinned`) proposes points and values with one fill
++//! query and is confined to finite index sorts, because over `Int` that
++//! query cost seconds.  So an `Int`- or `Real`-indexed goal no *constant*
++//! array satisfies — `∀i. a[i] ≥ 3` beside `a[5] = 4`, `a[6] = 3` (recheck
++//! 13, `d01`) — was declined, and the `sat` published the candidate's reads
++//! over the sort default `0`, false at every point no term names.
++//!
++//! The candidate already holds the values the ground assertions need at the
++//! points they name; what it lacks is a default the universals accept.  So
++//! this search keeps each array's candidate reads at literal indices as the
++//! pinned points and tries defaults drawn from the script's constants — the
++//! candidate's values of the element sort, the literals the assertions spell,
++//! and each of those `± 1` — in a deterministic order.  Every proposal goes
++//! through the same evaluation pre-filter and the same certificate as every
++//! other search (over an infinite index the certificate splits the universal
++//! into the named points and the unnamed region, `split`), so a wrong
++//! proposal costs a certificate and never a verdict.
++
++use nixie_core::ast::{TermId, TermKind, TermManager};
++use nixie_core::sort::{SortId, SortKind};
++use num_bigint::BigInt;
++use num_rational::Rational64;
++use num_traits::{CheckedAdd, CheckedSub};
++use rustc_hash::{FxHashMap, FxHashSet};
++
++use super::{Combinations, Goal, collect_constants, const_array, element_sort, is_literal};
++use crate::solver::Solver;
++
++/// Defaults tried per array (the base pool and its `± 1` neighbours).
++const MAX_POINT_DEFAULTS: usize = 10;
++
++/// Candidate points one array may carry.
++const MAX_CANDIDATE_POINTS: usize = 16;
++
++/// Certificates the search may spend on top of the other searches'.
++const MAX_POINT_QUERIES: usize = 32;
++
++impl Solver {
++    /// The search; `None` unless some array of `goal` has an `Int` / `Real`
++    /// index sort and a proposal certifies.
++    pub(super) fn search_candidate_point_completion(
++        &self,
++        goal: &Goal,
++        assignments: &FxHashMap<TermId, TermId>,
++        samples: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++        logic: Option<&str>,
++        queries: &mut super::QueryBudget,
++    ) -> Option<FxHashMap<TermId, TermId>> {
++        if !goal
++            .arrays
++            .iter()
++            .any(|&array| index_is_infinite(array, manager))
++        {
++            return None;
++        }
++        // Only where every universal is certified pointwise (`split`).
++        let arrays: FxHashSet<TermId> = goal.arrays.iter().copied().collect();
++        for (position, &universal) in goal.universals.iter().enumerate() {
++            if !super::split::applies_to(universal, position, &arrays, manager) {
++                return None;
++            }
++        }
++        let pools = goal.neighbour_pools(assignments, manager);
++        if pools.iter().any(Vec::is_empty) {
++            return None;
++        }
++        let mut entries: Vec<Vec<(TermId, TermId)>> = Vec::with_capacity(goal.arrays.len());
++        for &array in &goal.arrays {
++            entries.push(if index_is_infinite(array, manager) {
++                candidate_points(array, assignments, &goal.scalar_pins, manager)
++            } else {
++                Vec::new()
++            });
++        }
++        let starting_queries = queries.used;
++        for combination in Combinations::new(&pools) {
++            let mut completion: FxHashMap<TermId, TermId> = FxHashMap::default();
++            for ((&array, &default), points) in goal
++                .arrays
++                .iter()
++                .zip(combination.iter())
++                .zip(entries.iter())
++            {
++                let sort = manager.get(array).map(|d| d.sort)?;
++                let mut interpretation = const_array(sort, default, manager);
++                for &(index, value) in points {
++                    if value != default {
++                        interpretation = manager.mk_store(interpretation, index, value);
++                    }
++                }
++                completion.insert(array, interpretation);
++            }
++            if self.completion_refuted_by_evaluation(goal, &completion, samples, manager) {
++                continue;
++            }
++            if goal.certificate_passes(self, &completion, manager, logic, queries) {
++                return Some(completion);
++            }
++            if queries.used.saturating_sub(starting_queries) >= MAX_POINT_QUERIES {
++                break;
++            }
++        }
++        None
++    }
++}
++
++impl Goal {
++    /// Per array: the candidate's element-sort values and the assertions'
++    /// literals (as `default_pools` orders them), then each of those `± 1`
++    /// over a numeric element sort; at most [`MAX_POINT_DEFAULTS`].
++    fn neighbour_pools(
++        &self,
++        assignments: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> Vec<Vec<TermId>> {
++        let mut literals: Vec<TermId> = Vec::new();
++        let mut seen: FxHashSet<TermId> = FxHashSet::default();
++        for &assertion in &self.assertions {
++            collect_constants(assertion, manager, &mut literals, &mut seen);
++        }
++        let mut model_values: Vec<TermId> = assignments.values().copied().collect();
++        model_values.sort_unstable_by_key(|term| term.raw());
++        model_values.dedup();
++
++        let mut pools: Vec<Vec<TermId>> = Vec::with_capacity(self.arrays.len());
++        for &array in &self.arrays {
++            let Some(element) = element_sort(array, manager) else {
++                pools.push(Vec::new());
++                continue;
++            };
++            let base: Vec<TermId> = model_values
++                .iter()
++                .chain(literals.iter())
++                .copied()
++                .filter(|&value| is_literal(value, manager))
++                .filter(|&value| manager.get(value).is_some_and(|d| d.sort == element))
++                .collect();
++            let mut pool: Vec<TermId> = Vec::new();
++            let push = |value: TermId, pool: &mut Vec<TermId>| {
++                if pool.len() < MAX_POINT_DEFAULTS && !pool.contains(&value) {
++                    pool.push(value);
++                }
++            };
++            for &value in &base {
++                push(value, &mut pool);
++            }
++            for &value in &base {
++                for neighbour in neighbours(value, element, manager) {
++                    push(neighbour, &mut pool);
++                }
++            }
++            if pool.is_empty() {
++                for extreme in super::sort_extremes(element, manager) {
++                    push(extreme, &mut pool);
++                }
++            }
++            pools.push(pool);
++        }
++        pools
++    }
++}
++
++/// `value ± 1` for an `Int` / `Real` literal of `sort`; nothing otherwise.
++fn neighbours(value: TermId, sort: SortId, manager: &mut TermManager) -> Vec<TermId> {
++    let kind = manager.get(value).map(|d| d.kind.clone());
++    let sort_kind = manager.sorts.get(sort).map(|s| s.kind.clone());
++    match (kind, sort_kind) {
++        (Some(TermKind::IntConst(n)), Some(SortKind::Int)) => {
++            vec![
++                manager.mk_int(&n + BigInt::from(1u8)),
++                manager.mk_int(&n - BigInt::from(1u8)),
++            ]
++        }
++        (Some(TermKind::RealConst(r)), Some(SortKind::Real)) => {
++            let one = Rational64::from_integer(1);
++            let mut out = Vec::new();
++            if let Some(up) = r.checked_add(&one) {
++                out.push(manager.mk_real(up));
++            }
++            if let Some(down) = r.checked_sub(&one) {
++                out.push(manager.mk_real(down));
++            }
++            out
++        }
++        _ => Vec::new(),
++    }
++}
++
++/// Whether an array-sorted term's index sort is `Int` or `Real`.
++fn index_is_infinite(array: TermId, manager: &TermManager) -> bool {
++    let Some(sort) = manager.get(array).map(|d| d.sort) else {
++        return false;
++    };
++    match manager.sorts.get(sort).map(|s| &s.kind) {
++        Some(SortKind::Array { domain, .. }) => matches!(
++            manager.sorts.get(*domain).map(|s| &s.kind),
++            Some(SortKind::Int | SortKind::Real)
++        ),
++        _ => false,
++    }
++}
++
++/// The candidate model's reads of `array` at literal indices (a literal, or a
++/// scalar the candidate pins to one) with literal values, one per index in
++/// term-id order, at most [`MAX_CANDIDATE_POINTS`].
++fn candidate_points(
++    array: TermId,
++    assignments: &FxHashMap<TermId, TermId>,
++    scalar_pins: &FxHashMap<TermId, TermId>,
++    manager: &TermManager,
++) -> Vec<(TermId, TermId)> {
++    let mut reads: Vec<(TermId, TermId, TermId)> = Vec::new();
++    for (&term, &value) in assignments {
++        let Some(TermKind::Select(read_array, index)) = manager.get(term).map(|d| &d.kind) else {
++            continue;
++        };
++        if *read_array != array || !is_literal(value, manager) {
++            continue;
++        }
++        let index = if is_literal(*index, manager) {
++            *index
++        } else if let Some(&pinned) = scalar_pins.get(index).filter(|&&v| is_literal(v, manager)) {
++            pinned
++        } else {
++            continue;
++        };
++        reads.push((term, index, value));
++    }
++    reads.sort_unstable_by_key(|&(term, _, _)| term.raw());
++    let mut out: Vec<(TermId, TermId)> = Vec::new();
++    for (_, index, value) in reads {
++        if out.len() >= MAX_CANDIDATE_POINTS {
++            break;
++        }
++        if out.iter().any(|&(named, _)| named == index) {
++            continue;
++        }
++        out.push((index, value));
++    }
++    out
++}
+--- a/nixie-solver/src/solver/array_completion_certify/pinned.rs
++++ b/nixie-solver/src/solver/array_completion_certify/pinned.rs
+@@ -1,11 +1,170 @@
+-//! Finite counterexample points used only to explain or reject a model.
+-use super::{Goal, is_literal};
++//! Decision (41): a default **plus finitely many pinned points**.
++//!
++//! The first search of `array_completion_certify` interprets each array as a
++//! constant.  That is the whole of `#P2b-58`'s family, and it is exactly what
++//! a body declines when it forces *one* index to differ from all the others:
++//!
++//! ```text
++//! (forall ((i (_ BitVec 7))) (= (select a i) (ite (= i #b0000000) #b0 #b1)))
++//! ```
++//!
++//! is satisfied by `a = (store ((as const …) #b1) #b0000000 #b0)` and by no
++//! constant array at all.  This search widens the interpretation to Ge & de
++//! Moura's full *pins plus default* shape: a default overridden at finitely
++//! many points.
++//!
++//! # Where the points come from
++//!
++//! The ground index terms the goal already names, and nothing else: every
++//! literal of the index sort the assertions spell (a `select`/`store` index,
++//! the constant an `ite` condition or an implication guard compares the bound
++//! variable with) and the value the candidate model gives each index-sort
++//! constant (`Goal::scalar_pins`).  They are ordered by value, so the
++//! interpretation — and the model printed from it — is a property of the goal
++//! and not of term-id allocation or of a hash iteration order.
++//!
++//! # Where the values come from, and why a wrong one costs nothing
++//!
++//! The default and the value at each point are fresh reserved constants, and
++//! one quantifier-free **fill** query asks for values that satisfy the
++//! assertions with every maximal `forall` replaced by its instances at the
++//! points plus one representative of every gap the points leave in the
++//! orders a guard can use (`gap_representatives`; re-fix pass 13, where a
++//! single smallest unnamed value could fall outside a guarded region) — the
++//! instances at those representatives are what constrain the default.  A satisfying assignment is only a *proposal*: the
++//! concrete interpretation built from it is evaluated on the same sample and
++//! then goes through the very certificate the constant search uses — a
++//! validity query per universal over *every* point of its sort, plus one over
++//! the assertions — before anything is installed.  A proposal that is wrong
++//! anywhere is refused there, so the fill query can make the search find an
++//! interpretation, never make it accept a wrong one.  A point whose proposed
++//! value equals the default is dropped, so the printed interpretation carries
++//! no redundant `store`.
++
+ use nixie_core::ast::{TermId, TermKind, TermManager};
++use nixie_core::reserved::reserved_name;
+ use nixie_core::sort::{SortId, SortKind};
+ use num_bigint::BigInt;
+ use rustc_hash::{FxHashMap, FxHashSet};
++
++use super::{Combinations, Goal, const_array, is_literal, peel_universal_with_vars};
++use crate::solver::{Solver, SolverResult};
++
++/// Pinned points one array may carry.  Every script the decision names needs
++/// one or two; the cap bounds the fill query's size on a goal that spells
++/// many index literals.
+ const MAX_PINS_PER_SORT: usize = 16;
++
++/// Instances of one universal the fill query may carry (a product over the
++/// binder's variables).
++const MAX_FILL_INSTANCES: usize = 64;
++
++impl Solver {
++    /// The pinned search: one fill query over a **symbolic** default and a
++    /// symbolic value at every pinned point proposes an interpretation, the
++    /// evaluation pre-filter and then the certificate decide.  `None` when the
++    /// goal names no point, the fill query is not `Sat`, or the proposal does
++    /// not certify.
++    ///
++    /// One proposal rather than one per pooled default: the default is what
++    /// the interpretation reads at every point the pins do not name, and the
++    /// fill query already constrains it through the universal's instance at
++    /// the representative unnamed point, so a search over the pool would only
++    /// repeat the query the symbolic default answers once.
++    pub(super) fn search_pinned_completion(
++        &self,
++        goal: &Goal,
++        samples: &FxHashMap<TermId, TermId>,
++        points: &FxHashMap<SortId, Vec<TermId>>,
++        manager: &mut TermManager,
++        logic: Option<&str>,
++        queries: &mut super::QueryBudget,
++    ) -> Option<FxHashMap<TermId, TermId>> {
++        let mut array_pins: Vec<Vec<TermId>> = Vec::with_capacity(goal.arrays.len());
++        for &array in &goal.arrays {
++            let index = index_sort(array, manager)?;
++            // Finite index sorts only.  Over `Int` the fill query carries a
++            // store chain over a *symbolic* constant array on each side of an
++            // array equality, and one such query costs seconds: measured on
++            // `bench/z3_parity/benchmarks/AUFLIA/array_update.smt2`, 25 ms
++            // without this search and 104 s with it, where the constant
++            // search alone answers in 33 ms.  The family this search exists
++            // for (decision (41)) is the bit-vector one.
++            if !matches!(
++                manager.sorts.get(index).map(|s| &s.kind),
++                Some(SortKind::BitVec(_) | SortKind::Bool)
++            ) {
++                return None;
++            }
++            array_pins.push(points.get(&index).cloned().unwrap_or_default());
++        }
++        if array_pins.iter().all(Vec::is_empty) {
++            return None;
++        }
++        let mut symbolic: FxHashMap<TermId, TermId> = FxHashMap::default();
++        let mut defaults: Vec<TermId> = Vec::with_capacity(goal.arrays.len());
++        let mut slots: Vec<(usize, TermId, TermId)> = Vec::new();
++        for (position, &array) in goal.arrays.iter().enumerate() {
++            let sort = manager.get(array)?.sort;
++            let element = super::element_sort(array, manager)?;
++            let default = manager.mk_var(&reserved_name("qdef", &position.to_string()), element);
++            let mut interpretation = const_array(sort, default, manager);
++            for (pin, &index) in array_pins.get(position)?.iter().enumerate() {
++                let symbol = manager.mk_var(
++                    &reserved_name("qpin", &format!("{position}_{pin}")),
++                    element,
++                );
++                interpretation = manager.mk_store(interpretation, index, symbol);
++                slots.push((position, index, symbol));
++            }
++            symbolic.insert(array, interpretation);
++            defaults.push(default);
++        }
++        let fill = goal.fill_query(&symbolic, samples, manager);
++        let fill = goal.under_hypotheses(fill, manager);
++        let mut symbols = defaults.clone();
++        symbols.extend(slots.iter().map(|&(_, _, symbol)| symbol));
++        let values = run_fill_query(fill, &symbols, manager, logic, queries)?;
++        let (default_values, pin_values) = values.split_at(defaults.len());
++
++        let mut completion: FxHashMap<TermId, TermId> = FxHashMap::default();
++        for (position, &array) in goal.arrays.iter().enumerate() {
++            let sort = manager.get(array)?.sort;
++            // A default the fill model leaves unassigned is unconstrained by
++            // every instance; any literal of the element sort will do, and the
++            // certificate checks the one taken.
++            let default = match default_values.get(position).copied().flatten() {
++                Some(value) => value,
++                None => {
++                    let element = super::element_sort(array, manager)?;
++                    super::sort_extremes(element, manager).into_iter().next()?
++                }
++            };
++            let mut interpretation = const_array(sort, default, manager);
++            for (&(owner, index, _), value) in slots.iter().zip(pin_values.iter()) {
++                if owner != position {
++                    continue;
++                }
++                if let Some(value) = *value
++                    && value != default
++                {
++                    interpretation = manager.mk_store(interpretation, index, value);
++                }
++            }
++            completion.insert(array, interpretation);
++        }
++        if self.completion_refuted_by_evaluation(goal, &completion, samples, manager) {
++            return None;
++        }
++        goal.certificate_passes(self, &completion, manager, logic, queries)
++            .then_some(completion)
++    }
++}
++
+ impl Goal {
++    /// Candidate points per sort: every literal of that sort the assertions
++    /// spell, plus the candidate model's value of every constant of that sort,
++    /// ordered by value and capped.
+     pub(super) fn points_by_sort(&self, manager: &TermManager) -> FxHashMap<SortId, Vec<TermId>> {
+         let mut found: Vec<TermId> = Vec::new();
+         let mut visited: FxHashSet<TermId> = FxHashSet::default();
+@@ -46,7 +205,123 @@
+         }
+         by_sort
+     }
+-}
++
++    /// Every maximal universal of the goal, mapped to the conjunction of its
++    /// body's instances at the candidate points of each bound variable's sort
++    /// and at one representative point those points do not name.  Shared by
++    /// the fill query and by the evaluation pre-filter, so both look at the
++    /// same finite sample.  `None` when a universal is not one the certificate
++    /// could discharge anyway (an alternation survives the peel).
++    pub(super) fn sample_instances(
++        &self,
++        points: &FxHashMap<SortId, Vec<TermId>>,
++        manager: &mut TermManager,
++    ) -> Option<FxHashMap<TermId, TermId>> {
++        let mut instances: FxHashMap<TermId, TermId> = FxHashMap::default();
++        for (position, &universal) in self.universals.iter().enumerate() {
++            let (body, vars) = peel_universal_with_vars(universal, position, manager)?;
++            let mut lists: Vec<Vec<TermId>> = Vec::with_capacity(vars.len());
++            for &var in &vars {
++                let sort = manager.get(var)?.sort;
++                let mut list = points.get(&sort).cloned().unwrap_or_default();
++                list.extend(gap_representatives(sort, &list, manager));
++                if list.is_empty() {
++                    return None;
++                }
++                lists.push(list);
++            }
++            let mut conjuncts: Vec<TermId> = Vec::new();
++            for combination in Combinations::with_cap(&lists, MAX_FILL_INSTANCES) {
++                let map: FxHashMap<TermId, TermId> = vars
++                    .iter()
++                    .copied()
++                    .zip(combination.iter().copied())
++                    .collect();
++                conjuncts.push(manager.substitute(body, &map));
++            }
++            instances.insert(universal, manager.mk_and(conjuncts));
++        }
++        // An `exists` is sampled as the disjunction of its body at the very
++        // witnesses the certificate tries (`declined`), so the sample never
++        // refutes a completion the certificate could accept.
++        for (position, &existential) in self.existentials.iter().enumerate() {
++            let witnesses = self.existential_witnesses(existential, position, manager)?;
++            instances.insert(existential, manager.mk_or(witnesses));
++        }
++        // A quantifier at negative polarity is sampled through its dual
++        // (`polarity`): the original sub-term is the negation of the dual's
++        // sample, which is again the conjunction (for a `forall`) or the
++        // disjunction (for an `exists`) of its body's instances.
++        for &(original, dual) in &self.negations {
++            let dual_sample = *instances.get(&dual)?;
++            instances.insert(original, manager.mk_not(dual_sample));
++        }
++        Some(instances)
++    }
++
++    /// The fill query: the assertions under the symbolic interpretation, with
++    /// every maximal universal replaced by its sampled instances.
++    fn fill_query(
++        &self,
++        symbolic: &FxHashMap<TermId, TermId>,
++        samples: &FxHashMap<TermId, TermId>,
++        manager: &mut TermManager,
++    ) -> TermId {
++        let mut substitution = self.scalar_pins.clone();
++        substitution.extend(self.ground_values.iter().map(|(&k, &v)| (k, v)));
++        substitution.extend(symbolic.iter().map(|(&k, &v)| (k, v)));
++        let mut parts: Vec<TermId> = Vec::with_capacity(self.assertions.len());
++        for &assertion in &self.assertions {
++            let instantiated = manager.substitute(assertion, samples);
++            parts.push(manager.substitute(instantiated, &substitution));
++        }
++        manager.mk_and(parts)
++    }
++}
++
++/// Run the fill query and read back the value it proposes for each symbol
++/// (`None` where the model gives it no literal value — that point then takes
++/// the default).  `None` overall when the query is not `Sat`.
++fn run_fill_query(
++    goal: TermId,
++    symbols: &[TermId],
++    manager: &mut TermManager,
++    logic: Option<&str>,
++    queries: &mut super::QueryBudget,
++) -> Option<Vec<Option<TermId>>> {
++    let mut solver = queries.start(goal, manager, logic)?;
++    solver.assert(goal, manager);
++    let result = solver.check(manager);
++    queries.finish(&solver);
++    if result != SolverResult::Sat {
++        return None;
++    }
++    let model = solver.model()?;
++    Some(
++        symbols
++            .iter()
++            .map(|&symbol| {
++                model
++                    .get(symbol)
++                    .filter(|&value| is_literal(value, manager))
++            })
++            .collect(),
++    )
++}
++
++/// The index sort of an array-sorted term.
++fn index_sort(term: TermId, manager: &TermManager) -> Option<SortId> {
++    let data = manager.get(term)?;
++    match manager.sorts.get(data.sort)?.kind {
++        SortKind::Array { domain, .. } => Some(domain),
++        _ => None,
++    }
++}
++
++/// The smallest value of `sort` that `named` does not contain — the
++/// representative of the region every pinned interpretation reads as its
++/// default — or `None` when the sort has no such value or is not one this
++/// search enumerates.
+ pub(super) fn unnamed_point(
+     sort: SortId,
+     named: &[TermId],
+@@ -91,6 +366,18 @@
+     }
+ }
+ 
++/// One representative per gap of the orders a guard can use, beside the
++/// named points `named` (decision (41), re-fix pass 13): over a bit-vector
++/// sort `r ± 1 (mod 2^w)` beside every named `r` and the four ends of the
++/// unsigned and signed orders; over `Int` `r ± 1` (or `0` when nothing is
++/// named); over `Bool` whichever value is not named — each only if unnamed.
++///
++/// One *smallest* unnamed value was not enough: under a guard it can fall
++/// outside the guarded region, and then no sampled instance constrains the
++/// default — `∀i ≥ 2. a[i] = #b1` beside `a[0] = #b0` sampled `{0, 2}` plus
++/// the representative `1`, below the guard, so the fill query left the
++/// default free and the certificate refused the `#b0` it picked.  These are
++/// the same regions `mbqi::sat_certify::unnamed_region` represents.
+ pub(super) fn gap_representatives(
+     sort: SortId,
+     named: &[TermId],
+@@ -143,6 +430,10 @@
+     }
+ }
+ 
++/// A total order on literals by value (bit-vectors, then integers, then
++/// Booleans), so the points — and the store chain printed from them — do not
++/// depend on the order terms were interned in.  Reals and anything else sort
++/// last, by term id.
+ fn literal_key(term: TermId, manager: &TermManager) -> Option<(u8, BigInt)> {
+     match &manager.get(term)?.kind {
+         TermKind::BitVecConst { value, .. } => Some((0, value.clone())),
+--- a/nixie-solver/src/solver/array_completion_certify/printed.rs
++++ b/nixie-solver/src/solver/array_completion_certify/printed.rs
+@@ -34,6 +34,21 @@
+ const MAX_QUOTED_ASSERTION: usize = 160;
+ 
+ impl Solver {
++    /// Whether a certificate of this check already covered exactly the
++    /// model the last `check` left: a completion it installed, or a
++    /// candidate decision (48) certified as printed.
++    #[must_use]
++    pub(crate) fn model_already_certified(&self) -> bool {
++        let Some(model) = self.model.as_ref() else {
++            return false;
++        };
++        self.candidate_certified_as_printed
++            || self
++                .certified_array_model
++                .as_ref()
++                .is_some_and(|certified| certified == model.assignments())
++    }
++
+     /// Certify `printed` — every declared constant mapped to its printed
+     /// value, parsed back into a term — against `goal`: the asserted terms
+     /// with every uninterpreted function replaced by its printed table
+@@ -77,7 +92,98 @@
+     }
+ }
+ 
+-impl Solver {}
++impl Solver {
++    /// Where the printed model fails its certificate, complete it around what
++    /// it got right: each independent group of arrays (`groups`) keeps its
++    /// printed interpretation when that certifies on the group's own
++    /// sub-goal, and is completed by the ordinary searches otherwise; the
++    /// union, with the printed scalars, is installed when it certifies over
++    /// every assertion and passes the ground-assertion gate.  `true` when it
++    /// installed.
++    ///
++    /// This is what completes a goal whose groups need different treatment:
++    /// `¬∃i. a0[i] = #b0` beside `∃i. a1[i] = #b1` and `∃i. a1[i] = #b0`
++    /// (a fuzzed script, `fuzz_qc` seed 29093020) has a constant completion
++    /// for `a0` and none for `a1`, whose printed candidate — the two Skolem
++    /// witnesses over `#b0` — is right as it stands.
++    pub(crate) fn complete_around_printed(
++        &mut self,
++        goal: &[TermId],
++        printed: &FxHashMap<TermId, TermId>,
++        hypotheses: &[TermId],
++        manager: &mut TermManager,
++    ) -> bool {
++        let assertions = goal.to_vec();
++        let assignments = self
++            .model
++            .as_ref()
++            .map(|model| model.assignments().clone())
++            .unwrap_or_default();
++        let Ok(goal) =
++            Goal::for_interpretation(&assertions, &assignments, printed, hypotheses, manager)
++        else {
++            return false;
++        };
++        let logic = self.logic.clone();
++        let mut merged: FxHashMap<TermId, TermId> = FxHashMap::default();
++        let mut queries = super::QueryBudget::for_solver(self);
++        for group in super::groups::array_groups(&goal.arrays, &goal.assertions, manager) {
++            let printed_group: FxHashMap<TermId, TermId> = group
++                .iter()
++                .filter_map(|&array| printed.get(&array).map(|&value| (array, value)))
++                .collect();
++            let Some(sub_goal) = goal.restricted_to(&group, manager) else {
++                return false;
++            };
++            if sub_goal.certificate_passes(
++                self,
++                &printed_group,
++                manager,
++                logic.as_deref(),
++                &mut queries,
++            ) {
++                merged.extend(printed_group);
++                continue;
++            }
++            if group.len() > super::MAX_COMPLETED_ARRAYS || sub_goal.universals.is_empty() {
++                return false;
++            }
++            let Some(completion) = self.search_goal_completion(
++                &sub_goal,
++                &assignments,
++                manager,
++                logic.as_deref(),
++                &mut queries,
++            ) else {
++                return false;
++            };
++            merged.extend(completion);
++        }
++        if !goal.certificate_passes(self, &merged, manager, logic.as_deref(), &mut queries) {
++            return false;
++        }
++        let original = self.model.clone();
++        self.install_completed_model(&goal, &merged, manager);
++        if let Some(model) = self.model.as_mut() {
++            let mut scalars: Vec<(TermId, TermId)> = printed
++                .iter()
++                .filter(|(term, _)| !merged.contains_key(term))
++                .map(|(&term, &value)| (term, value))
++                .collect();
++            scalars.sort_unstable_by_key(|&(term, _)| term.raw());
++            for (term, value) in scalars {
++                model.set(term, value);
++            }
++            self.certified_array_model = Some(model.assignments().clone());
++        }
++        if self.model_refutes_assertions(manager) {
++            self.model = original;
++            self.certified_array_model = None;
++            return false;
++        }
++        true
++    }
++}
+ 
+ impl Goal {
+     /// The goal of the published-model certificate: every array is
+--- a/nixie-solver/src/solver/array_completion_certify/split.rs
++++ b/nixie-solver/src/solver/array_completion_certify/split.rs
+@@ -145,6 +145,59 @@
+     Some(true)
+ }
+ 
++/// Whether the point split applies to `universal` whatever the completion
++/// interprets `arrays` as: every bound variable has an infinite sort, and every
++/// read under the binder that mentions one is a read of one of `arrays` at a
++/// bare bound variable.  The candidate-point search (`infinite`) proposes only
++/// where this holds, so its certificates never fall back to a validity query
++/// over a store chain read at a compound index (`∀i. a[i + 1] = a[i] + 1` kept a
++/// sub-solver's simplex busy for minutes).
++pub(super) fn applies_to(
++    universal: TermId,
++    position: usize,
++    arrays: &FxHashSet<TermId>,
++    manager: &mut TermManager,
++) -> bool {
++    let Some((body, vars)) = peel_universal_with_vars(universal, position, manager) else {
++        return false;
++    };
++    if vars.is_empty() || !vars.iter().all(|&var| has_infinite_sort(var, manager)) {
++        return false;
++    }
++    let var_set: FxHashSet<TermId> = vars.iter().copied().collect();
++    let mentions = |term: TermId, manager: &TermManager| -> bool {
++        manager
++            .free_vars_including_patterns(term)
++            .into_iter()
++            .any(|var| var_set.contains(&var))
++    };
++    let mut stack: Vec<TermId> = vec![body];
++    let mut visited: FxHashSet<TermId> = FxHashSet::default();
++    let mut children: Vec<TermId> = Vec::new();
++    while let Some(current) = stack.pop() {
++        if !visited.insert(current) {
++            continue;
++        }
++        let Some(data) = manager.get(current) else {
++            return false;
++        };
++        match &data.kind {
++            TermKind::Select(array, index) if mentions(*index, manager) => {
++                if !var_set.contains(index) || !arrays.contains(array) {
++                    return false;
++                }
++            }
++            TermKind::Store(..) if mentions(current, manager) => return false,
++            kind => {
++                children.clear();
++                children.extend(nixie_core::ast::traversal::get_children(kind));
++                stack.extend(children.iter().copied());
++            }
++        }
++    }
++    true
++}
++
+ /// Whether `term`'s sort is `Int` or `Real`.
+ fn has_infinite_sort(term: TermId, manager: &TermManager) -> bool {
+     manager.get(term).is_some_and(|data| {
+--- a/nixie-solver/src/solver/mod.rs
++++ b/nixie-solver/src/solver/mod.rs
+@@ -743,7 +743,10 @@
+     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
+     pub(super) has_array_ops: bool,
+     /// Shared budget for independent model certificates.
++    pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
+     completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
++    replaced_candidate: Option<array_completion_certify::ReplacedCandidate>,
++    candidate_certified_as_printed: bool,
+     /// Incremental array-theory bookkeeping (Stage 1 of
+     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
+     /// internalised by the encoder, recorded as `(select_term, array, index)`.
+@@ -1360,7 +1363,10 @@
+             ff_terms_unconstrained: false,
+             ff_dispatch_answered: false,
+             has_array_ops: false,
++            certified_array_model: None,
+             completion_work: std::sync::Arc::default(),
++            replaced_candidate: None,
++            candidate_certified_as_printed: false,
+             array_select_terms: Vec::new(),
+             array_store_terms: Vec::new(),
+             array_theory: array_theory::ArrayTheory::new(),
+@@ -1609,6 +1615,9 @@
+         self.model_euf_snapshot = None;
+         self.mbqi.publication_candidate = None;
+         self.completion_work = std::sync::Arc::default();
++        self.certified_array_model = None;
++        self.replaced_candidate = None;
++        self.candidate_certified_as_printed = false;
+         self.begin_check_budget();
+         self.certification_failure = None;
+         #[cfg(feature = "std")]
+@@ -1626,6 +1635,13 @@
+         let mut raw_result = self.check_with_arith_refinement(manager);
+         if raw_result == SolverResult::Sat {
+             self.recover_ground_model_definitions(manager);
++        }
++        if array_probe_enabled() && raw_result != SolverResult::Unsat {
++            let original_candidate = (raw_result == SolverResult::Sat).then(|| self.model.clone()).flatten();
++            if self.certify_sat_by_array_completion(manager) {
++                self.replaced_candidate = original_candidate.map(|model| array_completion_certify::ReplacedCandidate { model });
++                raw_result = SolverResult::Sat;
++            }
+         }
+         if raw_result == SolverResult::Sat
+             && (!self.functional_collision_lemmas(manager, false).is_empty()
+@@ -5080,6 +5096,7 @@
+ 
+     /// Push a context level
+     pub fn push(&mut self) {
++        self.certified_array_model = None;
+         self.defer_flush_raw();
+         self.bv_preprocess_cache = None;
+         // The interface-repair memo compares vocabulary *sizes*; a pop can
+@@ -5148,6 +5165,7 @@
+ 
+     /// Pop a context level using trail-based undo
+     pub fn pop(&mut self) {
++        self.certified_array_model = None;
+         self.defer_flush_raw();
+         self.bv_preprocess_cache = None;
+         // Same reasoning as `push`: the size-based memo must not survive a
+@@ -5457,6 +5475,7 @@
+ 
+     /// Reset the solver
+     pub fn reset(&mut self) {
++        self.certified_array_model = None;
+         self.user_state = user_propagation::UserState::default();
+         self.sat.reset();
+         // The database (and every blocking clause in it) is gone with the
+@@ -5605,3 +5624,10 @@
+ mod tests;
+ 
+ // marker
++
++pub(crate) fn optional_probe_enabled(name: &str) -> bool {
++    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default()) == name
++}
++
++pub(crate) fn array_probe_enabled() -> bool { optional_probe_enabled("array-completion-search") }
+--- a/nixie-solver/src/solver/verdict_cache.rs
++++ b/nixie-solver/src/solver/verdict_cache.rs
+@@ -173,6 +173,9 @@
+     ///   verdict about the old stack in exactly the way `model` is, so it is
+     ///   cleared through exactly the same hook.
+     pub(super) fn invalidate_results(&mut self) {
++        self.certified_array_model = None;
++        self.replaced_candidate = None;
++        self.candidate_certified_as_printed = false;
+         self.model_euf_snapshot = None;
+         self.mbqi.publication_candidate = None;
+         self.completion_work = std::sync::Arc::default();
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/candidate_model.rs
+@@ -0,0 +1,63 @@
++//! Decision (48) at the `Context`: keep a candidate model that already
++//! satisfies every assertion **as printed**.
++//!
++//! The solver half is `solver::array_completion_certify::candidate`, whose
++//! docs carry the rationale.  This half owns the renderer, so it is the one
++//! that can say what the candidate's arrays *print as*: each array the
++//! completion interpreted is rendered from the recorded candidate model
++//! exactly as `(get-model)` would render it, the printed value is parsed back
++//! into a term, and the solver certifies those interpretations with the
++//! completion's own certificate.  A value that does not print as a closed term
++//! (an uninterpreted-sort witness `@uc_S_n`, the `?` placeholder) cannot be
++//! parsed back and leaves the completion in place.
++
++use super::*;
++
++impl Context {
++    /// Put the candidate model back when the completion replaced one that
++    /// already satisfied every assertion (decision (48)); otherwise leave the
++    /// certified completion installed.  Called after every `Sat`.
++    pub(in crate::context) fn keep_a_correct_candidate_model(&mut self) {
++        let Some(candidate) = self.solver.take_replaced_candidate() else {
++            return;
++        };
++        let arrays = self.solver.completed_arrays(&self.terms);
++        if arrays.is_empty() {
++            return;
++        }
++        // Rendered with the fresh values of `#P2b-71`, as `(get-model)`
++        // would print it.
++        let candidate_model = self.with_fresh_values(&candidate.model);
++        let class_values = self.build_class_values(&candidate_model);
++        let mut printed: Vec<(TermId, String)> = Vec::with_capacity(arrays.len());
++        for array in arrays {
++            let Some(sort) = self.terms.get(array).map(|t| t.sort) else {
++                return;
++            };
++            // The same fallbacks, in the same order, as `get_model`.
++            let text = if let Some(value) = candidate_model.get(array) {
++                self.format_value(value)
++            } else if let Some(chain) =
++                self.array_model_value(array, sort, &candidate_model, &class_values)
++            {
++                chain
++            } else {
++                self.default_value(sort)
++            };
++            printed.push((array, text));
++        }
++        let mut rendered: FxHashMap<TermId, TermId> = FxHashMap::default();
++        for (array, text) in printed {
++            let Ok(term) = nixie_core::smtlib::parse_term(&text, &mut self.terms) else {
++                return;
++            };
++            rendered.insert(array, term);
++        }
++        if self
++            .solver
++            .candidate_interpretation_certifies(&candidate, &rendered, &mut self.terms)
++        {
++            self.solver.restore_candidate_model(candidate);
++        }
++    }
++}
+--- a/nixie-solver/src/context.rs
++++ b/nixie-solver/src/context.rs
+@@ -621,6 +621,7 @@
+         if result == SolverResult::Sat
+             && self.solver.array_atoms_need_theory(&self.terms)
+             && !self.solver.array_axioms_saturated
++            && !(crate::solver::array_probe_enabled() && self.solver.model_already_certified())
+         {
+             if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                 eprintln!("[qround] Sat downgraded: array atoms need theory");
+@@ -1606,6 +1607,7 @@
+         if result == SolverResult::Sat
+             && self.solver.array_atoms_need_theory(&self.terms)
+             && !self.solver.array_axioms_saturated
++            && !(crate::solver::array_probe_enabled() && self.solver.model_already_certified())
+         {
+             result = SolverResult::Unknown;
+         }
+@@ -2036,6 +2038,7 @@
+                     if result == SolverResult::Sat
+                         && self.solver.array_atoms_need_theory(&self.terms)
+                         && !self.solver.array_axioms_saturated
++            && !(crate::solver::array_probe_enabled() && self.solver.model_already_certified())
+                     {
+                         result = SolverResult::Unknown;
+                     }
+--- /dev/null
++++ b/nixie-solver/src/mbqi/counterexample/guard_points.rs
+@@ -0,0 +1,393 @@
++//! Extra MBQI witnesses at literal guard boundaries. These are proposals, never
++//! a coverage certificate. As in Z3's `add_mono_exceptions`, integer and BV
++//! exceptions contribute their immediate neighbours (modulo the exact width).
++
++use super::*;
++
++const MAX_GUARD_POINTS: usize = 12;
++const MAX_GUARD_COMBINATIONS: usize = 64;
++const MAX_GUARD_WORK: usize = 20_000;
++const MAX_GUARD_VARIABLES: usize = 64;
++
++impl CounterExampleGenerator {
++    pub(super) fn guard_point_counterexamples(
++        &mut self,
++        quantifier: &QuantifiedFormula,
++        candidates: &[Vec<TermId>],
++        model: &CompletedModel,
++        manager: &mut TermManager,
++    ) -> Vec<CounterExample> {
++        if quantifier.bound_vars.is_empty()
++            || quantifier.bound_vars.len() > MAX_GUARD_VARIABLES
++            || self.max_cex_per_quantifier == 0
++        {
++            return Vec::new();
++        }
++        let mut lists = Vec::new();
++        let mut fresh = Vec::new();
++        let mut work = MAX_GUARD_WORK;
++        for (index, &(name, sort)) in quantifier.bound_vars.iter().enumerate() {
++            let mut list: Vec<_> = candidates
++                .get(index)
++                .into_iter()
++                .flatten()
++                .copied()
++                .take(self.max_candidates_per_var.min(MAX_GUARD_COMBINATIONS))
++                .collect();
++            let mut new = Vec::new();
++            for point in guard_points(quantifier.body, name, sort, manager, &mut work) {
++                if !list.contains(&point) {
++                    new.push(point);
++                    list.push(point);
++                    if new.len() == MAX_GUARD_POINTS {
++                        break;
++                    }
++                }
++            }
++            if list.is_empty() {
++                return Vec::new();
++            }
++            lists.push(list);
++            fresh.push(new);
++        }
++
++        // Fix one fresh point as a pivot and enumerate the other axes. Every
++        // visited tuple is charged, including duplicates; unlike an odometer
++        // over old values first, this cannot skip exponentially many tuples
++        // without spending its budget. Cycle pivots between evaluations so a
++        // large product on the first axis cannot starve later guard variables.
++        let mut pivots: Vec<_> = fresh
++            .into_iter()
++            .enumerate()
++            .flat_map(|(axis, points)| points.into_iter().map(move |point| (axis, point)))
++            .collect();
++        let mut cursors = vec![vec![0usize; lists.len()]; pivots.len()];
++        let mut found = Vec::new();
++        let mut visited = FxHashSet::default();
++        let mut attempts = 0;
++        let mut pivot = 0;
++        while !pivots.is_empty() && attempts < MAX_GUARD_COMBINATIONS {
++            attempts += 1;
++            let (axis, point) = pivots[pivot];
++            let mut witnesses: Vec<_> = lists
++                .iter()
++                .zip(&cursors[pivot])
++                .map(|(list, &slot)| list[slot])
++                .collect();
++            witnesses[axis] = point;
++            if visited.insert(witnesses.clone()) {
++                self.stats.num_combinations_tried += 1;
++                let assignment = quantifier
++                    .bound_vars
++                    .iter()
++                    .zip(&witnesses)
++                    .map(|(&(name, _), &value)| (name, value))
++                    .collect();
++                let substituted = self.apply_substitution(quantifier.body, &assignment, manager);
++                let value = self.evaluate_under_model(substituted, model, manager);
++                if self.is_counterexample(value, quantifier.is_universal, manager) {
++                    let mut cex = CounterExample::new(
++                        quantifier.term,
++                        assignment,
++                        witnesses,
++                        model.generation,
++                    );
++                    cex.body_value = Some(value);
++                    cex.calculate_quality(manager);
++                    found.push(cex);
++                    if found.len() >= self.max_cex_per_quantifier {
++                        break;
++                    }
++                }
++            }
++            let mut advanced = false;
++            for (index, slot) in cursors[pivot].iter_mut().enumerate() {
++                if index == axis {
++                    continue;
++                }
++                *slot += 1;
++                if *slot < lists[index].len() {
++                    advanced = true;
++                    break;
++                }
++                *slot = 0;
++            }
++            if !advanced {
++                pivots.remove(pivot);
++                cursors.remove(pivot);
++            } else {
++                pivot += 1;
++            }
++            if pivot == pivots.len() {
++                pivot = 0;
++            }
++        }
++        found
++    }
++}
++
++fn guard_points(
++    body: TermId,
++    name: Spur,
++    sort: SortId,
++    manager: &mut TermManager,
++    work: &mut usize,
++) -> Vec<TermId> {
++    if !matches!(
++        manager.sorts.get(sort).map(|s| &s.kind),
++        Some(SortKind::Int | SortKind::BitVec(_))
++    ) {
++        return Vec::new();
++    }
++    let bound = |term| {
++        manager.get(term).is_some_and(|data| {
++            data.sort == sort && matches!(data.kind, TermKind::Var(n) if n == name)
++        })
++    };
++    let mut literals = FxHashSet::default();
++    let mut pending = vec![body];
++    let mut seen = FxHashSet::default();
++    while let Some(term) = pending.pop() {
++        if *work == 0 {
++            break;
++        }
++        *work -= 1;
++        if !seen.insert(term) {
++            continue;
++        }
++        let Some(data) = manager.get(term) else {
++            continue;
++        };
++        let mut record = |left, right| {
++            let literal = if bound(left) {
++                right
++            } else if bound(right) {
++                left
++            } else {
++                return;
++            };
++            if manager.get(literal).is_some_and(|n| {
++                n.sort == sort
++                    && matches!(n.kind, TermKind::IntConst(_) | TermKind::BitVecConst { .. })
++            }) {
++                literals.insert(literal);
++            }
++        };
++        match &data.kind {
++            TermKind::Forall { .. } | TermKind::Exists { .. } => continue,
++            TermKind::Eq(a, b)
++            | TermKind::BvUlt(a, b)
++            | TermKind::BvUle(a, b)
++            | TermKind::BvSlt(a, b)
++            | TermKind::BvSle(a, b)
++            | TermKind::Lt(a, b)
++            | TermKind::Le(a, b)
++            | TermKind::Gt(a, b)
++            | TermKind::Ge(a, b) => record(*a, *b),
++            TermKind::Distinct(args) => {
++                // Only pairs involving this variable matter: no quadratic
++                // materialization of all pairs of a user-controlled n-ary AST.
++                if args.iter().take(*work).any(|&arg| bound(arg)) {
++                    for &arg in args.iter().take(*work) {
++                        if manager.get(arg).is_some_and(|n| {
++                            n.sort == sort
++                                && matches!(
++                                    n.kind,
++                                    TermKind::IntConst(_) | TermKind::BitVecConst { .. }
++                                )
++                        }) {
++                            literals.insert(arg);
++                        }
++                    }
++                }
++                *work = work.saturating_sub(args.len());
++            }
++            TermKind::Select(array, index) => {
++                let mut level = *array;
++                while *work > 0 {
++                    *work -= 1;
++                    let Some(TermKind::Store(inner, written, _)) =
++                        manager.get(level).map(|n| &n.kind)
++                    else {
++                        break;
++                    };
++                    record(*written, *index);
++                    level = *inner;
++                }
++            }
++            _ => {}
++        }
++        // A very wide child list can itself consume the remaining scan budget.
++        let children = nixie_core::ast::traversal::get_children(&data.kind);
++        pending.extend(children.into_iter().take(*work));
++    }
++    let mut keyed = Vec::new();
++    let mut seen = FxHashSet::default();
++    let mut literals: Vec<_> = literals.into_iter().collect();
++    literals.sort_unstable();
++    for literal in literals {
++        for point in neighbourhood(literal, manager) {
++            if seen.insert(point)
++                && let Some(key) = literal_value(point, manager)
++            {
++                keyed.push((key, point));
++            }
++        }
++    }
++    keyed.sort_unstable_by(|a, b| a.0.cmp(&b.0));
++    keyed.into_iter().map(|(_, term)| term).collect()
++}
++
++fn literal_value(term: TermId, manager: &TermManager) -> Option<BigInt> {
++    match &manager.get(term)?.kind {
++        TermKind::BitVecConst { value, .. } | TermKind::IntConst(value) => Some(value.clone()),
++        _ => None,
++    }
++}
++
++fn neighbourhood(literal: TermId, manager: &mut TermManager) -> Vec<TermId> {
++    match manager.get(literal).map(|data| data.kind.clone()) {
++        Some(TermKind::BitVecConst { value, width }) => {
++            let modulus = BigInt::from(1u8) << width;
++            vec![
++                literal,
++                manager.mk_bitvec((&value + 1u8) % &modulus, width),
++                manager.mk_bitvec((&value + &modulus - 1u8) % &modulus, width),
++            ]
++        }
++        Some(TermKind::IntConst(value)) => vec![
++            literal,
++            manager.mk_int(&value + 1u8),
++            manager.mk_int(&value - 1u8),
++        ],
++        _ => Vec::new(),
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn tracked(
++        manager: &mut TermManager,
++        vars: &[(&str, SortId)],
++        body: TermId,
++    ) -> QuantifiedFormula {
++        let term = manager.mk_forall(vars.iter().copied(), body);
++        let names = vars
++            .iter()
++            .map(|&(name, sort)| (manager.intern_str(name), sort))
++            .collect();
++        QuantifiedFormula::new(term, names, body, true)
++    }
++
++    #[test]
++    fn integer_guard_finds_a_point_absent_from_the_model() {
++        let mut m = TermManager::new();
++        let int = m.sorts.int_sort;
++        let x = m.mk_var("x", int);
++        let seven = m.mk_int(7);
++        let zero = m.mk_int(0);
++        let body = m.mk_le(x, seven);
++        let q = tracked(&mut m, &[("x", int)], body);
++        let mut generator = CounterExampleGenerator::new();
++        let found = generator.guard_point_counterexamples(
++            &q,
++            &[vec![zero]],
++            &CompletedModel::new(),
++            &mut m,
++        );
++        assert_eq!(found.len(), 1);
++        assert_eq!(
++            literal_value(found[0].witnesses[0], &m),
++            Some(BigInt::from(8))
++        );
++        assert!(generator.exhaustive_candidates.is_empty());
++        assert!(generator.candidate_cache.is_empty());
++    }
++
++    #[test]
++    fn wide_bv_neighbours_wrap_exactly_and_refute_signed_guard() {
++        let mut m = TermManager::new();
++        let sort = m.sorts.bitvec(129);
++        let x = m.mk_var("x", sort);
++        let zero = m.mk_bitvec(0, 129);
++        let maximum: BigInt = (BigInt::from(1u8) << 129u32) - 1u8;
++        let points = neighbourhood(zero, &mut m);
++        assert!(
++            points
++                .iter()
++                .any(|&p| literal_value(p, &m) == Some(maximum.clone()))
++        );
++        let body = m.mk_bv_sle(zero, x);
++        let q = tracked(&mut m, &[("x", sort)], body);
++        let mut generator = CounterExampleGenerator::new();
++        let found = generator.guard_point_counterexamples(
++            &q,
++            &[vec![zero]],
++            &CompletedModel::new(),
++            &mut m,
++        );
++        assert_eq!(found.len(), 1);
++        assert_eq!(literal_value(found[0].witnesses[0], &m), Some(maximum));
++    }
++
++    #[test]
++    fn nested_binders_do_not_contribute_shadowed_boundaries() {
++        let mut m = TermManager::new();
++        let int = m.sorts.int_sort;
++        let x = m.mk_var("x", int);
++        let n = m.mk_int(99);
++        let body = m.mk_lt(x, n);
++        let inner = m.mk_forall([("x", int)], body);
++        let name = m.intern_str("x");
++        let mut work = MAX_GUARD_WORK;
++        assert!(guard_points(inner, name, int, &mut m, &mut work).is_empty());
++    }
++
++    #[test]
++    fn array_write_indices_supply_guard_points() {
++        let mut m = TermManager::new();
++        let int = m.sorts.int_sort;
++        let sort = m.sorts.array(int, int);
++        let a = m.mk_var("a", sort);
++        let x = m.mk_var("x", int);
++        let n = m.mk_int(57);
++        let one = m.mk_int(1);
++        let store = m.mk_store(a, n, one);
++        let read = m.mk_select(store, x);
++        let name = m.intern_str("x");
++        let mut work = MAX_GUARD_WORK;
++        let points = guard_points(read, name, int, &mut m, &mut work);
++        assert_eq!(
++            points
++                .iter()
++                .filter_map(|&p| literal_value(p, &m))
++                .collect::<Vec<_>>(),
++            vec![56.into(), 57.into(), 58.into()]
++        );
++    }
++
++    #[test]
++    fn many_old_axes_cannot_hide_a_new_point_behind_an_exponential_prefix() {
++        let mut m = TermManager::new();
++        let int = m.sorts.int_sort;
++        let names: Vec<_> = (0..24).map(|i| format!("x{i}")).collect();
++        let vars: Vec<_> = names.iter().map(|s| (s.as_str(), int)).collect();
++        let x = m.mk_var("x23", int);
++        let n = m.mk_int(100);
++        let body = m.mk_le(x, n);
++        let q = tracked(&mut m, &vars, body);
++        let candidates = vec![(0..10).map(|i| m.mk_int(i)).collect::<Vec<_>>(); 24];
++        let mut generator = CounterExampleGenerator::new();
++        let found =
++            generator.guard_point_counterexamples(&q, &candidates, &CompletedModel::new(), &mut m);
++        assert!(!found.is_empty());
++        assert!(generator.stats.num_combinations_tried <= MAX_GUARD_COMBINATIONS);
++        assert!(
++            found
++                .iter()
++                .all(|c| literal_value(c.witnesses[23], &m) == Some(101.into()))
++        );
++    }
++}
+--- a/nixie-solver/src/mbqi/counterexample.rs
++++ b/nixie-solver/src/mbqi/counterexample.rs
+@@ -24,6 +24,8 @@
+ use nixie_time::{Duration, Instant};
+ use num_bigint::BigInt;
+ use smallvec::SmallVec;
++
++mod guard_points;
+ 
+ use super::model_completion::CompletedModel;
+ use super::{Instantiation, InstantiationReason, QuantifiedFormula};
+@@ -493,6 +495,11 @@
+             }
+         }
+ 
++        if counterexamples.is_empty() && crate::solver::optional_probe_enabled("guard-boundary-sampler") {
++            let extra = self.guard_point_counterexamples(quantifier, &candidates, model, manager);
++            self.stats.num_counterexamples_found += extra.len();
++            counterexamples.extend(extra);
++        }
+         // Sort by quality (best first)
+         counterexamples.sort_by(|a, b| {
+             b.quality
+--- /dev/null
++++ b/nixie-solver/src/solver/model_builder/separation_expanded_probe.rs
+@@ -0,0 +1,385 @@
++//! Bounded datatype model completion, retaining original and encoded field pins.
++//!
++//! Proposals change only unmentioned fields and entire proven equality classes.
++//! They must remove a decided collision without creating another collision or
++//! breaking a known equality. The normal model-certification gates still decide
++//! whether the complete interpretation can be published.
++
++use super::*;
++use nixie_sat::{LBool, Var};
++use num_rational::BigRational;
++
++const MAX_OFFSET: i64 = 8;
++const MAX_REPAIR_WORK: usize = 1_000_000;
++
++type Pair = (TermId, TermId);
++type Adjacency = FxHashMap<TermId, Vec<TermId>>;
++
++struct Requirements<'a> {
++    disequalities: &'a [Pair],
++    equalities: &'a Adjacency,
++}
++
++#[derive(Default)]
++struct Violations {
++    datatype: FxHashSet<Pair>,
++    numeric: FxHashSet<Var>,
++    equality: FxHashSet<Pair>,
++}
++
++impl Violations {
++    fn probe_improves(&self, before: &Self) -> bool {
++        self.datatype.is_subset(&before.datatype)
++            && self.numeric.is_subset(&before.numeric)
++            && self.equality.is_subset(&before.equality)
++            && (self.datatype.len() < before.datatype.len()
++                || self.numeric.len() < before.numeric.len())
++    }
++}
++
++fn probe_spend(work: &mut usize) -> Option<()> {
++    *work = work.checked_sub(1)?;
++    Some(())
++}
++
++impl Solver {
++    pub(super) fn probe_separate_datatype_models(
++        &self,
++        decls: &FxHashMap<SortId, DeclInfo>,
++        hints: &FxHashMap<TermId, Vec<String>>,
++        injectivity_pairs: &[Pair],
++        model: &mut Model,
++        manager: &mut TermManager,
++    ) {
++        let (mut disequalities, equalities) = self.decided_dt_equalities(model, manager);
++        disequalities.extend(injectivity_pairs.iter().copied());
++        disequalities.sort_unstable();
++        disequalities.dedup();
++        if disequalities.is_empty() {
++            return;
++        }
++        let mut roots = self.assertions.clone();
++        roots.extend(self.certificate_assertions.iter().copied());
++        roots.extend(self.ground_instance_roots.iter().copied());
++        let pinned = assertion_subterms(&roots, manager);
++        let requirements = Requirements {
++            disequalities: &disequalities,
++            equalities: &equalities,
++        };
++        let mut work = MAX_REPAIR_WORK;
++        for &(left, right) in &disequalities {
++            if model.get(left).is_none() || model.get(left) != model.get(right) {
++                continue;
++            }
++            // A fixed constructor on the right can force the left side to move.
++            for (term, other) in [(right, left), (left, right)] {
++                let Some(class) = self.probe_separation_class(term, &equalities, manager, &mut work)
++                else {
++                    return;
++                };
++                if class.contains(&other) {
++                    break;
++                }
++                if self.probe_separate_dt_value(
++                    term,
++                    &class,
++                    &pinned,
++                    decls,
++                    hints,
++                    &requirements,
++                    model,
++                    manager,
++                    &mut work,
++                ) {
++                    break;
++                }
++                if work == 0 {
++                    return;
++                }
++            }
++        }
++    }
++
++    fn probe_separation_class(
++        &self,
++        term: TermId,
++        equalities: &Adjacency,
++        manager: &TermManager,
++        work: &mut usize,
++    ) -> Option<Vec<TermId>> {
++        // Both helpers scan their graphs. Charge those scans before starting;
++        // repeated unsuccessful repairs must not multiply unbounded EUF work.
++        for neighbours in equalities.values() {
++            *work = work.checked_sub(neighbours.len().checked_add(1)?)?;
++        }
++        *work = work.checked_sub(self.model_euf().all_node_indices().len())?;
++        let mut class = equality_class(term, equalities);
++        let sort = manager.get(term).map(|node| node.sort);
++        let euf = self.model_euf();
++        if let Some(node) = euf.term_to_node(term) {
++            for member in euf.class_members(euf.find_immutable(node)) {
++                if let Some(term) = euf.node_term(member)
++                    && manager.get(term).map(|node| node.sort) == sort
++                {
++                    class.push(term);
++                }
++            }
++        }
++        class.sort_unstable();
++        class.dedup();
++        Some(class)
++    }
++
++    #[allow(clippy::too_many_arguments)]
++    fn probe_separate_dt_value(
++        &self,
++        term: TermId,
++        class: &[TermId],
++        pinned: &FxHashSet<TermId>,
++        decls: &FxHashMap<SortId, DeclInfo>,
++        hints: &FxHashMap<TermId, Vec<String>>,
++        requirements: &Requirements<'_>,
++        model: &mut Model,
++        manager: &mut TermManager,
++        work: &mut usize,
++    ) -> bool {
++        let Some(sort) = manager.get(term).map(|node| node.sort) else {
++            return false;
++        };
++        let Some(decl) = decls.get(&sort) else {
++            return false;
++        };
++        let Some(TermKind::DtConstructor { constructor, args }) = model
++            .get(term)
++            .and_then(|value| manager.get(value))
++            .map(|node| node.kind.clone())
++        else {
++            return false;
++        };
++        let name = manager.resolve_str(constructor).to_string();
++        let Some(constructor) = decl.constructors.iter().find(|c| c.name == name) else {
++            return false;
++        };
++        if constructor.fields.len() != args.len() {
++            return false;
++        }
++        let hinted = hints.get(&term).cloned().unwrap_or_default();
++        let mut order: Vec<_> = (0..constructor.fields.len()).collect();
++        for hint in hinted.iter().rev() {
++            if let Some(position) = constructor.fields.iter().position(|f| &f.selector == hint) {
++                order.retain(|&i| i != position);
++                order.insert(0, position);
++            }
++        }
++        let mut changed = false;
++        for position in order {
++            if probe_spend(work).is_none() {
++                return changed;
++            }
++            let field = &constructor.fields[position];
++            let Some(remaining) = work.checked_sub(class.len()) else {
++                return changed;
++            };
++            *work = remaining;
++            if probe_field_is_pinned(
++                class,
++                &name,
++                position,
++                &field.selector,
++                field.sort,
++                pinned,
++                manager,
++            ) {
++                continue;
++            }
++            let Some(TermKind::DtConstructor { args, .. }) = model
++                .get(term)
++                .and_then(|value| manager.get(value))
++                .map(|node| node.kind.clone())
++            else {
++                return changed;
++            };
++            if args.len() != constructor.fields.len() {
++                return changed;
++            }
++            let current = args[position];
++            let mut candidates = Vec::new();
++            if field.sort == manager.sorts.int_sort || field.sort == manager.sorts.real_sort {
++                let Some(number) =
++                    super::super::array_completion_certify::evaluate_closed_value_pure(
++                        self, current, manager,
++                    )
++                    .and_then(|value| value.to_big())
++                else {
++                    continue;
++                };
++                for offset in 1..=MAX_OFFSET {
++                    let value = &number + BigRational::from_integer(offset.into());
++                    let value = if field.sort == manager.sorts.int_sort {
++                        if !value.is_integer() {
++                            continue;
++                        }
++                        manager.mk_int(value.to_integer())
++                    } else {
++                        let numerator = manager.mk_int(value.numer().clone());
++                        let denominator = manager.mk_int(value.denom().clone());
++                        manager.mk_rdiv(numerator, denominator)
++                    };
++                    candidates.push(value);
++                }
++            } else if manager.sorts.is_datatype(field.sort) {
++                let Some(field_decl) = resolve_decl(field.sort, manager) else {
++                    continue;
++                };
++                for candidate_constructor in field_decl.constructors {
++                    if probe_spend(work).is_none() {
++                        return changed;
++                    }
++                    let mut args = Vec::new();
++                    for field in &candidate_constructor.fields {
++                        let Some(value) = ground_default_term(manager, field.sort) else {
++                            break;
++                        };
++                        args.push(value);
++                    }
++                    if args.len() == candidate_constructor.fields.len() {
++                        candidates.push(manager.mk_dt_constructor(
++                            &candidate_constructor.name,
++                            args,
++                            field.sort,
++                        ));
++                    }
++                }
++            }
++            let Some(before) = self.probe_separation_violations(model, requirements, manager, work)
++            else {
++                return changed;
++            };
++            for candidate in candidates {
++                if candidate == current {
++                    continue;
++                }
++                let mut new_args = args.to_vec();
++                new_args[position] = candidate;
++                let value = manager.mk_dt_constructor(&name, new_args, sort);
++                let mut trial = model.clone();
++                for &member in class {
++                    let accessor = manager.mk_dt_selector(&field.selector, member, field.sort);
++                    trial.set(accessor, candidate);
++                    trial.set(member, value);
++                }
++                let Some(after) = self.probe_separation_violations(&trial, requirements, manager, work)
++                else {
++                    return changed;
++                };
++                if !after.probe_improves(&before) {
++                    continue;
++                }
++                *model = trial;
++                changed = true;
++                break;
++            }
++            if changed && !hinted.iter().any(|hint| hint == &field.selector) {
++                return true;
++            }
++        }
++        changed
++    }
++
++    fn probe_separation_violations(
++        &self,
++        model: &Model,
++        requirements: &Requirements<'_>,
++        manager: &TermManager,
++        work: &mut usize,
++    ) -> Option<Violations> {
++        let mut result = Violations::default();
++        for &(left, right) in requirements.disequalities {
++            probe_spend(work)?;
++            if let (Some(a), Some(b)) = (model.get(left), model.get(right))
++                && a == b
++            {
++                result.datatype.insert((left, right));
++            }
++        }
++        for (&left, neighbours) in requirements.equalities {
++            for &right in neighbours {
++                probe_spend(work)?;
++                if left < right
++                    && let (Some(a), Some(b)) = (model.get(left), model.get(right))
++                    && a != b
++                {
++                    result.equality.insert((left, right));
++                }
++            }
++        }
++        for (&var, constraint) in &self.var_to_constraint {
++            probe_spend(work)?;
++            let Constraint::Eq(left, right) = *constraint else {
++                continue;
++            };
++            if self.sat.model_value(var) != LBool::False {
++                continue;
++            }
++            if !manager.get(left).is_some_and(|node| {
++                node.sort == manager.sorts.int_sort || node.sort == manager.sorts.real_sort
++            }) {
++                continue;
++            }
++            let a = self
++                .eval_datatype_repair(left, model, manager)
++                .value_owned()
++                .and_then(|value| value.to_big());
++            let b = self
++                .eval_datatype_repair(right, model, manager)
++                .value_owned()
++                .and_then(|value| value.to_big());
++            if let (Some(a), Some(b)) = (a, b)
++                && a == b
++            {
++                result.numeric.insert(var);
++            }
++        }
++        Some(result)
++    }
++}
++
++/// Constructor arguments constrain their fields even if purification hid them
++/// from the source DAG. Only a reconstruction `C(sel_C(t), ...)` leaves a field
++/// free; literal constructor classes cannot be re-valued.
++fn probe_field_is_pinned(
++    class: &[TermId],
++    constructor: &str,
++    position: usize,
++    selector: &str,
++    sort: SortId,
++    pinned: &FxHashSet<TermId>,
++    manager: &mut TermManager,
++) -> bool {
++    let selector_name = manager.intern_str(selector);
++    for &member in class {
++        let accessor = manager.mk_dt_selector(selector, member, sort);
++        if pinned.contains(&accessor) {
++            return true;
++        }
++        if let Some(TermKind::DtConstructor {
++            constructor: name,
++            args,
++        }) = manager.get(member).map(|node| &node.kind)
++        {
++            if manager.resolve_str(*name) != constructor {
++                return true;
++            }
++            let Some(&field) = args.get(position) else {
++                return true;
++            };
++            if !matches!(manager.get(field).map(|node| &node.kind),
++                Some(TermKind::DtSelector { selector, arg }) if *selector == selector_name && class.contains(arg))
++            {
++                return true;
++            }
++        }
++    }
++    false
++}
++
+--- a/nixie-solver/src/solver/model_builder.rs
++++ b/nixie-solver/src/solver/model_builder.rs
+@@ -18,6 +18,7 @@
+ 
+ mod opaque_leaves;
+ mod separation;
++mod separation_expanded_probe;
+ 
+ impl Solver {
+     /// Restore ground definitions eliminated before a specialized arithmetic
+--- a/nixie-solver/src/solver/model_builder/separation.rs
++++ b/nixie-solver/src/solver/model_builder/separation.rs
+@@ -50,6 +50,10 @@
+         model: &mut Model,
+         manager: &mut TermManager,
+     ) {
++        if crate::solver::optional_probe_enabled("expanded-datatype-separation") {
++            self.probe_separate_datatype_models(decls, hints, injectivity_pairs, model, manager);
++            return;
++        }
+         let (mut disequalities, equalities) = self.decided_dt_equalities(model, manager);
+         disequalities.extend(injectivity_pairs.iter().copied());
+         if disequalities.is_empty() {
