@@ -61,7 +61,11 @@ def command(arm, instance):
     if arm['engine'] == 'nixie':
         return [binary, '--stats', '--no-color'] + (['--dimacs'] if sat else []) + [path]
     if arm['engine'] == 'z3':
-        return [binary, '-st', '-dimacs' if sat else '-smt2', path]
+        # Z3 treats a bare argument containing '=' as a parameter assignment.
+        literal = ['--'] if '=' in path else []
+        return [binary, '-st', '-dimacs' if sat else '-smt2', *literal, path]
+    if arm['engine'] == 'cadical':
+        return [binary, '--stats', path]
     return [binary, '--statistics', path]
 
 

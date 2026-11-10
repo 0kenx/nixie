@@ -75,3 +75,15 @@ No solver source or search policy is changed by this benchmark.
 Pending the registered run. Raw evidence will live under the pinned revisions'
 `precompile/<sha>/benchmark/migration034-satlib-smtlib-30s/`, with canonical
 records in `benchmark/runs/migration034-satlib-smtlib-30s/`.
+
+## Harness corrections during collection
+
+The initial CaDiCaL command used Kissat's `--statistics` spelling; CaDiCaL
+requires `--stats`. Those 24 invocations rejected the command before solving.
+Z3 also interprets a bare filename containing `=` as a parameter assignment;
+the affected SMT-LIB filename requires `--` before it. These are invalid harness
+invocations, not solver performance failures. Their raw records remain archived.
+Corrected argument lists have distinct content-addressed configurations. Only
+those corrected cells are measured; all valid completed cells are reused.
+Five harness tests now cover these CLI boundaries as well as PMU/verdict parsing.
+Do not retry the incorrect commands or include their errors in solver totals.

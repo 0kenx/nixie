@@ -26,6 +26,14 @@ class MeasurementTests(unittest.TestCase):
         self.assertNotIn('--dimacs-output', argv)
         self.assertNotIn('--timeout', argv)
 
+    def test_reference_cli_options_and_literal_filenames(self):
+        instance = {'kind': 'SAT', 'path': 'sample.cnf'}
+        self.assertEqual(run.command({'engine': 'cadical', 'binary': 'cadical'}, instance),
+                         ['cadical', '--stats', 'sample.cnf'])
+        instance = {'kind': 'SMT', 'path': 'graph-nodes=150.smt2'}
+        self.assertEqual(run.command({'engine': 'z3', 'binary': 'z3'}, instance),
+                         ['z3', '-st', '-smt2', '--', 'graph-nodes=150.smt2'])
+
 
 if __name__ == '__main__':
     unittest.main()
