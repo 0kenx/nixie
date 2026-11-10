@@ -408,3 +408,35 @@ This secondary sum does not replace the registered per-instance geometric mean
 (1.076099x at that step), nor does it erase coverage losses. The residual cost
 is concentrated in small model-validation cases; it has not been proved
 irreducible.
+
+
+### Policy screen and selector-replay correction
+
+Diagnostic `2b307086` runs eight isolated policies plus off and Z3, first on
+49 focused inputs and then a superset with explicit model reads and scope
+controls. All cells use 30-second caps and complete retired-instruction costs;
+completed Unknown/model-error responses remain in the unchanged-work cohort.
+Function-else search gains no case and costs 1.108365x on the extended unchanged
+cohort. Zero-division alone gains nothing. These fail their cost/benefit screen.
+Six other policies recover focused cases; their screen alone is not acceptance.
+
+The initial independent replay labeled six expanded-datatype models falsifying.
+That label was incorrect: all six apply `item` to `empty`, while `item` belongs
+to the `full` constructor. The printed constants omit the off-constructor
+selector interpretation. CVC5 `datatypes_rewriter.cpp:600` preserves such reads,
+and Z3 `model_evaluator.cpp:483` supplies a model-specific accessor else value.
+A negative replay can choose a different interpretation and does not by itself
+falsify those partial models. Actual Z3 4.16.0 positive-pin replays are Sat in
+all six cases. They are now explicitly **partial-consistent**, never validated
+complete models. The original reports remain historical alongside the corrected
+reports; no benchmark cell was rerun.
+
+The diagnostic fix inspects datatype declarations and selector uses with a heap
+walk, and checks positive pins before classifying a satisfiable negative replay.
+Contradictory pins remain falsifying. Get-value checks have the same boundary.
+Twelve Python tests and actual Z3 controls for an unspecified selector, a fixed
+false constructor field, and a fixed true field pass. This changes no solver
+binary or runtime cost. Expanded separation is still dominated on observed
+coverage by datatype publication, which recovers all its cases plus others
+and yields fully validated models on these datatype controls; neither policy
+has passed the matched-null acceptance gate yet.

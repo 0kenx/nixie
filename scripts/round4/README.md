@@ -51,3 +51,9 @@ A model omitting declared symbols is only a partial assignment. A satisfiable
 Z3 replay of its pins is reported as `model_partial_consistent`, never
 `model_ok`: existence of some extension does not validate an absent function
 interpretation. Complete-model and partial-model outcomes remain separate.
+
+Datatype selectors applied to a different constructor are also underspecified.
+If a negative model replay is satisfiable, the judge checks the positive pins
+before calling it falsifying. Satisfiable positive pins are reported as a
+partial selector interpretation, not a validated model. The same distinction
+keeps an unresolved selector `get-value` separate from a provably wrong value.
