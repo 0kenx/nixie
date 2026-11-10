@@ -1,0 +1,148 @@
+{
+  "cells": 264,
+  "disagreements": [],
+  "totals": [
+    {
+      "kind": "SAT",
+      "arm": "before",
+      "n": 24,
+      "solved": 24,
+      "sat": 12,
+      "unsat": 12,
+      "unknown": 0,
+      "timeout": 0,
+      "error": 0,
+      "elapsed_s": 17.13057398996898,
+      "par2_s": 0.7137739162487075
+    },
+    {
+      "kind": "SAT",
+      "arm": "after",
+      "n": 24,
+      "solved": 24,
+      "sat": 12,
+      "unsat": 12,
+      "unknown": 0,
+      "timeout": 0,
+      "error": 0,
+      "elapsed_s": 17.019432720015175,
+      "par2_s": 0.7091430300006323
+    },
+    {
+      "kind": "SAT",
+      "arm": "z3",
+      "n": 24,
+      "solved": 24,
+      "sat": 12,
+      "unsat": 12,
+      "unknown": 0,
+      "timeout": 0,
+      "error": 0,
+      "elapsed_s": 13.84930746498867,
+      "par2_s": 0.5770544777078612
+    },
+    {
+      "kind": "SAT",
+      "arm": "kissat",
+      "n": 24,
+      "solved": 24,
+      "sat": 12,
+      "unsat": 12,
+      "unknown": 0,
+      "timeout": 0,
+      "error": 0,
+      "elapsed_s": 5.642307994959992,
+      "par2_s": 0.23509616645666634
+    },
+    {
+      "kind": "SAT",
+      "arm": "cadical",
+      "n": 24,
+      "solved": 24,
+      "sat": 12,
+      "unsat": 12,
+      "unknown": 0,
+      "timeout": 0,
+      "error": 0,
+      "elapsed_s": 8.393010456027696,
+      "par2_s": 0.349708769001154
+    },
+    {
+      "kind": "SMT",
+      "arm": "before",
+      "n": 48,
+      "solved": 24,
+      "sat": 6,
+      "unsat": 18,
+      "unknown": 13,
+      "timeout": 9,
+      "error": 2,
+      "elapsed_s": 365.9146377159923,
+      "par2_s": 31.2329413656668
+    },
+    {
+      "kind": "SMT",
+      "arm": "after",
+      "n": 48,
+      "solved": 24,
+      "sat": 6,
+      "unsat": 18,
+      "unknown": 10,
+      "timeout": 13,
+      "error": 1,
+      "elapsed_s": 471.18491702809115,
+      "par2_s": 31.251881018042695
+    },
+    {
+      "kind": "SMT",
+      "arm": "z3",
+      "n": 48,
+      "solved": 35,
+      "sat": 11,
+      "unsat": 24,
+      "unknown": 2,
+      "timeout": 11,
+      "error": 0,
+      "elapsed_s": 370.4351076349849,
+      "par2_s": 17.05189595466648
+    }
+  ],
+  "paired": {
+    "SAT:after/before": {
+      "pairs": 24,
+      "instructions": 1.0016482098927437,
+      "wall": 0.9733356380198269
+    },
+    "SAT:after/z3": {
+      "pairs": 24,
+      "instructions": 3.259883405203004,
+      "wall": 1.3307656523612912
+    },
+    "SAT:after/kissat": {
+      "pairs": 24,
+      "instructions": 1.2920581684095056,
+      "wall": 1.0796949394552435
+    },
+    "SAT:after/cadical": {
+      "pairs": 24,
+      "instructions": 2.508875566017771,
+      "wall": 1.1455218672217782
+    },
+    "SMT:after/before": {
+      "pairs": 23,
+      "instructions": 1.3678108178708523,
+      "wall": 1.2669925197360703
+    },
+    "SMT:after/z3": {
+      "pairs": 24,
+      "instructions": 4.836002456060993,
+      "wall": 2.2098026781125237
+    }
+  },
+  "gained": [
+    "smt-lib/non-incremental/QF_BV/brummayerbiere4/unconstrained05.smt2"
+  ],
+  "lost": [
+    "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2"
+  ]
+}

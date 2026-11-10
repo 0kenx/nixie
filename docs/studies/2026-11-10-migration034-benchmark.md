@@ -72,9 +72,58 @@ No solver source or search policy is changed by this benchmark.
 
 ## Results
 
-Pending the registered run. Raw evidence will live under the pinned revisions'
+Completed 264 final cells. The corrected reference pass reused 239 valid cells
+and executed only the 25 corrected configurations; the initial 25 command errors
+remain archived and are excluded from solver totals. All 264 result-store records
+and instance hashes validate. All 24 available SAT witnesses from Kissat and
+CaDiCaL satisfy their input clauses. No decisive verdict disagrees with the
+available corpus labels or references; this is not a proof of general soundness.
+
+| Solver | SATLIB solved / 24 | SMT-LIB solved / 48 |
+|---|---:|---:|
+| Nixie before | 24 | 24 |
+| Nixie after | 24 | 24 |
+| Z3 4.16.0 | 24 | 35 |
+| Kissat 4.0.4 | 24 | — |
+| CaDiCaL 3.0.1 | 24 | — |
+
+Observed after/before instruction ratios are **1.0016** on all 24 SAT pairs
+and **1.3678** on the 23 jointly solved, agreeing SMT pairs. SAT conflicts,
+decisions, propagations and restarts are identical on all 24 pairs. The SMT
+solved total hides one gain and one loss: `unconstrained05.smt2` changes from
+memory exhaustion to Sat, while `pipeline-invalid.smt2` changes from Sat to a
+30-second timeout. Both references' relevant decisive answers are Sat.
+
+The largest observed SMT increase is `xs-10-18-2-2-5-3.smt2`: **12.433 times**
+the instructions, with diagnostic elapsed time rising from **2.123 to 27.190 s**.
+This is a concrete cost finding, not a claim about a specific heuristic's merit.
+The one-seed sample does not establish statistical neutrality or a general
+speedup. It also does not establish that migration procedures were compliant.
+
+SMT non-solves before/after are 13/10 Unknown, 9/13 timeouts and 2/1 errors.
+The errors are address-space-limit allocation failures; `shift1add.29940.smt2`
+fails this way in both revisions. Total diagnostic SMT elapsed time is
+365.91/471.18 seconds; mean PAR-2 is 31.233/31.252 seconds. Short wall timings
+include process-wait granularity and should not be treated as precise latency.
+
+The [full tables](../../bench/migration034/results.md) include per-family and
+SAT/UNSAT breakdowns, paired reference ratios, all gained/lost cases and errors.
+The [CSV](../../bench/migration034/results.csv),
+[summary](../../bench/migration034/summary.json), and
+[record/model validation](../../bench/migration034/validation.json) are committed.
+Raw stdout/stderr/perf evidence remains under the pinned revisions'
 `precompile/<sha>/benchmark/migration034-satlib-smtlib-30s/`, with canonical
 records in `benchmark/runs/migration034-satlib-smtlib-30s/`.
+
+Reproduce the report without remeasuring:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 bench/migration034/summarize.py
+PYTHONDONTWRITEBYTECODE=1 python3 bench/migration034/audit.py
+```
+
+The runner reuses completed cells. Do not regenerate the manifest or replace
+cached binaries to obtain a different result.
 
 ## Harness corrections during collection
 

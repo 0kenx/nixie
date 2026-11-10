@@ -1,0 +1,129 @@
+{
+  "records_validated": 264,
+  "sat_models_checked": [
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0294.cnf",
+      "clauses_checked": 218
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0294.cnf",
+      "clauses_checked": 218
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-032.cnf",
+      "clauses_checked": 325
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-032.cnf",
+      "clauses_checked": 325
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0585.cnf",
+      "clauses_checked": 430
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0585.cnf",
+      "clauses_checked": 430
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-044.cnf",
+      "clauses_checked": 645
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-044.cnf",
+      "clauses_checked": 645
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-094.cnf",
+      "clauses_checked": 860
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-094.cnf",
+      "clauses_checked": 860
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-074.cnf",
+      "clauses_checked": 1065
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-074.cnf",
+      "clauses_checked": 1065
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0258.cnf",
+      "clauses_checked": 218
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0258.cnf",
+      "clauses_checked": 218
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-057.cnf",
+      "clauses_checked": 325
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-057.cnf",
+      "clauses_checked": 325
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0684.cnf",
+      "clauses_checked": 430
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0684.cnf",
+      "clauses_checked": 430
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-085.cnf",
+      "clauses_checked": 645
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-085.cnf",
+      "clauses_checked": 645
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-075.cnf",
+      "clauses_checked": 860
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-075.cnf",
+      "clauses_checked": 860
+    },
+    {
+      "arm": "kissat",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-062.cnf",
+      "clauses_checked": 1065
+    },
+    {
+      "arm": "cadical",
+      "instance": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-062.cnf",
+      "clauses_checked": 1065
+    }
+  ],
+  "native_sat_counter_pairs": 24,
+  "identical_native_sat_counter_pairs": 24,
+  "corrected_pass_reused": 239,
+  "corrected_pass_executed": 25
+}
