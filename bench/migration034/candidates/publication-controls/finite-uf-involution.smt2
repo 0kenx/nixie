@@ -1,0 +1,5 @@
+(set-logic UF)
+(declare-sort U 0)(declare-const a U)(declare-fun f (U) U)
+(assert (forall ((x U)) (= (f (f x)) x)))
+(assert (forall ((x U)) (not (= (f x) x))))
+(check-sat)(get-model)(get-value ((= (f (f a)) a) (= (f a) a)))

@@ -1,0 +1,1 @@
+(set-logic ALL)(declare-datatype Col ((red)(green)(blue)))(declare-datatype Box ((empty)(full (item Col))))(declare-const b1 Box)(declare-const b2 Box)(assert ((_ is full) b2)) (assert (= b1 (full red))) (assert (not (= b2 (full (item b1)))))(check-sat)(get-model)

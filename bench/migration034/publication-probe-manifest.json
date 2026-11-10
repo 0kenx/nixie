@@ -1,0 +1,528 @@
+{
+  "timeout_s": 30,
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "suite": "migration034-publication-controls-30s",
+  "seeds": [
+    0
+  ],
+  "seed_note": "Default-setting rejection/benefit snapshot only; not a heuristic acceptance study.",
+  "arms": [
+    {
+      "name": "off",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "baseline",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "off"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "guard-boundary-sampler",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "guard-boundary-sampler"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "expanded-datatype-separation",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "expanded-datatype-separation"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "array-completion-search",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "array-completion-search"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "finite-uf-model-search",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "finite-uf-model-search"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "datatype-publication-proposals",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "datatype-publication-proposals"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "numeric-projection-proposals",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "numeric-projection-proposals"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "function-else-search",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "function-else-search"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "zero-division-proposal",
+      "engine": "nixie",
+      "sha": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "version": "2b30708611c422a76c097a7abe84c464aeed8e8c",
+      "binary": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/nixie-diagnostic",
+      "sha256": "c918d4c81b80f2ad064140f9d78ba57d5b328df18d566554331c9eec5df33e73",
+      "role": "treatment",
+      "kinds": [
+        "SMT"
+      ],
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "zero-division-proposal"
+      },
+      "build": "standard release; diagnostic selectors; no policy accepted"
+    },
+    {
+      "name": "z3",
+      "engine": "z3",
+      "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+      "binary": "/run/current-system/sw/bin/z3",
+      "version": "Z3 version 4.16.0 - 64 bit",
+      "role": "reference",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "git_note": "sha denotes result-hosting Nixie revision, not Z3 source; identity pins the actual binary hash and version",
+      "sha256": "9d864f53188ddc26eae4aa915b515d50885d4481f1d97e1503b225b5a5ee7824"
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_mutually_recursive_datatypes_is_never_shortcircuited.smt2",
+      "sha256": "6448785487dd6b36e6773ccf425297b2d7f62abb3e3f922df492c9e91dfdeeb8",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate.smt2",
+      "sha256": "f7d85716082b232c9fe8b382a9e3d7b4204cc8494132153cc856909dd9495431",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/const_array_consistent_stays_sat.smt2",
+      "sha256": "b4f2804e1ec8f85c7e9cb32716b2a672924544caa157a596812d266dc3c5b8e4",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_composite_finite_datatype_exact_fit_is_sat.smt2",
+      "sha256": "57c8603362efd1a358aea966740f420b06e0dbcc5c97b3dbcde1f9e9764eda8f",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set9_family_answers_sat.smt2",
+      "sha256": "fa5814a0003736498782a9670b041e9dd2e59641bbc7e61ec96277bef830fbd9",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_monotone_relevant_terms_sat.smt2",
+      "sha256": "cff958fe2f8ff70e991503d6702135e3ec4378ccb60e687c5af745108abb6ed0",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set19_family_answers_sat.smt2",
+      "sha256": "ff11972a74f7a12cecf349b74d57daa343ef90491a299660f782b20fb7a78d68",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/symbolic_argument_solves_for_the_variable.smt2",
+      "sha256": "8044466b5f50c745dfb758a6a38e131eca568bcce9b17ee7ee54c5892f143039",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/negated_bounded_exists_outside_range_sat.smt2",
+      "sha256": "88e1f4e81d8a14c1f762145a474c9848a262cf605130eb59d180af4cc118aa5c",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/interposed_check_must_not_lose_a_kept_instantiation.smt2",
+      "sha256": "e6f2cfde8373cbd7a026fdb79a69a7c376ff031020de3055f28f6b1a266bf913",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set16_family_answers_sat.smt2",
+      "sha256": "387b99893868a52a20c7df558a1516a34bb5b3792e4beaecfe0cebcce79182b1",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflra_monotone_var_var_guard_sat.smt2",
+      "sha256": "ba185f2fa7351b4f83356cdcd0c8aa1a4adcf596ff1bcd287499599361041797",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/each_mbqi_round_costs_no_more_clauses_than_the_first.smt2",
+      "sha256": "b68a163e7d9dc9379ce78befd0cd312e9c0bfe929f9b23b9e746363de5ef56fd",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_injective_bounded_box_sat.smt2",
+      "sha256": "fe1fae5120fc7426ad96ddc5606729c8595b52fb316b8d5a7e5ae8b8a879cf68",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/enum-publication.smt2",
+      "sha256": "7baff18994c111e2a03db3c0c4c39056c1b4cb61f0e77de07696ae81af26f193",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/zero-division-publication.smt2",
+      "sha256": "f9a8a23d9c989fc28a8eafafb83754175a90ed606ee054727d346e48843f4c3d",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/shadowed-array-completion.smt2",
+      "sha256": "a9c8f0a66bbe7f11cbf83db83b5fdabdf845be779d3fbe8491c9145a9821c61b",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-congruence_closure.smt2",
+      "sha256": "5e2b1df5366f732710299fedb61c9d276c50cdba2b60c6d5abbe1b77e2584b20",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-division_property.smt2",
+      "sha256": "0b4096bae5bfa3ea17d12077cda2e60206ac28c1acf460e941b8f25a7f0158c3",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-idempotent.smt2",
+      "sha256": "a1d103fe50935a7a41675c32a80ec40c919c9a199c377dfd7c093dd61ede25a1",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-injective.smt2",
+      "sha256": "67858ad11f88daa1a51e601cc68bd8fdab0c18d7abf9efeb4600ae48dab64e3e",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-monotone_basic.smt2",
+      "sha256": "3000f9543ca6a24c48427947649644533e759d010ed4780e157c3effec887b3c",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-surjective.smt2",
+      "sha256": "297b80e77ec133eb770b893d7c335cb8f6ea5376aadee331eddd18abbb702e30",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-real_monotone.smt2",
+      "sha256": "e44f623d3f7ce04d49440f6cc9237effe35b1aa9522e7340068bda7109c3ea78",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/finite-uf-involution.smt2",
+      "sha256": "e837eb74c51329c86ec67816017cf7e4929d9eab951412308b9ac81003766fd4",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-0.smt2",
+      "sha256": "c5f5d67062c80e7e2085e33e10a3cd73ec83e7d16d80265599dd59b299766e38",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-1.smt2",
+      "sha256": "6223a0874f402e4d68edcd7afb0dcf9fb5b47beef9848ea762aad294059b423f",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-2.smt2",
+      "sha256": "b94ff4363dfa1fba07514ff7cd21d79d66cf1d18f7a1bf607336990a8498c279",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-3.smt2",
+      "sha256": "b80c2897ee1f4bdf548e334412c1b7a9a3457493616affe8d45a7687a0d84616",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-scopes.smt2",
+      "sha256": "28310738bb2a35928465f97540733ac2c6d7f36c514daf7a0a61b5965c40e768",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-00.smt2",
+      "sha256": "6343e7c21473428278294a4801fa8a9a6bb1965f92c08dd7593b88308403bda6",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-01.smt2",
+      "sha256": "fd40731c4983e576d9265ff97a8e1dd0c4a771ff422ed8a304eefc110a32161f",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-02.smt2",
+      "sha256": "d81dd47946c1143dc5326b6a983a6be0ef2ca3539c52a9624d7375e50f7dd0fb",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-03.smt2",
+      "sha256": "33eaa031e2742d1113b8d041fcd58bab13728561981edd6c92b2fc4258b6265f",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-04.smt2",
+      "sha256": "2f9aa12d7236a48c8dacfb768792f11e850844025db6a04855264056a0dc0e88",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-05.smt2",
+      "sha256": "beefe7db5d547a0a532a7055e03529438410f787abfc650f03e60aad5ac165a4",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-06.smt2",
+      "sha256": "5ea81e9b5ef02f097f99bc86541877debbfb22120b6992934fb2158dbb410877",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-07.smt2",
+      "sha256": "b0cdab262bd25a5aef968e5b50e813902586807cb4bb10600f6d05120b49b7f5",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-08.smt2",
+      "sha256": "e2d432c921d896c4e0e997c3013e5e3f7f53f20bbfdb419df8202874a164a09c",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-09.smt2",
+      "sha256": "7d3d21b96e61ceccdd8f1584ed7e992aafc003a24187bbbec3cb485c8d1b390f",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-10.smt2",
+      "sha256": "c44cfa1a4a0364e4d0125a41097beb74f52a7f6be2a703ebf04407abc0d9a729",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-11.smt2",
+      "sha256": "afaa38bf49c99d64f063a20b3b738149930201a9b9814d2a9a7f7341ea7abc6c",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-12.smt2",
+      "sha256": "e39adc62b6a6de8aa7a7c3990d3fbe1f1b3af92413a444ed69292a51a0756283",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-13.smt2",
+      "sha256": "1a12f5eba44a795fa6e1d00de65849bb86f6b064e1937e268f2e56ac97a69a8e",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-14.smt2",
+      "sha256": "09327ad46fc91bc17968d7bb4411fcb32a188077aea669633f275c776a87f326",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-15.smt2",
+      "sha256": "d3a4eeeb22770cc0fea2095706efc38a015c9789dce1f0e0d6bc07f90e251fc3",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-16.smt2",
+      "sha256": "673035033bcb0398124b76791ef0111156d9452053b93cf2279b71f64f8745b8",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-17.smt2",
+      "sha256": "c948f5e8f7e6a37719e6d0618e05c54c5e83c62dc0dc8098fa1807d1ad90d890",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-18.smt2",
+      "sha256": "74090d6a8041e2a2720d71eafe0642615dacba3c37076a3ad30796e59fce9f0b",
+      "kind": "SMT",
+      "family": "publication-capability-controls",
+      "expected": "unknown"
+    }
+  ],
+  "results": "precompile/2b30708611c422a76c097a7abe84c464aeed8e8c/benchmark/migration034-publication-controls-30s/results.json",
+  "gate": "Coverage and complete-work rejection stage only. Any acceptance additionally needs an active matched null, >=10 effective common seeds, fresh replay, independent model/proof validation, full 72-input/cumulative cost and complete release checks.",
+  "cost_veto": "No new timeout/crash replacing a completed baseline query. Compare complete instruction costs on all identical answer sequences, including honest Unknowns, separately from decisive agreements. A default-policy candidate exceeding 1.05 on unchanged completed work fails the cost gate; newly solved cases remain a distinct coverage benefit.",
+  "dependency_note": "Zero-division excludes projection fallback; array completion keeps the final omitted-pin guard and full printed certificate; each selector enables exactly one policy.",
+  "output_note": "Some scripts deliberately request models after Unknown or perform multiple checks. The generic single-check runner labels these error/unknown; analyze raw answer sequences, process exit, and full model outputs instead. Never count Unknown as a differential agreement."
+}
