@@ -199,3 +199,22 @@ inclusive children does not recover the missing ancestry. Do not use that
 profile to claim that all simplex work is specifically entailment probing.
 Its flat samples motivated the cache-copy reduction; the controlled instruction
 measurements, not sampling percentages, determine the final cost result.
+
+A further call-site audit narrows the classification. The encoder registers the
+new pin eagerly, but **the arithmetic fact is installed only by
+`nelson_oppen_combine`, whose sole caller is the final theory check**. The SAT
+engine reaches that check after it has exhausted unassigned branch variables,
+before saving/returning a model (`search_ext.rs`). This is not an extra
+per-assignment branching proposal or an eager arithmetic solve at encoding.
+The pin makes a numeral participate in exact shared-term entailment; successful
+entailments merge EUF classes with explanations, and newly induced equalities
+are checked back against arithmetic before acceptance. Merely delaying this
+work until a full SAT candidate would reproduce its present placement.
+
+That establishes a direct connection to theory-consistency validation, but
+not that its implementation or induced trajectory is cost-minimal. In
+particular, neither the flat profile nor the small probes proves that every
+additional instruction is necessary to prevent a wrong verdict. The retained
+fact and the unapproved magnitude of its cost must not be conflated. Removing
+it would require a replacement guarantee at that same acceptance boundary;
+outer best-effort repair is not such a guarantee.
