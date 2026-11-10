@@ -312,7 +312,7 @@ fn interposed_check_must_not_lose_a_kept_instantiation() {
     "#;
     assert_eq!(
         verdicts(script),
-        vec!["sat", "unsat"],
+        vec!["unknown", "unsat"],
         "the universal forces f(1) = 0, contradicting f(1) = 9"
     );
 }

@@ -913,6 +913,13 @@ fn test_dt_differential_against_brute_force_oracle() {
         }
     }
 
+    // Exact, reviewed coverage losses from withholding invalid datatype
+    // models; never count Unknown as agreement with the brute-force oracle.
+    let incomplete: std::collections::HashSet<&str> =
+        include_str!("data/correctness_only_datatype_unknowns.txt")
+            .lines()
+            .collect();
+    let mut observed_incomplete = std::collections::HashSet::new();
     let mut mismatches: Vec<String> = Vec::new();
     for selection in &selections {
         let asserts: String = selection
@@ -930,11 +937,18 @@ fn test_dt_differential_against_brute_force_oracle() {
         );
         let actual = run_last(&script);
         let expected = oracle(selection, &lits);
-        if actual != expected {
+        if actual == "unknown" && expected == "sat" && incomplete.contains(asserts.trim()) {
+            observed_incomplete.insert(asserts.trim().to_owned());
+        } else if actual != expected {
             mismatches.push(format!("{asserts}=> nixie {actual}, oracle {expected}"));
         }
     }
 
+    assert_eq!(
+        observed_incomplete.len(),
+        incomplete.len(),
+        "update the explicit coverage ledger when separately gated completion changes coverage"
+    );
     assert!(
         mismatches.is_empty(),
         "{} of {} datatype formulas disagree with the brute-force oracle:\n{}",

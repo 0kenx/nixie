@@ -139,6 +139,8 @@ fn unpinned_literal_function_collision_is_not_a_certificate() {
     for term in [four, x, f4, fx] {
         solver.euf.intern(term);
     }
+    let root = tm.mk_eq(f4, fx);
+    solver.encode(root, &mut tm);
     let mut model = Model::new();
     model.set(x, four);
     model.set(f4, tm.mk_int(0));
@@ -163,6 +165,8 @@ fn function_certificate_declines_missing_and_defaulted_values() {
     for term in [four, x, f4, fx] {
         solver.euf.intern(term);
     }
+    let root = tm.mk_eq(f4, fx);
+    solver.encode(root, &mut tm);
     let mut model = Model::new();
     model.set(f4, tm.mk_int(0));
     model.set(fx, tm.mk_int(0));
@@ -211,9 +215,14 @@ fn popped_numeric_function_obligations_do_not_poison_the_outer_scope() {
     let app = tm.mk_apply("f", [four], tm.sorts.int_sort);
     solver.euf.intern(four);
     solver.euf.intern(app);
+    let zero = tm.mk_int(0);
+    let root = tm.mk_eq(app, zero);
+    solver.encode(root, &mut tm);
+    assert!(solver.unpinned_uf_apps.contains(&app));
     solver.model = Some(Model::new());
     assert!(!solver.unpinned_function_model_is_consistent(&mut tm));
     solver.pop();
+    assert!(solver.unpinned_uf_apps.is_empty());
     solver.model = Some(Model::new());
     assert!(solver.unpinned_function_model_is_consistent(&mut tm));
 }

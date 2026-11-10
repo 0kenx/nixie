@@ -113,7 +113,7 @@ fn mutual_parity_cannot_be_both() {
 const SUM: &str = "(define-fun-rec sum ((n Int)) Int (ite (<= n 0) 0 (+ n (sum (- n 1)))))";
 
 #[test]
-fn symbolic_argument_solves_for_the_variable() {
+fn symbolic_argument_requires_withdrawn_function_refinement() {
     // Structural unfolding alone never decides this: whatever depth it reaches,
     // the solver can satisfy `sum(k) = 6` by giving the *boundary* application
     // whatever value the arithmetic needs, for any `k`. Reaching `sat` here
@@ -125,11 +125,14 @@ fn symbolic_argument_solves_for_the_variable() {
          (check-sat)(get-value (k))"
     );
     let out = run(&script);
-    assert_eq!(out[0], "sat", "a certified model must be found");
+    // The old k = 3 witness is valid (independently replayed with Z3).
+    // With the additional function-collision retries withdrawn, the current
+    // candidate search exhausts its existing bound. Record this real coverage
+    // loss; it is not evidence that the old answer or witness was wrong.
+    assert_eq!(out[0], "unknown");
     assert!(
-        out[1].contains('3'),
-        "the only non-negative solution of sum(k) = 6 is k = 3, got {}",
-        out[1]
+        out[1].starts_with("(error "),
+        "no unverified value: {out:?}"
     );
 }
 

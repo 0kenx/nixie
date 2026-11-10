@@ -227,27 +227,37 @@ impl Solver {
         let euf = self.model_euf();
         let mut work = MAX_WORK;
         let mut functions = FxHashSet::default();
-        let mut apps = Vec::new();
-        for node in euf.all_node_indices() {
+        // Only obligations created by omission of an encoder pin trigger
+        // this certificate. EUF also contains interpreted arrays, transient
+        // witnesses, and model-only terms that never had such an obligation.
+        for &term in &self.unpinned_uf_apps {
             spend(&mut work)?;
-            let term = euf.node_term(node)?;
-            let data = manager.get(term)?;
-            if let TermKind::Apply { func, args } = &data.kind {
-                apps.push(term);
-                for &arg in args.iter() {
-                    spend(&mut work)?;
-                    let sort = manager.get(arg)?.sort;
-                    if (sort == manager.sorts.int_sort || sort == manager.sorts.real_sort)
-                        && !self.interface_const_pins.contains_key(&arg)
-                        && self.interface_constant_value(arg, manager).is_some()
-                    {
-                        functions.insert(*func);
-                    }
+            let TermKind::Apply { func, args } = &manager.get(term)?.kind else {
+                return None;
+            };
+            for &arg in args.iter() {
+                spend(&mut work)?;
+                if !self.interface_const_pins.contains_key(&arg)
+                    && self.interface_constant_value(arg, manager).is_some()
+                {
+                    functions.insert(*func);
                 }
             }
         }
         if functions.is_empty() {
             return Some(());
+        }
+        // Include every point of each affected function, not just its
+        // literal-argument point; otherwise f(4) and f(x), x = 4, can collide.
+        let mut apps: Vec<_> = self.unpinned_uf_apps.iter().copied().collect();
+        for node in euf.all_node_indices() {
+            spend(&mut work)?;
+            let term = euf.node_term(node)?;
+            if matches!(&manager.get(term)?.kind, TermKind::Apply { func, .. }
+                if functions.contains(func))
+            {
+                apps.push(term);
+            }
         }
         let model = self.model.as_ref()?;
         let mut values = Values::new(self)?;

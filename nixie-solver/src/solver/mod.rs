@@ -828,6 +828,9 @@ pub struct Solver {
     pub(super) ground_instance_roots: FxHashSet<TermId>,
     /// Ground array ITE branch definitions installed in the current scopes.
     pub(super) array_ite_definitions: FxHashSet<TermId>,
+    /// Encoded ordinary UF applications whose numeric constants were not pinned.
+    /// These require a concrete function-interpretation certificate at Sat.
+    pub(super) unpinned_uf_apps: FxHashSet<TermId>,
     /// Scope-local rewrites of quantified ground instances and their definitions.
     pub(super) prepared_ground_instances: FxHashMap<(TermId, bool), TermId>,
     /// Set to `true` when the datatype axiom budget ran out before every
@@ -1373,6 +1376,7 @@ impl Solver {
             dt_axiom_instances: FxHashSet::default(),
             ground_instance_roots: FxHashSet::default(),
             array_ite_definitions: FxHashSet::default(),
+            unpinned_uf_apps: FxHashSet::default(),
             prepared_ground_instances: FxHashMap::default(),
             dt_axioms_incomplete: false,
             entailed_int_consts: FxHashMap::default(),
@@ -5309,6 +5313,9 @@ impl Solver {
                                 }
                             }
                         }
+                        TrailOp::UnpinnedUfAppAdded { term } => {
+                            self.unpinned_uf_apps.remove(&term);
+                        }
                         TrailOp::ArrayIteDefined { term } => {
                             self.array_ite_definitions.remove(&term);
                         }
@@ -5546,6 +5553,7 @@ impl Solver {
         self.dt_axiom_instances.clear();
         self.ground_instance_roots.clear();
         self.array_ite_definitions.clear();
+        self.unpinned_uf_apps.clear();
         self.prepared_ground_instances.clear();
         self.dt_axioms_incomplete = false;
         // The assertions that entailed these constants are gone; a survivor

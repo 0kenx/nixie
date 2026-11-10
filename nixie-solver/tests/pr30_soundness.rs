@@ -551,7 +551,9 @@ fn test_pr30_quantified_uf_div_mod_const_pins_close_false_sat() {
 /// semantics the logic does not define.  The pin must skip it and the verdict
 /// stay `sat` (z3: sat).
 #[test]
-fn test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate() {
+// Correctness-only baseline: withhold the unverified model. The former
+// Sat contract and exact input are retained in bench/migration034/candidates.
+fn test_pr30_quantified_uf_zero_divisor_pin_withholds_unverified_model() {
     let output = run(r#"
         (set-logic UFLIA)
         (declare-fun f (Int) Int)
@@ -563,7 +565,7 @@ fn test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate() {
     "#);
     assert_eq!(
         output,
-        vec!["sat"],
+        vec!["unknown"],
         "(div 1 0) uninterpreted: may differ from 1; z3: sat"
     );
 }

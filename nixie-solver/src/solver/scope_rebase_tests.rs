@@ -865,8 +865,8 @@ fn each_mbqi_round_costs_no_more_clauses_than_the_first() {
         .execute_script("(check-sat)")
         .expect("check-sat should run");
     assert!(
-        out.iter().any(|line| line == "sat"),
-        "the multi-round benchmark is satisfiable, got {out:?}"
+        out.iter().any(|line| line == "unknown"),
+        "the correctness-only baseline must withhold the incomplete function model, got {out:?}"
     );
 
     let samples = ctx.solver().mbqi_round_clauses.clone();

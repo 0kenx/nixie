@@ -2935,15 +2935,28 @@ impl Solver {
                         .get(arg)
                         .is_some_and(|a| a.sort == manager.sorts.bool_sort)
                 }));
-                // Array interface constants retain their defining pins. For
-                // ordinary UF applications, validate the final interpretation
-                // instead of eagerly perturbing arithmetic search.
-                if !matches!(node.kind, TermKind::Apply { .. }) {
-                    numeric.extend(children.iter().copied().filter(|&arg| {
-                        manager.get(arg).is_some_and(|a| {
-                            a.sort == manager.sorts.int_sort || a.sort == manager.sorts.real_sort
-                        })
-                    }));
+                // Constant-array applications are interpreted array terms,
+                // not ordinary functions: their defaults retain numeric pins.
+                let ordinary_uf = matches!(node.kind, TermKind::Apply { func, .. }
+                    if manager.resolve_str(func) != nixie_core::reserved::CONST_ARRAY_FUNC);
+                let numeric_args = children.iter().copied().filter(|&arg| {
+                    manager.get(arg).is_some_and(|a| {
+                        a.sort == manager.sorts.int_sort || a.sort == manager.sorts.real_sort
+                    })
+                });
+                if ordinary_uf {
+                    // Journal exactly the obligations whose eager pins this
+                    // encoding omits. Generated model-only applications and
+                    // internal distinct witnesses did not pass this interface.
+                    if numeric_args.into_iter().any(|arg| {
+                        !self.interface_const_pins.contains_key(&arg)
+                            && self.interface_constant_value(arg, manager).is_some()
+                    }) && self.unpinned_uf_apps.insert(term)
+                    {
+                        self.trail.push(TrailOp::UnpinnedUfAppAdded { term });
+                    }
+                } else {
+                    numeric.extend(numeric_args);
                 }
             }
             stack.extend(children);

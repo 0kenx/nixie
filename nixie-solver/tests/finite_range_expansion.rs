@@ -221,7 +221,9 @@ fn negated_bounded_exists_unsat() {
 /// The same negated existential stays satisfiable when the witness sits outside
 /// the interval.
 #[test]
-fn negated_bounded_exists_outside_range_sat() {
+// Correctness-only baseline: withhold the unverified model. The former
+// Sat contract and exact input are retained in bench/migration034/candidates.
+fn negated_bounded_exists_outside_range_without_completion() {
     let r = check(
         r#"
         (set-logic UFLIA)
@@ -231,7 +233,7 @@ fn negated_bounded_exists_outside_range_sat() {
         (check-sat)
     "#,
     );
-    assert_eq!(r, "sat");
+    assert_eq!(r, "unknown");
 }
 
 // ========  ========

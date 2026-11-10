@@ -302,91 +302,237 @@
       "id": "overflow-syntax",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "6f3334bd"
+      ],
+      "intended_benefit": "Explicit SMT-LIB overflow predicates, exhaustively checked at small widths and with wide-value controls.",
+      "cost_and_correctness_risk": "New syntax only; existing operators must keep identical encodings.",
+      "focused_gates": [
+        "overflow_predicates"
+      ],
+      "requires_matched_null": false
     },
     {
       "id": "qf-auf-alias",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "2e06106e"
+      ],
+      "intended_benefit": "Recognize the QF_AUF logic name without requiring callers to substitute ALL.",
+      "cost_and_correctness_risk": "Logic contract only; reject arithmetic/BV features outside the named logic.",
+      "focused_gates": [
+        "logic_contract_acceptance",
+        "upstream034_arrays_and_symbols"
+      ],
+      "requires_matched_null": false
     },
     {
       "id": "refinement-statistics",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "ed02c41a"
+      ],
+      "intended_benefit": "Expose per-query array work and embedded-BV conflicts for budget diagnostics.",
+      "cost_and_correctness_risk": "Saturating counter updates and output cost; query reset must remain correct.",
+      "focused_gates": [
+        "upstream034_names_and_statistics",
+        "upstream034_budget_transitions"
+      ],
+      "requires_matched_null": false
     },
     {
       "id": "array-completion-search",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "029ce7ad",
+        "8ca3622a"
+      ],
+      "intended_benefit": "Certify otherwise unavailable quantified-array interpretations.",
+      "cost_and_correctness_risk": "Automatic proposal/certificate search can consume the query budget and alter candidate choices.",
+      "focused_gates": [
+        "upstream034_array_completion"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "finite-uf-model-search",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Find concrete finite uninterpreted domains and function tables after Unknown.",
+      "cost_and_correctness_risk": "New model search and repeated publication certificates.",
+      "focused_gates": [
+        "upstream034_model_publication",
+        "upstream034_nested_interfaces"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "datatype-publication-proposals",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish valid constructor values when the solver candidate cannot be read consistently.",
+      "cost_and_correctness_risk": "Bounded constructor-product enumeration; overlaps with datatype separation.",
+      "focused_gates": [
+        "upstream034_datatype_separation"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "numeric-projection-proposals",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish interval-based numeric function interpretations when a finite table fails a universal.",
+      "cost_and_correctness_risk": "Alternative model semantics and certificate queries; ordering can change proposal cost.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "function-else-search",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Try other finite-table defaults to satisfy universal assertions.",
+      "cost_and_correctness_risk": "Candidate order and repeated full-model certificates.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "zero-division-proposal",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish an explicit total choice for division by zero and consistent get-value results.",
+      "cost_and_correctness_risk": "Alternative interpretation search; retain underspecification and avoid source-name capture.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "guard-boundary-sampler",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "7034f149"
+      ],
+      "intended_benefit": "Find additional counterexamples near numeric guard boundaries.",
+      "cost_and_correctness_risk": "Heuristic proposal order and MBQI trajectory; previous snapshot found no standing-solve gain.",
+      "focused_gates": [
+        "upstream034_guard_points"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "formal-harness",
-      "status": "withheld",
-      "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "status": "gate-failed",
+      "decision": "drop",
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "59af866b"
+      ],
+      "intended_benefit": "Standalone literal proof obligations using an actual external verifier.",
+      "cost_and_correctness_risk": "No solver runtime change, but a harness is not a proof; verifier/toolchain gate must pass.",
+      "focused_gates": [
+        "nixie-sat/formal/test_prepare.py"
+      ],
+      "requires_matched_null": false,
+      "gate_result": "Required cargo-formal executable and unpublished oxiformal checkout are unavailable. Plain concrete tests cannot establish the promised formal capability; no symbolic proof is claimed.",
+      "runtime_cost": "No production binary change; rejected before a runtime experiment."
     },
     {
       "id": "finite-array-completeness",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "1da2864c"
+      ],
+      "intended_benefit": "Exact finite-array cardinality and complete extensionality for small domains.",
+      "cost_and_correctness_risk": "Potential product-size growth; preserve exact arithmetic and budgets.",
+      "focused_gates": [
+        "upstream034_finite_array_domains",
+        "upstream034_nested_interfaces"
+      ],
+      "requires_matched_null": false
     },
     {
       "id": "expanded-datatype-separation",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "93fcd2ce"
+      ],
+      "intended_benefit": "Separate additional finite/enum and numeric datatype values with validated proposals.",
+      "cost_and_correctness_risk": "Additional proposal choices and trajectory; pinned fields may never change.",
+      "focused_gates": [
+        "upstream034_datatype_separation",
+        "model_builder::separation"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "general-function-retry",
       "status": "withheld",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "5a5ed86d"
+      ],
+      "intended_benefit": "Resolve candidate function collisions by guarded Ackermann lemmas instead of returning Unknown.",
+      "cost_and_correctness_risk": "Additional re-solves and theory resets; validate explanations and scopes.",
+      "focused_gates": [
+        "uf_consistency",
+        "upstream034_function_models"
+      ],
+      "requires_matched_null": true
     },
     {
       "id": "diagnostic-tools",
-      "status": "withheld",
+      "status": "focused-gate-passed",
       "decision": null,
-      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay."
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "5c2b6bed"
+      ],
+      "intended_benefit": "Reproducible differential-generation, triage and minimization tools.",
+      "cost_and_correctness_risk": "No solver runtime change; tool outputs must distinguish Unknown, errors and timeouts honestly.",
+      "focused_gates": [
+        "scripts/round4/test_tools.py"
+      ],
+      "requires_matched_null": false,
+      "gate_result": "Exact 5c2b6bed script sources restored in the isolated candidate; all nine Python tests passed. Actual Z3 smoke controls await completion of build/test work.",
+      "runtime_cost": "No Rust/Cargo changes; the solver binary and its measurement remain identical."
     }
   ],
   "numeric_uf_pins": {
@@ -394,5 +540,14 @@
     "prior_control": "pin-control-results.json",
     "decision": "drop eager numeric UF pins; retain array/quantified purifier pins and final value consistency",
     "evidence": "Prior 10 common seeds plus fresh replay isolate 11.19348x and 4.29175x treatment/null instruction cost on the two affected UFLIA instances. No new heuristic is introduced by rejecting an unverified candidate."
+  },
+  "correctness_snapshot": {
+    "source": "4e991ae0cd18e8760c5e2f2c8360290bb08fcf15",
+    "manifest": "correctness-only-manifest.json",
+    "report": "correctness-only-results.json",
+    "smt_original_cohort_ratio": 1.0759127266831383,
+    "sat_ratio": 0.9965100534365892,
+    "new_losses_vs_rejected_migration": 0,
+    "status": "rejected-by-full-suite-15-unknown-versus-sat; scoped-guard-revision-in-progress"
   }
 }
