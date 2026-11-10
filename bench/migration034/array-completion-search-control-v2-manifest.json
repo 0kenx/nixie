@@ -1,0 +1,198 @@
+{
+  "timeout_s": 30,
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "suite": "migration034-policy-controls-30s",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "feature": "array-completion-search",
+  "arms": [
+    {
+      "name": "off",
+      "engine": "nixie",
+      "sha": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "version": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "binary": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/nixie-diagnostic",
+      "sha256": "61f84d86cdf8e7631557b1892765f47af3de9ede6f8e939bcd1bb245b1c487a7",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "baseline",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "off",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "real",
+      "engine": "nixie",
+      "sha": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "version": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "binary": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/nixie-diagnostic",
+      "sha256": "61f84d86cdf8e7631557b1892765f47af3de9ede6f8e939bcd1bb245b1c487a7",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "treatment",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "array-completion-search",
+        "NIXIE_POLICY_CONTROL": "real"
+      }
+    },
+    {
+      "name": "null",
+      "engine": "nixie",
+      "sha": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "version": "730642c60fefefead222c1bcb2df92bf0b153caf",
+      "binary": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/nixie-diagnostic",
+      "sha256": "61f84d86cdf8e7631557b1892765f47af3de9ede6f8e939bcd1bb245b1c487a7",
+      "kinds": [
+        "SMT"
+      ],
+      "role": "null",
+      "build": "standard release diagnostic only; same instrumented binary in all arms",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "array-completion-search",
+        "NIXIE_POLICY_CONTROL": "null"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-7919.smt2",
+      "sha256": "35704461d72338b9dac0497512a284e7d00c780198f214fabe88cf00e0256e09",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 7919,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-15838.smt2",
+      "sha256": "83bf6f1b09b67364b374af41fd76080d34d7ef239ea6f2f8d818d163e19fbe66",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 15838,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-23757.smt2",
+      "sha256": "9cbf26a6308a0456c6d30a415bb47900f87f93559595ae88be9abc521349cba0",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 23757,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-31676.smt2",
+      "sha256": "b36dfca92122dbaf28d13a041d20ca95d8c688e0403b9916ec82ea34822d8b96",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 31676,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-39595.smt2",
+      "sha256": "7e8d38a09d425357f17f6c8b2c54c020d5a1b0f828b85aaf5361f7e66688ee44",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 39595,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-47514.smt2",
+      "sha256": "05ef302b00a1e49d171a8aa74644834bd8c3c287657018a8979bfbb617cea855",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 47514,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-55433.smt2",
+      "sha256": "65e3ba24a87f7709328f8e9a3c9ac5dea9d6de693921088418a4ea6961634fc0",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 55433,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-63352.smt2",
+      "sha256": "9b5cd68b431f37978f0c3eb0c1bc3a6e12b6a8da2d9e8d863a2f51ca27b08e2c",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 63352,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-71271.smt2",
+      "sha256": "7a5b8a83d41fd74e3754d2857e29fee1220ca03f70a70b639a29172f414efe14",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 71271,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-79190.smt2",
+      "sha256": "b156437f526b5d3af7f9795dbc6fdd3d637779fa1b7f75786383906b0044474f",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 79190,
+      "control": "model-shadowed-array-completion"
+    },
+    {
+      "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-87109.smt2",
+      "sha256": "27d44e385abb8f90ca93f53d8cd3c24a40650a67de5f52b3bc23479738430bfe",
+      "kind": "SMT",
+      "family": "array-completion-search",
+      "expected": "unknown",
+      "seed": 87109,
+      "control": "model-shadowed-array-completion"
+    }
+  ],
+  "plan": "bench/migration034/candidates/array-control-v2-plan.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "results": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/array-v2.json"
+}
