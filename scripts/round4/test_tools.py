@@ -89,6 +89,38 @@ class OracleTests(unittest.TestCase):
             self.assertEqual(runs[0], runs[1])
             self.assertTrue(runs[0])
 
+    def test_selector_interpretation_is_not_fabricated_by_model_replay(self):
+        script = '''(declare-datatype D ((empty) (full (value Bool))))
+            (declare-const d D) (assert (value d)) (check-sat) (get-model)'''
+        output = 'sat (model (define-fun d () D empty))'
+        with patch.object(zjudge, 'z3_run', side_effect=['sat', 'sat']), \
+             patch.object(zjudge, 'z3_version', return_value='test comparator'):
+            report = zjudge.judge(script, output, 1, check_verdicts=False)
+        self.assertEqual(report['falsifying'], 0)
+        self.assertEqual(report['model_ok'], 0)
+        self.assertEqual(report['model_partial_consistent'], 1)
+        self.assertEqual(report['events'][0][0], 'PARTIAL_SELECTOR_INTERPRETATION')
+        # A fixed, matching constructor cannot hide a genuinely false read.
+        with patch.object(zjudge, 'z3_run', side_effect=['sat', 'unsat']), \
+             patch.object(zjudge, 'z3_version', return_value='test comparator'):
+            report = zjudge.judge(script, 'sat (model (define-fun d () D (full false)))',
+                                 1, check_verdicts=False)
+        self.assertEqual(report['falsifying'], 1)
+        self.assertEqual(report['model_partial_consistent'], 0)
+
+    def test_partial_selector_value_is_unresolved_and_false_value_still_fails(self):
+        script = '''(declare-datatypes ((D 0)) (((empty) (full (value Bool)))))
+            (declare-const d D) (assert true) (check-sat) (get-model)
+            (get-value ((value d)))'''
+        for pinned, expected in [('sat', 0), ('unsat', 1), ('unknown', 0)]:
+            with patch.object(zjudge, 'z3_run', side_effect=['unsat', 'sat', pinned]), \
+                 patch.object(zjudge, 'z3_version', return_value='test comparator'):
+                report = zjudge.judge(script,
+                    'sat (model (define-fun d () D empty)) (((value d) true))',
+                    1, check_verdicts=False)
+            self.assertEqual(report['gv_wrong'], expected)
+            self.assertEqual(report['gv_unresolved'], 1 - expected)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -172,6 +172,40 @@ def quantified(asserts):
     return any(re.search(r"\((forall|exists)\b", a) for a in asserts)
 
 
+def may_read_datatype_selector(items, expressions):
+    """Detect selector reads whose off-constructor interpretation may be absent.
+
+    Detection is conservative; a second, positive pin query distinguishes a
+    genuinely inconsistent model from an unspecified selector interpretation.
+    CVC5 datatypes_rewriter.cpp deliberately leaves wrong-constructor reads
+    unreduced; Z3 model_evaluator.cpp supplies a model-specific accessor else.
+    """
+    selectors = set()
+    for kind, expr in items:
+        definitions = []
+        if kind == "declare-datatype" and len(expr) == 3:
+            definitions = [expr[2]]
+        elif kind == "declare-datatypes" and len(expr) == 3:
+            definitions = expr[2]
+        for definition in definitions:
+            if definition and definition[0] == "par":
+                definition = definition[2]
+            for constructor in definition:
+                if isinstance(constructor, list):
+                    for field in constructor[1:]:
+                        if isinstance(field, list) and field and isinstance(field[0], str):
+                            selectors.add(field[0])
+    stack = list(expressions)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, list) or not node:
+            continue
+        if isinstance(node[0], str) and node[0] in selectors:
+            return True
+        stack.extend(node)
+    return False
+
+
 def asserts_of(items):
     return [c.show(expr[1]) for kind, expr in items if kind == "assert"]
 
@@ -297,6 +331,20 @@ def judge(script_text: str, stdout: str, cap: int, check_verdicts=True):
                         # the universe's cardinality (adversarial recheck 17's
                         # minor 7; re-fix pass 18).
                         out["per_check"][last[2]] = "sat/uc_unresolved"
+                    elif may_read_datatype_selector(items, [e for k, e in items if k == "assert"] + list(defs.values())):
+                        pins, _, _ = replay_text(items, defs, logic,
+                                                "(assert (and true %s))" % " ".join(asserts))
+                        pinned = z3_run(pins, cap)
+                        if pinned == "sat":
+                            out["model_partial_consistent"] += 1
+                            out["per_check"][last[2]] = "sat/partial_selector"
+                            out["events"].append(("PARTIAL_SELECTOR_INTERPRETATION", last[2]))
+                        elif pinned == "unsat":
+                            out["falsifying"] += 1
+                            out["events"].append(("FALSIFYING", last[2]))
+                        else:
+                            out["model_unresolved"] += 1
+                            out["per_check"][last[2]] = "sat/unresolved"
                     else:
                         out["falsifying"] += 1
                         out["events"].append(("FALSIFYING", last[2]))
@@ -334,6 +382,14 @@ def judge(script_text: str, stdout: str, cap: int, check_verdicts=True):
                     if zv == "sat":
                         if has_uc and quantified(asserts_of(items)):
                             out["gv_unresolved"] += 1
+                        elif may_read_datatype_selector(items, [pair[0], pair[1]] + list(defs.values())):
+                            pins, _, _ = replay_text(items, defs, logic,
+                                                    "(assert (= %s %s))" % (term, value))
+                            if z3_run(pins, cap) == "unsat":
+                                out["gv_wrong"] += 1
+                                out["events"].append(("GV_WRONG", last[2], term, value))
+                            else:
+                                out["gv_unresolved"] += 1
                         else:
                             out["gv_wrong"] += 1
                             out["events"].append(("GV_WRONG", last[2], term, value))
