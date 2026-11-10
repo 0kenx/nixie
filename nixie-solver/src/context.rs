@@ -1472,7 +1472,7 @@ impl Context {
     pub fn get_statistics(&self) -> String {
         let stats = self.solver.get_statistics();
         format!(
-            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {})",
+            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {} :bv-embedded-conflicts {} :array-refinement-rounds {} :array-lemma-instances {})",
             stats.decisions,
             stats.conflicts,
             stats.propagations,
@@ -1480,7 +1480,10 @@ impl Context {
             stats.learned_clauses,
             stats.theory_propagations,
             stats.theory_conflicts,
-            stats.bv_embedded_checks
+            stats.bv_embedded_checks,
+            self.solver.bv_conflicts_spent(),
+            stats.array_refinement_rounds,
+            stats.array_lemma_instances
         )
     }
 

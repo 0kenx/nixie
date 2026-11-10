@@ -456,6 +456,8 @@ impl Solver {
                 .push(super::trail::TrailOp::ArrayAxiomInstanceAdded { term: inst });
             let lit = self.encode(inst, manager);
             let _ = self.sat.add_clause([lit]);
+            self.statistics.array_lemma_instances =
+                self.statistics.array_lemma_instances.saturating_add(1);
             if std::env::var("NIXIE_ARRAY_LEMMA_LOG").is_ok() {
                 use nixie_core::smtlib::Printer;
                 let p = Printer::new(manager);

@@ -19,6 +19,8 @@ impl Solver {
         self.sat.set_deadline(self.check_deadline);
         self.bv.set_budget(conflicts, self.check_deadline);
         self.statistics.bv_embedded_checks = 0;
+        self.statistics.array_refinement_rounds = 0;
+        self.statistics.array_lemma_instances = 0;
         self.check_theory_conflict_ceiling = conflicts
             .map(|n| self.statistics.conflicts.saturating_add(n))
             .unwrap_or(0);
