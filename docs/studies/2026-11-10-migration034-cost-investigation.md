@@ -240,3 +240,74 @@ search policy is inferred from these same-counter implementation reductions.
 The binary, source hashes, full gate logs, driver and parity JSON are retained
 under the fix commit's `precompile` entry. These checks establish this landing's
 verification bar; they do not erase the separately recorded numeric-pin cost.
+
+## Final snapshot and remaining cost
+
+The final `bcee40a4` binary measures **1.28973x** the pre-migration instruction
+cost on exactly the original **23 common SMT solves**, down from **1.36781x**
+(5.71% less than the original migrated binary on that same cohort). Against
+the rollback on all 24 jointly solved SMT cases it is 0.93943x. These are
+separate cohort comparisons, not interchangeable ratios. SAT is **0.99782x**
+the pre-migration cost on 24 pairs.
+
+All 72 new cells completed once; 336 existing cells were reused. SAT remains
+12 Sat / 12 Unsat. SMT remains 6 Sat / 18 Unsat / 10 Unknown / 13 timeouts /
+one allocation failure, with **zero decisive disagreements** against available
+labels and references. There are no gains or losses versus the original
+migration or policy rollback. Versus pre-migration, the earlier
+`unconstrained05` gain and `pipeline-invalid` timeout loss both remain. The
+allocation failure remains `QF_BV/pspace/shift1add.29940.smt2`. All **58** cases
+with observed SAT counters match the rollback's decisions, propagations,
+conflicts and restarts exactly; the other 14 have no comparable counter block.
+No timed-out partial instruction count enters a solved-cost ratio.
+
+| Case | Original migration / before | Fixed / before | Fixed / rollback |
+|---|---:|---:|---:|
+| Wisa `xs-10-18-2-2-5-3` | 12.433 | 12.419 | 0.9987 |
+| wisas `xs_8_13` | 4.698 | 4.693 | 0.9983 |
+| CLEARSY `00194` | 10.156 | 6.677 | 0.6575 |
+| FISCHER7-8-ninc | 1.595 | 1.087 | 0.6817 |
+| plan-16.cvc | 1.461 | 1.023 | 0.7001 |
+
+Thus repeated scans/readings were avoidable overhead: the targeted three
+cases drop approximately 30–34%. The arithmetic witness-copy reduction does
+**not** materially reduce the two UFLIA costs in this combined experiment.
+Do not interpret the earlier flat `int_eq_cache` sample percentage as time
+spent specifically cloning: that function also computes a dirty verdict.
+No isolated per-edit speedup is claimed for the combined binary.
+
+The two numeric-pin costs remain at essentially their previous magnitude.
+Their activation at final shared-theory consistency is directly correctness
+related, but this investigation does **not** establish that the full remaining
+28.97% aggregate penalty is necessary. The separate printed-model validation
+also remains after removing repeated identical readings. Neither the measured
+magnitude nor every smaller residual is blanket-approved by the full test pass.
+
+A final registered 18-cell historical extension (plus 15 reused cells) checks
+three smaller residuals. `TwoSquares/smtlib.639533` rises chiefly at published
+model validation (`029ce7ad` 5.49M → `8ca3622a` 6.07M instructions); the fixed
+binary is 5.89M with identical search counters. `QF_IDL/parity/05.200.graph`
+accumulates several increments before and across interface/model work
+(609.91M before, 629.85M at `68c36c44`, 653.04M at `c8abf146`, 673.99M at
+`029ce7ad`, 669.43M fixed), always with 0 decisions, 1,076 propagations and
+1 conflict. `QF_BV/sage/app9/bench_3296` accumulates its largest increment in
+the permanent-scope/BV-definition/budget/exchange interval before `1106bd4d`;
+propagations change from 62,979 to 62,776 there while decisions/conflicts stay
+zero. The cached boundaries localize those costs but do not prove an individual
+fix's necessity or authorize discarding it. Full numbers and provenance are
+in `cost-localization.json` under `smaller_residuals`.
+
+Reproduce the final report without remeasurement with:
+
+```sh
+python3 bench/migration034/compare_cost.py \
+  bench/migration034/cost-fixes-manifest.json cost-fixed \
+  bench/migration034/cost-fixes-results
+```
+
+The committed JSON and CSV retain every outcome and per-case instruction
+count. Raw records, commands, output and hardware-counter evidence live under
+`precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/benchmark/` alongside the
+cached binary and verification evidence. Temporary build/source trees have
+been removed; diagnostic branches/worktrees were removed immediately after
+their binaries were cached.

@@ -167,5 +167,376 @@
       "instructions": 11030487,
       "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/2bff470f82c58161c61c78a5"
     }
-  ]
+  ],
+  "smaller_residuals": {
+    "raw_results": "precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/benchmark/migration034-cost-attribution/residual-results.json",
+    "cases": {
+      "smt-lib/non-incremental/QF_IDL/parity/05.200.graph.smt2": {
+        "68c36c44": {
+          "sha": "68c36c4491fcf20232bcae61292e64e6c1425994",
+          "outcome": "unsat",
+          "instructions": 629854278,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/68c36c4491fcf20232bcae61292e64e6c1425994/benchmark/migration034-satlib-smtlib-30s/4387d26287617305261012b2"
+        },
+        "d280e0a4": {
+          "sha": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
+          "outcome": "unsat",
+          "instructions": 630220327,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/0f12430889d4a23e97708d41"
+        },
+        "029ce7ad": {
+          "sha": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
+          "outcome": "unsat",
+          "instructions": 673986808,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/029ce7adb9bcbbdd7398177c0654d84edace61a7/benchmark/migration034-satlib-smtlib-30s/b3cb29407e58664cac2a5ea6"
+        },
+        "8ca3622a": {
+          "sha": "8ca3622a8e20a829a5105c670456ca87373e8b61",
+          "outcome": "unsat",
+          "instructions": 674211346,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/8ca3622a8e20a829a5105c670456ca87373e8b61/benchmark/migration034-satlib-smtlib-30s/a7eab6b783c9a2bcbf276c10"
+        },
+        "before": {
+          "sha": "af14b6d2f800685b2737b02189cdae44d23f5459",
+          "outcome": "unsat",
+          "instructions": 609912157,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/af14b6d2f800685b2737b02189cdae44d23f5459/benchmark/migration034-satlib-smtlib-30s/2308c7638d753fe37ea39e4d"
+        },
+        "after": {
+          "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+          "outcome": "unsat",
+          "instructions": 674216994,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/fc513c2269368d58b335aa3f"
+        },
+        "rollback": {
+          "sha": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+          "outcome": "unsat",
+          "instructions": 674083892,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c/benchmark/migration034-satlib-smtlib-30s/99bb70693f8d2b21cbac4b53"
+        },
+        "cost-fixed": {
+          "sha": "bcee40a4252bd2af9a2e831bd20d0faa2968ea49",
+          "outcome": "unsat",
+          "instructions": 669433439,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/benchmark/migration034-satlib-smtlib-30s/a49dfc1660d19412c90b54b0"
+        },
+        "1106bd4d": {
+          "sha": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
+          "outcome": "unsat",
+          "instructions": 630636417,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/35e51d16dcc9c3a0ed327cca"
+        },
+        "c8abf146": {
+          "sha": "c8abf146a836e96b0d071594452519fd3403c749",
+          "outcome": "unsat",
+          "instructions": 653038601,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "1076",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/a1146783a20b17ca8b98f4ab"
+        }
+      },
+      "smt-lib/non-incremental/QF_BV/sage/app9/bench_3296.smt2": {
+        "c8abf146": {
+          "sha": "c8abf146a836e96b0d071594452519fd3403c749",
+          "outcome": "unsat",
+          "instructions": 598803359,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/aaf781a063874a4b2f1cf7fa"
+        },
+        "68c36c44": {
+          "sha": "68c36c4491fcf20232bcae61292e64e6c1425994",
+          "outcome": "unsat",
+          "instructions": 547898246,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62979",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/68c36c4491fcf20232bcae61292e64e6c1425994/benchmark/migration034-satlib-smtlib-30s/436f4a49c4225747ca3ac628"
+        },
+        "d280e0a4": {
+          "sha": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
+          "outcome": "unsat",
+          "instructions": 557766577,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62979",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/69c4ae7d2c340f8585094e45"
+        },
+        "029ce7ad": {
+          "sha": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
+          "outcome": "unsat",
+          "instructions": 600352991,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/029ce7adb9bcbbdd7398177c0654d84edace61a7/benchmark/migration034-satlib-smtlib-30s/a72703b41b641635f068b594"
+        },
+        "8ca3622a": {
+          "sha": "8ca3622a8e20a829a5105c670456ca87373e8b61",
+          "outcome": "unsat",
+          "instructions": 600366951,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/8ca3622a8e20a829a5105c670456ca87373e8b61/benchmark/migration034-satlib-smtlib-30s/746f7b7f7e9fcf9e40c8b4bf"
+        },
+        "before": {
+          "sha": "af14b6d2f800685b2737b02189cdae44d23f5459",
+          "outcome": "unsat",
+          "instructions": 538583817,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62979",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/af14b6d2f800685b2737b02189cdae44d23f5459/benchmark/migration034-satlib-smtlib-30s/185e055328ed7351f018e93a"
+        },
+        "after": {
+          "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+          "outcome": "unsat",
+          "instructions": 600355432,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/56560e3fd13d7f6f6ecbff81"
+        },
+        "rollback": {
+          "sha": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+          "outcome": "unsat",
+          "instructions": 600345232,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c/benchmark/migration034-satlib-smtlib-30s/36ad642b003470ca540c6a9a"
+        },
+        "cost-fixed": {
+          "sha": "bcee40a4252bd2af9a2e831bd20d0faa2968ea49",
+          "outcome": "unsat",
+          "instructions": 600318901,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/benchmark/migration034-satlib-smtlib-30s/c01dc3b10cb28d610de6f67f"
+        },
+        "1106bd4d": {
+          "sha": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
+          "outcome": "unsat",
+          "instructions": 595771005,
+          "counters": {
+            "Decisions": "0",
+            "Propagations": "62776",
+            "Conflicts": "0",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/7eba4b36b7820d583ec9aa2c"
+        }
+      },
+      "smt-lib/non-incremental/QF_UFLIA/TwoSquares/smtlib.639533.smt2": {
+        "d280e0a4": {
+          "sha": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
+          "outcome": "sat",
+          "instructions": 5458194,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/d280e0a4b38bc89b410911403bc8cb8aac006ec2/benchmark/migration034-satlib-smtlib-30s/ac8b19f1f65825436a503238"
+        },
+        "029ce7ad": {
+          "sha": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
+          "outcome": "sat",
+          "instructions": 5491175,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/029ce7adb9bcbbdd7398177c0654d84edace61a7/benchmark/migration034-satlib-smtlib-30s/3a3d3d4f5c448142cf572495"
+        },
+        "8ca3622a": {
+          "sha": "8ca3622a8e20a829a5105c670456ca87373e8b61",
+          "outcome": "sat",
+          "instructions": 6068688,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/8ca3622a8e20a829a5105c670456ca87373e8b61/benchmark/migration034-satlib-smtlib-30s/0a73cdb3f82f1a5a018cdec8"
+        },
+        "before": {
+          "sha": "af14b6d2f800685b2737b02189cdae44d23f5459",
+          "outcome": "sat",
+          "instructions": 5441218,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/af14b6d2f800685b2737b02189cdae44d23f5459/benchmark/migration034-satlib-smtlib-30s/2eff70e086fa30e027828b2c"
+        },
+        "after": {
+          "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+          "outcome": "sat",
+          "instructions": 6092734,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/60114626f64d89e570b1f568"
+        },
+        "rollback": {
+          "sha": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+          "outcome": "sat",
+          "instructions": 6126853,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c/benchmark/migration034-satlib-smtlib-30s/2eeab81c4c9e8087d93502d6"
+        },
+        "cost-fixed": {
+          "sha": "bcee40a4252bd2af9a2e831bd20d0faa2968ea49",
+          "outcome": "sat",
+          "instructions": 5894282,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/benchmark/migration034-satlib-smtlib-30s/9c46c94dd31f934d79d93f48"
+        },
+        "1106bd4d": {
+          "sha": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
+          "outcome": "sat",
+          "instructions": 5454807,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a/benchmark/migration034-satlib-smtlib-30s/6e4435ab346f8691d1f81e88"
+        },
+        "c8abf146": {
+          "sha": "c8abf146a836e96b0d071594452519fd3403c749",
+          "outcome": "sat",
+          "instructions": 5464610,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/c8abf146a836e96b0d071594452519fd3403c749/benchmark/migration034-satlib-smtlib-30s/d4d710307b0178fe49213abb"
+        },
+        "68c36c44": {
+          "sha": "68c36c4491fcf20232bcae61292e64e6c1425994",
+          "outcome": "sat",
+          "instructions": 5458753,
+          "counters": {
+            "Decisions": "3",
+            "Propagations": "8",
+            "Conflicts": "1",
+            "Restarts": "0"
+          },
+          "artifacts": "precompile/68c36c4491fcf20232bcae61292e64e6c1425994/benchmark/migration034-satlib-smtlib-30s/cf5349bda9786cc16a059d26"
+        }
+      }
+    }
+  }
 }
