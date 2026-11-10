@@ -829,7 +829,7 @@ mod typed_publication_regressions {
     fn repeated_value_reads_preserve_witnesses_and_do_not_cross_sort_contexts() {
         for sort_name in ["U", "V"] {
             let mut ctx = Context::new();
-            ctx.execute_script(&format!("(declare-sort {sort_name} 0)"))
+            ctx.execute_script(&format!("(declare-sort {sort_name} 0)(declare-const a {sort_name})"))
                 .expect("sort declaration");
             let mut parse = ParseBack {
                 sorts: ctx.witness_sorts(),
