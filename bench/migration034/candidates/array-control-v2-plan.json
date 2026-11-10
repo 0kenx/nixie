@@ -1,0 +1,37 @@
+{
+  "stage": "flag-gated matched-null after coverage/model screen; no default acceptance",
+  "features": [
+    "guard-boundary-sampler",
+    "array-completion-search",
+    "finite-uf-model-search",
+    "datatype-publication-proposals",
+    "numeric-projection-proposals"
+  ],
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "controls": {
+    "guard-boundary-sampler": "Construct the same fresh boundary slots and neighbours, then translate their integer/BV contents by a seeded nonzero exact offset in the null. Same slots, scan, substitution/evaluation and caps. Original candidates are retained. All generated instances still require concrete counterexample evaluation.",
+    "array-completion-search": "Build the same bounded default pools, then translate their scalar contents by a seeded nonzero exact offset in the null. Same pool lengths, proposal construction, evaluation and certificate paths; mutate before validation only. Unsupported scalar types are marked inactive, never credited.",
+    "finite-uf-model-search": "Solve the identical bounded finite query in both arms. Rewrite each observed result through the same domain-index selection loop: identity in real, seeded nonidentity domain permutation per observation in null. Identical typed table sizes and independent certificate. Singleton domains cannot be active controls.",
+    "datatype-publication-proposals": "Construct identical datatype pools and proposal slots. Real uses the original distinct-first/Cartesian values; null scrambles each slot within the same typed pool, with the same proposal cap and acceptance test. It breaks the systematic tuple contents, not the validator. Record early-exit effects separately from the opportunity budget.",
+    "numeric-projection-proposals": "Build and sort the same numeric argument points. Rewrite every output slot through a cyclic permutation: identity in real, seeded nonidentity rotation in null. Preserve point count, value multiset, interval construction and certificate path. Equal-valued or singleton tables are inactive."
+  },
+  "acceptance": "No incorrect answer/model; active semantic intervention on at least ten paired actual solver seeds; baseline distribution and off/real/null solved lists; fresh replay. Same intervention slots and caps at a shared entry state must be verified from source and telemetry. Post-intervention termination differences are outcomes, not evidence of equal work. No acceptance from inactive or mismatched controls. Report complete-instruction real/null costs and null/real benefit ratios plus coverage. No speed claim inside +/-5%. Surviving feature must also pass full sample cost, pinned gate/parity, cumulative default production cost and full release suite.",
+  "models": "Replay every recovered model; finite UF requires explicit nonvacuous finite-domain closure. Partial-consistent and unresolved are not model_ok.",
+  "cost": "Retired instructions for the whole process; 30 seconds, 8 GiB, two pinned lanes. Instrumentation cost is included and removed for the final production cost check.",
+  "revision": "Array second-stage control: also transform every default/store value returned by the fill query before building/evaluating/certifying its proposal.",
+  "prior_result": "All eleven real and default-null cells recovered the array model at neutral cost (0.999960 real/null); source inspection showed the pinned fill path reconstructed the required values. Default content alone does not explain the capability. Preserve those cells, do not label them feature acceptance.",
+  "scope": "Only array-completion-search is remeasured on the new binary; other four completed control matrices remain unchanged."
+}
