@@ -70,3 +70,5 @@ registered before declarations are emitted. Pure-real logics can reject printed
 `to_real` casts; these remain unresolved in the generic judge. Any explicit
 replay in a broader logic must document why user sort names and formula semantics
 remain valid (see the migration combined-replay controls).
+All input identifiers, including datatype constructors/selectors and mutually
+recursive definition names, are reserved against witness substitution.

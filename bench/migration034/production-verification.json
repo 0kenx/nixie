@@ -1,0 +1,249 @@
+{
+  "rust_source_commit": "07c1fe03",
+  "logs": "precompile/7718c768689032c0e4be5d7d2c2dc2df68d54b19/benchmark/final-capability-verification",
+  "input_note": "verification-input.json in logs records the guard regression already present when the process began",
+  "steps": [
+    {
+      "step": "clippy",
+      "argv": [
+        "cargo",
+        "clippy",
+        "--release",
+        "--all-features",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 11.280346632003784
+    },
+    {
+      "step": "fmt",
+      "argv": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 3.300337553024292
+    },
+    {
+      "step": "doc",
+      "argv": [
+        "cargo",
+        "doc",
+        "--release",
+        "--no-deps",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "seconds": 25.095877408981323
+    },
+    {
+      "step": "build-all",
+      "argv": [
+        "cargo",
+        "build",
+        "--release",
+        "--all-features"
+      ],
+      "exit_code": 0,
+      "seconds": 163.79374885559082
+    },
+    {
+      "step": "nextest",
+      "argv": [
+        "cargo",
+        "nextest",
+        "run",
+        "--release",
+        "--workspace",
+        "--all-features",
+        "--no-fail-fast"
+      ],
+      "exit_code": 0,
+      "seconds": 1372.2430930137634
+    },
+    {
+      "step": "doctests",
+      "argv": [
+        "cargo",
+        "test",
+        "--release",
+        "--workspace",
+        "--all-features",
+        "--doc"
+      ],
+      "exit_code": 0,
+      "seconds": 112.65280795097351
+    },
+    {
+      "step": "parity",
+      "argv": [
+        "./bench/z3_parity/run_parity.sh"
+      ],
+      "exit_code": 0,
+      "seconds": 172.1105945110321
+    },
+    {
+      "step": "build-cli",
+      "argv": [
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "nixie-cli"
+      ],
+      "exit_code": 0,
+      "seconds": 146.6659801006317
+    },
+    {
+      "step": "perf-gate",
+      "argv": [
+        "bench/perf_gate/run_gate.sh",
+        "/media/data/proj/nixie/target/release/nixie"
+      ],
+      "exit_code": 0,
+      "seconds": 251.07176089286804
+    }
+  ],
+  "nextest": {
+    "run": 12797,
+    "passed": 12797,
+    "skipped": 20
+  },
+  "doctests": {
+    "passed": 117,
+    "ignored": 31
+  },
+  "parity": {
+    "z3_version": "4.16.0",
+    "counts": {
+      "Correct": 171,
+      "Inconclusive": 6
+    },
+    "inconclusive": [
+      {
+        "benchmark": "array_unique.smt2",
+        "logic": "AUFLIA",
+        "nixie_result": "Unsat",
+        "z3_result": "Unknown",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 1321401
+        },
+        "z3_time": {
+          "secs": 1,
+          "nanos": 360060061
+        },
+        "match_status": "Inconclusive"
+      },
+      {
+        "benchmark": "congruence_closure.smt2",
+        "logic": "UFLIA",
+        "nixie_result": "Unknown",
+        "z3_result": "Sat",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 2920465
+        },
+        "z3_time": {
+          "secs": 0,
+          "nanos": 22997793
+        },
+        "match_status": "Inconclusive"
+      },
+      {
+        "benchmark": "division_property.smt2",
+        "logic": "UFLIA",
+        "nixie_result": "Unknown",
+        "z3_result": "Sat",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 1004655
+        },
+        "z3_time": {
+          "secs": 0,
+          "nanos": 24879694
+        },
+        "match_status": "Inconclusive"
+      },
+      {
+        "benchmark": "idempotent.smt2",
+        "logic": "UFLIA",
+        "nixie_result": "Unknown",
+        "z3_result": "Sat",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 574505
+        },
+        "z3_time": {
+          "secs": 0,
+          "nanos": 33942423
+        },
+        "match_status": "Inconclusive"
+      },
+      {
+        "benchmark": "injective.smt2",
+        "logic": "UFLIA",
+        "nixie_result": "Unknown",
+        "z3_result": "Sat",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 11862973
+        },
+        "z3_time": {
+          "secs": 0,
+          "nanos": 43756439
+        },
+        "match_status": "Inconclusive"
+      },
+      {
+        "benchmark": "surjective.smt2",
+        "logic": "UFLIA",
+        "nixie_result": "Unknown",
+        "z3_result": "Sat",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 2228245
+        },
+        "z3_time": {
+          "secs": 0,
+          "nanos": 26722185
+        },
+        "match_status": "Inconclusive"
+      }
+    ]
+  },
+  "perf_gate": "PASS; see perf-gate.log",
+  "production_cost": {
+    "source": "c6b8543957269eb148be7b247de39f6ba6786cc9",
+    "binary_sha256": "cf7ed2d159bbf95188d03f9642f5f0ce26a8274a9eb5eeef0930e0d79edc5244",
+    "complete_work": {
+      "correctness-scoped": {
+        "pairs": 34,
+        "ratio": 0.9999131701089169
+      },
+      "cumulative-array-completion-search": {
+        "pairs": 34,
+        "ratio": 1.0005955508097106
+      }
+    },
+    "incomplete_regressions": [],
+    "cost_gate": "PASS",
+    "disagreements": []
+  },
+  "production_model_responses": {
+    "cases": 74,
+    "all_equal": true,
+    "validated_printed_models": 57,
+    "report": "production-model-equivalence.json"
+  },
+  "diagnostic_tool_tests": {
+    "passed": 16,
+    "actual_z3_controls": "combined-replay-corrections.json"
+  }
+}

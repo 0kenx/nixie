@@ -1,5 +1,55 @@
 # Correctness-only reconstruction and per-capability gates
 
+## Final accepted result
+
+The rejected migration has been reconstructed as correctness-only patches,
+then each additional capability screened and gated separately. The production
+source is `c6b8543957269eb148be7b247de39f6ba6786cc9`; `production-manifest.json` pins its executable hash
+and every input. `production-verification.json` records all required checks.
+
+| Snapshot / measure | Retired-instruction ratio |
+|---|---:|
+| Original rejected migration / pre-migration SMT (23 fixed pairs) | 1.367811x |
+| Verified correctness-only / pre-migration SMT (same 23 pairs) | 1.077592x |
+| Final production / pre-migration SMT (same 23 pairs) | 1.077523x |
+| Final production / correctness-only SMT (24 decisive pairs) | 0.999820x |
+| Final production / correctness-only SMT (34 unchanged completed responses) | 0.999913x |
+| Final production / pre-migration SAT (24 pairs) | 0.996903x |
+
+Measurements use 24 SATLIB and 48 SMT-LIB samples, a 30-second cap, unchanged
+CPU/memory settings and complete-process user instructions. Existing Z3 4.16.0,
+Kissat 4.0.4 and CaDiCaL 3.0.1 cells were reused. The final production executable
+contains no experimental policy selectors or parse cache. Added capabilities
+are cost-neutral against the correctness-only build on the registered sample;
+this is not a general speedup claim. The residual correctness cost has not
+been proved irreducible.
+
+All required release checks pass: build, Clippy with warnings denied, format,
+documentation with warnings denied, **12,797 workspace tests**
+(20 skipped), **117 doctests** (31 ignored),
+Z3 parity (**171 agreements, zero disagreements,
+6 inconclusive**) and the unchanged pinned SAT gate.
+The independent combined-model controls validate all 57 printed models.
+
+Production retains 24/24 SAT and 24/48 SMT decisive answers, with no lost solve
+or new incomplete result relative to the correctness-only candidate. Relative
+to pre-migration, `pipeline-invalid.smt2` remains a timeout and
+`unconstrained05.smt2` changes from an error to Sat; the fixed 23-pair ratio
+excludes the censored pipeline case. The existing `shift1add.29940.smt2`
+allocation error remains. Five former UFLIA parity successes remain honest
+Unknowns: congruence closure, division property, idempotence, injectivity and
+surjectivity. The sixth inconclusive parity result is Z3 Unknown on
+`array_unique.smt2`. These are not counted as agreements.
+
+Accepted additions: overflow predicates, QF_AUF alias, refinement statistics,
+finite-array completeness, guard-boundary sampling, finite-UF model search,
+datatype publication proposals, numeric projection, array completion, and
+diagnostic tools. Dropped: general-function retry, function-else search,
+isolated zero-division proposals, redundant expanded datatype separation and
+the unverifiable formal harness. The additional printed-value cache is also
+dropped for no material benefit. Per-feature reasons and evidence are in
+`bench/migration034/rebuild-plan.json`; historical attempts below remain intact.
+
 The user rejects the remaining 1.28973x cost and requests rollback of the
 migration, reapplication of correctness patches only, measurement of that
 baseline, and an apply/drop decision for each additional change under the gate
@@ -548,3 +598,11 @@ zero-division proposal, expanded datatype separation, and the neutral parse
 cache. Its first compile caught an array helper located after rejected code;
 the identical helper is retained beside its sole accepted caller. Full release
 verification and a new production-binary cost measurement remain required.
+
+Final production follow-through: all 74 logical responses are byte-identical
+to the validated combined controls, so the 57 printed-model validations apply
+to the actual production executable as well (`production-model-equivalence.json`).
+The final tool review also protects every input identifier, including datatype
+constructors/selectors and mutually recursive names, from witness renaming.
+Sixteen focused tool tests and actual Z3 valid/false constructor-name controls
+pass. No Rust source changed after the completed release verification.

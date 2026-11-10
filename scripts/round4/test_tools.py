@@ -156,6 +156,19 @@ class OracleTests(unittest.TestCase):
         self.assertIn('((@uc_U_0 U)) (= @uc_U_0 uc__U__4)', text)
         self.assertNotIn('(declare-const uc__U__0 ', text)
 
+    def test_witness_spelling_does_not_capture_constructors_or_recursive_names(self):
+        items = [(e[0], e) for e in c.parse_all(
+            '(declare-datatype D ((@uc_D_0) (other)))'
+            '(declare-const d D)'
+            '(define-funs-rec ((@uc_D_1 () D)) ((@uc_D_0)))')]
+        defs = {'d': ['define-fun', 'd', [], 'D', '@uc_D_0']}
+        text, missing, witnesses = zjudge.replay_text(
+            items, defs, None, '(assert (= d @uc_D_1))')
+        self.assertFalse(missing)
+        self.assertFalse(witnesses)
+        self.assertIn('(define-fun d () D @uc_D_0)', text)
+        self.assertIn('(assert (= d @uc_D_1))', text)
+
 
 if __name__ == '__main__':
     unittest.main()

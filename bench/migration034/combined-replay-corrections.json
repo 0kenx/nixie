@@ -181,5 +181,76 @@
       "consistency": "sat",
       "validity": "unsat"
     }
-  ]
+  ],
+  "constructor_name_controls": [
+    {
+      "model_value": "@uc_D_0",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "model_value": "other",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 1,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [
+          [
+            "FALSIFYING",
+            0
+          ]
+        ],
+        "per_check": {
+          "0": "sat/falsifying"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  ],
+  "final_judge_sha256": "c69ca4364ddb9606356012a619258140380421fe807e6693acf803fcba824a1e",
+  "unit_tests_passed": 16
 }

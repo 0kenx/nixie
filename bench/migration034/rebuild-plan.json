@@ -300,8 +300,8 @@
   "additional_capabilities": [
     {
       "id": "overflow-syntax",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "6f3334bd"
@@ -313,12 +313,14 @@
       ],
       "requires_matched_null": false,
       "isolated_patch": "bench/migration034/candidates/patches/overflow-syntax.patch",
-      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar.",
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json"
     },
     {
       "id": "qf-auf-alias",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "2e06106e"
@@ -331,12 +333,14 @@
       ],
       "requires_matched_null": false,
       "isolated_patch": "bench/migration034/candidates/patches/qf-auf-alias.patch",
-      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar.",
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json"
     },
     {
       "id": "refinement-statistics",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "ed02c41a"
@@ -349,12 +353,14 @@
       ],
       "requires_matched_null": false,
       "isolated_patch": "bench/migration034/candidates/patches/refinement-statistics.patch",
-      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar.",
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json"
     },
     {
       "id": "array-completion-search",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "029ce7ad",
@@ -365,12 +371,17 @@
       "focused_gates": [
         "upstream034_array_completion"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json",
+      "matched_controls": "policy-control-summary.json",
+      "independent_models": "policy-control-model-validation.json",
+      "cumulative_gates": "cumulative-policy-gates.json"
     },
     {
       "id": "finite-uf-model-search",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "8ca3622a"
@@ -381,12 +392,17 @@
         "upstream034_model_publication",
         "upstream034_nested_interfaces"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json",
+      "matched_controls": "policy-control-summary.json",
+      "independent_models": "policy-control-model-validation.json",
+      "cumulative_gates": "cumulative-policy-gates.json"
     },
     {
       "id": "datatype-publication-proposals",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "8ca3622a"
@@ -396,12 +412,17 @@
       "focused_gates": [
         "upstream034_datatype_separation"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json",
+      "matched_controls": "policy-control-summary.json",
+      "independent_models": "policy-control-model-validation.json",
+      "cumulative_gates": "cumulative-policy-gates.json"
     },
     {
       "id": "numeric-projection-proposals",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "8ca3622a"
@@ -411,12 +432,17 @@
       "focused_gates": [
         "upstream034_model_publication"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json",
+      "matched_controls": "policy-control-summary.json",
+      "independent_models": "policy-control-model-validation.json",
+      "cumulative_gates": "cumulative-policy-gates.json"
     },
     {
       "id": "function-else-search",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-failed",
+      "decision": "drop",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "8ca3622a"
@@ -426,12 +452,13 @@
       "focused_gates": [
         "upstream034_model_publication"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "gate_result": "No observed coverage gain and 1.108365x unchanged-work cost in the extended screen."
     },
     {
       "id": "zero-division-proposal",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-failed",
+      "decision": "drop",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "8ca3622a"
@@ -441,12 +468,13 @@
       "focused_gates": [
         "upstream034_model_publication"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "gate_result": "No isolated coverage gain; projection dependency excluded explicitly, so no unsupported claim about all possible combinations."
     },
     {
       "id": "guard-boundary-sampler",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "7034f149"
@@ -456,7 +484,12 @@
       "focused_gates": [
         "upstream034_guard_points"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json",
+      "matched_controls": "policy-control-summary.json",
+      "independent_models": "policy-control-model-validation.json",
+      "cumulative_gates": "cumulative-policy-gates.json"
     },
     {
       "id": "formal-harness",
@@ -472,13 +505,13 @@
         "nixie-sat/formal/test_prepare.py"
       ],
       "requires_matched_null": false,
-      "gate_result": "Required cargo-formal executable and unpublished oxiformal checkout are unavailable. Plain concrete tests cannot establish the promised formal capability; no symbolic proof is claimed.",
+      "gate_result": "Required unpublished verifier unavailable; plain tests are not formal verification.",
       "runtime_cost": "No production binary change; rejected before a runtime experiment."
     },
     {
       "id": "finite-array-completeness",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "1da2864c"
@@ -491,12 +524,14 @@
       ],
       "requires_matched_null": false,
       "isolated_patch": "bench/migration034/candidates/patches/finite-array-completeness.patch",
-      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar.",
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json"
     },
     {
       "id": "expanded-datatype-separation",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-failed",
+      "decision": "drop",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "93fcd2ce"
@@ -507,7 +542,8 @@
         "upstream034_datatype_separation",
         "model_builder::separation"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "gate_result": "Observed coverage is dominated by accepted datatype publication; no incremental benefit justifies a second search."
     },
     {
       "id": "general-function-retry",
@@ -534,7 +570,7 @@
         "UFLIA/injective",
         "UFLIA/surjective"
       ],
-      "gate_result": "Default recursive witness recovered, but all eleven common-seed off/real/null runs already solve. Null is inactive at ten seeds and intervention counts differ at the active seed (65 real, 64 null). No valid semantic-merit inference; fresh seed has no gain.",
+      "gate_result": "No valid active matched-null semantic advantage; ten seed controls inactive, fresh seed has no gain.",
       "cost_report": "function-retry-results.json",
       "matched_control": "retry-control-summary.json",
       "smt_cost_over_core": 1.0005229342542894,
@@ -554,8 +590,10 @@
         "scripts/round4/test_tools.py"
       ],
       "requires_matched_null": false,
-      "gate_result": "Ten Python tests and four actual Z3 4.16.0 controls pass, including falsifying, partial-consistent and complete valid model outcomes. Partial-model success misclassification fixed. No Rust/Cargo input or solver binary change; existing cost cells reused.",
-      "runtime_cost": "No Rust/Cargo changes; the solver binary and its measurement remain identical."
+      "gate_result": "16 focused Python tests and actual Z3 4.16.0 controls pass; token-safe witness replay, selector underspecification and logic-specific sort names are handled honestly. Strict-logic cast limitations remain unresolved unless an explicit compatible replay is recorded. No solver runtime changes.",
+      "runtime_cost": "No Rust/Cargo changes; the solver binary and its measurement remain identical.",
+      "final_verification": "production-verification.json",
+      "final_cost": "production-gate.json"
     }
   ],
   "numeric_uf_pins": {
@@ -593,5 +631,67 @@
     "sat_solved": 24,
     "smt_solved": 24,
     "decisive_disagreements": 0
+  },
+  "optional_optimization": {
+    "id": "printed-value-cache",
+    "decision": "drop",
+    "reason": "No coverage benefit; overall 0.997575x and targeted 0.966805x are neutral, insufficient for extra mutable state.",
+    "report": "value-cache-results.json"
+  },
+  "production_snapshot": {
+    "source": "c6b8543957269eb148be7b247de39f6ba6786cc9",
+    "binary_sha256": "cf7ed2d159bbf95188d03f9642f5f0ce26a8274a9eb5eeef0930e0d79edc5244",
+    "complete_work": {
+      "correctness-scoped": {
+        "pairs": 34,
+        "ratio": 0.9999131701089169
+      },
+      "cumulative-array-completion-search": {
+        "pairs": 34,
+        "ratio": 1.0005955508097106
+      }
+    },
+    "incomplete_regressions": [],
+    "cost_gate": "PASS",
+    "disagreements": [],
+    "verification": "production-verification.json",
+    "applied": [
+      "array-completion-search",
+      "datatype-publication-proposals",
+      "diagnostic-tools",
+      "finite-array-completeness",
+      "finite-uf-model-search",
+      "guard-boundary-sampler",
+      "numeric-projection-proposals",
+      "overflow-syntax",
+      "qf-auf-alias",
+      "refinement-statistics"
+    ],
+    "dropped": {
+      "function-else-search": "No observed coverage gain and 1.108365x unchanged-work cost in the extended screen.",
+      "zero-division-proposal": "No isolated coverage gain; projection dependency excluded explicitly, so no unsupported claim about all possible combinations.",
+      "expanded-datatype-separation": "Observed coverage is dominated by accepted datatype publication; no incremental benefit justifies a second search.",
+      "general-function-retry": "No valid active matched-null semantic advantage; ten seed controls inactive, fresh seed has no gain.",
+      "formal-harness": "Required unpublished verifier unavailable; plain tests are not formal verification."
+    },
+    "original_smt_cohort": {
+      "original_pairs": 23,
+      "candidate_retained": 23,
+      "instructions_candidate_over_before": 1.0775227423803195,
+      "instructions_candidate_over_after": 0.7877717651462955
+    },
+    "counts": {
+      "SAT:production": {
+        "sat": 12,
+        "unsat": 12
+      },
+      "SMT:production": {
+        "timeout": 13,
+        "unsat": 18,
+        "error": 1,
+        "sat": 6,
+        "unknown": 10
+      }
+    }
   }
 }

@@ -1,0 +1,17 @@
+{
+  "source": "c6b8543957269eb148be7b247de39f6ba6786cc9",
+  "binary_sha256": "cf7ed2d159bbf95188d03f9642f5f0ce26a8274a9eb5eeef0930e0d79edc5244",
+  "complete_work": {
+    "correctness-scoped": {
+      "pairs": 34,
+      "ratio": 0.9999131701089169
+    },
+    "cumulative-array-completion-search": {
+      "pairs": 34,
+      "ratio": 1.0005955508097106
+    }
+  },
+  "incomplete_regressions": [],
+  "cost_gate": "PASS",
+  "disagreements": []
+}

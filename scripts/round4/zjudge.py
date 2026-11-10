@@ -127,6 +127,16 @@ def replace_uc(text, ucs, protected, occupied, mapping):
 def replay_symbols(items, defs, goal):
     """Reserve user symbols and binders before allocating witness names."""
     protected = declared_names(items) | set(defs)
+    # Every identifier supplied by the input belongs to the user, including
+    # datatype constructors/selectors and mutually recursive definitions.
+    # A witness is fresh output syntax, never an input identifier to rename.
+    original = [e for _, e in items]
+    while original:
+        node = original.pop()
+        if isinstance(node, list):
+            original.extend(node)
+        elif isinstance(node, str) and not node.startswith('"'):
+            protected.add(node)
     occupied = set()
     stack = [e for _, e in items] + list(defs.values()) + c.parse_all(goal)
     while stack:

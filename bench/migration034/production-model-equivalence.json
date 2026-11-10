@@ -1,0 +1,694 @@
+{
+  "source": "c6b8543957269eb148be7b247de39f6ba6786cc9",
+  "rows": [
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_mutually_recursive_datatypes_is_never_shortcircuited.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e414843850d1cf9ffce3e5a9",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/3f77a4fcc2ff4767c90eb90f"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/const_array_consistent_stays_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/ff0013f84eef478bc795d5f2",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/96e90d8a292d0c62f6abbe08"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set9_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/fc957230b3b0d479d653c65a",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/5e3c8b51912a1e5d3749283b"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set19_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/cdc55bdfc97d9ce020de9293",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/06e2f3af21ab4bc7dfb7d69b"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/negated_bounded_exists_outside_range_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/6dc1bc3b40eddc6ee1dcaf54",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/5ae218abd00cbadc94d338f9"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set16_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/3a2e17c75f994745d686637d",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/630f5f340a0a189d978cdc9c"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/each_mbqi_round_costs_no_more_clauses_than_the_first.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/7b93d25a67e1523627ce68bc",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/3b9f6378d9d95f503810866c"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/enum-publication.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/7eb30a66374445bf8cf2c07b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/5ae9d28e3e5d8dd8ce793572"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/shadowed-array-completion.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/8188bf1d591b76b41fbbfe83",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/1fb40716a0ce14659642a729"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/9d7e9a0b8205fc0da20bcd45",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/9f75ae044971fb8c005c231a"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-distinct_over_composite_finite_datatype_exact_fit_is_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/a86a48305d23df4c30862249",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/6be1a826813ac226194becbd"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflia_monotone_relevant_terms_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/c808037c2fd93ad245a6d4d0",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/cb1fec0e9e8d1c01d5a61589"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-symbolic_argument_solves_for_the_variable.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/0477c78208561c316412191b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/f193b8fda932755a7b8e381e"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-interposed_check_must_not_lose_a_kept_instantiation.smt2",
+      "answers": [
+        "unknown",
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/2ebf75f11570342d9d688a3e",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/6fa1c1e4009fb7aa8a94bbc5"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflra_monotone_var_var_guard_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/c3c182ff29643a0862452323",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/e3d4e2c03ab1790b8645cb17"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflia_injective_bounded_box_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/19d238729ef78ebebe32be9b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/40af609d6b0d4c6a4fe7bf71"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-zero-division-publication.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/055ff850a3f11536757012fa",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/7bf5886de0ca0644016220e0"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-congruence_closure.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/b437e3e364ac21d7c22b040f",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/0861a22fa5574fda525a297e"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-idempotent.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/49ed55a0f51f8fbedb45095f",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/ee6c7da336a92eac205a3161"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-monotone_basic.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/cf863d5f827f0ebbe9abbd68",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/b2572ad19083d615da05d141"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-real_monotone.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/96c56e9119895d75259ae016",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/710f7ab17c245a8e6034983b"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-0.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/ed748faf09b4529edec8be90",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/2d5003f2191929e7f21fbf37"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-2.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/fa480169be929d955cbaa322",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/02e71a859c72be92aec034e0"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-scopes.smt2",
+      "answers": [
+        "unsat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/88511e30d0bcc151ce6e2fb9",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/c55aeae799f426e1b19d4d4d"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-01.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/3832812b70fb69d629e2f25f",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/a3455ca1008ebfb3274d44ec"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-03.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/01094946bb4d8a4b5fa62e3b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/7cccaed253fb4b187bf2a4e1"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-05.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/083d540b009dad0f50a14588",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/8db7f972c73388b325d30180"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-07.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/dee4e931c1f68dbd5692db4d",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/9e0c09eb481f9af40cf9d26b"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-09.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/48dfeef4f33c4a11893616d7",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/11e2e57554cf75780dc6d685"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-11.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/2533675809730bcd28fd5ec1",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/6b87a5e2ff9fccbb82fbe69a"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-13.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/87627fb2f4d20af81af83674",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/beb1eb9d41a5a661ca59aac4"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-15.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/3208229cb7e83e751062b633",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/1f236e663154f8b2d21eaf54"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-17.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/943d044dca9c17cec93ec5eb",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/10ffe77df0a19d3ecf3c9af9"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-equality_model_partition_is_replaced_on_each_check.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/b1a241d73daa29989c66f1b2",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/de4fa51cad6e63c6a044809e"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-affine_certificate_is_the_published_function.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/1ba9669017f8f6949cf44bdb",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/efe500bb3eab5c74053147ba"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-distinct_arrays_publish_the_extensional_witness.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/f5a948fce1dbbb61c57dd5a0",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/41ab86917945f63f62b62e3d"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/else-integer-positive-range.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/03474f924580cbf9ff2a4bc1",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/8146485d5c541026fbfbdb6f"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/7b8f148729c7dff943d3e814",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/1a72491b13d76e12d66117b4"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_composite_finite_datatype_exact_fit_is_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/f00d81342b8fd19be2859f1b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/b1e59a03d3580bf5514f66a7"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_monotone_relevant_terms_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/a45e02f78cc68bb320c2ea2c",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/020c35769163984f30ca4800"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/symbolic_argument_solves_for_the_variable.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e5e4498ef09e368145029a20",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/0c2439d3ce7093d9d7c96291"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/interposed_check_must_not_lose_a_kept_instantiation.smt2",
+      "answers": [
+        "unknown",
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/6e98d808df12caf4f714ce9b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/8a0b6140c51b3a475dcfa3d8"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflra_monotone_var_var_guard_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/859d57f9799ec8d9c6b6cbcd",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/3c8a813f6d7a3b8d2b6a7008"
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_injective_bounded_box_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/fe69465400e620304fb53cf0",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/db0401c415e5222423d4493a"
+    },
+    {
+      "path": "bench/migration034/correctness-cases/zero-division-publication.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/788abea270f5908b675f2744",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/61f3309d143fd997f3fe7ad8"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-distinct_over_mutually_recursive_datatypes_is_never_shortcircuited.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/2c449bda431c5685747d3ae0",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/17f8d315a130864180b16633"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-const_array_consistent_stays_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/0decb50f3855adce563e7f9b",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/ace07baab9679915c4f8ecb6"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set9_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e02a995f9bd27b22c361fd76",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/7c23aa13af7667b7ea0de228"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set19_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/be55112f4d20fc35117b40fd",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/be85d3410e8928ec79664ead"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-negated_bounded_exists_outside_range_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e9b74048b842651675fe9521",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/ade160b80f0d64a359f7dab9"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set16_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/3b96f816638a992a25fc99b5",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/ef0949f62efa096a588c9754"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-each_mbqi_round_costs_no_more_clauses_than_the_first.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/f8a81e80a2edc38c5369b3d4",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/8f7ca8a8affcf21270dc2a37"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-enum-publication.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/9804edb1c2a7db75ce666101",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/7ce5db49250128883a3c696c"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-shadowed-array-completion.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/cae56f3f7c9547b20061782c",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/25d89f215941ca5500391fae"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-division_property.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e72e8b72f1709dd4d118b0c7",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/899a1ebba1da7d13107973fe"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-injective.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/9422dabb728557f78451a889",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/a6072496e132958576ff1734"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-surjective.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/391bbc8bb05da9f60ca99588",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/4f4c73182950c354728cef6a"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/finite-uf-involution.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/ed79708c4d255bfe79524390",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/c67229376f09e0524378e5ba"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-1.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/cd2b6d422deeb51d2aee4f22",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/b94435caaed5f383a797e7e6"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-3.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/31bb948cd4d058752ce66aa2",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/1f4d3b8ab6a994cacadbaece"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-00.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/5cbf6cb6fe3e5cefd587e84c",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/833811e600212f0325198728"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-02.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/a75747f78da948fa16821a05",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/33e51c926551a5d9a58a80f7"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-04.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/1a14cb901386fb1e33a79746",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/d0fd41ac013fff43f74d835c"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-06.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/81077f3362028029bb3e7198",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/0cba35d1159c60c8dc061da8"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-08.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/e795ea7950668457994e73c1",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/e30bd62fe8e5d7f39441d398"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-10.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/a202263ea671342478ec55eb",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/a431997a67e5932b265fd3de"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-12.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/fbd5f6b7abeab8f4709ab74e",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/e9ce5081d6f4b016d4fa5a3c"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-14.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/714601b6919a0ab528a3478c",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/f489bf1f11bbb091b5cb9d8d"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-16.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/b29ed49cba70f8d776a7651d",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/74437629c2dc312848e44d6c"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-18.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/b55ab67fc86dc96d4f5386e1",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/be79b2abc6047c5ee3a8bd0a"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-witness_symbols_do_not_capture_declarations_or_rewrite_strings.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/075ed633bd3275178cdc369e",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/40857e43768ed7ffe1530ed6"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-uninterpreted_constants_and_function_tables_share_witnesses.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/3972f37f1172bc87543ecfb3",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/2adf943f4d43d4ceab6d8f67"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-published_models_follow_assumptions_and_scope_changes.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/88bfb4686eaf97e9a26408e7",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/bab618cd1d7ff06b9f9a68cf"
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/else-real-positive-range.smt2",
+      "answers": [
+        "sat"
+      ],
+      "same_logical_response": true,
+      "production_artifacts": "precompile/c6b8543957269eb148be7b247de39f6ba6786cc9/benchmark/migration034-publication-controls-30s/7e442169bb99b7a5ee9d8d0e",
+      "validated_diagnostic_artifacts": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-publication-controls-30s/00efc169384d5a21fbda391e"
+    }
+  ],
+  "all_equal": true,
+  "validation_reused": [
+    "combined-publication-validation.json",
+    "combined-replay-corrections.json"
+  ],
+  "note": "Byte-identical logical response means identical printed model/values and verdict sequence; timing/statistics trailer excluded. No unresolved result is reclassified by equality alone."
+}
