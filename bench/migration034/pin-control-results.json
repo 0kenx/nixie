@@ -1,0 +1,425 @@
+{
+  "rows": 66,
+  "cases": {
+    "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2": {
+      "pin-off": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          23824006834,
+          29774717520.5,
+          36468915631
+        ]
+      },
+      "pin-null": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          23827714736,
+          30648963588.5,
+          39342038994
+        ]
+      },
+      "pin-real": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          73647506079,
+          408215314371.0,
+          436275953118
+        ]
+      },
+      "real_over_null_geomean": 11.193483060492959,
+      "joint_solved": 10,
+      "replay": {
+        "pin-real": {
+          "outcome": "unsat",
+          "instructions": 146187417468
+        },
+        "pin-null": {
+          "outcome": "unsat",
+          "instructions": 26357875330
+        },
+        "pin-off": {
+          "outcome": "unsat",
+          "instructions": 30847463861
+        }
+      },
+      "checks": [
+        {
+          "seed": 7919,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 23757,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 47514,
+          "identical_cnf": true,
+          "null_perturbs": false,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 71271,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "identical_cnf": true,
+          "null_perturbs": false,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(31) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(917) = 4 Some(Var(Spur(32)))"
+            ],
+            "pin-off": []
+          }
+        }
+      ]
+    },
+    "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2": {
+      "pin-off": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          11971018481,
+          15398435113.5,
+          33810775432
+        ]
+      },
+      "pin-null": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          11972576823,
+          16990700452.0,
+          26427628879
+        ]
+      },
+      "pin-real": {
+        "solved": 10,
+        "total": 10,
+        "outcomes": {
+          "unsat": 10
+        },
+        "solved_instructions_min_median_max": [
+          42209441616,
+          77529252937.5,
+          121671260277
+        ]
+      },
+      "real_over_null_geomean": 4.291746049523456,
+      "joint_solved": 10,
+      "replay": {
+        "pin-off": {
+          "outcome": "unsat",
+          "instructions": 15658177125
+        },
+        "pin-real": {
+          "outcome": "unsat",
+          "instructions": 75046098935
+        },
+        "pin-null": {
+          "outcome": "unsat",
+          "instructions": 20129653323
+        }
+      },
+      "checks": [
+        {
+          "seed": 7919,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 15838,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 39595,
+          "identical_cnf": true,
+          "null_perturbs": false,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "identical_cnf": true,
+          "null_perturbs": false,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 63352,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ],
+            "pin-off": []
+          }
+        },
+        {
+          "seed": 87109,
+          "identical_cnf": true,
+          "null_perturbs": true,
+          "pins": {
+            "pin-off": [],
+            "pin-real": [
+              "[cost-pin] TermId(28) = 4 Some(IntConst(4))"
+            ],
+            "pin-null": [
+              "[cost-pin] TermId(860) = 4 Some(Var(Spur(30)))"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

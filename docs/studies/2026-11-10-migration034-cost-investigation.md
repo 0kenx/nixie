@@ -119,3 +119,65 @@ A necessary pin is retained even when expensive. An eager activation with no
 correctness dependency and no demonstrated semantic benefit is withdrawn rather
 than tuned to these two inputs. Any resulting production change still needs the
 full gates and unchanged 72-instance snapshot.
+
+## Matched-control outcome
+
+All 66 cells completed with Unsat, matching the original Z3 4.16.0 evidence
+and corpus labels. On the ten registered seeds, real/null whole-process
+instruction geomeans are **11.19348 on Wisa** and **4.29175 on wisas**.
+The held-back seed is independently **5.54626** and **3.72814**, respectively.
+Initial CNF is byte-identical across all three arms at every seed; real and
+null each trace exactly one value-4 pin, and off traces none. The null changes
+SAT counters relative to off on nine of eleven seeds for each case, so it is
+not an inert perturbation. All ten seed overrides produce distinct off-arm
+trajectories. The no-pin baseline instruction distributions (minimum / median /
+maximum, billions) are 23.824 / 29.775 / 36.469 for Wisa and
+11.971 / 15.398 / 33.811 for wisas. Complete summaries and trace checks are in
+[`pin-control-results.json`](../../bench/migration034/pin-control-results.json);
+the immutable records and frozen seeded inputs are under the diagnostic
+`83cdf7be` cache entry. This is evidence of a regression on these two selected
+cases, not a general performance estimate or authorization to remove a fact.
+
+The intervention's semantic connection, rather than merely allocating an
+additional fixed arithmetic column, accounts for the large cost. Restoring the
+old search would require removing or deferring a theory-interface fact, not
+merely avoiding redundant allocation. Neither successful end-to-end small
+probes nor candidate repair establishes that this is safe: the functional
+collision pass has explicit work/lemma caps, and some model evaluators can
+return undetermined without providing a universal certificate. The new pin is
+therefore retained while its implementation cost is investigated. This does
+**not** declare the 11.19x cost necessary or acceptable.
+
+Independent layers inspected include coefficient-preserving purification,
+closed-constant folding, generated-lemma interface registration, scoped
+arithmetic bounds, equality-entailment certificates, EUF congruence, candidate
+Ackermann repairs and published-model validation. Z3's
+`theory_arith_core.h::internalize_numeral` likewise fixes numeral interfaces
+with exact lower and upper bounds. A new theory-level regression exercises
+entailed equality with/without the live pin, its retraction and reassertion
+across pop, reason provenance and reset. It protects the obligation independently
+of an outer model checker; it is not an end-to-end false-Sat reproducer.
+The earlier coefficient-int/real probes are negative evidence: both versions
+and Z3 already refute them, so they cannot justify the new pin on their own.
+
+## Equivalent-work reductions under verification
+
+Three changes leave interface facts, search choices, budgets and proof
+obligations in place:
+
+- Track the first live EUF application rather than scan all nodes for each
+  assignment. Nodes are append-only within a scope and pop removes a suffix;
+  nullary applications count, leaves do not. A direct scan oracle checks nested
+  scopes, slot reuse and reset.
+- Reuse an unchanged published-model reading within one settlement call. Repeat
+  validation after discarding a candidate or attempting repair; retain the
+  independent typed-value check. The regression changes the interpretation and
+  scopes to ensure no result survives model mutation.
+- Borrow the cached Diophantine verdict rather than clone its entire incumbent
+  at each check. Copy a conflict core only when returning it, and a witness only
+  when actually attempting it. Equality assertion/pop invalidation and rejected
+  incumbent handling remain unchanged. This removes copying, not an entailment
+  test, certificate, arithmetic solve or budget charge.
+
+Final verification and the unchanged 72-instance snapshot are pending; these
+edits are not yet a landed performance claim.
