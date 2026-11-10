@@ -1,0 +1,97 @@
+diff --git a/nixie-solver/src/solver/logic_contract.rs b/nixie-solver/src/solver/logic_contract.rs
+index 055ce7b6..a9de143d 100644
+--- a/nixie-solver/src/solver/logic_contract.rs
++++ b/nixie-solver/src/solver/logic_contract.rs
+@@ -453,6 +453,14 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
+         },
+     ),
+     // --- Arrays ---
++    (
++        "QF_AUF",
++        LogicSpec {
++            arrays: true,
++            uf: true,
++            ..LogicSpec::NONE
++        },
++    ),
+     (
+         "QF_AX",
+         LogicSpec {
+diff --git a/nixie-solver/tests/upstream034_arrays_and_symbols.rs b/nixie-solver/tests/upstream034_arrays_and_symbols.rs
+index 6c333b94..8fabf373 100644
+--- a/nixie-solver/tests/upstream034_arrays_and_symbols.rs
++++ b/nixie-solver/tests/upstream034_arrays_and_symbols.rs
+@@ -40,7 +40,7 @@ fn upstream_e3db58089d90293f() {
+     let output = Context::new()
+         .execute_script(
+             r##"
+-(set-logic ALL)
++(set-logic QF_AUF)
+ (declare-sort U 0)
+ (declare-fun f (U) U)
+ (declare-const arr (Array U U))
+@@ -59,7 +59,7 @@ fn upstream_8e513ca57fd8f614() {
+     let output = Context::new()
+         .execute_script(
+             r##"
+-(set-logic ALL)
++(set-logic QF_AUF)
+ (declare-sort U 0)
+ (declare-fun f (U) U)
+ (declare-const arr (Array U U))
+@@ -80,7 +80,7 @@ fn upstream_6f7226844b3a571f() {
+     let output = Context::new()
+         .execute_script(
+             r##"
+-(set-logic ALL)
++(set-logic QF_AUF)
+ (declare-sort U 0)
+ (declare-fun f (U) U)
+ (declare-const arr (Array U U))
+@@ -101,7 +101,7 @@ fn upstream_90bb84b06ae53573() {
+     let output = Context::new()
+         .execute_script(
+             r##"
+-(set-logic ALL)
++(set-logic QF_AUF)
+ (declare-sort U 0)
+ (declare-const arr (Array U U))
+ (declare-const i U)
+@@ -119,7 +119,7 @@ fn upstream_db729f7712870791() {
+     let output = Context::new()
+         .execute_script(
+             r##"
+-(set-logic ALL)
++(set-logic QF_AUF)
+ (declare-sort U 0)
+ (declare-fun f (U) U)
+ (declare-const arr (Array U U))
+@@ -197,7 +197,7 @@ fn array_discovery_survives_scope_rollback() {
+     let output = Context::new()
+         .execute_script(
+             r#"
+-        (set-logic ALL)
++        (set-logic QF_AUF)
+         (declare-sort U 0)
+         (declare-fun f (U) U)
+         (declare-const a (Array U U))
+--- a/nixie-solver/tests/logic_contract_acceptance.rs
++++ b/nixie-solver/tests/logic_contract_acceptance.rs
+@@ -208,3 +208,17 @@
+         );
+     }
+ }
++
++/// The added array/UF alias must not silently admit arithmetic, bit-vectors,
++/// or quantifiers merely because its array/UF signatures are supported.
++#[test]
++fn qf_auf_alias_rejects_features_outside_its_contract() {
++    for body in [
++        "(declare-const x Int)(assert (= x 0))",
++        "(declare-const x (_ BitVec 4))(assert (= x #x0))",
++        "(assert (forall ((x Bool)) x))",
++    ] {
++        let error = run_err(&format!("(set-logic QF_AUF){body}(check-sat)"));
++        assert!(error.contains("QF_AUF") && !error.starts_with("no error"), "{error}");
++    }
++}

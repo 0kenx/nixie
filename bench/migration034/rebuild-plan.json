@@ -11,7 +11,7 @@
     {
       "commit": "6f3334bd89b80223f614af317f63be09940e7cbc",
       "subject": "Migrate upstream 0.3.4 overflow predicates and quantified theory certification",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Reject invalid numeric literals; certify quantified regions and discover ground datatype obligations."
       ],
@@ -23,7 +23,7 @@
     {
       "commit": "2e06106ebbbd7ab203508192667ebdfc8331c75f",
       "subject": "Migrate upstream array discovery and SMT-LIB symbol handling",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Discover nested array reads and store congruence; prevent internal-symbol capture; preserve source spelling and quoted symbols."
       ],
@@ -35,7 +35,7 @@
     {
       "commit": "6b7bf10eb79becf23c4c6c1b130ece81b2c34d22",
       "subject": "Migrate upstream allocator alignment fixes and enforce handle ownership",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Allocator alignment, zero-sized allocations, handle ownership and lifetime safety."
       ],
@@ -45,7 +45,7 @@
     {
       "commit": "68c36c4491fcf20232bcae61292e64e6c1425994",
       "subject": "Migrate datatype construction and close set/model integration gaps",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Constructor disjointness/injectivity and iterative folding; correct declaration interner; set congruence and cyclic model reads."
       ],
@@ -55,7 +55,7 @@
     {
       "commit": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
       "subject": "Migrate permanent SAT clauses and preserve restored obligations across scopes",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Restore eliminated clauses across scopes and retain permanent clauses and valid proof reasons."
       ],
@@ -65,7 +65,7 @@
     {
       "commit": "6da0820976d9258166688462e2e0a598d3568ace",
       "subject": "Migrate persistent BV definitions and sound scoped assumption search",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Preserve assumptions over restarts, scoped BV definitions, selector explanations and assignment rollback."
       ],
@@ -75,7 +75,7 @@
     {
       "commit": "d48d98826982710379182459a4e92502ff7778ff",
       "subject": "Migrate query-wide SAT and embedded bit-vector resource budgets",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Enforce query-wide conflict/decision/embedded-check budgets without accepting interrupted search."
       ],
@@ -85,7 +85,7 @@
     {
       "commit": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
       "subject": "Migrate explained BV/EUF exchange and joint model validation",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Explain cross-theory BV equalities and independently validate the joint BV/EUF assignment."
       ],
@@ -95,7 +95,7 @@
     {
       "commit": "c8abf146a836e96b0d071594452519fd3403c749",
       "subject": "Migrate nested array and finite theory interfaces",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Ground nested-array/BV interfaces, Boolean term-position polarity, and arithmetic array arrangements. Numeric UF pins are replaced by fail-closed final-value consistency."
       ],
@@ -105,7 +105,7 @@
     {
       "commit": "ed02c41ab1786903d153be6c07c47ee50e8fa0ee",
       "subject": "Isolate generated symbols and expose refinement diagnostics",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Prevent source names capturing generated skolems and other internal symbols; retain model/seed enumeration helpers used by correctness code."
       ],
@@ -117,7 +117,7 @@
     {
       "commit": "7e696bdf1fee5b252f8f2880f07c4f3048a8c2fb",
       "subject": "Preserve ground finite domains for quantified functions",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Do not waive finite ground BV domains when the same function also occurs under quantifiers."
       ],
@@ -127,7 +127,7 @@
     {
       "commit": "235e64afef8536dbbc2509d2003aaa5453a0d154",
       "subject": "Migrate complete quantifier positions and finite expansion",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Quantifier-position ownership, capture-free binder rows, exact distinct certification; complete small finite domains fix published models violating quantified assertions."
       ],
@@ -137,7 +137,7 @@
     {
       "commit": "faeef968761f4282c4d608a814dee4ffd42da54c",
       "subject": "Preserve array ITE identities and import facade terms safely",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Enforce array ITE branch identity; import facade terms between independent arenas, retaining scope/core identity."
       ],
@@ -147,7 +147,7 @@
     {
       "commit": "e715b10416d9cd86636378a749f76c34d5f6ca57",
       "subject": "Migrate exact BV values into the shared model evaluator",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Evaluate published BV values exactly at arbitrary width and Boolean conditions through their circuit assignments."
       ],
@@ -157,7 +157,7 @@
     {
       "commit": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
       "subject": "Migrate certified array completion and structural model reads",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Retain structural array/model value evaluation and independent validity certificates. Remove speculative array interpretation search."
       ],
@@ -169,7 +169,7 @@
     {
       "commit": "8ca3622a8e20a829a5105c670456ca87373e8b61",
       "subject": "Migrate certified model publication and exact completion from upstream 0.3.4",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Retain exact published-interpretation validation, witness hygiene, real solver-candidate reconstruction, ANIA and model-state fixes. Remove new alternative-model proposal searches."
       ],
@@ -185,7 +185,7 @@
     {
       "commit": "6be88b3395f9acc4bfb80984ec3198f07d473342",
       "subject": "Migrate guarded datatype refinement and preserve exact nonlinear witnesses",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Datatype congruence/occurs checks; preserve exact NIRA witnesses; respect assertion polarity and exact scalar sorts."
       ],
@@ -195,7 +195,7 @@
     {
       "commit": "7034f149395c2d7b45378a6aca11b3df45935d8b",
       "subject": "Migrate bounded guard-boundary counterexample proposals",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [],
       "optional_capabilities": [
         "guard-boundary-sampler"
@@ -205,7 +205,7 @@
     {
       "commit": "59af866b4498699866247bd9dd411431a8208b74",
       "subject": "Migrate standalone literal formal obligations with explicit verifier setup",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [],
       "optional_capabilities": [
         "formal-harness"
@@ -215,7 +215,7 @@
     {
       "commit": "92fd8e2f95406c67d8aa86b34cc7e3fbca37deb5",
       "subject": "Migrate robustness changes and validate CAD cache and optimizer results",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Checked state access and error propagation; complete CAD cache keys; verify PMRES objective and result before claiming optimality."
       ],
@@ -225,7 +225,7 @@
     {
       "commit": "167e3dafe25771c2c225cc853ad9e2d6402438ad",
       "subject": "Replace algebraic extension placeholders with exact quotient arithmetic",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Replace false algebraic field defaults with exact quotient arithmetic and valid cache identity."
       ],
@@ -235,7 +235,7 @@
     {
       "commit": "1da2864c8acee5786e74b0281ebe305c5cb45f1f",
       "subject": "Migrate exact finite-array cardinality and extensionality domains",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [],
       "optional_capabilities": [
         "finite-array-completeness"
@@ -245,7 +245,7 @@
     {
       "commit": "93fcd2ce3e03f7a0dd7d9b9915d52b3fe5ef1c2d",
       "subject": "Migrate bounded exact datatype model separation from upstream 0.3.4",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Retain pinned-field and exact-offset validation; retain the pre-migration one-proposal separation policy."
       ],
@@ -257,7 +257,7 @@
     {
       "commit": "5a5ed86dfe4d63d51a618d8e750d8ac8214e6944",
       "subject": "Migrate exact function consistency and compound datatype field models",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Retain exact compound-field evaluation and guarded collision detection; replace the added general-function retry loops with rejection of conflicting candidates."
       ],
@@ -269,7 +269,7 @@
     {
       "commit": "8b564255ebc4d57741fed1145914ddc87f76a6ad",
       "subject": "Migrate upstream model interfaces and keep finite-field completion in range",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Fix to_real result sort, malformed distinct handling, finite-field model ranges, and reject unjustified set choices."
       ],
@@ -279,7 +279,7 @@
     {
       "commit": "862c6d948f73133f1229831a0240f2558e8dbfe5",
       "subject": "Complete generated datatype models and restore rejected repair snapshots",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [
         "Generated datatype witness obligations; rollback unsuccessful repair snapshots and default markers; exact offset arithmetic."
       ],
@@ -289,7 +289,7 @@
     {
       "commit": "5c2b6bed1e77bc4020efb6849c9a0b32d301416c",
       "subject": "Migrate upstream differential tools and complete the 0.3.4 capability audit",
-      "status": "reconstructed-awaiting-verification",
+      "status": "correctness-reconstruction-verified",
       "correctness_obligations": [],
       "optional_capabilities": [
         "diagnostic-tools"
@@ -311,7 +311,9 @@
       "focused_gates": [
         "overflow_predicates"
       ],
-      "requires_matched_null": false
+      "requires_matched_null": false,
+      "isolated_patch": "bench/migration034/candidates/patches/overflow-syntax.patch",
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
     },
     {
       "id": "qf-auf-alias",
@@ -327,7 +329,9 @@
         "logic_contract_acceptance",
         "upstream034_arrays_and_symbols"
       ],
-      "requires_matched_null": false
+      "requires_matched_null": false,
+      "isolated_patch": "bench/migration034/candidates/patches/qf-auf-alias.patch",
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
     },
     {
       "id": "refinement-statistics",
@@ -343,7 +347,9 @@
         "upstream034_names_and_statistics",
         "upstream034_budget_transitions"
       ],
-      "requires_matched_null": false
+      "requires_matched_null": false,
+      "isolated_patch": "bench/migration034/candidates/patches/refinement-statistics.patch",
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
     },
     {
       "id": "array-completion-search",
@@ -483,7 +489,9 @@
         "upstream034_finite_array_domains",
         "upstream034_nested_interfaces"
       ],
-      "requires_matched_null": false
+      "requires_matched_null": false,
+      "isolated_patch": "bench/migration034/candidates/patches/finite-array-completeness.patch",
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar."
     },
     {
       "id": "expanded-datatype-separation",
@@ -515,12 +523,22 @@
         "uf_consistency",
         "upstream034_function_models"
       ],
-      "requires_matched_null": true
+      "requires_matched_null": true,
+      "isolated_patch": "bench/migration034/candidates/patches/general-function-retry.patch",
+      "acceptance_bar": "Zero wrong answers; no lost standing solves; <= 1.05 full-work cost against correctness-only and cumulative accepted trees; concrete public/coverage benefit; final cumulative tree must pass the entire release verification bar.",
+      "positive_control": "symbolic_argument_solves_for_the_variable: original k=3 witness replays with Z3; both cached pin modes solve; reconstructed baseline exhausts rounds honestly. Isolated retry patch still requires measurement and matched null.",
+      "parity_controls": [
+        "UFLIA/congruence_closure",
+        "UFLIA/division_property",
+        "UFLIA/idempotent",
+        "UFLIA/injective",
+        "UFLIA/surjective"
+      ]
     },
     {
       "id": "diagnostic-tools",
-      "status": "focused-gate-passed",
-      "decision": null,
+      "status": "gate-passed",
+      "decision": "apply",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "5c2b6bed"
@@ -531,12 +549,12 @@
         "scripts/round4/test_tools.py"
       ],
       "requires_matched_null": false,
-      "gate_result": "Exact 5c2b6bed script sources restored in the isolated candidate; all nine Python tests passed. Actual Z3 smoke controls await completion of build/test work.",
+      "gate_result": "Ten Python tests and four actual Z3 4.16.0 controls pass, including falsifying, partial-consistent and complete valid model outcomes. Partial-model success misclassification fixed. No Rust/Cargo input or solver binary change; existing cost cells reused.",
       "runtime_cost": "No Rust/Cargo changes; the solver binary and its measurement remain identical."
     }
   ],
   "numeric_uf_pins": {
-    "status": "replacement-under-test",
+    "status": "replacement-verified",
     "prior_control": "pin-control-results.json",
     "decision": "drop eager numeric UF pins; retain array/quantified purifier pins and final value consistency",
     "evidence": "Prior 10 common seeds plus fresh replay isolate 11.19348x and 4.29175x treatment/null instruction cost on the two affected UFLIA instances. No new heuristic is introduced by rejecting an unverified candidate."
@@ -549,5 +567,26 @@
     "sat_ratio": 0.9965100534365892,
     "new_losses_vs_rejected_migration": 0,
     "status": "rejected-by-full-suite-15-unknown-versus-sat; scoped-guard-revision-in-progress"
+  },
+  "verified_core_snapshot": {
+    "source": "f8a621f4587295f3bff68959fbf46ead81340f00",
+    "binary_sha256": "e9abf3db9c63567ccf5cabd03a43c63c34b9e91c2ba02c83d9379140c59a1846",
+    "nextest_passed": 12760,
+    "nextest_skipped": 20,
+    "doctests_passed": 117,
+    "doctests_ignored": 31,
+    "z3_version": "4.16.0",
+    "parity_agree": 169,
+    "parity_disagree": 0,
+    "parity_inconclusive": 8,
+    "perf_gate": "PASS: conflicts/decisions 1.000x, 12 verdicts agree",
+    "cost_manifest": "correctness-scoped-manifest.json",
+    "status": "all-required-checks-and-cost-measurement-passed",
+    "cost_report": "correctness-scoped-results.json",
+    "sat_ratio": 0.996911734566309,
+    "smt_original_cohort_ratio": 1.077592420691937,
+    "sat_solved": 24,
+    "smt_solved": 24,
+    "decisive_disagreements": 0
   }
 }

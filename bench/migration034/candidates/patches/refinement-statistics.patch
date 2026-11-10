@@ -1,0 +1,123 @@
+diff --git a/nixie-solver/src/context.rs b/nixie-solver/src/context.rs
+index 4564fcce..453fac79 100644
+--- a/nixie-solver/src/context.rs
++++ b/nixie-solver/src/context.rs
+@@ -1472,7 +1473,7 @@ impl Context {
+     pub fn get_statistics(&self) -> String {
+         let stats = self.solver.get_statistics();
+         format!(
+-            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {})",
++            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {} :bv-embedded-conflicts {} :array-refinement-rounds {} :array-lemma-instances {})",
+             stats.decisions,
+             stats.conflicts,
+             stats.propagations,
+@@ -1480,7 +1481,10 @@ impl Context {
+             stats.learned_clauses,
+             stats.theory_propagations,
+             stats.theory_conflicts,
+-            stats.bv_embedded_checks
++            stats.bv_embedded_checks,
++            self.solver.bv_conflicts_spent(),
++            stats.array_refinement_rounds,
++            stats.array_lemma_instances
+         )
+     }
+ 
+diff --git a/nixie-solver/src/solver/mod.rs b/nixie-solver/src/solver/mod.rs
+index c9f11422..306c55c9 100644
+--- a/nixie-solver/src/solver/mod.rs
++++ b/nixie-solver/src/solver/mod.rs
+@@ -3392,6 +3396,10 @@ impl Solver {
+                         && !set_refined
+                         && self.has_array_ops
+                         && self.instantiate_array_axioms(manager);
++                    if array_refined {
++                        self.statistics.array_refinement_rounds =
++                            self.statistics.array_refinement_rounds.saturating_add(1);
++                    }
+                     // Distinct-semantics guard clauses: for a live
+                     // injective-`distinct` spec, every encoded
+                     // `(= t_i t_j)` atom between two of its arguments is
+diff --git a/nixie-solver/src/solver/array_axioms.rs b/nixie-solver/src/solver/array_axioms.rs
+index 52b27242..ecb6a9f5 100644
+--- a/nixie-solver/src/solver/array_axioms.rs
++++ b/nixie-solver/src/solver/array_axioms.rs
+@@ -456,6 +461,8 @@ impl Solver {
+                 .push(super::trail::TrailOp::ArrayAxiomInstanceAdded { term: inst });
+             let lit = self.encode(inst, manager);
+             let _ = self.sat.add_clause([lit]);
++            self.statistics.array_lemma_instances =
++                self.statistics.array_lemma_instances.saturating_add(1);
+             if std::env::var("NIXIE_ARRAY_LEMMA_LOG").is_ok() {
+                 use nixie_core::smtlib::Printer;
+                 let p = Printer::new(manager);
+diff --git a/nixie-solver/src/solver/resource_budget.rs b/nixie-solver/src/solver/resource_budget.rs
+index dd3d0f27..92e609b5 100644
+--- a/nixie-solver/src/solver/resource_budget.rs
++++ b/nixie-solver/src/solver/resource_budget.rs
+@@ -19,6 +19,8 @@ impl Solver {
+         self.sat.set_deadline(self.check_deadline);
+         self.bv.set_budget(conflicts, self.check_deadline);
+         self.statistics.bv_embedded_checks = 0;
++        self.statistics.array_refinement_rounds = 0;
++        self.statistics.array_lemma_instances = 0;
+         self.check_theory_conflict_ceiling = conflicts
+             .map(|n| self.statistics.conflicts.saturating_add(n))
+             .unwrap_or(0);
+diff --git a/nixie-solver/src/solver/types.rs b/nixie-solver/src/solver/types.rs
+index 8e72fadf..8e380578 100644
+--- a/nixie-solver/src/solver/types.rs
++++ b/nixie-solver/src/solver/types.rs
+@@ -578,6 +578,10 @@ impl SolverConfig {
+ /// Solver statistics
+ #[derive(Debug, Clone, Default)]
+ pub struct Statistics {
++    /// Productive array-refinement rounds in the most recent query.
++    pub array_refinement_rounds: u64,
++    /// New array lemma instances asserted in the most recent query.
++    pub array_lemma_instances: u64,
+     /// Embedded BV checks attempted in the most recent query.
+     pub bv_embedded_checks: u64,
+     /// Number of decisions made
+diff --git a/nixie-solver/tests/upstream034_names_and_statistics.rs b/nixie-solver/tests/upstream034_names_and_statistics.rs
+index c44bb439..831c539a 100644
+--- a/nixie-solver/tests/upstream034_names_and_statistics.rs
++++ b/nixie-solver/tests/upstream034_names_and_statistics.rs
+@@ -19,3 +19,37 @@ fn source_names_cannot_capture_existential_witnesses() {
+         );
+     }
+ }
++
++fn counter(stats: &str, name: &str) -> u64 {
++    let words: Vec<_> = stats.trim_matches(['(', ')']).split_whitespace().collect();
++    let index = words
++        .iter()
++        .position(|word| *word == name)
++        .expect("published counter");
++    words[index + 1].parse().expect("integer counter")
++}
++
++#[test]
++fn array_work_and_embedded_conflicts_are_published_per_query() {
++    let mut context = Context::new();
++    let output = context
++        .execute_script(
++            "(set-logic QF_ALIA)
++        (declare-const a (Array Int Int))(declare-const i Int)
++        (assert (= (select (store a i 7) i) 7))(check-sat)
++        (get-info :all-statistics)",
++        )
++        .unwrap();
++    assert_eq!(output[0], "sat");
++    let stats = &output[1];
++    assert!(counter(stats, ":array-refinement-rounds") > 0);
++    assert!(counter(stats, ":array-lemma-instances") > 0);
++    assert_eq!(counter(stats, ":bv-embedded-conflicts"), 0);
++    context
++        .execute_script("(reset-assertions)(check-sat)")
++        .unwrap();
++    let stats = context.get_statistics();
++    assert_eq!(counter(&stats, ":array-refinement-rounds"), 0);
++    assert_eq!(counter(&stats, ":array-lemma-instances"), 0);
++    assert_eq!(counter(&stats, ":bv-embedded-conflicts"), 0);
++}

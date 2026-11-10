@@ -231,11 +231,13 @@ no solver-runtime cost, but zero runtime cost does not substitute for a verified
 benefit. No external toolchain was fabricated and no historical upstream proof
 result was relabeled as a Nixie result.
 
-**Diagnostic tools — focused gate passed, final decision pending.** Exact
-`scripts/round4` sources from `5c2b6bed` passed all nine Python tests. This
-candidate touches no Rust/Cargo input, so it neither changes the frozen solver
-binary nor introduces a new solver-cost cell. Actual Z3 smoke controls are
-queued after build/test activity, as the tools' own methodology requires.
+**Diagnostic tools — apply.** The restored tools, with the partial-model
+accounting fix below, pass ten Python tests and four actual Z3 4.16.0 controls:
+a falsifying datatype model, a consistent partial function model, a valid
+recursive-function model, and a valid constant-array model. This candidate
+touches no Rust/Cargo input, so the binary and its cost cells are identical.
+The benefit is concrete: the tools detected invalid historical models and now
+correctly distinguish incomplete model pins from a verified complete model.
 
 ### Full-suite rejection of the first candidate
 
@@ -279,3 +281,43 @@ and scope/round-count assertions. The 696-case datatype oracle has an exact
 19-input incompleteness allowlist; additional Unknowns and every decisive
 disagreement still fail. These changes record deliberate coverage withdrawal,
 not 14 solver fixes or successful differential agreements.
+
+## Revised correctness-only verification
+
+Source `f8a621f4587295f3bff68959fbf46ead81340f00` scopes the omitted-interface
+certificate and records the explicit coverage withdrawals above. The default
+release binary SHA-256 is
+`e9abf3db9c63567ccf5cabd03a43c63c34b9e91c2ba02c83d9379140c59a1846`.
+All required release checks passed: all-feature build, all-target/all-feature
+clippy, formatting, warnings-denied documentation, **12,760 nextest tests**
+(20 skipped), and **117 doctests** (31 ignored).
+
+Z3 **4.16.0** parity: **169 decisive agreements, zero disagreements, eight
+inconclusive**. The pre-existing comparator Unknown on `array_unique` remains.
+The seven new Nixie Unknowns are UFLIA `congruence_closure`, `division_property`,
+`idempotent`, `injective`, `monotone_basic`, `surjective`, and UFLRA
+`real_monotone`. They are explicitly lost coverage versus the rejected migration,
+not parity matches. They become focused positive controls for the optional
+refinement/publication gates.
+
+The unchanged pinned performance gate (`28e82c65`, 150 s cap) passes: all 12
+verdicts agree, with conflicts and decisions geomeans **1.000x** over the nine
+nontrivial pairs. Full-work SATLIB/SMT-LIB measurement is separately registered
+in `correctness-scoped-manifest.json`; it started only after every verification
+process and this gate finished. The 72 new cells and 480 reused cells are
+reported in `correctness-scoped-results.json` and its CSV companion. Against
+pre-migration, SAT instructions are **0.996912x** and SMT instructions on the
+original 23-case cohort are **1.077592x**, versus **1.367811x** for the original
+migration. All 24 SAT inputs and 24 of 48 SMT inputs are solved, with zero
+decisive reference disagreements. The SMT remainder is ten Unknowns, thirteen
+timeouts, and one existing allocation error. The measured solved set is
+unchanged versus the rejected migration; this does not erase the seven
+separate parity coverage losses above. The pre-migration pipeline-invalid
+solve remains a timeout and the unconstrained BV solve remains gained.
+
+The remaining 7.76% aggregate cost is not a claim that all retained work is
+irreducible. A diagnostic profile succeeded with user-only call chains after
+the host rejected kernel-callchain access. Launcher locale processing occupied
+many samples; it is excluded from solver attribution. No host settings changed.
+Full-process retired instructions, not profile sample percentages or wall time,
+remain the primary cost measurement.
