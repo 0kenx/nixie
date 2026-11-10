@@ -592,6 +592,7 @@ impl Solver {
             constant: constant_r, // Move constant to RHS
             constraint_type,
             reason_term: reason,
+            eq_placeholder: false,
         };
 
         self.arith_parse_cache.insert(reason, Some(result.clone()));
@@ -1227,6 +1228,7 @@ impl Solver {
             constant: constant_r,
             constraint_type,
             reason_term: reason,
+            eq_placeholder: false,
         })
     }
 
@@ -4171,13 +4173,17 @@ impl Solver {
                         }
                         // We use Le type as placeholder since equality will be asserted
                         // as both Le and Ge
-                        if let Some(parsed) = self.parse_arith_comparison(
+                        if let Some(mut parsed) = self.parse_arith_comparison(
                             *lhs,
                             *rhs,
                             ArithConstraintType::Le,
                             term,
                             manager,
                         ) {
+                            // Mark the placeholder so the DL bound-propagator
+                            // can skip equality atoms without probing
+                            // `var_to_constraint` per atom.
+                            parsed.eq_placeholder = true;
                             self.var_to_parsed_arith.insert(var, parsed);
                         }
                         // Lemma-minted atoms only: the assertion spine is

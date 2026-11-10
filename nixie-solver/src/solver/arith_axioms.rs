@@ -257,6 +257,7 @@ impl Solver {
                     core::cmp::Ordering::Equal => continue,
                 },
                 reason_term: atom,
+                eq_placeholder: false,
             };
             // The row mentions both columns: make sure the arithmetic solver
             // has them interned (the parse already did, this is idempotent).

@@ -2283,73 +2283,71 @@ impl<'a> TheoryManager<'a> {
         tighten: bool,
     ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         use nixie_theories::arithmetic::DeltaRational;
-        // Collect candidate atoms as a flat `(var, constant, less, strict)` list –
-        // all `Copy`, so no per-candidate allocation.  The atom's term vector is
-        // fetched lazily into a single reused buffer below, which removes the
-        // `Vec<(Var, Vec<terms>, …)>` allocation that dominated this
-        // propagator (it inlined into the SAT loop as `extend`/`spec_extend`).
-        let candidates: Vec<(Var, Rational64, bool, bool)> = self
-            .var_to_constraint
-            .iter()
-            .filter_map(|(&var, constraint)| {
-                if self.assigned_pol_of(var).is_some() {
-                    return None; // already decided
-                }
-                // Skip equality-constrained atoms: `var_to_parsed_arith`
-                // carries an `Le` placeholder for them, so probing the bound
-                // and propagating would treat a disequality as a single
-                // comparison (unsound). See `encode.rs` `TermKind::Eq`.
-                if matches!(constraint, Constraint::Eq(..)) {
-                    return None;
-                }
-                let parsed = self.var_to_parsed_arith.get(&var)?;
-                let (less, strict) = match parsed.constraint_type {
-                    ArithConstraintType::Lt => (true, true),
-                    ArithConstraintType::Le => (true, false),
-                    ArithConstraintType::Gt => (false, true),
-                    ArithConstraintType::Ge => (false, false),
-                };
-                Some((var, parsed.constant, less, strict))
-            })
-            .collect();
-        if candidates.is_empty() {
+        // Fused single pass over `var_to_parsed_arith` — no candidate
+        // collection, no per-atom probes into the second map.  The
+        // historical two-loop form paid, per arith assertion, a full scan of
+        // `var_to_constraint` with a `var_to_parsed_arith` hash probe per
+        // entry plus a `Vec` build (the dominant QF_UFIDL cost), and then a
+        // SECOND probe per candidate for `.terms`; on large DL instances
+        // that owned essentially the entire solve.  Everything the pass
+        // reads per atom now comes from this one map entry: the
+        // `eq_placeholder` flag replaces the `var_to_constraint` kind probe
+        // (equality atoms carry an `Le` placeholder whose single-comparison
+        // reading would be unsound — see `encode.rs` `TermKind::Eq`), and
+        // the terms are borrowed directly instead of copied.
+        if self.var_to_parsed_arith.is_empty() {
             return None;
         }
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
         // Tighten the tableau's variable bounds ONCE (to a fixpoint) so the
         // per-atom derivation below sees transitive (recurrence-derived)
-        // bounds cheaply.  Done here rather than inside `derive_expr_bound_reasons`
-        // (which runs per atom) so the O(tableau) cost is paid once per
-        // assertion, not per atom × per assertion.
-        if tighten {
-            self.arith.tighten_tableau_bounds();
-        }
-        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-        // One reused term buffer for every candidate (DL atoms have ≤2 terms,
-        // so capacity stabilises immediately): the immutable borrow of
-        // `var_to_parsed_arith` is scoped to the refill and ends before the
-        // `&mut self.arith` derivation call.
-        let mut terms_buf: Vec<(TermId, Rational64)> = Vec::new();
-        for (var, constant, less, strict) in candidates {
-            {
-                let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
-                    continue;
-                };
-                terms_buf.clear();
-                terms_buf.extend(parsed.terms.iter().copied());
+        // bounds cheaply.  Done here rather than inside
+        // `derive_expr_bound_reasons` (which runs per atom) so the
+        // O(tableau) cost is paid once per assertion, not per atom × per
+        // assertion.  Deferred until the first passable candidate so an
+        // all-equality/all-decided map skips it exactly as the empty
+        // candidate list did.  `tighten_tableau_bounds` goes through the
+        // `arith` reference field while the iteration reads the
+        // `var_to_parsed_arith` reference field — separate borrows, and no
+        // derivation runs before the tighten.
+        let mut tightened = false;
+        for (&var, parsed) in self.var_to_parsed_arith {
+            // Skip equality-constrained atoms: `var_to_parsed_arith` carries
+            // an `Le` placeholder for them, so probing the bound and
+            // propagating would treat a disequality as a single comparison
+            // (unsound). See `encode.rs` `TermKind::Eq`.
+            if parsed.eq_placeholder {
+                continue;
             }
+            if self.assigned_pol_of(var).is_some() {
+                continue; // already decided
+            }
+            if !tightened && tighten {
+                self.arith.tighten_tableau_bounds();
+                tightened = true;
+            }
+            let (less, strict) = match parsed.constraint_type {
+                ArithConstraintType::Lt => (true, true),
+                ArithConstraintType::Le => (true, false),
+                ArithConstraintType::Gt => (false, true),
+                ArithConstraintType::Ge => (false, false),
+            };
+            let constant = parsed.constant;
             let c_dr = DeltaRational::from_rational(constant);
             // Derive the bound on `e := Σ coefᵢ·termᵢ` (the atom's LHS) by
             // passing constant = 0; `constant` is the atom's RHS THRESHOLD,
             // compared below, NOT part of the expression.  (Passing `constant`
             // here would fold the threshold into the expression and make the
-            // check read `e + c ◦ c` ≡ `e ◦ 0` – a soundness bug for any atom
-            // with a non-zero threshold.)
+            // check read `e + c ○ c` ≡ `e ○ 0` – a soundness bug for any atom
+            // with a non-zero threshold.)  The `&parsed.terms` borrow reads
+            // the map reference field while `self.arith` is the separate
+            // mutable reference field — no conflict.
             let (lo, hi) = self.arith.derive_expr_bound_reasons(
-                &terms_buf,
+                &parsed.terms,
                 Rational64::from_integer(0),
                 tighten,
             );
-            // Determine whether the atom `e ◦ c` is forced TRUE or FALSE.
+            // Determine whether the atom `e ○ c` is forced TRUE or FALSE.
             //
             //   less (e ≤ c / e < c): TRUE ⇔ upper(e) ≤/< c ;  FALSE ⇔ lower(e) >/≥ c
             //   !less (e ≥ c / e > c): TRUE ⇔ lower(e) ≥/> c ;  FALSE ⇔ upper(e) </≤ c

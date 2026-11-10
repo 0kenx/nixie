@@ -192,6 +192,14 @@ pub(crate) struct ParsedArithConstraint {
     pub(crate) constraint_type: ArithConstraintType,
     /// The original term (for conflict explanation)
     pub(crate) reason_term: TermId,
+    /// True only for equality atoms parsed with the `Le` placeholder
+    /// (`encode.rs` `TermKind::Eq`): the atom is really an equality whose
+    /// disequality meaning is the disjunction `x<y ∨ x>y`, never a single
+    /// comparison.  Lets the DL bound-propagator skip these atoms from a
+    /// single pass over this map, with no per-atom probe into
+    /// `var_to_constraint` (the placeholder is indistinguishable from a
+    /// real `Le` via `constraint_type` alone).
+    pub(crate) eq_placeholder: bool,
 }
 
 /// Polarity of a term in the formula
