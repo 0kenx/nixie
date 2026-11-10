@@ -1,0 +1,5 @@
+(declare-sort U 0)
+        (declare-const @uc_U_0 U)(declare-const a U)
+        (declare-const s String)(assert (distinct a @uc_U_0))
+        (assert (= s "@uc_U_0"))(check-sat)(get-model)(get-model)
+        (get-value (s (= a @uc_U_0)))

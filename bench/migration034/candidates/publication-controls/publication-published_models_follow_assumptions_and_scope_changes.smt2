@@ -1,0 +1,7 @@
+(declare-const p Bool)
+        (declare-const a (Array Bool Bool))
+        (assert (= (select a false) p))
+        (check-sat-assuming (p)) (get-value ((select a false)))
+        (check-sat-assuming ((not p))) (get-value ((select a false)))
+        (push) (get-model) (assert p) (check-sat) (get-value (p))
+        (pop) (get-model)

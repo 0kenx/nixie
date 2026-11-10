@@ -1,0 +1,8 @@
+(declare-sort U 0)
+        (declare-const a U)(declare-const b U)(declare-const c U)(declare-const d U)
+        (assert (or (= a c) (= a d)))(assert (or (= b c) (= b d)))
+        (assert (distinct c d))(check-sat)
+        (assert (= a c))(check-sat)(assert (= b d))(check-sat)
+        (get-value ((= a c) (= b d) (= c d)))
+        (push)(assert (= c d))(check-sat)(pop)(check-sat)
+        (get-value ((= a c) (= b d) (= c d)))
