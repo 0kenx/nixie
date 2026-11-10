@@ -1,0 +1,1907 @@
+{
+  "cells": 696,
+  "candidate": "overflow-syntax",
+  "disagreements": [],
+  "counts": {
+    "SAT:before": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:after": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:z3": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:kissat": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:cadical": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:rollback": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:cost-fixed": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:correctness-only": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:correctness-scoped": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:value-cache": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SAT:overflow-syntax": {
+      "sat": 12,
+      "unsat": 12
+    },
+    "SMT:before": {
+      "unknown": 13,
+      "timeout": 9,
+      "unsat": 18,
+      "sat": 6,
+      "error": 2
+    },
+    "SMT:after": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:z3": {
+      "unknown": 2,
+      "timeout": 11,
+      "unsat": 24,
+      "sat": 11
+    },
+    "SMT:rollback": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:cost-fixed": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:correctness-only": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:correctness-scoped": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:value-cache": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    },
+    "SMT:overflow-syntax": {
+      "timeout": 13,
+      "unsat": 18,
+      "error": 1,
+      "sat": 6,
+      "unknown": 10
+    }
+  },
+  "comparisons": {
+    "SAT:before": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.997031480588243,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:after": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.9953908675132609,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:z3": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 3.244858170697101,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:kissat": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 1.2861029011307326,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:cadical": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 2.497311826141252,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:rollback": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.9949640460267751,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:cost-fixed": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.9992125894878011,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:correctness-only": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 1.000523253277632,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:correctness-scoped": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 1.000120116975036,
+      "gained": [],
+      "lost": []
+    },
+    "SAT:value-cache": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 1.0001300286476567,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:before": {
+      "jointly_solved_agreeing": 23,
+      "instructions_candidate_over_baseline": 1.076099335166377,
+      "gained": [
+        "smt-lib/non-incremental/QF_BV/brummayerbiere4/unconstrained05.smt2"
+      ],
+      "lost": [
+        "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2"
+      ]
+    },
+    "SMT:after": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.7901679150681127,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:z3": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 3.8212539779699872,
+      "gained": [],
+      "lost": [
+        "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/sound/diff/4.smt2",
+        "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+        "smt-lib/non-incremental/QF_LIA/tightrhombus/tightrhombus-283-245-5.smt2",
+        "smt-lib/non-incremental/QF_NIA/2019-ezsmt/car/inst8.ez.smt2",
+        "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/lcm2.c_AllErrorsAtOnce_Iteration3_0.smt2",
+        "smt-lib/non-incremental/QF_LIA/arctic-matrix/constraint-392137.smt2",
+        "smt-lib/non-incremental/QF_LIA/wisa/wisa5.smt2",
+        "smt-lib/non-incremental/QF_NIA/LassoRanker/aaron3_true-termination.c_Iteration1_Loop+nonterminationTemplate_0.smt2",
+        "smt-lib/non-incremental/QF_UFIDL/pete2/c6nidw_s.smt2",
+        "smt-lib/non-incremental/UF/wintersteiger/fmsd13/fixpoint/small-bug1-fixpoint-8.smt2",
+        "smt-lib/non-incremental/UFLRA/misc/set16.smt2"
+      ]
+    },
+    "SMT:rollback": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.789213211475185,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:cost-fixed": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.8401019277893377,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:correctness-only": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.9993517304614655,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:correctness-scoped": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 0.9979344786575135,
+      "gained": [],
+      "lost": []
+    },
+    "SMT:value-cache": {
+      "jointly_solved_agreeing": 24,
+      "instructions_candidate_over_baseline": 1.0003605532714464,
+      "gained": [],
+      "lost": []
+    }
+  },
+  "cases": [
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0585.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 64899471,
+      "rollback_instructions": 64987955,
+      "candidate_instructions": 64872499,
+      "candidate_over_before": 0.9995844033921324,
+      "candidate_counters": {
+        "Decisions": "150",
+        "Propagations": "2791",
+        "Conflicts": "110",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "150",
+        "Propagations": "2791",
+        "Conflicts": "110",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/1d173100871848282e9da017"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0684.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 64675685,
+      "rollback_instructions": 64775490,
+      "candidate_instructions": 64618359,
+      "candidate_over_before": 0.9991136390747156,
+      "candidate_counters": {
+        "Decisions": "204",
+        "Propagations": "4016",
+        "Conflicts": "158",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "204",
+        "Propagations": "4016",
+        "Conflicts": "158",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/08e99de9602366842228dd4b"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-044.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 241819755,
+      "rollback_instructions": 242568506,
+      "candidate_instructions": 240508262,
+      "candidate_over_before": 0.9945765679896582,
+      "candidate_counters": {
+        "Decisions": "2785",
+        "Propagations": "70616",
+        "Conflicts": "2296",
+        "Restarts": "2"
+      },
+      "rollback_counters": {
+        "Decisions": "2785",
+        "Propagations": "70616",
+        "Conflicts": "2296",
+        "Restarts": "2"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/e359bb99f5e31056a0ed122f"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-085.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 123668811,
+      "rollback_instructions": 123874928,
+      "candidate_instructions": 123485024,
+      "candidate_over_before": 0.9985138775208245,
+      "candidate_counters": {
+        "Decisions": "569",
+        "Propagations": "13991",
+        "Conflicts": "424",
+        "Restarts": "2"
+      },
+      "rollback_counters": {
+        "Decisions": "569",
+        "Propagations": "13991",
+        "Conflicts": "424",
+        "Restarts": "2"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/963c896db3933d424c666bc0"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-075.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 366628024,
+      "rollback_instructions": 367976619,
+      "candidate_instructions": 364601658,
+      "candidate_over_before": 0.9944729647835104,
+      "candidate_counters": {
+        "Decisions": "4408",
+        "Propagations": "124337",
+        "Conflicts": "3156",
+        "Restarts": "32"
+      },
+      "rollback_counters": {
+        "Decisions": "4408",
+        "Propagations": "124337",
+        "Conflicts": "3156",
+        "Restarts": "32"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/06873195f0d5df78c676d4e1"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-094.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 2026610025,
+      "rollback_instructions": 2032543338,
+      "candidate_instructions": 2015854038,
+      "candidate_over_before": 0.9946926212407343,
+      "candidate_counters": {
+        "Decisions": "18951",
+        "Propagations": "572749",
+        "Conflicts": "14792",
+        "Restarts": "91"
+      },
+      "rollback_counters": {
+        "Decisions": "18951",
+        "Propagations": "572749",
+        "Conflicts": "14792",
+        "Restarts": "91"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/0b23f4ea09cf0e3cf1ab49c4"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-062.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 20151281808,
+      "rollback_instructions": 20189453495,
+      "candidate_instructions": 20075850037,
+      "candidate_over_before": 0.9962567259135816,
+      "candidate_counters": {
+        "Decisions": "146988",
+        "Propagations": "3655011",
+        "Conflicts": "83202",
+        "Restarts": "2776"
+      },
+      "rollback_counters": {
+        "Decisions": "146988",
+        "Propagations": "3655011",
+        "Conflicts": "83202",
+        "Restarts": "2776"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/b523d528b171061345ea12df"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-074.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 532034682,
+      "rollback_instructions": 533985671,
+      "candidate_instructions": 528362378,
+      "candidate_over_before": 0.9930976229102297,
+      "candidate_counters": {
+        "Decisions": "7091",
+        "Propagations": "184926",
+        "Conflicts": "4029",
+        "Restarts": "99"
+      },
+      "rollback_counters": {
+        "Decisions": "7091",
+        "Propagations": "184926",
+        "Conflicts": "4029",
+        "Restarts": "99"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/b7afbe56e6174343c4bf7576"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0258.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 34325195,
+      "rollback_instructions": 34393427,
+      "candidate_instructions": 34361106,
+      "candidate_over_before": 1.0010461994462085,
+      "candidate_counters": {
+        "Decisions": "2",
+        "Propagations": "28",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "2",
+        "Propagations": "28",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/d60a7a696cef08b6acc79d95"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0294.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 31423550,
+      "rollback_instructions": 31477361,
+      "candidate_instructions": 31467751,
+      "candidate_over_before": 1.00140662019409,
+      "candidate_counters": {
+        "Decisions": "16",
+        "Propagations": "85",
+        "Conflicts": "2",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "16",
+        "Propagations": "85",
+        "Conflicts": "2",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/abfe12ce266e61510e3d467f"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-032.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 44105121,
+      "rollback_instructions": 44168239,
+      "candidate_instructions": 44100743,
+      "candidate_over_before": 0.999900737150228,
+      "candidate_counters": {
+        "Decisions": "47",
+        "Propagations": "662",
+        "Conflicts": "34",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "47",
+        "Propagations": "662",
+        "Conflicts": "34",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/a5bf4a670b4076c42c229468"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-057.cnf",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 47334379,
+      "rollback_instructions": 47415081,
+      "candidate_instructions": 47288678,
+      "candidate_over_before": 0.9990345072447238,
+      "candidate_counters": {
+        "Decisions": "188",
+        "Propagations": "2631",
+        "Conflicts": "153",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "188",
+        "Propagations": "2631",
+        "Conflicts": "153",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/6a9debe0d7072d04462fabe5"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf100-430/uuf100-0347.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 83129115,
+      "rollback_instructions": 83303229,
+      "candidate_instructions": 82823156,
+      "candidate_over_before": 0.9963194724255154,
+      "candidate_counters": {
+        "Decisions": "701",
+        "Propagations": "13468",
+        "Conflicts": "589",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "701",
+        "Propagations": "13468",
+        "Conflicts": "589",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/2598ed5f59398464218c68d7"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf100-430/uuf100-0968.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 92141744,
+      "rollback_instructions": 92400844,
+      "candidate_instructions": 91680743,
+      "candidate_over_before": 0.9949968279306717,
+      "candidate_counters": {
+        "Decisions": "1141",
+        "Propagations": "19145",
+        "Conflicts": "822",
+        "Restarts": "17"
+      },
+      "rollback_counters": {
+        "Decisions": "1141",
+        "Propagations": "19145",
+        "Conflicts": "822",
+        "Restarts": "17"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/e4f686d5ac07160aa7dd61aa"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf150-645/uuf150-017.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 349478476,
+      "rollback_instructions": 350655218,
+      "candidate_instructions": 347079546,
+      "candidate_over_before": 0.9931356859871393,
+      "candidate_counters": {
+        "Decisions": "5422",
+        "Propagations": "113911",
+        "Conflicts": "3693",
+        "Restarts": "91"
+      },
+      "rollback_counters": {
+        "Decisions": "5422",
+        "Propagations": "113911",
+        "Conflicts": "3693",
+        "Restarts": "91"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/cb83d45ca77f2eee87ac2372"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf150-645/uuf150-075.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 467862617,
+      "rollback_instructions": 469387874,
+      "candidate_instructions": 464699314,
+      "candidate_over_before": 0.9932388207882829,
+      "candidate_counters": {
+        "Decisions": "5822",
+        "Propagations": "144382",
+        "Conflicts": "4703",
+        "Restarts": "27"
+      },
+      "rollback_counters": {
+        "Decisions": "5822",
+        "Propagations": "144382",
+        "Conflicts": "4703",
+        "Restarts": "27"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/0f860ddd5b030d48f2449859"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf200-860/uuf200-01.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 2834851031,
+      "rollback_instructions": 2842320626,
+      "candidate_instructions": 2819102059,
+      "candidate_over_before": 0.99444451513403,
+      "candidate_counters": {
+        "Decisions": "29599",
+        "Propagations": "761971",
+        "Conflicts": "20651",
+        "Restarts": "392"
+      },
+      "rollback_counters": {
+        "Decisions": "29599",
+        "Propagations": "761971",
+        "Conflicts": "20651",
+        "Restarts": "392"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/389b5b092486269a1f29199c"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf200-860/uuf200-083.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 4125677958,
+      "rollback_instructions": 4135013978,
+      "candidate_instructions": 4104068259,
+      "candidate_over_before": 0.9947621459503165,
+      "candidate_counters": {
+        "Decisions": "37541",
+        "Propagations": "1038727",
+        "Conflicts": "27483",
+        "Restarts": "364"
+      },
+      "rollback_counters": {
+        "Decisions": "37541",
+        "Propagations": "1038727",
+        "Conflicts": "27483",
+        "Restarts": "364"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c32723bec76382e1f008f88f"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf250-1065/uuf250-034.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 88632249251,
+      "rollback_instructions": 88768186231,
+      "candidate_instructions": 88343817690,
+      "candidate_over_before": 0.9967457492793262,
+      "candidate_counters": {
+        "Decisions": "546607",
+        "Propagations": "13049593",
+        "Conflicts": "303817",
+        "Restarts": "11162"
+      },
+      "rollback_counters": {
+        "Decisions": "546607",
+        "Propagations": "13049593",
+        "Conflicts": "303817",
+        "Restarts": "11162"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/429beed44bf54ca7e7fd32fe"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf250-1065/uuf250-08.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 57234763120,
+      "rollback_instructions": 57324782543,
+      "candidate_instructions": 57059540872,
+      "candidate_over_before": 0.9969385345819878,
+      "candidate_counters": {
+        "Decisions": "339631",
+        "Propagations": "8256645",
+        "Conflicts": "193319",
+        "Restarts": "7021"
+      },
+      "rollback_counters": {
+        "Decisions": "339631",
+        "Propagations": "8256645",
+        "Conflicts": "193319",
+        "Restarts": "7021"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/0efbb4273d6efed38210238a"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf50-218/uuf50-0605.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 26315301,
+      "rollback_instructions": 26316103,
+      "candidate_instructions": 26297572,
+      "candidate_over_before": 0.9993262854945113,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "33",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "33",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/51a6f012c278d7582ccefea5"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf50-218/uuf50-0974.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 39755247,
+      "rollback_instructions": 39782182,
+      "candidate_instructions": 39767278,
+      "candidate_over_before": 1.0003026267199395,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "17",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "17",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/47c7a09af2e0105b6a3b0739"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf75-325/uuf75-074.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 62412431,
+      "rollback_instructions": 62496776,
+      "candidate_instructions": 62384989,
+      "candidate_over_before": 0.9995603119513162,
+      "candidate_counters": {
+        "Decisions": "277",
+        "Propagations": "3786",
+        "Conflicts": "224",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "277",
+        "Propagations": "3786",
+        "Conflicts": "224",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c52f864100551aba7b00e656"
+    },
+    {
+      "kind": "SAT",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf75-325/uuf75-086.cnf",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 57137415,
+      "rollback_instructions": 57229343,
+      "candidate_instructions": 56987141,
+      "candidate_over_before": 0.9973699545210437,
+      "candidate_counters": {
+        "Decisions": "325",
+        "Propagations": "4995",
+        "Conflicts": "275",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "325",
+        "Propagations": "4995",
+        "Conflicts": "275",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/1e988f77e345f39477b15b20"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/AUFLIA/20170829-Rodin/smt7651775328626477292.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 25731445,
+      "rollback_instructions": 27424475,
+      "candidate_instructions": 26688922,
+      "candidate_over_before": 1.0372103859693849,
+      "candidate_counters": {
+        "Decisions": "1004",
+        "Propagations": "1267",
+        "Conflicts": "26",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "1004",
+        "Propagations": "1267",
+        "Conflicts": "26",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/f553dc9b865fd5b576543c50"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/AUFLIA/20230321-UltimateAutomizerSvcomp2023/sll_to_dll_rev-1.i_26.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 256180989,
+      "rollback_instructions": 368557923959,
+      "candidate_instructions": 389212750426,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/8cba6c774cd8d6160398a33a"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/AUFLIA/20230321-UltimateAutomizerSvcomp2023/sll_to_dll_rev-2.i_60.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 475670603,
+      "rollback_instructions": 357607473731,
+      "candidate_instructions": 379006923006,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/892e2f3bef104d33cc0321a6"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/AUFLIA/misc/set1.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 380470808638,
+      "rollback_instructions": 384477108484,
+      "candidate_instructions": 387082060507,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/44026eeb1152f63181d891cc"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/sound/diff/4.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 409114672804,
+      "rollback_instructions": 343910607343,
+      "candidate_instructions": 389088177408,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/188e07dbf62535ecc58ef566"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/lcm2.c_AllErrorsAtOnce_Iteration3_0.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 1087253617,
+      "rollback_instructions": 1088557422,
+      "candidate_instructions": 1089514314,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/9a280669cd27cdbd1b3fe719"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_ANIA/20240413-AutomizerLoopAcceleration/ddlm2013.i_AllErrorsAtOnce_Iteration5_0.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 614193223,
+      "rollback_instructions": 615291074,
+      "candidate_instructions": 615169810,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/5c87fad23b711ea62cc17f9f"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_ANIA/UltimateAutomizer/cs_peterson_true-unreach-call.i.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 40221194380,
+      "rollback_instructions": 33980391947,
+      "candidate_instructions": 33665227070,
+      "candidate_over_before": 0.8370021723357883,
+      "candidate_counters": {
+        "Decisions": "249543",
+        "Propagations": "317689",
+        "Conflicts": "699",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "249543",
+        "Propagations": "317689",
+        "Conflicts": "699",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/d7d43ccf476c2b7398a3633e"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt8654111885011073106.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 4749697,
+      "rollback_instructions": 4763386,
+      "candidate_instructions": 4760795,
+      "candidate_over_before": 1.0023365701012086,
+      "candidate_counters": {
+        "Decisions": "2",
+        "Propagations": "7",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "2",
+        "Propagations": "7",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/65064b0af4d632d0c99e9544"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 427289779116,
+      "rollback_instructions": 418743204406,
+      "candidate_instructions": 436717919369,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/48e21c9f79f5585d106f0f58"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storeinv/storeinv_t3_pp_nf_ai_00004_001.cvc.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 42436323,
+      "rollback_instructions": 36906294,
+      "candidate_instructions": 36760773,
+      "candidate_over_before": 0.8662572626756564,
+      "candidate_counters": {
+        "Decisions": "102",
+        "Propagations": "552",
+        "Conflicts": "27",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "102",
+        "Propagations": "552",
+        "Conflicts": "27",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/4663bf3a0d23da7667479912"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_t1_pp_nf_ai_00008_001.cvc.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 285245481,
+      "rollback_instructions": 271691664,
+      "candidate_instructions": 269737652,
+      "candidate_over_before": 0.9456333928739786,
+      "candidate_counters": {
+        "Decisions": "1663",
+        "Propagations": "16118",
+        "Conflicts": "497",
+        "Restarts": "4"
+      },
+      "rollback_counters": {
+        "Decisions": "1663",
+        "Propagations": "16118",
+        "Conflicts": "497",
+        "Restarts": "4"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/507a84a6aaf8788b2c6a9cda"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_BV/brummayerbiere4/unconstrained05.smt2",
+      "before_outcome": "error",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 40926997674,
+      "rollback_instructions": 15756650,
+      "candidate_instructions": 13789753,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/7390c66456fd68aa200a6df0"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_BV/pspace/shift1add.29940.smt2",
+      "before_outcome": "error",
+      "rollback_outcome": "error",
+      "candidate_outcome": "error",
+      "before_instructions": 63599330186,
+      "rollback_instructions": 67622715224,
+      "candidate_instructions": 66141984783,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/9fa1ca87c48f6413909c35b9"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_3296.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 538583817,
+      "rollback_instructions": 600345232,
+      "candidate_instructions": 596784365,
+      "candidate_over_before": 1.1080621922956886,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "62776",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "62776",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/ee316e4e747fbc8c5ce17b1e"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_BV/stp_samples/run_03230.trace.cond_030313_0x41821d_00.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 27912428,
+      "rollback_instructions": 28024697,
+      "candidate_instructions": 27971302,
+      "candidate_over_before": 1.0021092396548232,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/d043ec714b5ea65a00a0ac03"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_IDL/asp/GraphColouring/graph-colouring-nodes=150-density=0.1-instance=5.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 301794176464,
+      "rollback_instructions": 322181465880,
+      "candidate_instructions": 271055769529,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/278488d7670ee313369b3c22"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_IDL/mathsat/fischer/FISCHER7-8-ninc.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 796175918,
+      "rollback_instructions": 1270090467,
+      "candidate_instructions": 858904607,
+      "candidate_over_before": 1.0787874734488012,
+      "candidate_counters": {
+        "Decisions": "2187",
+        "Propagations": "264371",
+        "Conflicts": "1217",
+        "Restarts": "53"
+      },
+      "rollback_counters": {
+        "Decisions": "2187",
+        "Propagations": "264371",
+        "Conflicts": "1217",
+        "Restarts": "53"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c9d9a08445783c21b9bce7f0"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_IDL/parity/05.200.graph.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 609912157,
+      "rollback_instructions": 674083892,
+      "candidate_instructions": 668550904,
+      "candidate_over_before": 1.0961429384986008,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "1076",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "1076",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/d9d99fee4ebc023326800e7d"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-16.cvc.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 700510722,
+      "rollback_instructions": 1025525359,
+      "candidate_instructions": 716675448,
+      "candidate_over_before": 1.023075629668949,
+      "candidate_counters": {
+        "Decisions": "3196",
+        "Propagations": "143339",
+        "Conflicts": "712",
+        "Restarts": "25"
+      },
+      "rollback_counters": {
+        "Decisions": "3196",
+        "Propagations": "143339",
+        "Conflicts": "712",
+        "Restarts": "25"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/0cb32d01dcf23fbd3c053341"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/SwimmingPool-PT-04/RC-02.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 5252799,
+      "rollback_instructions": 5336053,
+      "candidate_instructions": 5322616,
+      "candidate_over_before": 1.0132913899808464,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/4de241c76a15469ad59cccf7"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_LIA/arctic-matrix/constraint-392137.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 534211687127,
+      "rollback_instructions": 516806683019,
+      "candidate_instructions": 519355928731,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/811ee1997bed8c56d6653466"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_LIA/tightrhombus/tightrhombus-283-245-5.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 1956218464,
+      "rollback_instructions": 1980537010,
+      "candidate_instructions": 1951312610,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "1701",
+        "Propagations": "2954",
+        "Conflicts": "55",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "1701",
+        "Propagations": "2954",
+        "Conflicts": "55",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/41c11b18d63a3155b411cb45"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_LIA/wisa/wisa5.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 341169298870,
+      "rollback_instructions": 353156682093,
+      "candidate_instructions": 350223785657,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/95536aedf0c66c77c43c84d8"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_NIA/2019-ezsmt/car/inst8.ez.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 31252361,
+      "rollback_instructions": 35278990,
+      "candidate_instructions": 35110061,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/5d4c8172f126c6094ab92546"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_NIA/LCTES/digital-stopwatch.locals.nosummaries.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 334999004,
+      "rollback_instructions": 349490708,
+      "candidate_instructions": 348906842,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/8e948dba517f36c467d2079b"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_NIA/LassoRanker/aaron3_true-termination.c_Iteration1_Loop+nonterminationTemplate_0.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 2574368699,
+      "rollback_instructions": 2580565770,
+      "candidate_instructions": 2572695700,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/51a92451a2669f03c0e312af"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_NIA/mcm/18.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 4238834429,
+      "rollback_instructions": 4572853330,
+      "candidate_instructions": 4563865932,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/e958ea0e99321b28525c1490"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 10896510,
+      "rollback_instructions": 110645672,
+      "candidate_instructions": 69373893,
+      "candidate_over_before": 6.366615824699835,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "51",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "51",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/7c813b1f4b188e324833d61b"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UF/PEQ/PEQ014_size9.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 406758430889,
+      "rollback_instructions": 410891174644,
+      "candidate_instructions": 406797764079,
+      "candidate_over_before": 1.000096699138882,
+      "candidate_counters": {
+        "Decisions": "564089",
+        "Propagations": "7292533",
+        "Conflicts": "405292",
+        "Restarts": "25856"
+      },
+      "rollback_counters": {
+        "Decisions": "564089",
+        "Propagations": "7292533",
+        "Conflicts": "405292",
+        "Restarts": "25856"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/2671337d64c9fc61405abdcf"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UF/SEQ/SEQ005_size6.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 46339052667,
+      "rollback_instructions": 47062417825,
+      "candidate_instructions": 46397357771,
+      "candidate_over_before": 1.0012582282253155,
+      "candidate_counters": {
+        "Decisions": "25301",
+        "Propagations": "398410",
+        "Conflicts": "8161",
+        "Restarts": "470"
+      },
+      "rollback_counters": {
+        "Decisions": "25301",
+        "Propagations": "398410",
+        "Conflicts": "8161",
+        "Restarts": "470"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/672181c094f037d6e4dfcee7"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UF/eq_diamond/eq_diamond89.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 73805060,
+      "rollback_instructions": 74539782,
+      "candidate_instructions": 70735114,
+      "candidate_over_before": 0.9584046676474486,
+      "candidate_counters": {
+        "Decisions": "12133",
+        "Propagations": "35776",
+        "Conflicts": "180",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "12133",
+        "Propagations": "35776",
+        "Conflicts": "180",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/4e8a139491f0125bbf989503"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_f77.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 519609075781,
+      "rollback_instructions": 502732436435,
+      "candidate_instructions": 519031487502,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/3210150bfeb07efd2d892668"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/sorted_list_insert_noalloc0.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 150792774,
+      "rollback_instructions": 139326758,
+      "candidate_instructions": 132315617,
+      "candidate_over_before": 0.87746656215768,
+      "candidate_counters": {
+        "Decisions": "1454",
+        "Propagations": "3126",
+        "Conflicts": "34",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "1454",
+        "Propagations": "3126",
+        "Conflicts": "34",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c7dcaf7347a960505e29a1ca"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/ibm_cache/ibm_cache_full1.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 2324086018,
+      "rollback_instructions": 2359209535,
+      "candidate_instructions": 2333928631,
+      "candidate_over_before": 1.0042350467769994,
+      "candidate_counters": {
+        "Decisions": "27591",
+        "Propagations": "71545",
+        "Conflicts": "335",
+        "Restarts": "3"
+      },
+      "rollback_counters": {
+        "Decisions": "27591",
+        "Propagations": "71545",
+        "Conflicts": "335",
+        "Restarts": "3"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/a9c91fad102d67ad3f704a76"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c6nidw_s.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 537301335401,
+      "rollback_instructions": 513493377616,
+      "candidate_instructions": 540517227211,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/81c12d79900603d7cc3324c7"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFLIA/20230314-Jaroslav-Bendik-Certora/25959_5dee2e2f6ef44465a2bea4b085818948_67_QF_UFLIA.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 23941651885,
+      "rollback_instructions": 28148594448,
+      "candidate_instructions": 27917358637,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "0",
+        "Propagations": "0",
+        "Conflicts": "0",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/298f7de4cbf7f5c228ff6647"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFLIA/TwoSquares/smtlib.639533.smt2",
+      "before_outcome": "sat",
+      "rollback_outcome": "sat",
+      "candidate_outcome": "sat",
+      "before_instructions": 5441218,
+      "rollback_instructions": 6126853,
+      "candidate_instructions": 5906543,
+      "candidate_over_before": 1.0855185364747377,
+      "candidate_counters": {
+        "Decisions": "3",
+        "Propagations": "8",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "3",
+        "Propagations": "8",
+        "Conflicts": "1",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/7eea2ba226cb15c060308acb"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 31663062475,
+      "rollback_instructions": 393749871179,
+      "candidate_instructions": 31558790464,
+      "candidate_over_before": 0.9967068248347004,
+      "candidate_counters": {
+        "Decisions": "271186",
+        "Propagations": "979038",
+        "Conflicts": "4287",
+        "Restarts": "702"
+      },
+      "rollback_counters": {
+        "Decisions": "704250",
+        "Propagations": "3519658",
+        "Conflicts": "23433",
+        "Restarts": "2668"
+      },
+      "same_observed_counters": false,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/a872bb07b74cc7414023152b"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 14105739712,
+      "rollback_instructions": 66305489388,
+      "candidate_instructions": 14067058364,
+      "candidate_over_before": 0.9972577582750167,
+      "candidate_counters": {
+        "Decisions": "177211",
+        "Propagations": "511375",
+        "Conflicts": "3080",
+        "Restarts": "354"
+      },
+      "rollback_counters": {
+        "Decisions": "191571",
+        "Propagations": "549938",
+        "Conflicts": "4326",
+        "Restarts": "658"
+      },
+      "same_observed_counters": false,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/9bd8904589f525679a5b5cda"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UF/20170428-Barrett/cdt-cade2015/nada/distro/gram_lang/x2015_09_10_16_48_25_187_1125625.smt_in.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 485696377037,
+      "rollback_instructions": 395086389559,
+      "candidate_instructions": 420825657516,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/75aa00a76559179b5c98329a"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UF/grasshopper/instantiated/rec_reverse_postcondition_of_rec_reverse_29_2.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 657642010,
+      "rollback_instructions": 578463349,
+      "candidate_instructions": 575754331,
+      "candidate_over_before": 0.8754828953217267,
+      "candidate_counters": {
+        "Decisions": "128",
+        "Propagations": "5122",
+        "Conflicts": "24",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "128",
+        "Propagations": "5122",
+        "Conflicts": "24",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/dd84dace5ef4da5718a5a9e1"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UF/sledgehammer/TwoSquares/uf.707021.smt2",
+      "before_outcome": "timeout",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 358856409792,
+      "rollback_instructions": 408223185690,
+      "candidate_instructions": 433667379950,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/7fc475d3337cc79e74adda4f"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UF/wintersteiger/fmsd13/fixpoint/small-bug1-fixpoint-8.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 3022931648,
+      "rollback_instructions": 5714180158,
+      "candidate_instructions": 5618305060,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "11177",
+        "Propagations": "30569",
+        "Conflicts": "15",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "11177",
+        "Propagations": "30569",
+        "Conflicts": "15",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/bd6c329d7f74daa5358dd193"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UFLRA/FFT/smtlib.623417.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 5824388,
+      "rollback_instructions": 6089490,
+      "candidate_instructions": 6067451,
+      "candidate_over_before": 1.041731938188184,
+      "candidate_counters": {
+        "Decisions": "5",
+        "Propagations": "19",
+        "Conflicts": "2",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "5",
+        "Propagations": "19",
+        "Conflicts": "2",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/b3c8e214bbd2c8c9bbd0a050"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UFLRA/FFT/smtlib.627457.smt2",
+      "before_outcome": "unsat",
+      "rollback_outcome": "unsat",
+      "candidate_outcome": "unsat",
+      "before_instructions": 9047369,
+      "rollback_instructions": 9569713,
+      "candidate_instructions": 9508198,
+      "candidate_over_before": 1.0509351392653488,
+      "candidate_counters": {
+        "Decisions": "63",
+        "Propagations": "113",
+        "Conflicts": "6",
+        "Restarts": "0"
+      },
+      "rollback_counters": {
+        "Decisions": "63",
+        "Propagations": "113",
+        "Conflicts": "6",
+        "Restarts": "0"
+      },
+      "same_observed_counters": true,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/4d75a5e95cba1730fe452cc1"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UFLRA/misc/list2.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "unknown",
+      "candidate_outcome": "unknown",
+      "before_instructions": 12976512298,
+      "rollback_instructions": 5211240616,
+      "candidate_instructions": 4816319951,
+      "candidate_over_before": null,
+      "candidate_counters": {
+        "Decisions": "31552",
+        "Propagations": "32507",
+        "Conflicts": "279",
+        "Restarts": "2"
+      },
+      "rollback_counters": {
+        "Decisions": "33290",
+        "Propagations": "34237",
+        "Conflicts": "285",
+        "Restarts": "2"
+      },
+      "same_observed_counters": false,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c26b235e067aee7b6a7ee95e"
+    },
+    {
+      "kind": "SMT",
+      "path": "smt-lib/non-incremental/UFLRA/misc/set16.smt2",
+      "before_outcome": "unknown",
+      "rollback_outcome": "timeout",
+      "candidate_outcome": "timeout",
+      "before_instructions": 375904756,
+      "rollback_instructions": 694898603481,
+      "candidate_instructions": 736417510914,
+      "candidate_over_before": null,
+      "candidate_counters": {},
+      "rollback_counters": {},
+      "same_observed_counters": null,
+      "candidate_artifacts": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/benchmark/migration034-satlib-smtlib-30s/c39c9caa09c077ae5aae6c79"
+    }
+  ],
+  "original_smt_cohort": {
+    "original_pairs": 23,
+    "candidate_retained": 23,
+    "instructions_candidate_over_before": 1.076099335166377,
+    "instructions_candidate_over_after": 0.786731118884879
+  }
+}
