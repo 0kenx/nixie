@@ -35,7 +35,7 @@ use num_rational::Rational64;
 pub(super) fn operand_plan(op: &str) -> Option<Plan> {
     let plan = match op {
             // ======== one operand ========
-            "not" | "abs" | "to_real" | "to_int" | "is_int" | "bvnot" | "bvneg" | "bvnego" | "fp.isNormal"
+            "not" | "abs" | "to_real" | "to_int" | "is_int" | "bvnot" | "bvneg" | "fp.isNormal"
             | "fp.isSubnormal" | "fp.isZero" | "fp.isInfinite" | "fp.isNaN" | "fp.isNegative"
             | "fp.isPositive" | "fp.abs" | "fp.neg" | "fp.to_real" | "str.len" | "str.is_digit"
             | "str.to_code" | "str.from_code" | "str.to_int" | "str.to.int" | "int.to_str"
@@ -61,7 +61,6 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // behaviour, including the `(bvadd x)` arity-1 identity.)
             "seq.nth" | "mod" | "select" | "bvult"
             | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvcomp"
-            | "bvuaddo" | "bvsaddo" | "bvusubo" | "bvssubo" | "bvumulo" | "bvsmulo"
             | "fp.rem"
             | "fp.eq" | "fp.lt" | "fp.gt" | "fp.leq" | "fp.geq" | "fp.min" | "fp.max"
             | "str.at" | "str.contains" | "str.prefixof" | "str.suffixof" | "str.in_re"
@@ -483,149 +482,6 @@ impl Parser<'_> {
         }
     }
 
-    /// The bit-vector width both operands of an overflow predicate share.
-    ///
-    /// [`Parser::check_bv_binary_widths`] has already rejected a mismatch, so
-    /// this only has to read the width back off the left operand — and reject
-    /// the degenerate width 0, which has no sign bit for the signed
-    /// predicates and no `(_ bvMIN 0)` for `bvnego`.
-    fn overflow_operand_width(&self, op: &str, x: TermId) -> Result<u32> {
-        let width = self
-            .bv_sort_width(x)
-            .ok_or_else(|| NixieError::ParseError {
-                position: self.lexer.position(),
-                message: format!("operands of {op} must have bit-vector sorts"),
-            })?;
-        if width == 0 {
-            return Err(NixieError::ParseError {
-                position: self.lexer.position(),
-                message: format!("operands of {op} must be at least 1 bit wide"),
-            });
-        }
-        Ok(width)
-    }
-
-    /// `2 * width`, the width of the exact product the multiplication
-    /// overflow predicates reason about.
-    ///
-    /// Checked, because `width` comes straight from the input: an operand of
-    /// more than `2^31` bits has no representable double-width product, and
-    /// the standard reading of the predicate does not exist for it.
-    fn overflow_double_width(&self, op: &str, width: u32) -> Result<u32> {
-        width.checked_mul(2).ok_or_else(|| NixieError::ParseError {
-            position: self.lexer.position(),
-            message: format!(
-                "{op} needs a {}-bit intermediate product, which exceeds the \
-                 largest representable bit-vector width",
-                u64::from(width) * 2
-            ),
-        })
-    }
-
-    /// `((_ zero_extend n) x)`, built exactly as the indexed-operator parser
-    /// builds it: `n` zero bits concatenated in front of `x`.
-    fn bv_zero_extend(&mut self, n: u32, x: TermId) -> Result<TermId> {
-        if n == 0 {
-            return Ok(x);
-        }
-        let zeros = self.manager.mk_bitvec(0, n);
-        self.manager.try_mk_bv_concat(zeros, x)
-    }
-
-    /// `((_ sign_extend n) x)` for an operand of `width` bits, built exactly
-    /// as the indexed-operator parser builds it: `n` copies of the sign bit
-    /// concatenated in front of `x`.
-    fn bv_sign_extend(&mut self, n: u32, width: u32, x: TermId) -> Result<TermId> {
-        if n == 0 {
-            return Ok(x);
-        }
-        let sign_bit = self.manager.mk_bv_extract(width - 1, width - 1, x);
-        let mut ext = sign_bit;
-        let mut bits = 1u32;
-        for shift in (0..(31 - n.leading_zeros())).rev() {
-            ext = self.manager.try_mk_bv_concat(ext, ext)?;
-            bits *= 2;
-            if (n >> shift) & 1 != 0 {
-                ext = self.manager.try_mk_bv_concat(ext, sign_bit)?;
-                bits += 1;
-            }
-        }
-        debug_assert_eq!(bits, n);
-        self.manager.try_mk_bv_concat(ext, x)
-    }
-
-    /// The sign bit of a `width`-bit operand, as a 1-bit term.
-    fn bv_sign_bit(&mut self, width: u32, x: TermId) -> TermId {
-        self.manager.mk_bv_extract(width - 1, width - 1, x)
-    }
-
-    /// Build one of the SMT-LIB 2.7 binary overflow predicates.
-    ///
-    /// Every one of them is a *desugaring* into term kinds the bit-blaster
-    /// already handles — there is no new `TermKind` and no new circuit — so
-    /// the predicates inherit the bit-vector theory's semantics exactly.
-    /// The definitions are the standard ones:
-    ///
-    /// * `bvuaddo(a, b)` = `bvult(bvadd(a, b), a)` — an unsigned sum wraps iff
-    ///   it comes out below either summand.
-    /// * `bvusubo(a, b)` = `bvult(a, b)` — an unsigned difference borrows iff
-    ///   the minuend is the smaller.
-    /// * `bvsaddo(a, b)` = the summands share a sign and the sum does not.
-    /// * `bvssubo(a, b)` = the operands differ in sign and the difference does
-    ///   not match the minuend's.
-    /// * `bvumulo(a, b)` = the high half of the exact `2w`-bit unsigned
-    ///   product is non-zero.
-    /// * `bvsmulo(a, b)` = the exact `2w`-bit signed product differs from the
-    ///   sign-extension of its own low `w` bits.
-    fn build_bv_overflow_binary(&mut self, op: &str, x: TermId, y: TermId) -> Result<TermId> {
-        let width = self.overflow_operand_width(op, x)?;
-        let term = match op {
-            "bvuaddo" => {
-                let sum = self.manager.mk_bv_add(x, y);
-                self.manager.mk_bv_ult(sum, x)
-            }
-            "bvusubo" => self.manager.mk_bv_ult(x, y),
-            "bvsaddo" => {
-                let sum = self.manager.mk_bv_add(x, y);
-                let sx = self.bv_sign_bit(width, x);
-                let sy = self.bv_sign_bit(width, y);
-                let ss = self.bv_sign_bit(width, sum);
-                let same_input_sign = self.manager.mk_eq(sx, sy);
-                let flipped = self.manager.mk_distinct([sx, ss]);
-                self.manager.mk_and([same_input_sign, flipped])
-            }
-            "bvssubo" => {
-                let diff = self.manager.mk_bv_sub(x, y);
-                let sx = self.bv_sign_bit(width, x);
-                let sy = self.bv_sign_bit(width, y);
-                let sd = self.bv_sign_bit(width, diff);
-                let differing_input_sign = self.manager.mk_distinct([sx, sy]);
-                let flipped = self.manager.mk_distinct([sx, sd]);
-                self.manager.mk_and([differing_input_sign, flipped])
-            }
-            "bvumulo" => {
-                let double = self.overflow_double_width(op, width)?;
-                let wide_x = self.bv_zero_extend(width, x)?;
-                let wide_y = self.bv_zero_extend(width, y)?;
-                let product = self.manager.mk_bv_mul(wide_x, wide_y);
-                let high = self.manager.mk_bv_extract(double - 1, width, product);
-                let zero = self.manager.mk_bitvec(0, width);
-                self.manager.mk_distinct([high, zero])
-            }
-            "bvsmulo" => {
-                let _ = self.overflow_double_width(op, width)?;
-                let wide_x = self.bv_sign_extend(width, width, x)?;
-                let wide_y = self.bv_sign_extend(width, width, y)?;
-                let product = self.manager.mk_bv_mul(wide_x, wide_y);
-                let low = self.manager.mk_bv_extract(width - 1, 0, product);
-                let widened = self.bv_sign_extend(width, width, low)?;
-                self.manager.mk_distinct([product, widened])
-            }
-            _ => return Err(self.plan_mismatch(op)),
-        };
-        Ok(term)
-    }
-
     /// SMT-LIB rendering of a sort for sort-mismatch diagnostics
     /// (`(_ BitVec 8)`, `Bool`, `Int`, `(Array D R)`, …).
     fn sort_display(&self, sort: Option<crate::sort::SortId>) -> String {
@@ -919,12 +775,6 @@ impl Parser<'_> {
             },
             "bvnot" => self.manager.mk_bv_not(x),
             "bvneg" => self.manager.mk_bv_neg(x),
-            "bvnego" => {
-                let width = self.overflow_operand_width("bvnego", x)?;
-                let min = BigInt::from(1) << (width - 1);
-                let most_negative = self.manager.mk_bitvec(min, width);
-                self.manager.mk_eq(x, most_negative)
-            }
             "fp.isNormal" => self.manager.mk_fp_is_normal(x),
             "fp.isSubnormal" => self.manager.mk_fp_is_subnormal(x),
             "fp.isZero" => self.manager.mk_fp_is_zero(x),
@@ -1195,9 +1045,6 @@ impl Parser<'_> {
             "bvadd" => self.manager.mk_bv_add(x, y),
             "bvsub" => self.manager.mk_bv_sub(x, y),
             "bvmul" => self.manager.mk_bv_mul(x, y),
-            "bvuaddo" | "bvsaddo" | "bvusubo" | "bvssubo" | "bvumulo" | "bvsmulo" => {
-                self.build_bv_overflow_binary(op, x, y)?
-            }
             "bvult" => self.manager.mk_bv_ult(x, y),
             "bvslt" => self.manager.mk_bv_slt(x, y),
             "bvule" => self.manager.mk_bv_ule(x, y),
@@ -1639,12 +1486,6 @@ fn is_same_width_bv_op(op: &str) -> bool {
             | "bvadd"
             | "bvsub"
             | "bvmul"
-            | "bvuaddo"
-            | "bvsaddo"
-            | "bvusubo"
-            | "bvssubo"
-            | "bvumulo"
-            | "bvsmulo"
             | "bvult"
             | "bvslt"
             | "bvule"
@@ -1704,7 +1545,6 @@ mod tests {
         "is_int",
         "bvnot",
         "bvneg",
-        "bvnego",
         "fp.isNormal",
         "fp.isSubnormal",
         "fp.isZero",
@@ -1742,12 +1582,6 @@ mod tests {
         "bvuge",
         "bvsge",
         "bvcomp",
-        "bvuaddo",
-        "bvsaddo",
-        "bvusubo",
-        "bvssubo",
-        "bvumulo",
-        "bvsmulo",
         "fp.rem",
         "fp.eq",
         "fp.lt",

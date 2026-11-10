@@ -621,7 +621,6 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
-            && !self.solver.model_already_certified()
         {
             if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: array atoms need theory");
@@ -1473,7 +1472,7 @@ impl Context {
     pub fn get_statistics(&self) -> String {
         let stats = self.solver.get_statistics();
         format!(
-            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {} :bv-embedded-conflicts {} :array-refinement-rounds {} :array-lemma-instances {})",
+            "(:decisions {} :conflicts {} :propagations {} :restarts {} :learned-clauses {} :theory-propagations {} :theory-conflicts {} :bv-embedded-checks {})",
             stats.decisions,
             stats.conflicts,
             stats.propagations,
@@ -1481,10 +1480,7 @@ impl Context {
             stats.learned_clauses,
             stats.theory_propagations,
             stats.theory_conflicts,
-            stats.bv_embedded_checks,
-            self.solver.bv_conflicts_spent(),
-            stats.array_refinement_rounds,
-            stats.array_lemma_instances
+            stats.bv_embedded_checks
         )
     }
 
@@ -1610,7 +1606,6 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
-            && !self.solver.model_already_certified()
         {
             result = SolverResult::Unknown;
         }
@@ -2041,7 +2036,6 @@ impl Context {
                     if result == SolverResult::Sat
                         && self.solver.array_atoms_need_theory(&self.terms)
                         && !self.solver.array_axioms_saturated
-                        && !self.solver.model_already_certified()
                     {
                         result = SolverResult::Unknown;
                     }

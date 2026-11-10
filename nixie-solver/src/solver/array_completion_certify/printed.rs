@@ -34,21 +34,6 @@ const MAX_EXPLAIN_INSTANCES: usize = 256;
 const MAX_QUOTED_ASSERTION: usize = 160;
 
 impl Solver {
-    /// Whether a certificate of this check already covered exactly the
-    /// model the last `check` left: a completion it installed, or a
-    /// candidate decision (48) certified as printed.
-    #[must_use]
-    pub(crate) fn model_already_certified(&self) -> bool {
-        let Some(model) = self.model.as_ref() else {
-            return false;
-        };
-        self.candidate_certified_as_printed
-            || self
-                .certified_array_model
-                .as_ref()
-                .is_some_and(|certified| certified == model.assignments())
-    }
-
     /// Certify `printed` — every declared constant mapped to its printed
     /// value, parsed back into a term — against `goal`: the asserted terms
     /// with every uninterpreted function replaced by its printed table
@@ -92,98 +77,7 @@ impl Solver {
     }
 }
 
-impl Solver {
-    /// Where the printed model fails its certificate, complete it around what
-    /// it got right: each independent group of arrays (`groups`) keeps its
-    /// printed interpretation when that certifies on the group's own
-    /// sub-goal, and is completed by the ordinary searches otherwise; the
-    /// union, with the printed scalars, is installed when it certifies over
-    /// every assertion and passes the ground-assertion gate.  `true` when it
-    /// installed.
-    ///
-    /// This is what completes a goal whose groups need different treatment:
-    /// `¬∃i. a0[i] = #b0` beside `∃i. a1[i] = #b1` and `∃i. a1[i] = #b0`
-    /// (a fuzzed script, `fuzz_qc` seed 29093020) has a constant completion
-    /// for `a0` and none for `a1`, whose printed candidate — the two Skolem
-    /// witnesses over `#b0` — is right as it stands.
-    pub(crate) fn complete_around_printed(
-        &mut self,
-        goal: &[TermId],
-        printed: &FxHashMap<TermId, TermId>,
-        hypotheses: &[TermId],
-        manager: &mut TermManager,
-    ) -> bool {
-        let assertions = goal.to_vec();
-        let assignments = self
-            .model
-            .as_ref()
-            .map(|model| model.assignments().clone())
-            .unwrap_or_default();
-        let Ok(goal) =
-            Goal::for_interpretation(&assertions, &assignments, printed, hypotheses, manager)
-        else {
-            return false;
-        };
-        let logic = self.logic.clone();
-        let mut merged: FxHashMap<TermId, TermId> = FxHashMap::default();
-        let mut queries = super::QueryBudget::for_solver(self);
-        for group in super::groups::array_groups(&goal.arrays, &goal.assertions, manager) {
-            let printed_group: FxHashMap<TermId, TermId> = group
-                .iter()
-                .filter_map(|&array| printed.get(&array).map(|&value| (array, value)))
-                .collect();
-            let Some(sub_goal) = goal.restricted_to(&group, manager) else {
-                return false;
-            };
-            if sub_goal.certificate_passes(
-                self,
-                &printed_group,
-                manager,
-                logic.as_deref(),
-                &mut queries,
-            ) {
-                merged.extend(printed_group);
-                continue;
-            }
-            if group.len() > super::MAX_COMPLETED_ARRAYS || sub_goal.universals.is_empty() {
-                return false;
-            }
-            let Some(completion) = self.search_goal_completion(
-                &sub_goal,
-                &assignments,
-                manager,
-                logic.as_deref(),
-                &mut queries,
-            ) else {
-                return false;
-            };
-            merged.extend(completion);
-        }
-        if !goal.certificate_passes(self, &merged, manager, logic.as_deref(), &mut queries) {
-            return false;
-        }
-        let original = self.model.clone();
-        self.install_completed_model(&goal, &merged, manager);
-        if let Some(model) = self.model.as_mut() {
-            let mut scalars: Vec<(TermId, TermId)> = printed
-                .iter()
-                .filter(|(term, _)| !merged.contains_key(term))
-                .map(|(&term, &value)| (term, value))
-                .collect();
-            scalars.sort_unstable_by_key(|&(term, _)| term.raw());
-            for (term, value) in scalars {
-                model.set(term, value);
-            }
-            self.certified_array_model = Some(model.assignments().clone());
-        }
-        if self.model_refutes_assertions(manager) {
-            self.model = original;
-            self.certified_array_model = None;
-            return false;
-        }
-        true
-    }
-}
+impl Solver {}
 
 impl Goal {
     /// The goal of the published-model certificate: every array is

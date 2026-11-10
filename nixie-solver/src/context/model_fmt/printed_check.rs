@@ -434,7 +434,7 @@ impl Context {
         funcs: &PrintedFunctions,
     ) -> TermId {
         if funcs.is_empty() {
-            return self.fold_published_zero_division(term);
+            return term;
         }
         enum Frame {
             Expand(TermId),
@@ -568,8 +568,7 @@ impl Context {
                 }
             }
         }
-        let expanded = done.get(&term).copied().unwrap_or(term);
-        self.fold_published_zero_division(expanded)
+        done.get(&term).copied().unwrap_or(term)
     }
 
     /// The maximal quantifier nodes of `term` and, outside them, the

@@ -1,7 +1,7 @@
 use nixie_solver::Context;
 
 #[test]
-fn unconstrained_enum_fields_publish_valid_values_across_scopes() {
+fn unsupported_enum_separation_does_not_publish_an_invalid_model() {
     let mut context = Context::new();
     let output = context
         .execute_script(
@@ -24,8 +24,8 @@ fn unconstrained_enum_fields_publish_valid_values_across_scopes() {
             .filter(|s| matches!(s.as_str(), "sat" | "unsat" | "unknown"))
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["sat", "sat", "unsat", "sat"]
+        ["unknown", "unknown", "unsat", "unknown"]
     );
-    assert!(output[1].ends_with("true))"), "{output:?}");
-    assert!(output[3].ends_with("true))"), "{output:?}");
+    assert!(output[1].contains("error"), "{output:?}");
+    assert!(output[3].contains("error"), "{output:?}");
 }

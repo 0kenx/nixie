@@ -742,11 +742,8 @@ pub struct Solver {
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
     pub(super) has_array_ops: bool,
-    /// Exact assignment snapshot certified by array completion.
-    pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
+    /// Shared budget for independent model certificates.
     completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
-    replaced_candidate: Option<array_completion_certify::ReplacedCandidate>,
-    candidate_certified_as_printed: bool,
     /// Incremental array-theory bookkeeping (Stage 1 of
     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
     /// internalised by the encoder, recorded as `(select_term, array, index)`.
@@ -1360,10 +1357,7 @@ impl Solver {
             ff_terms_unconstrained: false,
             ff_dispatch_answered: false,
             has_array_ops: false,
-            certified_array_model: None,
             completion_work: std::sync::Arc::default(),
-            replaced_candidate: None,
-            candidate_certified_as_printed: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
             array_theory: array_theory::ArrayTheory::new(),
@@ -1608,12 +1602,9 @@ impl Solver {
             return cached;
         }
 
-        self.certified_array_model = None;
         self.model_euf_snapshot = None;
         self.mbqi.publication_candidate = None;
         self.completion_work = std::sync::Arc::default();
-        self.replaced_candidate = None;
-        self.candidate_certified_as_printed = false;
         self.begin_check_budget();
         self.certification_failure = None;
         #[cfg(feature = "std")]
@@ -1632,13 +1623,14 @@ impl Solver {
         if raw_result == SolverResult::Sat {
             self.recover_ground_model_definitions(manager);
         }
-        let original_candidate = (raw_result == SolverResult::Sat)
-            .then(|| self.model.clone())
-            .flatten();
-        if raw_result != SolverResult::Unsat && self.certify_sat_by_array_completion(manager) {
-            self.replaced_candidate = original_candidate
-                .map(|model| array_completion_certify::ReplacedCandidate { model });
-            raw_result = SolverResult::Sat;
+        if raw_result == SolverResult::Sat
+            && (!self.functional_collision_lemmas(manager, false).is_empty()
+                || !self.unpinned_function_model_is_consistent(manager))
+        {
+            raw_result = SolverResult::Unknown;
+            self.model = None;
+            self.unsat_core = None;
+            self.certification_failure = Some("unverified function interpretation".into());
         }
         if self.user_state.active() {
             if raw_result == SolverResult::Sat && !self.validate_user_model(manager) {
@@ -3396,10 +3388,6 @@ impl Solver {
                         && !set_refined
                         && self.has_array_ops
                         && self.instantiate_array_axioms(manager);
-                    if array_refined {
-                        self.statistics.array_refinement_rounds =
-                            self.statistics.array_refinement_rounds.saturating_add(1);
-                    }
                     // Distinct-semantics guard clauses: for a live
                     // injective-`distinct` spec, every encoded
                     // `(= t_i t_j)` atom between two of its arguments is
@@ -3870,58 +3858,6 @@ impl Solver {
                         // is what makes "recompute after every re-solve" fall
                         // out of the loop structure instead of being a rule
                         // to remember.
-                        // General result sorts need a valid congruence lemma
-                        // before candidate blocking. Numeric repair retains its
-                        // established position after the refutation gate.
-                        if self.assert_functional_consistency(manager, true) {
-                            theory_refinement_rounds += 1;
-                            if theory_refinement_rounds >= max_theory_refinement_rounds {
-                                self.model = None;
-                                self.unsat_core = None;
-                                return SolverResult::Unknown;
-                            }
-                            self.instantiate_arith_axioms(manager);
-                            self.sat.backtrack_to_root();
-                            self.euf.reset();
-                            self.arith.reset();
-                            self.reset_bv_theory_for_round();
-                            self.diff.reset();
-                            self.rebase_theory_state();
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.check_theory_conflict_ceiling,
-                                self.config.max_decisions,
-                                self.config.max_bv_embedded_checks,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                Some(&self.encoded_terms),
-                                self.check_deadline,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
                         let refutation = self.model_refutation_kind(manager);
                         if refutation != model_eval::ModelRefutation::No {
                             // Bounded blocking (upstream #40): this one
@@ -3996,56 +3932,6 @@ impl Solver {
                         // and the argument-pair care-split plus its
                         // trichotomy force the decision.
                         if self.repair_congruence_gap(manager) {
-                            self.sat.backtrack_to_root();
-                            self.euf.reset();
-                            self.arith.reset();
-                            self.reset_bv_theory_for_round();
-                            self.diff.reset();
-                            self.rebase_theory_state();
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.check_theory_conflict_ceiling,
-                                self.config.max_decisions,
-                                self.config.max_bv_embedded_checks,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                Some(&self.encoded_terms),
-                                self.check_deadline,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
-
-                        if self.assert_functional_consistency(manager, false) {
-                            theory_refinement_rounds += 1;
-                            if theory_refinement_rounds >= max_theory_refinement_rounds {
-                                self.model = None;
-                                self.unsat_core = None;
-                                return SolverResult::Unknown;
-                            }
-                            self.instantiate_arith_axioms(manager);
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
@@ -4310,62 +4196,6 @@ impl Solver {
                             "[qround{tag}] iter={mbqi_iteration} result={desc} mc_declined={:?}",
                             self.mbqi.model_checker_last_decline()
                         );
-                    }
-                    // Only a would-be Sat exit is eligible. Repairing every
-                    // intermediate quantified candidate can starve MBQI and
-                    // grow clauses on unchanged repeated checks.
-                    if matches!(
-                        mbqi_result,
-                        MBQIResult::NoQuantifiers | MBQIResult::Satisfied
-                    ) && self.assert_functional_consistency(manager, false)
-                    {
-                        theory_refinement_rounds += 1;
-                        if theory_refinement_rounds >= max_theory_refinement_rounds {
-                            self.model = None;
-                            self.unsat_core = None;
-                            return SolverResult::Unknown;
-                        }
-                        self.instantiate_arith_axioms(manager);
-                        self.sat.backtrack_to_root();
-                        self.euf.reset();
-                        self.arith.reset();
-                        self.reset_bv_theory_for_round();
-                        self.diff.reset();
-                        self.rebase_theory_state();
-                        let zero_term = manager.mk_int(0);
-                        theory_manager = TheoryManager::new(
-                            manager,
-                            &mut self.euf,
-                            &mut self.arith,
-                            &mut self.bv,
-                            &mut self.diff,
-                            &mut self.array_theory,
-                            &self.bv_terms,
-                            &self.var_to_constraint,
-                            &self.var_to_parsed_arith,
-                            &self.term_to_var,
-                            &self.var_to_term,
-                            &self.numarg_proxies,
-                            &self.interface_const_pins,
-                            zero_term,
-                            &self.ite_result_terms,
-                            &mut self.derived_reasons,
-                            self.config.theory_mode,
-                            &mut self.statistics,
-                            self.check_theory_conflict_ceiling,
-                            self.config.max_decisions,
-                            self.config.max_bv_embedded_checks,
-                            self.has_bv_arith_ops,
-                            self.has_array_ops,
-                            Some(&self.encoded_terms),
-                            self.check_deadline,
-                            self.logic.as_deref(),
-                            pure_dl,
-                            sparse_dl,
-                            self.has_injective_distinct,
-                            &self.injective_distinct_specs,
-                        );
-                        continue;
                     }
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
@@ -5246,7 +5076,6 @@ impl Solver {
 
     /// Push a context level
     pub fn push(&mut self) {
-        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // The interface-repair memo compares vocabulary *sizes*; a pop can
@@ -5315,7 +5144,6 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
-        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // Same reasoning as `push`: the size-based memo must not survive a
@@ -5622,7 +5450,6 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
-        self.certified_array_model = None;
         self.user_state = user_propagation::UserState::default();
         self.sat.reset();
         // The database (and every blocking clause in it) is gone with the

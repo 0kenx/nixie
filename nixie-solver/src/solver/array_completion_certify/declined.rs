@@ -382,36 +382,7 @@ impl Goal {
         false
     }
 
-    /// The instances of `existential`'s body at the witness tuples (the
-    /// goal's points plus one unnamed representative per bound variable's
-    /// sort), each still over the goal's free symbols; `None` when the
-    /// `exists` is not one this module handles (an alternation under it, a
-    /// sort with no point).  Shared by the certificate and by the sample the
-    /// evaluation pre-filter and the fill query read, so all three look at
-    /// the same witnesses.
-    pub(super) fn existential_witnesses(
-        &self,
-        existential: TermId,
-        position: usize,
-        manager: &mut TermManager,
-    ) -> Option<Vec<TermId>> {
-        self.existential_witnesses_with(existential, position, &FxHashMap::default(), manager)
-    }
-
-    /// [`Self::existential_witnesses`] with `extra` points tried as well —
-    /// the store indices of the interpretation being certified, which is
-    /// where a candidate's Skolem witness sits (decision (54)(ii)).
-    pub(super) fn existential_witnesses_with(
-        &self,
-        existential: TermId,
-        position: usize,
-        extra: &FxHashMap<SortId, Vec<TermId>>,
-        manager: &mut TermManager,
-    ) -> Option<Vec<TermId>> {
-        self.existential_witnesses_capped(existential, position, extra, MAX_WITNESSES, manager)
-    }
-
-    /// [`Self::existential_witnesses_with`] with at most `cap` witness tuples.
+    /// Enumerate at most `cap` concrete witness tuples for the certificate.
     fn existential_witnesses_capped(
         &self,
         existential: TermId,

@@ -145,59 +145,6 @@ pub(super) fn universal_by_points(
     Some(true)
 }
 
-/// Whether the point split applies to `universal` whatever the completion
-/// interprets `arrays` as: every bound variable has an infinite sort, and every
-/// read under the binder that mentions one is a read of one of `arrays` at a
-/// bare bound variable.  The candidate-point search (`infinite`) proposes only
-/// where this holds, so its certificates never fall back to a validity query
-/// over a store chain read at a compound index (`∀i. a[i + 1] = a[i] + 1` kept a
-/// sub-solver's simplex busy for minutes).
-pub(super) fn applies_to(
-    universal: TermId,
-    position: usize,
-    arrays: &FxHashSet<TermId>,
-    manager: &mut TermManager,
-) -> bool {
-    let Some((body, vars)) = peel_universal_with_vars(universal, position, manager) else {
-        return false;
-    };
-    if vars.is_empty() || !vars.iter().all(|&var| has_infinite_sort(var, manager)) {
-        return false;
-    }
-    let var_set: FxHashSet<TermId> = vars.iter().copied().collect();
-    let mentions = |term: TermId, manager: &TermManager| -> bool {
-        manager
-            .free_vars_including_patterns(term)
-            .into_iter()
-            .any(|var| var_set.contains(&var))
-    };
-    let mut stack: Vec<TermId> = vec![body];
-    let mut visited: FxHashSet<TermId> = FxHashSet::default();
-    let mut children: Vec<TermId> = Vec::new();
-    while let Some(current) = stack.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        let Some(data) = manager.get(current) else {
-            return false;
-        };
-        match &data.kind {
-            TermKind::Select(array, index) if mentions(*index, manager) => {
-                if !var_set.contains(index) || !arrays.contains(array) {
-                    return false;
-                }
-            }
-            TermKind::Store(..) if mentions(current, manager) => return false,
-            kind => {
-                children.clear();
-                children.extend(nixie_core::ast::traversal::get_children(kind));
-                stack.extend(children.iter().copied());
-            }
-        }
-    }
-    true
-}
-
 /// Whether `term`'s sort is `Int` or `Real`.
 fn has_infinite_sort(term: TermId, manager: &TermManager) -> bool {
     manager.get(term).is_some_and(|data| {

@@ -18,19 +18,14 @@ use num_traits::{One, Signed, Zero};
 
 use super::{Context, RawFuncInterp};
 mod array_model;
-mod candidate_model;
 mod certified_numeric;
 mod class_values;
 mod completed_candidate;
-mod datatype_completion;
-mod finite_uninterpreted;
 mod get_value;
 mod mint;
 mod printed_check;
 mod printed_eval;
-mod projected_functions;
 mod published;
-mod underspecified;
 pub(super) use published::PublishedModel;
 
 /// Render a nonlinear-real exact value as SMT-LIB2 text.
@@ -451,9 +446,6 @@ impl Context {
         // Pick `else_value`: the most common entry value (ties → first seen),
         // matching Z3's habit of reusing an existing value as the default.
         let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
-        // An else value the published-model certificate chose because the
-        // most common one broke a universal (`published::repair_else_values`).
-        let else_value = self.else_override(func_name).unwrap_or(else_value);
 
         Some(((entries, else_value, arity), is_function))
     }
@@ -1722,20 +1714,7 @@ impl Context {
         if let Some(error) = self.uncertified_model_error() {
             return error;
         }
-        let mut func_lines = self.func_interp_lines();
-        let mut division_sorts: Vec<_> =
-            self.published.zero_division_sorts.iter().copied().collect();
-        division_sorts.sort_unstable_by_key(|s| s.0);
-        for sort in division_sorts {
-            let (name, sort, value) = if sort == self.terms.sorts.int_sort {
-                ("div0", "Int", "0")
-            } else {
-                ("/0", "Real", "0.0")
-            };
-            func_lines.push(format!(
-                "  (define-fun {name} ((x!0 {sort}) (x!1 {sort})) {sort} {value})"
-            ));
-        }
+        let func_lines = self.func_interp_lines();
         match self.get_model() {
             None => "(error \"No model available\")".to_string(),
             Some(model) if model.is_empty() && recfun_lines.is_empty() && func_lines.is_empty() => {

@@ -173,12 +173,9 @@ impl Solver {
     ///   verdict about the old stack in exactly the way `model` is, so it is
     ///   cleared through exactly the same hook.
     pub(super) fn invalidate_results(&mut self) {
-        self.certified_array_model = None;
         self.model_euf_snapshot = None;
         self.mbqi.publication_candidate = None;
         self.completion_work = std::sync::Arc::default();
-        self.replaced_candidate = None;
-        self.candidate_certified_as_printed = false;
         #[cfg(feature = "std")]
         {
             self.user_state.cp_proof = None;

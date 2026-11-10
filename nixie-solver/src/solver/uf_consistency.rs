@@ -111,6 +111,35 @@ impl Values {
             .map(|value| ValueKey::Closed(sort, value))
     }
 
+    /// A certificate cannot treat missing/defaulted values as evidence, or
+    /// let an EUF assignment override the semantics of a literal/compound.
+    fn certificate_key(
+        &mut self,
+        solver: &Solver,
+        term: TermId,
+        model: &Model,
+        manager: &mut TermManager,
+    ) -> Option<ValueKey> {
+        spend(&mut self.work)?;
+        let sort = manager.get(term)?.sort;
+        if let Some(value) = self.closed_value(solver, term, manager) {
+            return Some(ValueKey::Closed(sort, value));
+        }
+        if matches!(manager.sorts.get(sort)?.kind, SortKind::Uninterpreted(_)) {
+            return solver
+                .euf_class_representative(term)
+                .map(|r| ValueKey::Class(sort, r));
+        }
+        if model.is_defaulted(term) {
+            return None;
+        }
+        // The value-only reader recomputes compounds; it has no live-theory
+        // fallback and preserves exact wide integers, rationals and BVs.
+        let value = solver.model_value_in(term, model, manager)?;
+        let value = self.closed_value(solver, value, manager)?;
+        (manager.get(value)?.sort == sort).then_some(ValueKey::Closed(sort, value))
+    }
+
     /// Normalize scalar leaves exactly before hash-consing a constructor DAG.
     /// A shared subtree is visited once, and no recursive equality/hash/drop of
     /// a nested Rust value is needed even for very deep datatype values.
@@ -183,9 +212,79 @@ fn contains_value_sort(sort: SortId, manager: &TermManager, work: &mut usize) ->
 }
 
 impl Solver {
-    /// `non_numeric_only` preserves the existing numeric repair's position
-    /// after the refutation gate. Results outside arithmetic need the missing
-    /// general congruence repair before that gate can discard the candidate.
+    /// Removing eager numeric UF pins may leave an arithmetic/EUF candidate
+    /// whose concrete function points collide. Check the interpretation before
+    /// accepting Sat. Unlike the refinement helper below, every missing value
+    /// or exhausted budget fails closed, and no clauses/search are added.
+    ///
+    /// Z3's model_generator::mk_func_interps builds entries from argument
+    /// *values*. The same function must have one result at each such tuple.
+    pub(super) fn unpinned_function_model_is_consistent(&self, manager: &mut TermManager) -> bool {
+        self.check_unpinned_function_model(manager).is_some()
+    }
+
+    fn check_unpinned_function_model(&self, manager: &mut TermManager) -> Option<()> {
+        let euf = self.model_euf();
+        let mut work = MAX_WORK;
+        let mut functions = FxHashSet::default();
+        let mut apps = Vec::new();
+        for node in euf.all_node_indices() {
+            spend(&mut work)?;
+            let term = euf.node_term(node)?;
+            let data = manager.get(term)?;
+            if let TermKind::Apply { func, args } = &data.kind {
+                apps.push(term);
+                for &arg in args.iter() {
+                    spend(&mut work)?;
+                    let sort = manager.get(arg)?.sort;
+                    if (sort == manager.sorts.int_sort || sort == manager.sorts.real_sort)
+                        && !self.interface_const_pins.contains_key(&arg)
+                        && self.interface_constant_value(arg, manager).is_some()
+                    {
+                        functions.insert(*func);
+                    }
+                }
+            }
+        }
+        if functions.is_empty() {
+            return Some(());
+        }
+        let model = self.model.as_ref()?;
+        let mut values = Values::new(self)?;
+        values.work = values.work.min(work);
+        type Point = (Spur, SortId, Vec<ValueKey>);
+        let mut points: FxHashMap<Point, ValueKey> = FxHashMap::default();
+        apps.sort_unstable();
+        apps.dedup();
+        for term in apps {
+            spend(&mut values.work)?;
+            let node = manager.get(term)?;
+            let sort = node.sort;
+            let TermKind::Apply { func, args } = node.kind.clone() else {
+                return None;
+            };
+            if !functions.contains(&func) {
+                continue;
+            }
+            let keys: Option<Vec<_>> = args
+                .iter()
+                .map(|&arg| values.certificate_key(self, arg, model, manager))
+                .collect();
+            let result = values.certificate_key(self, term, model, manager)?;
+            let point = (func, sort, keys?);
+            if let Some(previous) = points.insert(point, result)
+                && previous != result
+            {
+                return None;
+            }
+        }
+        Some(())
+    }
+
+    /// Produce valid guarded congruence obligations for concrete collisions.
+    /// The final-result guard rejects such a candidate without retrying search.
+    /// This is a refutation helper, not a certificate: missing values may be
+    /// skipped here, while the unpinned-interface certificate fails closed.
     pub(super) fn functional_collision_lemmas(
         &self,
         manager: &mut TermManager,
@@ -288,6 +387,7 @@ impl Solver {
 }
 
 impl Solver {
+    #[cfg(test)]
     pub(super) fn assert_functional_consistency(
         &mut self,
         manager: &mut TermManager,

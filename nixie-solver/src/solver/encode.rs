@@ -2935,11 +2935,16 @@ impl Solver {
                         .get(arg)
                         .is_some_and(|a| a.sort == manager.sorts.bool_sort)
                 }));
-                numeric.extend(children.iter().copied().filter(|&arg| {
-                    manager.get(arg).is_some_and(|a| {
-                        a.sort == manager.sorts.int_sort || a.sort == manager.sorts.real_sort
-                    })
-                }));
+                // Array interface constants retain their defining pins. For
+                // ordinary UF applications, validate the final interpretation
+                // instead of eagerly perturbing arithmetic search.
+                if !matches!(node.kind, TermKind::Apply { .. }) {
+                    numeric.extend(children.iter().copied().filter(|&arg| {
+                        manager.get(arg).is_some_and(|a| {
+                            a.sort == manager.sorts.int_sort || a.sort == manager.sorts.real_sort
+                        })
+                    }));
+                }
             }
             stack.extend(children);
         }
@@ -3441,9 +3446,20 @@ impl Solver {
     /// Constants that do not fit `Rational64` are skipped: the pre-fix gap
     /// remains for them (missed pairing only, never a wrong answer).
     fn pin_interface_const(&mut self, arg: TermId, manager: &TermManager) {
-        if self.interface_const_pins.contains_key(&arg) {
-            return;
+        if !self.interface_const_pins.contains_key(&arg)
+            && let Some(value) = self.interface_constant_value(arg, manager)
+        {
+            self.interface_const_pins.insert(arg, value);
         }
+    }
+
+    /// Exact closed constant recognized by the existing interface purifier.
+    /// Reading this value neither adds arithmetic variables nor changes search.
+    pub(super) fn interface_constant_value(
+        &self,
+        arg: TermId,
+        manager: &TermManager,
+    ) -> Option<Rational64> {
         // CLOSED-FORM evaluation, three layers:
         //
         // 1. Int `div`/`mod` of closed constants — Euclidean per SMT-LIB
@@ -3466,10 +3482,9 @@ impl Solver {
         // Anything else (symbolic operands, `ite`, out-of-`i64` magnitudes,
         // overflow while folding) stays unpinned: missed pairing only, never
         // a wrong value.
-        let node = manager.get(arg);
+        let node = manager.get(arg)?;
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;
-        let Some(node) = node else { return };
         let value = match &node.kind {
             TermKind::Div(m, n) if node.sort == int_sort => {
                 let (m, n) = match (
@@ -3477,16 +3492,13 @@ impl Solver {
                     super::arith_axioms::int_constant(*n, manager),
                 ) {
                     (Some(m), Some(n)) => (m, n),
-                    _ => return,
+                    _ => return None,
                 };
                 if n == 0 {
-                    return; // uninterpreted per SMT-LIB: no value to pin
+                    return None; // uninterpreted per SMT-LIB: no value to pin
                 }
-                let r = m.rem_euclid(n);
-                let q = match m.checked_sub(r).and_then(|x| x.checked_div(n)) {
-                    Some(q) => q,
-                    None => return,
-                };
+                let r = m.checked_rem_euclid(n)?;
+                let q = m.checked_sub(r)?.checked_div(n)?;
                 num_rational::Rational64::from_integer(q)
             }
             TermKind::Mod(m, n) if node.sort == int_sort => {
@@ -3495,12 +3507,12 @@ impl Solver {
                     super::arith_axioms::int_constant(*n, manager),
                 ) {
                     (Some(m), Some(n)) => (m, n),
-                    _ => return,
+                    _ => return None,
                 };
                 if n == 0 {
-                    return;
+                    return None;
                 }
-                num_rational::Rational64::from_integer(m.rem_euclid(n))
+                num_rational::Rational64::from_integer(m.checked_rem_euclid(n)?)
             }
             TermKind::Div(m, n) if node.sort == real_sort => {
                 let mut mterms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
@@ -3532,16 +3544,13 @@ impl Solver {
                         .is_none()
                     || !nterms.is_empty()
                 {
-                    return;
+                    return None;
                 }
                 if nc.is_zero() {
-                    return; // uninterpreted per SMT-LIB
+                    return None; // uninterpreted per SMT-LIB
                 }
                 // The pin value must be `Rational64`-representable.
-                let Some(value) = narrow_rational64(&(mc / nc)) else {
-                    return;
-                };
-                value
+                narrow_rational64(&(mc / nc))?
             }
             _ => {
                 let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
@@ -3560,17 +3569,14 @@ impl Solver {
                     .is_none()
                     || !terms.is_empty()
                 {
-                    return;
+                    return None;
                 }
                 // A pin value must fit the `Rational64` the model stores;
                 // an exact-but-wide value simply has no pin to record.
-                let Some(constant) = narrow_rational64(&constant) else {
-                    return;
-                };
-                constant
+                narrow_rational64(&constant)?
             }
         };
-        self.interface_const_pins.insert(arg, value);
+        Some(value)
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately

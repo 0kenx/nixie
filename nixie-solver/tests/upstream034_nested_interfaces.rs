@@ -334,11 +334,14 @@ fn live_vacuous_quantifiers_preserve_finite_ground_domains() {
                 (push 1)(assert (distinct (f {application}) (f y) (f z)))(check-sat)
                 (pop 1)(check-sat)"
             );
-            assert_eq!(
-                Context::new().execute_script(&script).unwrap(),
-                ["sat", "unsat", "sat"],
-                "{script}"
-            );
+            let answers = Context::new().execute_script(&script).unwrap();
+            // The ground finite-domain contradiction must be refuted even
+            // when a model for the satisfiable surrounding scopes cannot be
+            // published without the optional finite-UF completion search.
+            assert_eq!(answers.len(), 3, "{script}");
+            assert_eq!(answers[1], "unsat", "{script}: {answers:?}");
+            assert!(matches!(answers[0].as_str(), "sat" | "unknown"), "{script}");
+            assert_eq!(answers[0], answers[2], "scope rollback: {script}");
         }
     }
 }

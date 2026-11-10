@@ -126,3 +126,114 @@ fn datatype_and_uninterpreted_results_emit_only_guarded_congruence() {
         assert_eq!(lemmas[0], expected);
     }
 }
+
+#[test]
+fn unpinned_literal_function_collision_is_not_a_certificate() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let four = tm.mk_int(4);
+    let x = tm.mk_var("x", int);
+    let f4 = tm.mk_apply("f", [four], int);
+    let fx = tm.mk_apply("f", [x], int);
+    let mut solver = Solver::new();
+    for term in [four, x, f4, fx] {
+        solver.euf.intern(term);
+    }
+    let mut model = Model::new();
+    model.set(x, four);
+    model.set(f4, tm.mk_int(0));
+    model.set(fx, tm.mk_int(1));
+    // A stale assignment to the literal cannot make 4 denote 7.
+    model.set(four, tm.mk_int(7));
+    solver.model = Some(model);
+    assert!(!solver.unpinned_function_model_is_consistent(&mut tm));
+    solver.model.as_mut().unwrap().set(fx, tm.mk_int(0));
+    assert!(solver.unpinned_function_model_is_consistent(&mut tm));
+}
+
+#[test]
+fn function_certificate_declines_missing_and_defaulted_values() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let four = tm.mk_int(4);
+    let x = tm.mk_var("x", int);
+    let f4 = tm.mk_apply("f", [four], int);
+    let fx = tm.mk_apply("f", [x], int);
+    let mut solver = Solver::new();
+    for term in [four, x, f4, fx] {
+        solver.euf.intern(term);
+    }
+    let mut model = Model::new();
+    model.set(f4, tm.mk_int(0));
+    model.set(fx, tm.mk_int(0));
+    solver.model = Some(model);
+    assert!(!solver.unpinned_function_model_is_consistent(&mut tm));
+    solver.model.as_mut().unwrap().set_default(x, four);
+    assert!(!solver.unpinned_function_model_is_consistent(&mut tm));
+    solver.model.as_mut().unwrap().set(x, four);
+    assert!(solver.unpinned_function_model_is_consistent(&mut tm));
+}
+
+#[test]
+fn function_certificate_budget_exhaustion_is_not_success() {
+    let mut tm = TermManager::new();
+    let solver = Solver::new();
+    let model = Model::new();
+    let four = tm.mk_int(4);
+    let mut values = Values::new(&solver).unwrap();
+    values.work = 0;
+    assert!(
+        values
+            .certificate_key(&solver, four, &model, &mut tm)
+            .is_none()
+    );
+}
+
+#[test]
+fn interface_constant_recognition_does_not_overflow_on_signed_remainder() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let min = tm.mk_int(i64::MIN);
+    let minus_one = tm.mk_int(-1);
+    let solver = Solver::new();
+    for kind in [TermKind::Div(min, minus_one), TermKind::Mod(min, minus_one)] {
+        let term = tm.intern_term(kind, int);
+        assert!(solver.interface_constant_value(term, &tm).is_none());
+    }
+}
+
+#[test]
+fn popped_numeric_function_obligations_do_not_poison_the_outer_scope() {
+    let mut tm = TermManager::new();
+    let mut solver = Solver::new();
+    solver.push();
+    let four = tm.mk_int(4);
+    let app = tm.mk_apply("f", [four], tm.sorts.int_sort);
+    solver.euf.intern(four);
+    solver.euf.intern(app);
+    solver.model = Some(Model::new());
+    assert!(!solver.unpinned_function_model_is_consistent(&mut tm));
+    solver.pop();
+    solver.model = Some(Model::new());
+    assert!(solver.unpinned_function_model_is_consistent(&mut tm));
+}
+
+#[test]
+fn coefficient_argument_is_checked_without_an_eager_uf_pin() {
+    let mut ctx = Context::new();
+    ctx.execute_script(
+        "(set-logic QF_UFLIA)
+        (declare-fun f (Int) Int)(declare-const x Int)
+        (assert (= (* 4 x) 8))(assert (= (f 4) 0))",
+    )
+    .unwrap();
+    let four = ctx.terms.mk_int(4);
+    assert!(!ctx.solver().interface_const_pins.contains_key(&four));
+    let result = ctx
+        .execute_script(
+            "(check-sat)(check-sat)
+        (push 1)(assert false)(check-sat)(pop 1)(check-sat)",
+        )
+        .unwrap();
+    assert_eq!(result, ["sat", "sat", "unsat", "sat"]);
+}

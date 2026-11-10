@@ -28,11 +28,6 @@ use smallvec::SmallVec;
 use super::model_completion::CompletedModel;
 use super::{Instantiation, InstantiationReason, QuantifiedFormula};
 
-// Retain the isolated proposal tests, but do not enable this search policy
-// without the matched-null, multi-seed evidence required by AGENTS.md.
-#[cfg(test)]
-mod guard_points;
-
 /// Compute SMT-LIB Euclidean division and remainder for integers.
 ///
 /// Returns `(q, r)` such that `a = b*q + r` and `0 <= r < |b|`.  The caller

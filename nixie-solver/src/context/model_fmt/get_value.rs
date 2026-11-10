@@ -180,7 +180,6 @@ impl Context {
         let mut reading: Option<Option<super::printed_check::PrintedReading>> = None;
         let mut values = Vec::with_capacity(terms.len());
         for &term in terms {
-            let term = self.fold_published_zero_division(term);
             let proposed = if !self.published.function_overrides.is_empty()
                 || !self.published.literal_values.is_empty()
             {
