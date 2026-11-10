@@ -122,10 +122,6 @@ pub(in crate::context) struct ParseBack {
     pub(in crate::context) constructors: FxHashMap<String, SortId>,
     /// Witness placeholder symbol → the witness constant it stands for.
     pub(in crate::context) witnesses: FxHashMap<TermId, TermId>,
-    /// Successful value readings within this fixed sort/constructor context.
-    /// Witnesses only accumulate; a hit retains the witness registrations made
-    /// by the original reading. This cache never survives a model read.
-    values: FxHashMap<String, TermId>,
 }
 
 impl Context {
@@ -167,17 +163,12 @@ impl Context {
         text: &str,
         parse: &mut ParseBack,
     ) -> Option<TermId> {
-        if let Some(&value) = parse.values.get(text) {
-            return Some(value);
-        }
         // Resolve witness symbols structurally: replacing text would also
         // corrupt string literals and quoted user symbols containing @uc_.
         let value = self.parse_typed_printed_term(text, parse, Vec::new())?;
         let value = self.resolve_witnesses(value, &parse.sorts, &mut parse.witnesses);
         let value = self.resolve_constructors(value, &parse.constructors);
-        let value = self.fold_numeral_value(value);
-        parse.values.insert(text.to_string(), value);
-        Some(value)
+        Some(self.fold_numeral_value(value))
     }
 
     fn parse_typed_printed_term(
@@ -443,7 +434,7 @@ impl Context {
         funcs: &PrintedFunctions,
     ) -> TermId {
         if funcs.is_empty() {
-            return self.fold_published_zero_division(term);
+            return term;
         }
         enum Frame {
             Expand(TermId),
@@ -577,8 +568,7 @@ impl Context {
                 }
             }
         }
-        let expanded = done.get(&term).copied().unwrap_or(term);
-        self.fold_published_zero_division(expanded)
+        done.get(&term).copied().unwrap_or(term)
     }
 
     /// The maximal quantifier nodes of `term` and, outside them, the
@@ -633,7 +623,6 @@ impl Context {
             sorts: self.witness_sorts(),
             constructors: self.value_constructors(),
             witnesses: FxHashMap::default(),
-            values: FxHashMap::default(),
         };
         let mut printed: FxHashMap<TermId, TermId> = FxHashMap::default();
         for (term, (_, _, text)) in decls.into_iter().zip(rows) {
@@ -809,7 +798,6 @@ mod typed_publication_regressions {
             sorts: ctx.witness_sorts(),
             constructors: ctx.value_constructors(),
             witnesses: FxHashMap::default(),
-            values: FxHashMap::default(),
         };
         let base = ctx
             .parse_printed_value("((as const (Array Int E)) ea)", &mut parse)
@@ -827,45 +815,6 @@ mod typed_publication_regressions {
     }
 
     #[test]
-    fn repeated_value_reads_preserve_witnesses_and_do_not_cross_sort_contexts() {
-        for sort_name in ["U", "V"] {
-            let mut ctx = Context::new();
-            ctx.execute_script(&format!(
-                "(declare-sort {sort_name} 0)(declare-const a {sort_name})"
-            ))
-            .expect("sort declaration");
-            let mut parse = ParseBack {
-                sorts: ctx.witness_sorts(),
-                constructors: ctx.value_constructors(),
-                witnesses: FxHashMap::default(),
-                values: FxHashMap::default(),
-            };
-            let text = format!("((as const (Array Int {sort_name})) @uc_{sort_name}_17)");
-            let first = ctx.parse_printed_value(&text, &mut parse).expect("array");
-            let before = parse.witnesses.clone();
-            let second = ctx
-                .parse_printed_value(&text, &mut parse)
-                .expect("same array");
-            assert_eq!(first, second);
-            assert_eq!(before, parse.witnesses);
-            assert!(!before.is_empty());
-            let witness_text = format!("@uc_{sort_name}_17");
-            let witness = ctx
-                .parse_printed_value(&witness_text, &mut parse)
-                .expect("witness");
-            let zero = ctx.terms.mk_int(0);
-            let read = ctx.terms.mk_select(second, zero);
-            let equality = ctx.terms.mk_eq(read, witness);
-            let witnesses = parse.witnesses.values().copied().collect();
-            assert_eq!(ctx.ground_truth(equality, &witnesses), Some(true));
-            assert!(
-                ctx.parse_printed_value("@uc_missing_17", &mut parse)
-                    .is_none()
-            );
-        }
-    }
-
-    #[test]
     fn witnesses_inside_array_values_are_typed_without_touching_strings() {
         let mut ctx = Context::new();
         ctx.execute_script("(declare-sort U 0)(declare-const a (Array Int U))")
@@ -874,7 +823,6 @@ mod typed_publication_regressions {
             sorts: ctx.witness_sorts(),
             constructors: ctx.value_constructors(),
             witnesses: FxHashMap::default(),
-            values: FxHashMap::default(),
         };
         let array = ctx
             .parse_printed_value("((as const (Array Int U)) @uc_U_17)", &mut parse)

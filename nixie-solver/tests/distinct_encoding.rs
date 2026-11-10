@@ -774,9 +774,7 @@ fn distinct_over_composite_finite_datatype_pigeonhole_is_unsat() {
 }
 
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn distinct_over_composite_finite_datatype_exact_fit_is_without_completion() {
+fn distinct_over_composite_finite_datatype_exact_fit_is_sat() {
     // Exactly |Pair| = 6 arguments: no short-circuit may fire, and the
     // datatype theory itself must accept the enumeration.
     check(
@@ -786,7 +784,7 @@ fn distinct_over_composite_finite_datatype_exact_fit_is_without_completion() {
          (declare-const p1 Pair)(declare-const p2 Pair)(declare-const p3 Pair)\n\
          (declare-const p4 Pair)(declare-const p5 Pair)(declare-const p6 Pair)\n\
          (assert (distinct p1 p2 p3 p4 p5 p6))\n(check-sat)\n",
-        "unknown",
+        "sat",
     );
 }
 
@@ -803,15 +801,13 @@ fn distinct_over_recursive_datatype_is_never_shortcircuited() {
 }
 
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
 fn distinct_over_mutually_recursive_datatypes_is_never_shortcircuited() {
     // A ⇄ B mutual recursion: infinite carriers, no short-circuit.
     check(
         "(declare-datatypes ((A 0) (B 0)) (((a1) (mkA (b B))) ((b1) (mkB (a A)))))\n\
          (declare-const x1 A)(declare-const x2 A)(declare-const x3 A)\n\
          (assert (distinct x1 x2 x3))\n(check-sat)\n",
-        "unknown",
+        "sat",
     );
 }
 

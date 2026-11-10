@@ -18,7 +18,6 @@ type DecidedEqualities = (Vec<(TermId, TermId)>, FxHashMap<TermId, Vec<TermId>>)
 
 mod opaque_leaves;
 mod separation;
-mod separation_expanded_probe;
 
 impl Solver {
     /// Restore ground definitions eliminated before a specialized arithmetic

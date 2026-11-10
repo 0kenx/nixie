@@ -61,7 +61,7 @@ fn completed_array_defaults_answer_get_value_and_survive_scope_changes() {
 }
 
 #[test]
-fn incomplete_bound_index_completion_is_honestly_unknown() {
+fn repeated_bound_index_names_do_not_capture_the_free_scalar() {
     let answers = Context::new()
         .execute_script(
             "(set-logic ALL)
@@ -72,5 +72,5 @@ fn incomplete_bound_index_completion_is_honestly_unknown() {
       (check-sat)",
         )
         .expect("valid script");
-    assert_eq!(answers.last().map(String::as_str), Some("unknown"));
+    assert_eq!(answers.last().map(String::as_str), Some("sat"));
 }

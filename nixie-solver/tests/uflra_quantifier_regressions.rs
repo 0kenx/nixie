@@ -399,9 +399,7 @@ fn pigeonhole_enumeration_refutes_through_the_euf_export() {
 /// set).  This is the arc's convergence pin: a regression here means one
 /// of the three mechanisms regressed.
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn set16_family_answers_without_completion() {
+fn set16_family_answers_sat() {
     let output = run_bounded(
         r#"
         (set-logic UF)
@@ -435,8 +433,8 @@ fn set16_family_answers_without_completion() {
     );
     let status = last_status(&output);
     assert!(
-        status == "unknown",
-        "without additional completion this candidate must remain unverified; got {status}"
+        status == "sat",
+        "the constructor-table completion closes this family (z3: sat, 0.5 s); got {status}"
     );
 }
 
@@ -451,9 +449,7 @@ fn set16_family_answers_without_completion() {
 /// never justified).  z3 answers `sat`; this is the convergence pin
 /// for both mechanisms on the harder half of the family.
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn set9_family_answers_without_completion() {
+fn set9_family_answers_sat() {
     let output = run_bounded(
         r#"
         (set-logic UF)
@@ -482,8 +478,8 @@ fn set9_family_answers_without_completion() {
     );
     let status = last_status(&output);
     assert!(
-        status == "unknown",
-        "without additional completion this candidate must remain unverified; got {status}"
+        status == "sat",
+        "the row-closure completion closes this goal (z3: sat); got {status}"
     );
 }
 
@@ -494,9 +490,7 @@ fn set9_family_answers_without_completion() {
 /// mechanism that closes it (the fresh-row mint plus the
 /// structure-membership drop) cannot silently regress to `unknown`.
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn set19_family_answers_without_completion() {
+fn set19_family_answers_sat() {
     let output = run_bounded(
         r#"
         (set-logic UF)
@@ -527,8 +521,8 @@ fn set19_family_answers_without_completion() {
     );
     let status = last_status(&output);
     assert!(
-        status == "unknown",
-        "no finite-function publication search in the correctness-only baseline; got {status}"
+        status == "sat",
+        "nixie closes this goal where z3 4.16.0 times out; got {status}"
     );
 }
 

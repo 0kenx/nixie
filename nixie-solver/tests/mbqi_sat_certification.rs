@@ -62,9 +62,7 @@ fn uflia_injective_bounded_box_without_completion() {
 /// variables appear only under the uninterpreted `f`; certified by instantiating
 /// over the ground argument terms `{0, 5, 10}`.
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn uflia_monotone_relevant_terms_without_completion() {
+fn uflia_monotone_relevant_terms_sat() {
     let r = check(
         r#"
         (set-logic UFLIA)
@@ -77,10 +75,7 @@ fn uflia_monotone_relevant_terms_without_completion() {
         (check-sat)
     "#,
     );
-    assert_eq!(
-        r, "unknown",
-        "monotone UF axiom requires separately gated model completion"
-    );
+    assert_eq!(r, "sat", "monotone UF axiom should certify sat");
 }
 
 /// Two bounded-box quantifiers sharing an integer window `[0, n)` with `n = 3`,
@@ -123,9 +118,7 @@ fn uflra_bounds_essentially_uninterpreted_sat() {
 /// Real monotone axiom with a variable-vs-variable `<=` guard (the
 /// monotone-preserving almost-uninterpreted case).
 #[test]
-// Correctness-only baseline: withhold the unverified model. The former
-// Sat contract and exact input are retained in bench/migration034/candidates.
-fn uflra_monotone_var_var_guard_without_completion() {
+fn uflra_monotone_var_var_guard_sat() {
     let r = check(
         r#"
         (set-logic UFLRA)
@@ -137,10 +130,7 @@ fn uflra_monotone_var_var_guard_without_completion() {
         (check-sat)
     "#,
     );
-    assert_eq!(
-        r, "unknown",
-        "real monotone axiom requires separately gated model completion"
-    );
+    assert_eq!(r, "sat", "real monotone axiom should certify sat");
 }
 
 /// Almost-uninterpreted fragment: real Lipschitz bound with variable-vs-ground

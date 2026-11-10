@@ -1636,7 +1636,7 @@ impl Solver {
         if raw_result == SolverResult::Sat {
             self.recover_ground_model_definitions(manager);
         }
-        if array_probe_enabled() && raw_result != SolverResult::Unsat {
+        if raw_result != SolverResult::Unsat {
             let original_candidate = (raw_result == SolverResult::Sat)
                 .then(|| self.model.clone())
                 .flatten();
@@ -5629,16 +5629,3 @@ mod fp_hybrid;
 mod scope_rebase_tests;
 #[cfg(test)]
 mod tests;
-
-// marker
-
-pub(crate) fn optional_probe_enabled(name: &str) -> bool {
-    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default())
-        .split(',')
-        .any(|selected| selected == name)
-}
-
-pub(crate) fn array_probe_enabled() -> bool {
-    optional_probe_enabled("array-completion-search")
-}

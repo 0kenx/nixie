@@ -495,9 +495,7 @@ impl CounterExampleGenerator {
             }
         }
 
-        if counterexamples.is_empty()
-            && crate::solver::optional_probe_enabled("guard-boundary-sampler")
-        {
+        if counterexamples.is_empty() {
             let extra = self.guard_point_counterexamples(quantifier, &candidates, model, manager);
             self.stats.num_counterexamples_found += extra.len();
             counterexamples.extend(extra);
