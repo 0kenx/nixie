@@ -7,6 +7,53 @@
 use super::*;
 
 #[test]
+fn application_presence_tracks_nested_scopes_reset_and_reused_slots() {
+    fn check(solver: &EufSolver, expected: bool) {
+        assert_eq!(solver.has_app_nodes(), expected);
+        assert_eq!(
+            solver.has_app_nodes(),
+            solver.nodes.iter().any(ENode::is_app)
+        );
+    }
+
+    let mut solver = EufSolver::new();
+    check(&solver, false);
+    let leaf_term = TermId::new(1);
+    let leaf = solver.intern(leaf_term);
+    // Re-interning an existing leaf does not turn it into an application.
+    assert_eq!(solver.intern_app(leaf_term, 0, [leaf]), leaf);
+    check(&solver, false);
+    solver.push();
+    let first = solver.intern_app(TermId::new(2), 0, [leaf]);
+    check(&solver, true);
+    solver.push();
+    let congruent = solver.intern_app(TermId::new(3), 0, [leaf]);
+    assert!(solver.are_equal(first, congruent));
+    check(&solver, true);
+    solver.pop();
+    check(&solver, true);
+    solver.pop();
+    check(&solver, false);
+    // An index that used to hold an application can become an ordinary leaf.
+    assert_eq!(solver.intern(TermId::new(4)), first);
+    check(&solver, false);
+    // Zero-argument applications still have a function symbol.
+    solver.intern_app(TermId::new(5), 1, []);
+    check(&solver, true);
+    solver.push();
+    solver.intern(TermId::new(6));
+    solver.pop();
+    check(&solver, true);
+    solver.reset();
+    check(&solver, false);
+    solver.pop();
+    check(&solver, false);
+    let leaf = solver.intern(TermId::new(7));
+    solver.intern_app(TermId::new(8), 2, [leaf]);
+    check(&solver, true);
+}
+
+#[test]
 fn merge_only_pop_keeps_term_identity_across_nested_node_creation() {
     let mut solver = EufSolver::new();
     let a_term = TermId::new(1);

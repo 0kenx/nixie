@@ -155,18 +155,29 @@ impl Context {
             }
             return result;
         }
-        if minted && self.printed_model_falsifies().is_some() {
+        // Reuse this reading only while the interpretation is unchanged.
+        // Parsing/interning the same printed values is idempotent; repeating
+        // the whole certificate here adds no independent validation. The
+        // separate typed-value net below still runs.
+        let mut refutation = self.printed_model_falsifies();
+        if minted && refutation.is_some() {
             let fresh = self.published.model.take();
             // Neither reading holds: the fresh values stay out, so the model
             // printed is the solver's own, as on every earlier build.
             // Continue through the typed-value net even if the unmodified
             // candidate is unreadable: absence of a refutation is no certificate.
             drop(fresh);
+            refutation = self.printed_model_falsifies();
         }
-        if self.printed_model_falsifies().is_some() && self.repair_datatype_publication() {
-            return result;
+        if refutation.is_some() {
+            if self.repair_datatype_publication() {
+                return result;
+            }
+            // Even an unsuccessful repair can have inspected/rebuilt model
+            // state. Keep the original post-repair check, not its old reading.
+            refutation = self.printed_model_falsifies();
         }
-        if let Some(reason) = self.printed_model_falsifies() {
+        if let Some(reason) = refutation {
             self.withhold_every_symbol(&reason);
         }
         let result = self.withhold_a_falsifying_datatype_model(result);
@@ -1047,3 +1058,6 @@ impl Context {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod cost_tests;

@@ -267,6 +267,10 @@ pub struct EufSolver {
     uf: UnionFind,
     /// E-nodes
     nodes: Vec<ENode>,
+    /// First application in the append-only node vector, if any. Nodes never
+    /// change between leaf and application; pop removes a suffix. Therefore
+    /// removing this index removes every application, without a graph scan.
+    first_app_node: Option<usize>,
     /// Term to node index mapping.
     ///
     /// Every entry points at the node that was *created* for that term, and
@@ -547,6 +551,7 @@ impl EufSolver {
         Self {
             uf: UnionFind::new(0),
             nodes: Vec::new(),
+            first_app_node: None,
             term_to_node: FxHashMap::default(),
             diseqs: Vec::new(),
             pending: Vec::new(),
@@ -761,6 +766,9 @@ impl EufSolver {
         let idx = self.nodes.len() as u32;
         self.nodes
             .push(ENode::app(func, flattened_args.clone(), fp, term));
+        if func != ENode::NO_FUNC && self.first_app_node.is_none() {
+            self.first_app_node = Some(idx as usize);
+        }
         self.uf.add();
         self.use_list.push(SmallVec::new());
         self.proof_forest.push(SmallVec::new());
@@ -1011,7 +1019,7 @@ impl EufSolver {
     /// manifests on function-bearing EUF, not on pure-equality (constants-only)
     /// problems.
     pub fn has_app_nodes(&self) -> bool {
-        self.nodes.iter().any(|n| n.is_app())
+        self.first_app_node.is_some()
     }
 
     /// Get the term associated with a node index
@@ -1369,6 +1377,9 @@ impl Theory for EufSolver {
             }
 
             self.nodes.truncate(num_nodes);
+            if self.first_app_node.is_some_and(|index| index >= num_nodes) {
+                self.first_app_node = None;
+            }
             self.diseqs.truncate(state.num_diseqs);
             self.diseq_stamp.truncate(state.num_diseqs);
             self.uf.pop();
@@ -1532,6 +1543,7 @@ impl Theory for EufSolver {
     fn reset(&mut self) {
         self.uf = UnionFind::new(0);
         self.nodes.clear();
+        self.first_app_node = None;
         self.term_to_node.clear();
         self.diseqs.clear();
         self.pending.clear();

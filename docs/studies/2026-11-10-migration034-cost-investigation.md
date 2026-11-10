@@ -179,8 +179,8 @@ obligations in place:
   incumbent handling remain unchanged. This removes copying, not an entailment
   test, certificate, arithmetic solve or budget charge.
 
-Final verification and the unchanged 72-instance snapshot are pending; these
-edits are not yet a landed performance claim.
+The complete release verification below has passed. The unchanged 72-instance
+snapshot remains the separate acceptance measurement of actual SMT cost.
 
 An additional 18-script correctness matrix varies Int/Real arguments,
 Int/Bool/uninterpreted results, point bounds, coupled linear equations and a
@@ -218,3 +218,25 @@ additional instruction is necessary to prevent a wrong verdict. The retained
 fact and the unapproved magnitude of its cost must not be conflated. Removing
 it would require a replacement guarantee at that same acceptance boundary;
 outer best-effort repair is not such a guarantee.
+
+## Verification of the equivalent-work reductions
+
+All nine verification steps completed successfully on the final, hash-checked
+Rust sources, using the standard release profile (LTO, one codegen unit):
+all-feature build; full workspace/all-feature nextest (**12,794 passed,
+20 skipped**); doctests (**117 passed, 31 ignored**); all-feature/all-target
+Clippy with warnings denied; formatting; documentation with warnings denied by
+`.cargo/config.toml`; official Z3 parity; default-feature CLI build; pinned perf
+gate. The new arithmetic pin, EUF scope and model-reading regressions all pass.
+
+Installed Z3 **4.16.0** gives **176 decisive agreements, zero disagreements,
+one inconclusive** (`array_unique`: Nixie Unsat, Z3 Unknown). The pinned
+`28e82c65` performance gate passes all twelve verdict comparisons, with
+conflict and decision geomeans **1.000** on nine nontrivial pairs and three
+trivial cases. The default 150-second gate cap was not overridden; the separate
+requested SATLIB/SMT-LIB snapshot continues to use 30 seconds. No changed
+search policy is inferred from these same-counter implementation reductions.
+
+The binary, source hashes, full gate logs, driver and parity JSON are retained
+under the fix commit's `precompile` entry. These checks establish this landing's
+verification bar; they do not erase the separately recorded numeric-pin cost.

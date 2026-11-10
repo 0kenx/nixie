@@ -2776,7 +2776,7 @@ impl ArithSolver {
     /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
     ///
     /// A pure function of `int_equalities`; callers memoize via
-    /// [`ArithSolver::cached_int_eq_verdict`].  Guards (system size,
+    /// [`ArithSolver::int_eq_cache`].  Guards (system size,
     /// intermediate magnitude) return `GiveUp` — never a wrapped verdict.
     fn compute_int_eq_verdict(&self) -> IntEqVerdict {
         if self.int_equalities.is_empty() {
@@ -2841,38 +2841,33 @@ impl ArithSolver {
         }
     }
 
-    /// Memoized [`ArithSolver::compute_int_eq_verdict`]; invalidated exactly
-    /// when an equality is asserted or retracted by `pop`.
-    fn cached_int_eq_verdict(&mut self) -> IntEqVerdict {
-        self.int_eq_cache().verdict
-    }
-
-    /// Verdict plus the incumbent-rejection marker, memoized together.
-    fn int_eq_cache(&mut self) -> IntEqCache {
-        if self.int_eq_verdict_cache.is_none() {
-            self.int_eq_verdict_cache = Some(IntEqCache {
-                verdict: self.compute_int_eq_verdict(),
-                rejected: false,
-            });
-        }
-        self.int_eq_verdict_cache.clone().unwrap_or(IntEqCache {
-            verdict: IntEqVerdict::GiveUp,
+    /// Borrow the memoized verdict without copying its potentially large witness.
+    /// Invalidated exactly when an equality is asserted or retracted by `pop`.
+    fn int_eq_cache(&mut self) -> &IntEqCache {
+        // The placeholder is ignored when the entry already exists. Compute
+        // before borrowing the slot so the computation may read the equations.
+        let verdict = if self.int_eq_verdict_cache.is_none() {
+            self.compute_int_eq_verdict()
+        } else {
+            IntEqVerdict::GiveUp
+        };
+        self.int_eq_verdict_cache.get_or_insert(IntEqCache {
+            verdict,
             rejected: false,
         })
     }
 
     /// Attempt the incumbent once per equality-set state; record rejection.
     fn try_cached_eq_incumbent(&mut self) -> bool {
-        let (verdict, rejected) = {
-            let c = self.int_eq_cache();
-            (c.verdict, c.rejected)
-        };
-        let IntEqVerdict::Incumbent(w) = verdict else {
-            return false;
-        };
-        if rejected {
+        let c = self.int_eq_cache();
+        if c.rejected {
             return false;
         }
+        let IntEqVerdict::Incumbent(w) = &c.verdict else {
+            return false;
+        };
+        // Only an actual attempt needs ownership across mutation of simplex.
+        let w = w.clone();
         let ok = self.try_eq_incumbent(&w);
         if !ok && let Some(c) = self.int_eq_verdict_cache.as_mut() {
             c.rejected = true;
@@ -2937,8 +2932,8 @@ impl ArithSolver {
         // eagerly changes theory verdicts from Unknown to Sat under
         // partial assignments and measurably steers searches badly; the
         // incumbent stays post-hoc.
-        if let IntEqVerdict::Infeasible(core) = self.cached_int_eq_verdict() {
-            return Ok(TheoryResult::Unsat(core));
+        if let IntEqVerdict::Infeasible(core) = &self.int_eq_cache().verdict {
+            return Ok(TheoryResult::Unsat(core.clone()));
         }
         self.simplex.push();
         let result = self.lia_cuts_then_bnb()?;
@@ -2955,8 +2950,8 @@ impl ArithSolver {
         // through a scoped LP re-solve that respects every other active row;
         // acceptance yields a genuine integral model where branch-and-bound
         // could not construct one (the unbounded pure-equality class).
-        match self.cached_int_eq_verdict() {
-            IntEqVerdict::Infeasible(core) => Ok(TheoryResult::Unsat(core)),
+        match &self.int_eq_cache().verdict {
+            IntEqVerdict::Infeasible(core) => Ok(TheoryResult::Unsat(core.clone())),
             IntEqVerdict::Incumbent(_) => {
                 if self.try_cached_eq_incumbent() {
                     Ok(TheoryResult::Sat)
@@ -4633,6 +4628,44 @@ impl ArithSolver {
             reason_terms = self.full_unsat_core();
         }
         Some(reason_terms)
+    }
+}
+
+#[cfg(test)]
+mod interface_pin_cost_tests {
+    use super::*;
+
+    #[test]
+    fn numeral_interface_entailment_requires_a_live_pin_across_pop() {
+        use crate::Theory;
+        let mut solver = ArithSolver::lra();
+        let x = TermId::new(1);
+        let four = TermId::new(2);
+        let lower = TermId::new(10);
+        let upper = TermId::new(11);
+        let one = Rational64::one();
+        let value = Rational64::from_integer(4);
+        solver.assert_ge(&[(x, one)], value, lower);
+        solver.assert_le(&[(x, one)], value, upper);
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+        assert_eq!(solver.entailed_equal_reason(x, four), None);
+
+        solver.push();
+        solver.assert_eq(&[(four, one)], value, four);
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+        assert!(solver.entailed_equal_reason(x, four).is_some());
+        solver.pop();
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+        assert_eq!(solver.entailed_equal_reason(x, four), None);
+
+        // Interning survives pop; the equality fact does not. Re-pinning is
+        // required before arithmetic may justify the congruence f(x) = f(4).
+        solver.assert_eq(&[(four, one)], value, four);
+        assert!(matches!(solver.check(), Ok(TheoryResult::Sat)));
+        let reasons = solver.entailed_equal_reason(x, four).expect("live pin");
+        assert!(reasons.iter().all(|r| [lower, upper, four].contains(r)));
+        solver.reset();
+        assert_eq!(solver.entailed_equal_reason(x, four), None);
     }
 }
 
