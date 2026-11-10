@@ -11,218 +11,543 @@
     {
       "commit": "6f3334bd89b80223f614af317f63be09940e7cbc",
       "subject": "Migrate upstream 0.3.4 overflow predicates and quantified theory certification",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Reject invalid numeric literals; certify quantified regions and discover ground datatype obligations."
+      ],
+      "optional_capabilities": [
+        "overflow-syntax"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "2e06106ebbbd7ab203508192667ebdfc8331c75f",
       "subject": "Migrate upstream array discovery and SMT-LIB symbol handling",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Discover nested array reads and store congruence; prevent internal-symbol capture; preserve source spelling and quoted symbols."
+      ],
+      "optional_capabilities": [
+        "qf-auf-alias"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "6b7bf10eb79becf23c4c6c1b130ece81b2c34d22",
       "subject": "Migrate upstream allocator alignment fixes and enforce handle ownership",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Allocator alignment, zero-sized allocations, handle ownership and lifetime safety."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "68c36c4491fcf20232bcae61292e64e6c1425994",
       "subject": "Migrate datatype construction and close set/model integration gaps",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Constructor disjointness/injectivity and iterative folding; correct declaration interner; set congruence and cyclic model reads."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "d280e0a4b38bc89b410911403bc8cb8aac006ec2",
       "subject": "Migrate permanent SAT clauses and preserve restored obligations across scopes",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Restore eliminated clauses across scopes and retain permanent clauses and valid proof reasons."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "6da0820976d9258166688462e2e0a598d3568ace",
       "subject": "Migrate persistent BV definitions and sound scoped assumption search",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Preserve assumptions over restarts, scoped BV definitions, selector explanations and assignment rollback."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "d48d98826982710379182459a4e92502ff7778ff",
       "subject": "Migrate query-wide SAT and embedded bit-vector resource budgets",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Enforce query-wide conflict/decision/embedded-check budgets without accepting interrupted search."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "1106bd4dab9ba451dbddcc62fbe564f4ef7e2c0a",
       "subject": "Migrate explained BV/EUF exchange and joint model validation",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Explain cross-theory BV equalities and independently validate the joint BV/EUF assignment."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "c8abf146a836e96b0d071594452519fd3403c749",
       "subject": "Migrate nested array and finite theory interfaces",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Ground nested-array/BV interfaces, Boolean term-position polarity, and arithmetic array arrangements. Numeric UF pins are replaced by fail-closed final-value consistency."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "ed02c41ab1786903d153be6c07c47ee50e8fa0ee",
       "subject": "Isolate generated symbols and expose refinement diagnostics",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Prevent source names capturing generated skolems and other internal symbols; retain model/seed enumeration helpers used by correctness code."
+      ],
+      "optional_capabilities": [
+        "refinement-statistics"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "7e696bdf1fee5b252f8f2880f07c4f3048a8c2fb",
       "subject": "Preserve ground finite domains for quantified functions",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Do not waive finite ground BV domains when the same function also occurs under quantifiers."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "235e64afef8536dbbc2509d2003aaa5453a0d154",
       "subject": "Migrate complete quantifier positions and finite expansion",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Quantifier-position ownership, capture-free binder rows, exact distinct certification; complete small finite domains fix published models violating quantified assertions."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "faeef968761f4282c4d608a814dee4ffd42da54c",
       "subject": "Preserve array ITE identities and import facade terms safely",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Enforce array ITE branch identity; import facade terms between independent arenas, retaining scope/core identity."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "e715b10416d9cd86636378a749f76c34d5f6ca57",
       "subject": "Migrate exact BV values into the shared model evaluator",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Evaluate published BV values exactly at arbitrary width and Boolean conditions through their circuit assignments."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "029ce7adb9bcbbdd7398177c0654d84edace61a7",
       "subject": "Migrate certified array completion and structural model reads",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Retain structural array/model value evaluation and independent validity certificates. Remove speculative array interpretation search."
+      ],
+      "optional_capabilities": [
+        "array-completion-search"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "8ca3622a8e20a829a5105c670456ca87373e8b61",
       "subject": "Migrate certified model publication and exact completion from upstream 0.3.4",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Retain exact published-interpretation validation, witness hygiene, real solver-candidate reconstruction, ANIA and model-state fixes. Remove new alternative-model proposal searches."
+      ],
+      "optional_capabilities": [
+        "finite-uf-model-search",
+        "datatype-publication-proposals",
+        "numeric-projection-proposals",
+        "function-else-search",
+        "zero-division-proposal"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "6be88b3395f9acc4bfb80984ec3198f07d473342",
       "subject": "Migrate guarded datatype refinement and preserve exact nonlinear witnesses",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Datatype congruence/occurs checks; preserve exact NIRA witnesses; respect assertion polarity and exact scalar sorts."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "7034f149395c2d7b45378a6aca11b3df45935d8b",
       "subject": "Migrate bounded guard-boundary counterexample proposals",
-      "status": "audit-required",
+      "status": "reconstructed-awaiting-verification",
       "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "optional_capabilities": [
+        "guard-boundary-sampler"
+      ],
+      "decision": "withhold-pending-capability-gate"
     },
     {
       "commit": "59af866b4498699866247bd9dd411431a8208b74",
       "subject": "Migrate standalone literal formal obligations with explicit verifier setup",
-      "status": "audit-required",
+      "status": "reconstructed-awaiting-verification",
       "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "optional_capabilities": [
+        "formal-harness"
+      ],
+      "decision": "withhold-pending-capability-gate"
     },
     {
       "commit": "92fd8e2f95406c67d8aa86b34cc7e3fbca37deb5",
       "subject": "Migrate robustness changes and validate CAD cache and optimizer results",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Checked state access and error propagation; complete CAD cache keys; verify PMRES objective and result before claiming optimality."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "167e3dafe25771c2c225cc853ad9e2d6402438ad",
       "subject": "Replace algebraic extension placeholders with exact quotient arithmetic",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Replace false algebraic field defaults with exact quotient arithmetic and valid cache identity."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "1da2864c8acee5786e74b0281ebe305c5cb45f1f",
       "subject": "Migrate exact finite-array cardinality and extensionality domains",
-      "status": "audit-required",
+      "status": "reconstructed-awaiting-verification",
       "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "optional_capabilities": [
+        "finite-array-completeness"
+      ],
+      "decision": "withhold-pending-capability-gate"
     },
     {
       "commit": "93fcd2ce3e03f7a0dd7d9b9915d52b3fe5ef1c2d",
       "subject": "Migrate bounded exact datatype model separation from upstream 0.3.4",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Retain pinned-field and exact-offset validation; retain the pre-migration one-proposal separation policy."
+      ],
+      "optional_capabilities": [
+        "expanded-datatype-separation"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "5a5ed86dfe4d63d51a618d8e750d8ac8214e6944",
       "subject": "Migrate exact function consistency and compound datatype field models",
-      "status": "audit-required",
-      "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Retain exact compound-field evaluation and guarded collision detection; replace the added general-function retry loops with rejection of conflicting candidates."
+      ],
+      "optional_capabilities": [
+        "general-function-retry"
+      ],
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "8b564255ebc4d57741fed1145914ddc87f76a6ad",
       "subject": "Migrate upstream model interfaces and keep finite-field completion in range",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Fix to_real result sort, malformed distinct handling, finite-field model ranges, and reject unjustified set choices."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "862c6d948f73133f1229831a0240f2558e8dbfe5",
       "subject": "Complete generated datatype models and restore rejected repair snapshots",
-      "status": "audit-required",
-      "correctness_obligations": [],
+      "status": "reconstructed-awaiting-verification",
+      "correctness_obligations": [
+        "Generated datatype witness obligations; rollback unsuccessful repair snapshots and default markers; exact offset arithmetic."
+      ],
       "optional_capabilities": [],
-      "decision": null
+      "decision": "retain-correctness-only"
     },
     {
       "commit": "5c2b6bed1e77bc4020efb6849c9a0b32d301416c",
       "subject": "Migrate upstream differential tools and complete the 0.3.4 capability audit",
-      "status": "audit-required",
+      "status": "reconstructed-awaiting-verification",
       "correctness_obligations": [],
-      "optional_capabilities": [],
-      "decision": null
+      "optional_capabilities": [
+        "diagnostic-tools"
+      ],
+      "decision": "withhold-pending-capability-gate"
     }
-  ]
+  ],
+  "additional_capabilities": [
+    {
+      "id": "overflow-syntax",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "6f3334bd"
+      ],
+      "intended_benefit": "Explicit SMT-LIB overflow predicates, exhaustively checked at small widths and with wide-value controls.",
+      "cost_and_correctness_risk": "New syntax only; existing operators must keep identical encodings.",
+      "focused_gates": [
+        "overflow_predicates"
+      ],
+      "requires_matched_null": false
+    },
+    {
+      "id": "qf-auf-alias",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "2e06106e"
+      ],
+      "intended_benefit": "Recognize the QF_AUF logic name without requiring callers to substitute ALL.",
+      "cost_and_correctness_risk": "Logic contract only; reject arithmetic/BV features outside the named logic.",
+      "focused_gates": [
+        "logic_contract_acceptance",
+        "upstream034_arrays_and_symbols"
+      ],
+      "requires_matched_null": false
+    },
+    {
+      "id": "refinement-statistics",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "ed02c41a"
+      ],
+      "intended_benefit": "Expose per-query array work and embedded-BV conflicts for budget diagnostics.",
+      "cost_and_correctness_risk": "Saturating counter updates and output cost; query reset must remain correct.",
+      "focused_gates": [
+        "upstream034_names_and_statistics",
+        "upstream034_budget_transitions"
+      ],
+      "requires_matched_null": false
+    },
+    {
+      "id": "array-completion-search",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "029ce7ad",
+        "8ca3622a"
+      ],
+      "intended_benefit": "Certify otherwise unavailable quantified-array interpretations.",
+      "cost_and_correctness_risk": "Automatic proposal/certificate search can consume the query budget and alter candidate choices.",
+      "focused_gates": [
+        "upstream034_array_completion"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "finite-uf-model-search",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Find concrete finite uninterpreted domains and function tables after Unknown.",
+      "cost_and_correctness_risk": "New model search and repeated publication certificates.",
+      "focused_gates": [
+        "upstream034_model_publication",
+        "upstream034_nested_interfaces"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "datatype-publication-proposals",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish valid constructor values when the solver candidate cannot be read consistently.",
+      "cost_and_correctness_risk": "Bounded constructor-product enumeration; overlaps with datatype separation.",
+      "focused_gates": [
+        "upstream034_datatype_separation"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "numeric-projection-proposals",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish interval-based numeric function interpretations when a finite table fails a universal.",
+      "cost_and_correctness_risk": "Alternative model semantics and certificate queries; ordering can change proposal cost.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "function-else-search",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Try other finite-table defaults to satisfy universal assertions.",
+      "cost_and_correctness_risk": "Candidate order and repeated full-model certificates.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "zero-division-proposal",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "8ca3622a"
+      ],
+      "intended_benefit": "Publish an explicit total choice for division by zero and consistent get-value results.",
+      "cost_and_correctness_risk": "Alternative interpretation search; retain underspecification and avoid source-name capture.",
+      "focused_gates": [
+        "upstream034_model_publication"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "guard-boundary-sampler",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "7034f149"
+      ],
+      "intended_benefit": "Find additional counterexamples near numeric guard boundaries.",
+      "cost_and_correctness_risk": "Heuristic proposal order and MBQI trajectory; previous snapshot found no standing-solve gain.",
+      "focused_gates": [
+        "upstream034_guard_points"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "formal-harness",
+      "status": "gate-failed",
+      "decision": "drop",
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "59af866b"
+      ],
+      "intended_benefit": "Standalone literal proof obligations using an actual external verifier.",
+      "cost_and_correctness_risk": "No solver runtime change, but a harness is not a proof; verifier/toolchain gate must pass.",
+      "focused_gates": [
+        "nixie-sat/formal/test_prepare.py"
+      ],
+      "requires_matched_null": false,
+      "gate_result": "Required cargo-formal executable and unpublished oxiformal checkout are unavailable. Plain concrete tests cannot establish the promised formal capability; no symbolic proof is claimed.",
+      "runtime_cost": "No production binary change; rejected before a runtime experiment."
+    },
+    {
+      "id": "finite-array-completeness",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "1da2864c"
+      ],
+      "intended_benefit": "Exact finite-array cardinality and complete extensionality for small domains.",
+      "cost_and_correctness_risk": "Potential product-size growth; preserve exact arithmetic and budgets.",
+      "focused_gates": [
+        "upstream034_finite_array_domains",
+        "upstream034_nested_interfaces"
+      ],
+      "requires_matched_null": false
+    },
+    {
+      "id": "expanded-datatype-separation",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "93fcd2ce"
+      ],
+      "intended_benefit": "Separate additional finite/enum and numeric datatype values with validated proposals.",
+      "cost_and_correctness_risk": "Additional proposal choices and trajectory; pinned fields may never change.",
+      "focused_gates": [
+        "upstream034_datatype_separation",
+        "model_builder::separation"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "general-function-retry",
+      "status": "withheld",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "5a5ed86d"
+      ],
+      "intended_benefit": "Resolve candidate function collisions by guarded Ackermann lemmas instead of returning Unknown.",
+      "cost_and_correctness_risk": "Additional re-solves and theory resets; validate explanations and scopes.",
+      "focused_gates": [
+        "uf_consistency",
+        "upstream034_function_models"
+      ],
+      "requires_matched_null": true
+    },
+    {
+      "id": "diagnostic-tools",
+      "status": "focused-gate-passed",
+      "decision": null,
+      "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
+      "source_commits": [
+        "5c2b6bed"
+      ],
+      "intended_benefit": "Reproducible differential-generation, triage and minimization tools.",
+      "cost_and_correctness_risk": "No solver runtime change; tool outputs must distinguish Unknown, errors and timeouts honestly.",
+      "focused_gates": [
+        "scripts/round4/test_tools.py"
+      ],
+      "requires_matched_null": false,
+      "gate_result": "Exact 5c2b6bed script sources restored in the isolated candidate; all nine Python tests passed. Actual Z3 smoke controls await completion of build/test work.",
+      "runtime_cost": "No Rust/Cargo changes; the solver binary and its measurement remain identical."
+    }
+  ],
+  "numeric_uf_pins": {
+    "status": "replacement-under-test",
+    "prior_control": "pin-control-results.json",
+    "decision": "drop eager numeric UF pins; retain array/quantified purifier pins and final value consistency",
+    "evidence": "Prior 10 common seeds plus fresh replay isolate 11.19348x and 4.29175x treatment/null instruction cost on the two affected UFLIA instances. No new heuristic is introduced by rejecting an unverified candidate."
+  },
+  "correctness_snapshot": {
+    "source": "4e991ae0cd18e8760c5e2f2c8360290bb08fcf15",
+    "manifest": "correctness-only-manifest.json",
+    "report": "correctness-only-results.json",
+    "smt_original_cohort_ratio": 1.0759127266831383,
+    "sat_ratio": 0.9965100534365892,
+    "new_losses_vs_rejected_migration": 0,
+    "status": "rejected-by-full-suite-15-unknown-versus-sat; scoped-guard-revision-in-progress"
+  }
 }

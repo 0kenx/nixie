@@ -60,7 +60,8 @@ def main():
             if subset:
                 summary['counts'][kind + ':' + arm['name']] = dict(
                     collections.Counter(r['outcome'] for r in subset))
-        for baseline in ('before', 'after', 'rollback', 'z3', 'kissat', 'cadical'):
+        for baseline in (arm['name'] for arm in manifest['arms']
+                         if arm['name'] != args.candidate):
             relevant = [g for g in groups.values() if baseline in g and args.candidate in g
                         and g[args.candidate]['instance']['kind'] == kind]
             if not relevant:
