@@ -1,0 +1,185 @@
+{
+  "z3_version": "Z3 version 4.16.0 - 64 bit",
+  "judge_sha256": "a23f531ace6a09cfe3849eb2ec30d69c782f4ba69f2ea8ce1efcfacc18a2712b",
+  "cases": [
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-witness_symbols_do_not_capture_declarations_or_rewrite_strings.smt2",
+      "note": "Original script and model; token-safe witness replay.",
+      "script": "(declare-sort U 0)\n        (declare-const @uc_U_0 U)(declare-const a U)\n        (declare-const s String)(assert (distinct a @uc_U_0))\n        (assert (= s \"@uc_U_0\"))(check-sat)(get-model)(get-model)\n        (get-value (s (= a @uc_U_0)))\n",
+      "output": "sat\n(model\n  \n  (define-fun @uc_U_0 () U @uc_U_1)\n  \n  (define-fun a () U @uc_U_2)\n  \n  (define-fun s () String \"@uc_U_0\")\n)\n(model\n  \n  (define-fun @uc_U_0 () U @uc_U_1)\n  \n  (define-fun a () U @uc_U_2)\n  \n  (define-fun s () String \"@uc_U_0\")\n)\n((s \"@uc_U_0\")\n ((= a @uc_U_0) false))\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 0\n  Propagations: 3\n  Conflicts: 0\n  Restarts: 0\n",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/else-real-positive-range.smt2",
+      "note": "Explicit control-only replay in ALL: source has only Real/function declarations, no user sort aliases. This admits printed to_real casts without changing the real formula. General logic broadening remains prohibited.",
+      "script": "(set-logic ALL)(declare-fun f (Real) Real)(assert (forall ((x Real)) (>= (f x) 10.0)))(assert (= (f 0.0) 20.0))(check-sat)(get-model)(get-value ((f 0.0) (f 1.0)))\n",
+      "output": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (= x!0 (to_real 0)) (to_real 20) (+ (* (to_real 0) x!0) (to_real 20))))\n)\n(((f 0.0) 20.0)\n ((f 1.0) 20.0))\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 3\n  Propagations: 6\n  Conflicts: 1\n  Restarts: 0\n  Conflicts/Decision: 0.333\n",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "control": "string-literal-\"@uc_U_0\"",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "control": "string-literal-\"uc__U__0\"",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 1,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [
+          [
+            "FALSIFYING",
+            0
+          ]
+        ],
+        "per_check": {
+          "0": "sat/falsifying"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-affine_certificate_is_the_published_function.smt2",
+      "note": "Control-only ALL replay admits exact printed to_real casts; no user sort aliases occur.",
+      "script": "(set-logic ALL)\n        (declare-fun f (Real) Real)\n        (assert (forall ((x Real)) (= (f x) (+ (* 2.0 x) 1.0))))\n        (check-sat)(get-model)(get-value ((f 3.0) (f (- 2.0))))\n",
+      "output": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (+ (* (to_real 2) x!0) (to_real 1)))\n)\n(((f 3.0) 7.0)\n ((f (- 2.0)) -3.0))\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 3\n  Propagations: 4\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/finite-uf-involution.smt2",
+      "finite_domains": {
+        "U": 2
+      },
+      "consistency_query": "(set-logic UF)\n(declare-sort U 0)\n(declare-const uc__U__0 U)\n(declare-const uc__U__1 U)\n(assert (distinct uc__U__0 uc__U__1))\n(define-fun a () U uc__U__1)\n(define-fun f ((x!0 U)) U (ite (= x!0 uc__U__0) uc__U__1 uc__U__0))\n(assert (forall ((__domain U)) (or (= __domain uc__U__0) (= __domain uc__U__1))))\n(check-sat)\n",
+      "validity_query": "(set-logic UF)\n(declare-sort U 0)\n(declare-const uc__U__0 U)\n(declare-const uc__U__1 U)\n(assert (distinct uc__U__0 uc__U__1))\n(define-fun a () U uc__U__1)\n(define-fun f ((x!0 U)) U (ite (= x!0 uc__U__0) uc__U__1 uc__U__0))\n(assert (forall ((__domain U)) (or (= __domain uc__U__0) (= __domain uc__U__1))))\n(assert (not (and true (forall ((x U)) (= (f (f x)) x)) (forall ((x U)) (not (= (f x) x))))))\n(check-sat)\n",
+      "consistency": "sat",
+      "validity": "unsat"
+    }
+  ]
+}

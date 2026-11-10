@@ -1,0 +1,1953 @@
+{
+  "z3_version": "Z3 version 4.16.0 - 64 bit",
+  "selected": [
+    "guard-boundary-sampler",
+    "finite-uf-model-search",
+    "datatype-publication-proposals",
+    "numeric-projection-proposals",
+    "array-completion-search"
+  ],
+  "rows": [
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_mutually_recursive_datatypes_is_never_shortcircuited.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9122325,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/const_array_consistent_stays_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 7266093,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set9_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 14955065872,
+      "model_validation": {
+        "model_ok": 1,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set19_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 208238801474,
+      "model_validation": {
+        "model_ok": 1,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/negated_bounded_exists_outside_range_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 5879149,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/set16_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 2584030818,
+      "model_validation": {
+        "model_ok": 1,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/each_mbqi_round_costs_no_more_clauses_than_the_first.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 16787555,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/correctness-cases/enum-publication.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 11060701,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/correctness-cases/shadowed-array-completion.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 19783827266,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6370461,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-distinct_over_composite_finite_datatype_exact_fit_is_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 16844129,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflia_monotone_relevant_terms_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 957424393,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-symbolic_argument_solves_for_the_variable.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 185123511115,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-interposed_check_must_not_lose_a_kept_instantiation.smt2",
+      "answers": [
+        "unknown",
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 7432485,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflra_monotone_var_var_guard_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 290456382,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-uflia_injective_bounded_box_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 39056585,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-zero-division-publication.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6376385,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-congruence_closure.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 10215445,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-idempotent.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6166281,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-monotone_basic.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 957202491,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-real_monotone.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 840172242,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-0.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "unsat",
+      "instructions": 5514230,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-2.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "unsat",
+      "instructions": 5477207,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-scopes.smt2",
+      "answers": [
+        "unsat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6587915,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-01.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9687274,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-03.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 7262062,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-05.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9189139,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-07.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 8708102,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-09.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 10582298,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-11.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9056101,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-13.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 6350661,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-15.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 12200027,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-17.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 12515928,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-equality_model_partition_is_replaced_on_each_check.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 7213199,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-affine_certificate_is_the_published_function.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5100152,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 1,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 2,
+        "events": [],
+        "per_check": {
+          "0": "sat/unresolved"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-distinct_arrays_publish_the_extensional_witness.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5120519,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/else-integer-positive-range.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5147132,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6371633,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/distinct_over_composite_finite_datatype_exact_fit_is_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 16293599,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_monotone_relevant_terms_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 957485591,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/symbolic_argument_solves_for_the_variable.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 185127018246,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/interposed_check_must_not_lose_a_kept_instantiation.smt2",
+      "answers": [
+        "unknown",
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 7430848,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflra_monotone_var_var_guard_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 290001440,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/coverage-contracts/uflia_injective_bounded_box_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 39059781,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/correctness-cases/zero-division-publication.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 6373864,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-distinct_over_mutually_recursive_datatypes_is_never_shortcircuited.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9296518,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-const_array_consistent_stays_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 7338745,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set9_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 14996601148,
+      "model_validation": {
+        "model_ok": 2,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set19_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 208302647087,
+      "model_validation": {
+        "model_ok": 2,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-negated_bounded_exists_outside_range_sat.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 5889299,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-set16_family_answers_sat.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 2591382596,
+      "model_validation": {
+        "model_ok": 2,
+        "closed_domain_checks": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "consistency": "sat",
+            "validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-each_mbqi_round_costs_no_more_clauses_than_the_first.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 16782391,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-enum-publication.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "unsat",
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 11325844,
+      "model_validation": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/model-shadowed-array-completion.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 19785564708,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-division_property.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 8876256,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-injective.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 39056504,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/parity-surjective.smt2",
+      "answers": [
+        "unknown"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 7515672,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/finite-uf-involution.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 503102204,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 1,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [
+          [
+            "UC_SAT",
+            0
+          ]
+        ],
+        "per_check": {
+          "0": "sat/uc_unresolved"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-1.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "unsat",
+      "instructions": 5417171,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/guard-boundary-3.smt2",
+      "answers": [
+        "unsat"
+      ],
+      "exit_code": 0,
+      "outcome": "unsat",
+      "instructions": 6051540,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-00.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9719800,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-02.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5443302,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-04.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9334116,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-06.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9324220,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-08.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 12644478,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-10.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 8650198,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-12.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 9298465,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-14.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 13028176,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-16.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 11590263,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/datatype-oracle-18.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 10478184,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-witness_symbols_do_not_capture_declarations_or_rewrite_strings.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5085316,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 2,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 2,
+        "events": [],
+        "per_check": {
+          "0": "sat/unresolved"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-uninterpreted_constants_and_function_tables_share_witnesses.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 4941927,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 3,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/publication-published_models_follow_assumptions_and_scope_changes.smt2",
+      "answers": [
+        "sat",
+        "sat",
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "error",
+      "instructions": 5218518,
+      "model_validation": null
+    },
+    {
+      "path": "bench/migration034/candidates/publication-controls/else-real-positive-range.smt2",
+      "answers": [
+        "sat"
+      ],
+      "exit_code": 0,
+      "outcome": "sat",
+      "instructions": 5471460,
+      "model_validation": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 0,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 1,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 2,
+        "events": [],
+        "per_check": {
+          "0": "sat/unresolved"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  ]
+}

@@ -94,12 +94,56 @@ def decl_name(kind, expr):
     return None
 
 
-def replace_uc(text: str, ucs: dict) -> str:
-    def sub(m):
-        name = "uc__%s__%s" % (m.group(1), m.group(2))
-        ucs[name] = m.group(1)
-        return name
-    return UC.sub(sub, text)
+def replace_uc(text, ucs, protected, occupied, mapping):
+    """Rename witness tokens only; preserve strings, comments and user names."""
+    pieces = []
+    end = 0
+    for token in c._TOKEN.finditer(text):
+        atom = token.group(5) or token.group(6)
+        if atom is None:
+            continue
+        symbol = atom[1:-1] if atom.startswith("|") else atom
+        match = UC.fullmatch(symbol)
+        if match is None or symbol in protected:
+            continue
+        start, stop = token.span(5 if token.group(5) else 6)
+        name = mapping.get(symbol)
+        if name is None:
+            base = "uc__%s__%s" % (match.group(1), match.group(2))
+            name = base
+            suffix = 0
+            while name in occupied:
+                suffix += 1
+                name = base + "__" + str(suffix)
+            occupied.add(name)
+            mapping[symbol] = name
+            ucs[name] = match.group(1)
+        pieces.extend((text[end:start], name))
+        end = stop
+    pieces.append(text[end:])
+    return "".join(pieces)
+
+
+def replay_symbols(items, defs, goal):
+    """Reserve user symbols and binders before allocating witness names."""
+    protected = declared_names(items) | set(defs)
+    occupied = set()
+    stack = [e for _, e in items] + list(defs.values()) + c.parse_all(goal)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, str):
+            if not node.startswith('"'):
+                occupied.add(node)
+            continue
+        if not isinstance(node, list) or not node:
+            continue
+        if node[0] in ('define-fun', 'define-fun-rec') and len(node) == 5:
+            protected.add(node[1])
+            protected.update(v[0] for v in node[2] if isinstance(v, list) and v)
+        elif node[0] in ('forall', 'exists', 'lambda', 'let') and len(node) == 3:
+            protected.update(v[0] for v in node[1] if isinstance(v, list) and v)
+        stack.extend(node)
+    return protected, occupied
 
 
 def base_prefix(items, logic):
@@ -126,6 +170,9 @@ def replay_text(items, defs, logic, goal):
     written, each declared symbol as the model's define-fun (or its
     declaration when the model omits it), then the goal."""
     ucs = {}
+    protected, occupied = replay_symbols(items, defs, goal)
+    mapping = {}
+    rename = lambda text: replace_uc(text, ucs, protected, occupied, mapping)
     lines = ["(set-logic %s)" % logic] if logic else []
     missing = []
     body = []
@@ -142,7 +189,8 @@ def replay_text(items, defs, logic, goal):
             missing.append(name)
             body.append(c.show(expr))
         else:
-            body.append(replace_uc(c.show(d), ucs))
+            body.append(rename(c.show(d)))
+    goal = rename(goal)
     uc_lines = []
     by_sort = {}
     for name, sort in sorted(ucs.items()):
@@ -151,7 +199,6 @@ def replay_text(items, defs, logic, goal):
     for sort, names in sorted(by_sort.items()):
         if len(names) > 1:
             uc_lines.append("(assert (distinct %s))" % " ".join(names))
-    goal = replace_uc(goal, ucs)
     # witnesses are declared after the sorts they belong to: put them right
     # before the goal (a witness is only mentioned by model values and goal)
     return "\n".join(lines + body[:0] + [x for x in body if x.startswith("(declare-sort") or x.startswith("(define-sort") or x.startswith("(declare-datatype")] + uc_lines + [x for x in body if not (x.startswith("(declare-sort") or x.startswith("(define-sort") or x.startswith("(declare-datatype"))] + [goal, "(check-sat)"]) + "\n", missing, bool(ucs)

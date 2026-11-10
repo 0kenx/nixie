@@ -510,3 +510,41 @@ and cumulative-policy gates include this cache and remain accurately labeled;
 the final production measurement must check the actual cache-free executable.
 Do not retry the same optimization on these measurements or describe the
 neutral result as an aggregate speedup.
+
+### Cumulative policy gates and combined models
+
+All five prefixes passed the full 72-input, 30-second cost gate and Z3 4.16.0
+parity without a lost decisive answer, disagreement, or newly incomplete run.
+Unchanged completed SMT work includes ten Unknown responses as well as the
+24 decisive results. `cumulative-policy-gates.json` records marginal and core
+comparisons. The final diagnostic prefix costs 0.999318x core on those 34
+completed cases and 0.998909x on 24 decisive cases; these are neutral.
+
+The combined 74-control run preserves decisive agreements and recovers the
+expected finite-UF, datatype, projection, guard, and array coverage. Its 57
+printed models across 46 responses pass independent validation after the
+explicit replay corrections below. The 696-formula datatype oracle and the
+recovered tests now require their original decisive answers; the 19-case
+Unknown allowlist is removed. Six other former coverage contracts remain
+explicitly incomplete, including bounded injectivity, negated bounded exists,
+zero-division, general recursive-function refinement and two scope/refinement
+controls. No Unknown is credited as a match.
+
+The combined replay exposed two further comparator boundaries, not solver
+counterexamples. Raw regex witness substitution changed string literals and
+collided with a user-declared `@uc_U_0`. Replay now renames whole symbol tokens,
+preserves user/bound names and strings, avoids fresh-name collisions, and
+registers goal-only witnesses before emitting declarations. Fifteen tool tests
+and actual Z3 controls validate both true and false string models. Two real
+function controls print `to_real`, which strict UFLRA replay rejects; their
+explicit ALL replays contain no user sort aliases and preserve the real
+formula. This is not a generic logic-widening fallback. The finite involution
+model is checked with separately satisfiable two-element domain closure.
+`combined-publication-validation.json` retains the initial unresolved labels;
+`combined-replay-corrections.json` records their resolutions and exact inputs.
+
+The production cleanup removes every diagnostic selector, function-else and
+zero-division proposal, expanded datatype separation, and the neutral parse
+cache. Its first compile caught an array helper located after rejected code;
+the identical helper is retained beside its sole accepted caller. Full release
+verification and a new production-binary cost measurement remain required.

@@ -131,6 +131,31 @@ class OracleTests(unittest.TestCase):
         self.assertNotIn('(set-logic ALL)', run.call_args.args[0])
         self.assertEqual(report['model_ok'], 1)
 
+    def test_witness_renaming_preserves_user_symbols_strings_and_freshness(self):
+        items = [(e[0], e) for e in c.parse_all(
+            '(declare-sort U 0)(declare-const @uc_U_0 U)'
+            '(declare-const uc__U__1 U)(declare-const s String)')]
+        defs = zjudge.model_defs(c.parse_all('(model '
+            '(define-fun @uc_U_0 () U @uc_U_1)'
+            '(define-fun uc__U__1 () U @uc_U_2)'
+            '(define-fun s () String "@uc_U_0"))')[0])
+        text, missing, _ = zjudge.replay_text(items, defs, None,
+            '(assert (and (distinct @uc_U_0 uc__U__1) (= s "@uc_U_0")))')
+        self.assertFalse(missing)
+        self.assertIn('(define-fun @uc_U_0 () U uc__U__1__1)', text)
+        self.assertIn('(define-fun uc__U__1 () U uc__U__2)', text)
+        self.assertIn('(define-fun s () String "@uc_U_0")', text)
+        self.assertIn('(distinct @uc_U_0 uc__U__1)', text)
+        self.assertNotIn('(declare-const uc__U__0 ', text)
+
+    def test_goal_only_witnesses_are_declared_and_bound_names_are_preserved(self):
+        items = [('declare-sort', ['declare-sort', 'U', '0'])]
+        text, _, _ = zjudge.replay_text(items, {}, 'UF',
+            '(assert (forall ((@uc_U_0 U)) (= @uc_U_0 @uc_U_4)))')
+        self.assertIn('(declare-const uc__U__4 U)', text)
+        self.assertIn('((@uc_U_0 U)) (= @uc_U_0 uc__U__4)', text)
+        self.assertNotIn('(declare-const uc__U__0 ', text)
+
 
 if __name__ == '__main__':
     unittest.main()
