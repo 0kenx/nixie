@@ -61,3 +61,17 @@ impl Context {
         }
     }
 }
+
+impl Context {
+    pub(in crate::context) fn with_fresh_values(
+        &mut self,
+        model: &crate::solver::Model,
+    ) -> crate::solver::Model {
+        let minted = self.mint_fresh_values(model);
+        let mut out = model.clone();
+        for (term, value) in minted {
+            out.set(term, value);
+        }
+        out
+    }
+}
