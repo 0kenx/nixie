@@ -1,0 +1,32 @@
+{
+  "purpose": "Rejection/acceptance control for optional function retries; no production diagnostic code will land.",
+  "arms": [
+    "off",
+    "real",
+    "null"
+  ],
+  "match": "Both active arms create and encode real and detached-function congruence lemmas over identical argument terms/signatures; assert one valid unit through assert_dt_lemma and the same re-solve path. Only linkage to the user function differs.",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "fresh_seed": 87109,
+  "input": "coverage-contracts/symbolic_argument_solves_for_the_variable.smt2",
+  "primary": "complete-process instructions:u, 30s cap",
+  "vetoes": [
+    "Wrong answer or invalid published model",
+    "No movement in null relative to off",
+    "Unequal intervention count or encoding path at corresponding intervention",
+    "No reproducible valid witness gain beyond trajectory reshuffling"
+  ],
+  "interpretation": "If the control is unmatched or inert, do not infer semantic merit or accept based on raw before/after. Record the failure and drop the optional retry pending a valid controlled design."
+}
