@@ -1,0 +1,1586 @@
+[
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-7919.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 23878921240,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1099ms\n\nSAT Solver Statistics:\n  Decisions: 18085\n  Propagations: 118352\n  Conflicts: 122\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=122 decisions=18085 propagations=118352\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c5523f024d3ae49dba359f26"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-7919.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 24053847176,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1119ms\n\nSAT Solver Statistics:\n  Decisions: 18085\n  Propagations: 118352\n  Conflicts: 122\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=26 eligible=26 changed=0\n; stats: conflicts=122 decisions=18085 propagations=118352\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4a9c361343987da91037140d"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-7919.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 24293922988,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1139ms\n\nSAT Solver Statistics:\n  Decisions: 18085\n  Propagations: 118352\n  Conflicts: 122\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=124 eligible=124 changed=124\n; stats: conflicts=122 decisions=18085 propagations=118352\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/53a35c1b9f08f4d8cda858df"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-23757.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 120593071045,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5332ms\n\nSAT Solver Statistics:\n  Decisions: 99887\n  Propagations: 1132727\n  Conflicts: 1131\n  Restarts: 123\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=124 eligible=124 changed=124\n; stats: conflicts=1131 decisions=99887 propagations=1132727\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/44bcb5d21b27f9acaac90a14"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-23757.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 119999367925,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5304ms\n\nSAT Solver Statistics:\n  Decisions: 99887\n  Propagations: 1132727\n  Conflicts: 1131\n  Restarts: 123\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=1131 decisions=99887 propagations=1132727\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/00ce0bd99a040efbd3f9dd92"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-23757.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 120417179405,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5317ms\n\nSAT Solver Statistics:\n  Decisions: 99887\n  Propagations: 1132727\n  Conflicts: 1131\n  Restarts: 123\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=26 eligible=26 changed=0\n; stats: conflicts=1131 decisions=99887 propagations=1132727\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/947247c9e7619aec4fd8caa1"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-39595.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 53094900101,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2458ms\n\nSAT Solver Statistics:\n  Decisions: 47630\n  Propagations: 356644\n  Conflicts: 445\n  Restarts: 14\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=26 eligible=26 changed=0\n; stats: conflicts=445 decisions=47630 propagations=356644\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4d621b8bd29af0d1f6aaf86e"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-39595.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 53283524902,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2457ms\n\nSAT Solver Statistics:\n  Decisions: 47630\n  Propagations: 356644\n  Conflicts: 445\n  Restarts: 14\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=124 eligible=124 changed=124\n; stats: conflicts=445 decisions=47630 propagations=356644\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/b1289d9822e8fa3d277a90e2"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-39595.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 52768927496,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2442ms\n\nSAT Solver Statistics:\n  Decisions: 47630\n  Propagations: 356644\n  Conflicts: 445\n  Restarts: 14\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=445 decisions=47630 propagations=356644\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c9ea62603b5e1cc324854cfc"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-55433.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9930817800,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 480ms\n\nSAT Solver Statistics:\n  Decisions: 7073\n  Propagations: 44219\n  Conflicts: 12\n  Restarts: 0\n  Conflicts/Decision: 0.002\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=12 decisions=7073 propagations=44219\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ddaf7866754cbf7d28780421"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-55433.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 10009847217,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 470ms\n\nSAT Solver Statistics:\n  Decisions: 7073\n  Propagations: 44219\n  Conflicts: 12\n  Restarts: 0\n  Conflicts/Decision: 0.002\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=26 eligible=26 changed=0\n; stats: conflicts=12 decisions=7073 propagations=44219\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ac6f3f535614c9bcdf779e3e"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-55433.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10281806255,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 484ms\n\nSAT Solver Statistics:\n  Decisions: 7073\n  Propagations: 44219\n  Conflicts: 12\n  Restarts: 0\n  Conflicts/Decision: 0.002\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=124 eligible=124 changed=124\n; stats: conflicts=12 decisions=7073 propagations=44219\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/927788eb7463b0ac73068015"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-71271.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 16534458333,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 794ms\n\nSAT Solver Statistics:\n  Decisions: 10306\n  Propagations: 73142\n  Conflicts: 71\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=124 eligible=124 changed=124\n; stats: conflicts=71 decisions=10306 propagations=73142\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a6bb88c721927e68d1356ffb"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-71271.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 16170106397,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 767ms\n\nSAT Solver Statistics:\n  Decisions: 10306\n  Propagations: 73142\n  Conflicts: 71\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=71 decisions=10306 propagations=73142\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/bfcecf36a63a893067a433af"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-71271.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16268672755,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 774ms\n\nSAT Solver Statistics:\n  Decisions: 10306\n  Propagations: 73142\n  Conflicts: 71\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=26 eligible=26 changed=0\n; stats: conflicts=71 decisions=10306 propagations=73142\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a15b625e3ee8a1b47dd72a82"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-87109.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 14994521264,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 693ms\n\nSAT Solver Statistics:\n  Decisions: 13604\n  Propagations: 106395\n  Conflicts: 129\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=26 eligible=26 changed=0\n; stats: conflicts=129 decisions=13604 propagations=106395\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/2994c8208f1f8ea25cbf66c5"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-87109.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15263514491,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 703ms\n\nSAT Solver Statistics:\n  Decisions: 13604\n  Propagations: 106395\n  Conflicts: 129\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=124 eligible=124 changed=124\n; stats: conflicts=129 decisions=13604 propagations=106395\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3ec8e2f7670a080078ef6d94"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-87109.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 14905290699,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 680ms\n\nSAT Solver Statistics:\n  Decisions: 13604\n  Propagations: 106395\n  Conflicts: 129\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=129 decisions=13604 propagations=106395\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/fd192ea42f8602a02c0d0ad3"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-15838.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 55804555968,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2707ms\n\nSAT Solver Statistics:\n  Decisions: 66120\n  Propagations: 647974\n  Conflicts: 729\n  Restarts: 68\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=729 decisions=66120 propagations=647974\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/69f3066d9bdedefdd7ed87b8"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-15838.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 56047096122,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2730ms\n\nSAT Solver Statistics:\n  Decisions: 66120\n  Propagations: 647974\n  Conflicts: 729\n  Restarts: 68\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=26 eligible=26 changed=0\n; stats: conflicts=729 decisions=66120 propagations=647974\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/04fd0059fad7f0f823f337ef"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-15838.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 56235766565,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2734ms\n\nSAT Solver Statistics:\n  Decisions: 66120\n  Propagations: 647974\n  Conflicts: 729\n  Restarts: 68\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=124 eligible=124 changed=124\n; stats: conflicts=729 decisions=66120 propagations=647974\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/553e299cdb44ce9dcee6e857"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-31676.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 7212609761,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 367ms\n\nSAT Solver Statistics:\n  Decisions: 17743\n  Propagations: 117972\n  Conflicts: 219\n  Restarts: 0\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=124 eligible=124 changed=124\n; stats: conflicts=219 decisions=17743 propagations=117972\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e8e0a125144ddc8023910ecc"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-31676.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6871640047,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 351ms\n\nSAT Solver Statistics:\n  Decisions: 17743\n  Propagations: 117972\n  Conflicts: 219\n  Restarts: 0\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=219 decisions=17743 propagations=117972\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d6dd60bba39a9796a3fa8c82"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-31676.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 6978339179,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 366ms\n\nSAT Solver Statistics:\n  Decisions: 17743\n  Propagations: 117972\n  Conflicts: 219\n  Restarts: 0\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=26 eligible=26 changed=0\n; stats: conflicts=219 decisions=17743 propagations=117972\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/7b1d7c770153a52acb727c5c"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-47514.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 167102840065,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 7145ms\n\nSAT Solver Statistics:\n  Decisions: 138752\n  Propagations: 1247986\n  Conflicts: 1144\n  Restarts: 87\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=26 eligible=26 changed=0\n; stats: conflicts=1144 decisions=138752 propagations=1247986\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/28c49723056dbd7b6b03298b"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-47514.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 167237685149,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 7266ms\n\nSAT Solver Statistics:\n  Decisions: 138752\n  Propagations: 1247986\n  Conflicts: 1144\n  Restarts: 87\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=124 eligible=124 changed=124\n; stats: conflicts=1144 decisions=138752 propagations=1247986\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/304bc6147b26be694d35e852"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-47514.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 166659669447,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 7127ms\n\nSAT Solver Statistics:\n  Decisions: 138752\n  Propagations: 1247986\n  Conflicts: 1144\n  Restarts: 87\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=1144 decisions=138752 propagations=1247986\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a9da57789d820ab80ce0ac89"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-63352.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 87174816676,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4173ms\n\nSAT Solver Statistics:\n  Decisions: 135685\n  Propagations: 1197517\n  Conflicts: 1428\n  Restarts: 114\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=1428 decisions=135685 propagations=1197517\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/474f30c98d5095cf61044633"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-63352.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 87427697445,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4056ms\n\nSAT Solver Statistics:\n  Decisions: 135685\n  Propagations: 1197517\n  Conflicts: 1428\n  Restarts: 114\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=26 eligible=26 changed=0\n; stats: conflicts=1428 decisions=135685 propagations=1197517\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/23b62941ad43f0af8904191a"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-63352.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 87612559870,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4087ms\n\nSAT Solver Statistics:\n  Decisions: 135685\n  Propagations: 1197517\n  Conflicts: 1428\n  Restarts: 114\n  Conflicts/Decision: 0.011\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=124 eligible=124 changed=124\n; stats: conflicts=1428 decisions=135685 propagations=1197517\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ba5bf64547e1759b364aa279"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-79190.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 609216241676,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 24306ms\n\nSAT Solver Statistics:\n  Decisions: 1315262\n  Propagations: 8391596\n  Conflicts: 7336\n  Restarts: 388\n  Conflicts/Decision: 0.006\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=124 eligible=124 changed=124\n; stats: conflicts=7336 decisions=1315262 propagations=8391596\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/20389fc081bfcb2279808abe"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-79190.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 607784395856,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 23874ms\n\nSAT Solver Statistics:\n  Decisions: 1315262\n  Propagations: 8391596\n  Conflicts: 7336\n  Restarts: 388\n  Conflicts/Decision: 0.006\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=7336 decisions=1315262 propagations=8391596\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8263b0454d47c110ad264170"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-79190.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 609527169393,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 23891ms\n\nSAT Solver Statistics:\n  Decisions: 1315262\n  Propagations: 8391596\n  Conflicts: 7336\n  Restarts: 388\n  Conflicts/Decision: 0.006\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=26 eligible=26 changed=0\n; stats: conflicts=7336 decisions=1315262 propagations=8391596\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/663f3df7ffb12522c980dd11"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-15838.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 10998326370,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 564ms\n\nSAT Solver Statistics:\n  Decisions: 7459\n  Propagations: 60869\n  Conflicts: 76\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=26 eligible=26 changed=0\n; stats: conflicts=76 decisions=7459 propagations=60869\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/bfa44f77d01f6a33dfe2ce2f"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-15838.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11262749545,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 566ms\n\nSAT Solver Statistics:\n  Decisions: 7459\n  Propagations: 60869\n  Conflicts: 76\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=124 eligible=124 changed=124\n; stats: conflicts=76 decisions=7459 propagations=60869\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c964d03f997cc55b3c2739aa"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-15838.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10891758501,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 563ms\n\nSAT Solver Statistics:\n  Decisions: 7459\n  Propagations: 60869\n  Conflicts: 76\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=76 decisions=7459 propagations=60869\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8ce60a307fc5bd1dcacd5783"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-31676.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 96996815131,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4403ms\n\nSAT Solver Statistics:\n  Decisions: 112919\n  Propagations: 1223345\n  Conflicts: 1150\n  Restarts: 106\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=1150 decisions=112919 propagations=1223345\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/b60e6118e5d903c4eab09391"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-31676.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 97423909000,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4424ms\n\nSAT Solver Statistics:\n  Decisions: 112919\n  Propagations: 1223345\n  Conflicts: 1150\n  Restarts: 106\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=26 eligible=26 changed=0\n; stats: conflicts=1150 decisions=112919 propagations=1223345\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8eb6ebff34769d303dcc891f"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-31676.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 97579866542,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4434ms\n\nSAT Solver Statistics:\n  Decisions: 112919\n  Propagations: 1223345\n  Conflicts: 1150\n  Restarts: 106\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=124 eligible=124 changed=124\n; stats: conflicts=1150 decisions=112919 propagations=1223345\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/74e004a47a82c5fea0662100"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-47514.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11119358591,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 536ms\n\nSAT Solver Statistics:\n  Decisions: 9751\n  Propagations: 73840\n  Conflicts: 101\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=124 eligible=124 changed=124\n; stats: conflicts=101 decisions=9751 propagations=73840\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/96848475cd4f097a1f3c0b33"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-47514.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10759644409,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 505ms\n\nSAT Solver Statistics:\n  Decisions: 9751\n  Propagations: 73840\n  Conflicts: 101\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=101 decisions=9751 propagations=73840\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0d23c50a16999288deb6b4d4"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-47514.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 10851739312,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 516ms\n\nSAT Solver Statistics:\n  Decisions: 9751\n  Propagations: 73840\n  Conflicts: 101\n  Restarts: 0\n  Conflicts/Decision: 0.010\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=26 eligible=26 changed=0\n; stats: conflicts=101 decisions=9751 propagations=73840\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c262211cb6e357c262f1e214"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-63352.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 21827784804,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 959ms\n\nSAT Solver Statistics:\n  Decisions: 22599\n  Propagations: 167916\n  Conflicts: 196\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=26 eligible=26 changed=0\n; stats: conflicts=196 decisions=22599 propagations=167916\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9b26d5e05c1d92c3c9439c05"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-63352.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 22079153903,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 984ms\n\nSAT Solver Statistics:\n  Decisions: 22599\n  Propagations: 167916\n  Conflicts: 196\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=124 eligible=124 changed=124\n; stats: conflicts=196 decisions=22599 propagations=167916\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5c7e7ab61bb799ccf6e855a8"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-63352.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 21685060792,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 973ms\n\nSAT Solver Statistics:\n  Decisions: 22599\n  Propagations: 167916\n  Conflicts: 196\n  Restarts: 0\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=196 decisions=22599 propagations=167916\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a3e7ef58a9053c647f3440d0"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-79190.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 26480988401,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1240ms\n\nSAT Solver Statistics:\n  Decisions: 15002\n  Propagations: 93550\n  Conflicts: 112\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=112 decisions=15002 propagations=93550\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4b1ee9dd7e20cbf9e90db20e"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-79190.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 26619157563,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_1)) true false)))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 @uc_Set_0))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1233ms\n\nSAT Solver Statistics:\n  Decisions: 15002\n  Propagations: 93550\n  Conflicts: 112\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=26 eligible=26 changed=0\n; stats: conflicts=112 decisions=15002 propagations=93550\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ee8a55eab37bdf5fcf6d68c2"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-set9_family_answers_sat-79190.smt2",
+    "control": "model-set9_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 26870897872,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1254ms\n\nSAT Solver Statistics:\n  Decisions: 15002\n  Propagations: 93550\n  Conflicts: 112\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=124 eligible=124 changed=124\n; stats: conflicts=112 decisions=15002 propagations=93550\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/160f5f0740bfc99c917a61d5"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-7919.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 4496687865,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 229ms\n\nSAT Solver Statistics:\n  Decisions: 9524\n  Propagations: 50211\n  Conflicts: 35\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=124 eligible=124 changed=124\n; stats: conflicts=35 decisions=9524 propagations=50211\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6ab4ba0c9523bf5ea5b28c10"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-7919.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 4188935446,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 212ms\n\nSAT Solver Statistics:\n  Decisions: 9524\n  Propagations: 50211\n  Conflicts: 35\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=35 decisions=9524 propagations=50211\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0a3641326457ac3d2d913e4a"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-7919.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 4245150402,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 213ms\n\nSAT Solver Statistics:\n  Decisions: 9524\n  Propagations: 50211\n  Conflicts: 35\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=26 eligible=26 changed=0\n; stats: conflicts=35 decisions=9524 propagations=50211\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f1e0b795666916fcfef1a9ba"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-23757.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 123070949481,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5444ms\n\nSAT Solver Statistics:\n  Decisions: 243548\n  Propagations: 2059844\n  Conflicts: 2105\n  Restarts: 267\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=26 eligible=26 changed=0\n; stats: conflicts=2105 decisions=243548 propagations=2059844\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/451d040e6f0706d2b5fa066c"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-23757.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 123199086987,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5397ms\n\nSAT Solver Statistics:\n  Decisions: 243548\n  Propagations: 2059844\n  Conflicts: 2105\n  Restarts: 267\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=124 eligible=124 changed=124\n; stats: conflicts=2105 decisions=243548 propagations=2059844\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1d71468f76961e3a598120a0"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-23757.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 122640183071,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5370ms\n\nSAT Solver Statistics:\n  Decisions: 243548\n  Propagations: 2059844\n  Conflicts: 2105\n  Restarts: 267\n  Conflicts/Decision: 0.009\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=2105 decisions=243548 propagations=2059844\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/52eed2f2fee6bef6d6cad4f9"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-39595.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 356322480816,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 12176ms\n\nSAT Solver Statistics:\n  Decisions: 239883\n  Propagations: 2275913\n  Conflicts: 1811\n  Restarts: 154\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=1811 decisions=239883 propagations=2275913\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/028e4ab4b2dc9ac2385afdeb"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-39595.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 356799192659,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 12248ms\n\nSAT Solver Statistics:\n  Decisions: 239883\n  Propagations: 2275913\n  Conflicts: 1811\n  Restarts: 154\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=26 eligible=26 changed=0\n; stats: conflicts=1811 decisions=239883 propagations=2275913\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3abc983fbee6e2ac85650cd5"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-39595.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 356913566436,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 12382ms\n\nSAT Solver Statistics:\n  Decisions: 239883\n  Propagations: 2275913\n  Conflicts: 1811\n  Restarts: 154\n  Conflicts/Decision: 0.008\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=124 eligible=124 changed=124\n; stats: conflicts=1811 decisions=239883 propagations=2275913\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c6357ec6ef263a81f8eab8df"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-55433.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 14648165621,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 756ms\n\nSAT Solver Statistics:\n  Decisions: 12198\n  Propagations: 50494\n  Conflicts: 43\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=124 eligible=124 changed=124\n; stats: conflicts=43 decisions=12198 propagations=50494\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/fb333c813be2abcf4548a6ff"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-55433.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 14276198444,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 732ms\n\nSAT Solver Statistics:\n  Decisions: 12198\n  Propagations: 50494\n  Conflicts: 43\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=43 decisions=12198 propagations=50494\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3a8c0911226d32817cc14ecf"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-55433.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 14429745629,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 745ms\n\nSAT Solver Statistics:\n  Decisions: 12198\n  Propagations: 50494\n  Conflicts: 43\n  Restarts: 0\n  Conflicts/Decision: 0.004\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=26 eligible=26 changed=0\n; stats: conflicts=43 decisions=12198 propagations=50494\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4b22f138d50a4cf62861e64b"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-71271.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 113368138382,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4992ms\n\nSAT Solver Statistics:\n  Decisions: 174525\n  Propagations: 1205432\n  Conflicts: 1203\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=26 eligible=26 changed=0\n; stats: conflicts=1203 decisions=174525 propagations=1205432\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/956c11c436393cd2e2941b6c"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-71271.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 113465536393,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 5100ms\n\nSAT Solver Statistics:\n  Decisions: 174525\n  Propagations: 1205432\n  Conflicts: 1203\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=124 eligible=124 changed=124\n; stats: conflicts=1203 decisions=174525 propagations=1205432\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/882a1a1d9208fce4040ce925"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-71271.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 112835344727,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4983ms\n\nSAT Solver Statistics:\n  Decisions: 174525\n  Propagations: 1205432\n  Conflicts: 1203\n  Restarts: 0\n  Conflicts/Decision: 0.007\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=1203 decisions=174525 propagations=1205432\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8a081ca5e0dc3438ec3413d5"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-87109.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 94215126161,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4547ms\n\nSAT Solver Statistics:\n  Decisions: 103021\n  Propagations: 1252463\n  Conflicts: 1232\n  Restarts: 97\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=1232 decisions=103021 propagations=1252463\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9a439579307fc320516690e0"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-87109.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 94660387812,
+    "stdout": "sat\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n(model\n  \n  (define-fun a () Set @uc_Set_1)\n  \n  (define-fun b () Set @uc_Set_0)\n  \n  (define-fun member ((x!0 Elem) (x!1 Set)) Bool (ite (and (= x!0 @uc_Elem_0) (= x!1 @uc_Set_0)) true false))\n  \n  (define-fun subset ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun seteq ((x!0 Set) (x!1 Set)) Bool (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) true (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) false (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) true false)))))\n  \n  (define-fun union ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun intersection ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_0 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n  \n  (define-fun difference ((x!0 Set) (x!1 Set)) Set (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_0) (= x!1 @uc_Set_1)) @uc_Set_0 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_0)) @uc_Set_1 (ite (and (= x!0 @uc_Set_1) (= x!1 @uc_Set_1)) @uc_Set_1 @uc_Set_0)))))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4622ms\n\nSAT Solver Statistics:\n  Decisions: 103021\n  Propagations: 1252463\n  Conflicts: 1232\n  Restarts: 97\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=26 eligible=26 changed=0\n; stats: conflicts=1232 decisions=103021 propagations=1252463\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 26,
+        "eligible": 26,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/447a07dc3190a0e6d84eacf8"
+  },
+  {
+    "feature": "finite-uf-model-search",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-set16_family_answers_sat-87109.smt2",
+    "control": "model-set16_family_answers_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 94780704147,
+    "stdout": "unknown\n(error \"No model available\")\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 4632ms\n\nSAT Solver Statistics:\n  Decisions: 103021\n  Propagations: 1252463\n  Conflicts: 1232\n  Restarts: 97\n  Conflicts/Decision: 0.012\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=124 eligible=124 changed=124\n; stats: conflicts=1232 decisions=103021 propagations=1252463\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 124,
+        "eligible": 124,
+        "changed": 124
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c1aef0d43f78bacc198fef57"
+  }
+]

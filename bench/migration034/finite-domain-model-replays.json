@@ -1,0 +1,71 @@
+[
+  {
+    "path": "bench/migration034/candidates/publication-controls/model-set9_family_answers_sat.smt2",
+    "domains": {
+      "Elem": 1,
+      "Set": 2
+    },
+    "results": {
+      "domain_consistency": {
+        "query_sha256": "50e2abc9694a0b920dec83a91c16e8972605cf4ffa2be6661cb9167e24dbc303",
+        "stdout": "sat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      },
+      "model_validity": {
+        "query_sha256": "6153d244f380777356883e11c51e972a693894601a743e5f23ccb08ec09b14ac",
+        "stdout": "unsat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  },
+  {
+    "path": "bench/migration034/candidates/publication-controls/model-set16_family_answers_sat.smt2",
+    "domains": {
+      "Elem": 1,
+      "Set": 2
+    },
+    "results": {
+      "domain_consistency": {
+        "query_sha256": "74eef87983fc786ced2a7ac8cd0bf621a86f5a11a2c560b6533616d73f7044ab",
+        "stdout": "sat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      },
+      "model_validity": {
+        "query_sha256": "8a98b7ec83df6c446e48a3bfbf69a52de6a10412fb7838cb005c08ff95af97af",
+        "stdout": "unsat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  },
+  {
+    "path": "bench/migration034/candidates/publication-controls/model-set19_family_answers_sat.smt2",
+    "domains": {
+      "Elem": 1,
+      "Set": 2
+    },
+    "results": {
+      "domain_consistency": {
+        "query_sha256": "15ffa60d3737b6ab3e2011087a60113959ac5408289b305899a71215c69bf347",
+        "stdout": "sat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      },
+      "model_validity": {
+        "query_sha256": "abb092b610253e403df2cda989ae9fba6253cc967ed88d82596c1d093893d8d0",
+        "stdout": "unsat\n",
+        "stderr": "",
+        "exit_code": 0,
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  }
+]

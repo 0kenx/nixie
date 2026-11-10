@@ -1,0 +1,2279 @@
+[
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-7919.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17011734,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6026689946bc974ea662aa6f"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-7919.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5380121,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4b4542af8d5467ee6c00db68"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-7919.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18527584,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=120 eligible=120 changed=120\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e6dd5897949489894d78bd7d"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-23757.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18604784,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 44\n  Propagations: 53\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.068\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=44 propagations=53\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/22bd5d7a2797055b08a98c58"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-23757.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17067340,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 44\n  Propagations: 53\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.068\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=44 propagations=53\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4c0e32919a3ccb3a20af17ab"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-23757.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5379884,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ac69cfd9dfb769f0b2214de8"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-39595.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5536978,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 14\n  Propagations: 21\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.286\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=0\n; stats: conflicts=4 decisions=14 propagations=21\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/74b48f70ef5182a3f0b521a0"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-39595.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5587896,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 14\n  Propagations: 21\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.286\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=3\n; stats: conflicts=4 decisions=14 propagations=21\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/17821f7783b3f9f7b1b2a768"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-39595.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17187278,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 37\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.148\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=4 decisions=27 propagations=37\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6bd29588a807efea16884c09"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-55433.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17031644,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/296746521b047cd84d0d64cd"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-55433.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5379005,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e9824d06dfd179cca6063d13"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-55433.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5412905,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=3\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9345077193691c1ebb20dcee"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-71271.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18535849,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=120 eligible=120 changed=120\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d85e03ae2a064c2f939c9e64"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-71271.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17039091,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/73a3fd2acce51c2fa6ccf17d"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-71271.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5379017,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5a7a26e9a2a9f7428a0b9a6f"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-87109.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5378833,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8084438d99dbca86ce6f1ef2"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-87109.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18547046,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=120 eligible=120 changed=120\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0565ef4837a2fa0c8116ae53"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-87109.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17017554,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1a01f777d21d1f1a04f348a4"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-15838.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18091526,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/92d7368e0883246e4a7f7a45"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-15838.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6467087,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=0\npolicy-control seed=15838 slots=3 eligible=3 changed=0\npolicy-control seed=15838 slots=3 eligible=3 changed=0\npolicy-control seed=15838 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c904d1e708bbde8703c0afea"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-15838.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19639929,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=120 eligible=120 changed=120\npolicy-control seed=15838 slots=120 eligible=120 changed=120\npolicy-control seed=15838 slots=120 eligible=120 changed=120\npolicy-control seed=15838 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 15838,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 15838,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 15838,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/de11285ecd16e1dfc301f4af"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-31676.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6516624,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=3\npolicy-control seed=31676 slots=3 eligible=3 changed=3\npolicy-control seed=31676 slots=3 eligible=3 changed=3\npolicy-control seed=31676 slots=3 eligible=3 changed=3\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a0fada872a31d08adb07a0e2"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-31676.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18093062,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/27faf4879c2a71214dde9893"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-31676.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6462755,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=0\npolicy-control seed=31676 slots=3 eligible=3 changed=0\npolicy-control seed=31676 slots=3 eligible=3 changed=0\npolicy-control seed=31676 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/27f2fb3f40d4a0c2e7b0ecb3"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-47514.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6467385,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=0\npolicy-control seed=47514 slots=3 eligible=3 changed=0\npolicy-control seed=47514 slots=3 eligible=3 changed=0\npolicy-control seed=47514 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1326ff4a1f11e30a6000281b"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-47514.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19749660,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 91\n  Propagations: 106\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.055\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=120 eligible=120 changed=120\npolicy-control seed=47514 slots=120 eligible=120 changed=120\npolicy-control seed=47514 slots=120 eligible=120 changed=120\npolicy-control seed=47514 slots=120 eligible=120 changed=120\n; stats: conflicts=5 decisions=91 propagations=106\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 47514,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 47514,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 47514,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c05ef779860f3843c135d3a6"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-47514.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18219875,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 91\n  Propagations: 106\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.055\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=5 decisions=91 propagations=106\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/928322d8b5b8c66c70b6a5fc"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-63352.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18090823,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1df3ff27e2ae3ba51008d571"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-63352.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6460883,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=0\npolicy-control seed=63352 slots=3 eligible=3 changed=0\npolicy-control seed=63352 slots=3 eligible=3 changed=0\npolicy-control seed=63352 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8ef2adde7cefc9d7ed328130"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-63352.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19628634,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=120 eligible=120 changed=120\npolicy-control seed=63352 slots=120 eligible=120 changed=120\npolicy-control seed=63352 slots=120 eligible=120 changed=120\npolicy-control seed=63352 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 63352,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 63352,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 63352,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/213e37153e179ca32a37e249"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-79190.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6506963,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=3\npolicy-control seed=79190 slots=3 eligible=3 changed=3\npolicy-control seed=79190 slots=3 eligible=3 changed=3\npolicy-control seed=79190 slots=3 eligible=3 changed=3\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4ec7b16ffc6f74455869d2a5"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-79190.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18148782,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 78\n  Propagations: 92\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.051\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=4 decisions=78 propagations=92\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5e7ecc14827099246836e4ae"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-79190.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6457724,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=0\npolicy-control seed=79190 slots=3 eligible=3 changed=0\npolicy-control seed=79190 slots=3 eligible=3 changed=0\npolicy-control seed=79190 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/64a6f407e6fe9107e1ad6ac7"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-15838.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5378009,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/cdaeff8161d4248877b9f438"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-15838.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18533337,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=120 eligible=120 changed=120\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ab8b33640046acc3033ca23e"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-15838.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17009631,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/343b762f3cb16863c802767c"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-31676.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 16996455,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 2ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/47223e0b5537b5f058f5ea6b"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-31676.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5372991,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c2d97792950cf621cc07f143"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-31676.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5419554,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=3\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1b4c1e158a8a63052003155c"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-47514.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18601681,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 49\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=40 propagations=49\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e5f4141d8d95917a21d5232a"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-47514.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17078465,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 49\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=40 propagations=49\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/627fe0a0037c6e6ccd82d7c0"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-47514.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5380737,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/b4e623516a63c22920c2cf77"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-63352.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5377512,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/43d0025d1e8b398e275baf03"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-63352.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 18540416,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=120 eligible=120 changed=120\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8da019a9a99886857cd5afbe"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-63352.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17005133,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 50\n  Propagations: 58\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=50 propagations=58\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/62d43d8f8c3a2f3eea5f0718"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-79190.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "unknown",
+    "exit_code": 0,
+    "instructions": 17060117,
+    "stdout": "unknown\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 49\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=40 propagations=49\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/307804cc5c9cba6bdd5d2fec"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-79190.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5380148,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/2acc19822b035617775cfa70"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/guard-boundary-2-79190.smt2",
+    "control": "guard-boundary-2",
+    "answers": [
+      "unsat"
+    ],
+    "outcome": "unsat",
+    "exit_code": 0,
+    "instructions": 5419574,
+    "stdout": "unsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 11\n  Propagations: 16\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.182\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=3\n; stats: conflicts=2 decisions=11 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/25daee28d1e7ac1140cb3e7d"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-7919.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19730455,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 101\n  Propagations: 115\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=120 eligible=120 changed=120\npolicy-control seed=7919 slots=120 eligible=120 changed=120\npolicy-control seed=7919 slots=120 eligible=120 changed=120\npolicy-control seed=7919 slots=120 eligible=120 changed=120\n; stats: conflicts=4 decisions=101 propagations=115\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 7919,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 7919,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 7919,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/811745b50bf43d144e9c98de"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-7919.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18173327,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 101\n  Propagations: 115\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.040\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=4 decisions=101 propagations=115\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8ccce653e7c17fd20f039419"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-7919.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6463034,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=0\npolicy-control seed=7919 slots=3 eligible=3 changed=0\npolicy-control seed=7919 slots=3 eligible=3 changed=0\npolicy-control seed=7919 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/695ed96b5939e81b0e528a1b"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-23757.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6422325,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=0\npolicy-control seed=23757 slots=3 eligible=3 changed=0\npolicy-control seed=23757 slots=3 eligible=3 changed=0\npolicy-control seed=23757 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0228cd1f75cab300c0cc3b69"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-23757.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19694658,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 82\n  Propagations: 96\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.049\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=120 eligible=120 changed=120\npolicy-control seed=23757 slots=120 eligible=120 changed=120\npolicy-control seed=23757 slots=120 eligible=120 changed=120\npolicy-control seed=23757 slots=120 eligible=120 changed=120\n; stats: conflicts=4 decisions=82 propagations=96\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 23757,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 23757,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 23757,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/7740bedb803fb6a3231898e2"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-23757.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18145812,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 82\n  Propagations: 96\n  Conflicts: 4\n  Restarts: 0\n  Conflicts/Decision: 0.049\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=4 decisions=82 propagations=96\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c857578e905630cb0f05e363"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-39595.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18239383,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 65\n  Propagations: 80\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.077\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=5 decisions=65 propagations=80\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a00151f7b5ee0a7bc8e85250"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-39595.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6626214,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 43\n  Propagations: 55\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.116\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=0\npolicy-control seed=39595 slots=3 eligible=3 changed=0\npolicy-control seed=39595 slots=3 eligible=3 changed=0\npolicy-control seed=39595 slots=3 eligible=3 changed=0\n; stats: conflicts=5 decisions=43 propagations=55\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ef69a20a66bffa25a0703864"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-39595.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6667284,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 43\n  Propagations: 55\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.116\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=3\npolicy-control seed=39595 slots=3 eligible=3 changed=3\npolicy-control seed=39595 slots=3 eligible=3 changed=3\npolicy-control seed=39595 slots=3 eligible=3 changed=3\n; stats: conflicts=5 decisions=43 propagations=55\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/52a67a4b8ff33f0b8fd1b93b"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-55433.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6499032,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=3\npolicy-control seed=55433 slots=3 eligible=3 changed=3\npolicy-control seed=55433 slots=3 eligible=3 changed=3\npolicy-control seed=55433 slots=3 eligible=3 changed=3\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0301c28588ac309e172932f2"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-55433.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18090635,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/774f5dea3c67270f2cf09d86"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-55433.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6466644,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=0\npolicy-control seed=55433 slots=3 eligible=3 changed=0\npolicy-control seed=55433 slots=3 eligible=3 changed=0\npolicy-control seed=55433 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c602fa431b32637635a7210c"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-71271.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6464201,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=0\npolicy-control seed=71271 slots=3 eligible=3 changed=0\npolicy-control seed=71271 slots=3 eligible=3 changed=0\npolicy-control seed=71271 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c141d0219e56aa8fca1684a3"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-71271.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19626678,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=120 eligible=120 changed=120\npolicy-control seed=71271 slots=120 eligible=120 changed=120\npolicy-control seed=71271 slots=120 eligible=120 changed=120\npolicy-control seed=71271 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 71271,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 71271,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 71271,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/879165c7ada268d7c44fbf51"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-71271.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18141592,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f6c999f90f8cb9f2bd9d2fa2"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-87109.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18103524,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/df2946d06e6759ea3c770c70"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-87109.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unsat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 6467008,
+    "stdout": "unsat\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 40\n  Propagations: 50\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.075\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=0\npolicy-control seed=87109 slots=3 eligible=3 changed=0\npolicy-control seed=87109 slots=3 eligible=3 changed=0\npolicy-control seed=87109 slots=3 eligible=3 changed=0\n; stats: conflicts=3 decisions=40 propagations=50\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8bd9b6fe0b6182d39df45b6c"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/guard-scopes-87109.smt2",
+    "control": "guard-scopes",
+    "answers": [
+      "unknown",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19634030,
+    "stdout": "unknown\nsat\nunsat\nsat\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 88\n  Propagations: 101\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.034\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=120 eligible=120 changed=120\npolicy-control seed=87109 slots=120 eligible=120 changed=120\npolicy-control seed=87109 slots=120 eligible=120 changed=120\npolicy-control seed=87109 slots=120 eligible=120 changed=120\n; stats: conflicts=3 decisions=88 propagations=101\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 87109,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 87109,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      },
+      {
+        "seed": 87109,
+        "slots": 120,
+        "eligible": 120,
+        "changed": 120
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/12789e8e1c0d0bb6405b2f9d"
+  }
+]

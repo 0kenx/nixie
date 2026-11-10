@@ -1,0 +1,794 @@
+[
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-7919.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 31321312782,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1146ms\n\nSAT Solver Statistics:\n  Decisions: 9575\n  Propagations: 25402\n  Conflicts: 7\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=7 decisions=9575 propagations=25402\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/365944998db614a61a82e30c"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-7919.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 31350496294,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b1011000) #b1011000 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b1011000)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1135ms\n\nSAT Solver Statistics:\n  Decisions: 9575\n  Propagations: 25402\n  Conflicts: 7\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=9 eligible=9 changed=0\n; stats: conflicts=7 decisions=9575 propagations=25402\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/3ec4f116637ac8300748590a"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-7919.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 31331125958,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1124ms\n\nSAT Solver Statistics:\n  Decisions: 9575\n  Propagations: 25402\n  Conflicts: 7\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=9 eligible=9 changed=9\n; stats: conflicts=7 decisions=9575 propagations=25402\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/5325e0136b8ba3ca9f867e6e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-23757.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 30069870825,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1082ms\n\nSAT Solver Statistics:\n  Decisions: 8693\n  Propagations: 25138\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=9 eligible=9 changed=9\n; stats: conflicts=5 decisions=8693 propagations=25138\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/3be0c69578e9c969356fb1c0"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-23757.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 30055312435,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1083ms\n\nSAT Solver Statistics:\n  Decisions: 8693\n  Propagations: 25138\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=5 decisions=8693 propagations=25138\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/18493983bd14a1f623d3174e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-23757.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 30088757844,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0110100) #b0110100 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0110100)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1103ms\n\nSAT Solver Statistics:\n  Decisions: 8693\n  Propagations: 25138\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=9 eligible=9 changed=0\n; stats: conflicts=5 decisions=8693 propagations=25138\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/0bbcf553383151765957d6db"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-39595.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 18440772018,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0001111) #b0001111 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0001111)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 660ms\n\nSAT Solver Statistics:\n  Decisions: 5955\n  Propagations: 17030\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=9 eligible=9 changed=0\n; stats: conflicts=3 decisions=5955 propagations=17030\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/8510ee722eb566af6e44e268"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-39595.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18422473792,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 664ms\n\nSAT Solver Statistics:\n  Decisions: 5955\n  Propagations: 17030\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=9 eligible=9 changed=9\n; stats: conflicts=3 decisions=5955 propagations=17030\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/cdaebf3865528545cd32c492"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-39595.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 18414309079,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 670ms\n\nSAT Solver Statistics:\n  Decisions: 5955\n  Propagations: 17030\n  Conflicts: 3\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=3 decisions=5955 propagations=17030\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/d832680ac7f4f88f3e3a63c8"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-55433.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 35585496976,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1297ms\n\nSAT Solver Statistics:\n  Decisions: 9822\n  Propagations: 28510\n  Conflicts: 9\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=9 decisions=9822 propagations=28510\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/05f42250224dac670cc5ac94"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-55433.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 35615566535,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0010000) #b0010000 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0010000)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1279ms\n\nSAT Solver Statistics:\n  Decisions: 9822\n  Propagations: 28510\n  Conflicts: 9\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=9 eligible=9 changed=0\n; stats: conflicts=9 decisions=9822 propagations=28510\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/94a04a146a151e1a6f53d956"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-55433.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 35595215586,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1265ms\n\nSAT Solver Statistics:\n  Decisions: 9822\n  Propagations: 28510\n  Conflicts: 9\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=9 eligible=9 changed=9\n; stats: conflicts=9 decisions=9822 propagations=28510\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/228f49dc1380ddc26cd2b4f6"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-71271.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 37247537915,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1384ms\n\nSAT Solver Statistics:\n  Decisions: 11183\n  Propagations: 31668\n  Conflicts: 13\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=9 eligible=9 changed=9\n; stats: conflicts=13 decisions=11183 propagations=31668\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/7d76e144b3c343f9859ca0f1"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-71271.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 37237618530,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1340ms\n\nSAT Solver Statistics:\n  Decisions: 11183\n  Propagations: 31668\n  Conflicts: 13\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=13 decisions=11183 propagations=31668\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/21b55ef008722396a330b79e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-71271.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 37266675856,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b1100000) #b1100000 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b1100000)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1344ms\n\nSAT Solver Statistics:\n  Decisions: 11183\n  Propagations: 31668\n  Conflicts: 13\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=9 eligible=9 changed=0\n; stats: conflicts=13 decisions=11183 propagations=31668\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/c6465c29ae2f0dd47ba61ed4"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-87109.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 19236258636,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0010011) #b0010011 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0010011)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 696ms\n\nSAT Solver Statistics:\n  Decisions: 6988\n  Propagations: 17470\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=9 eligible=9 changed=0\n; stats: conflicts=5 decisions=6988 propagations=17470\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/467e3af8f6cd153cd800aa2e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-87109.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19216939800,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 697ms\n\nSAT Solver Statistics:\n  Decisions: 6988\n  Propagations: 17470\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=9 eligible=9 changed=9\n; stats: conflicts=5 decisions=6988 propagations=17470\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/387d25ee50ef2bdae54d94c9"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-87109.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 19206260592,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 681ms\n\nSAT Solver Statistics:\n  Decisions: 6988\n  Propagations: 17470\n  Conflicts: 5\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=5 decisions=6988 propagations=17470\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/5f2bf19521d1924d1b2032dc"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-15838.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 26213313132,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b1100010) #b1100010 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b1100010)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 933ms\n\nSAT Solver Statistics:\n  Decisions: 8478\n  Propagations: 21690\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=9 eligible=9 changed=0\n; stats: conflicts=6 decisions=8478 propagations=21690\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/d7c6d7af2015464daa61b15b"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-15838.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 26193844050,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 955ms\n\nSAT Solver Statistics:\n  Decisions: 8478\n  Propagations: 21690\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=9 eligible=9 changed=9\n; stats: conflicts=6 decisions=8478 propagations=21690\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/6c6188e96338b2ee81974ff4"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-15838.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 26182350634,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 923ms\n\nSAT Solver Statistics:\n  Decisions: 8478\n  Propagations: 21690\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=6 decisions=8478 propagations=21690\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/cb423280243cd254fabc9ded"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-31676.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 41300012561,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1479ms\n\nSAT Solver Statistics:\n  Decisions: 13303\n  Propagations: 34819\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=11 decisions=13303 propagations=34819\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/86e730233e8493acf5f48a9e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-31676.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 41316965119,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0000000))\n  \n  (define-fun k () (_ BitVec 7) #b0000000)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1481ms\n\nSAT Solver Statistics:\n  Decisions: 13303\n  Propagations: 34819\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=6 eligible=6 changed=0\n; stats: conflicts=11 decisions=13303 propagations=34819\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/eba855770796b0a31d67cdb7"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-31676.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 41305881962,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1496ms\n\nSAT Solver Statistics:\n  Decisions: 13303\n  Propagations: 34819\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=9 eligible=9 changed=9\n; stats: conflicts=11 decisions=13303 propagations=34819\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/10b5ffdbe1b06a3351dbfc83"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-47514.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 24608843383,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 903ms\n\nSAT Solver Statistics:\n  Decisions: 7955\n  Propagations: 20753\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=9 eligible=9 changed=9\n; stats: conflicts=6 decisions=7955 propagations=20753\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/5216778a492e19740343127e"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-47514.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 24598071287,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 894ms\n\nSAT Solver Statistics:\n  Decisions: 7955\n  Propagations: 20753\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=6 decisions=7955 propagations=20753\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/8077a1f5c3d549552581996f"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-47514.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 24627775599,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0010000) #b0010000 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0010000)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 894ms\n\nSAT Solver Statistics:\n  Decisions: 7955\n  Propagations: 20753\n  Conflicts: 6\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=9 eligible=9 changed=0\n; stats: conflicts=6 decisions=7955 propagations=20753\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/bcbdbbb77d06fc399e62a261"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-63352.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 34844428935,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0000010))\n  \n  (define-fun k () (_ BitVec 7) #b0000010)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1245ms\n\nSAT Solver Statistics:\n  Decisions: 9523\n  Propagations: 30022\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=6 eligible=6 changed=0\n; stats: conflicts=11 decisions=9523 propagations=30022\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/9e68c26f49d94335dec34fa7"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-63352.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 34834894688,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1235ms\n\nSAT Solver Statistics:\n  Decisions: 9523\n  Propagations: 30022\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=9 eligible=9 changed=9\n; stats: conflicts=11 decisions=9523 propagations=30022\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/8d1c677b3e22960cd2520645"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-63352.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 34824838733,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1232ms\n\nSAT Solver Statistics:\n  Decisions: 9523\n  Propagations: 30022\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=11 decisions=9523 propagations=30022\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/625d84e272ae52dc4de7308f"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-79190.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 39962984076,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1413ms\n\nSAT Solver Statistics:\n  Decisions: 10760\n  Propagations: 32392\n  Conflicts: 8\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=8 decisions=10760 propagations=32392\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/8c3f9a94b2a8acb9b6e6b8a2"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-79190.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 39993787383,
+    "stdout": "sat\n(model\n  \n  (define-fun a () (Array (_ BitVec 7) (_ BitVec 7)) (store (store ((as const (Array (_ BitVec 7) (_ BitVec 7))) #b0100010) #b0000001 #b0011001) #b0011001 #b0100100))\n  \n  (define-fun k () (_ BitVec 7) #b0011001)\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1413ms\n\nSAT Solver Statistics:\n  Decisions: 10760\n  Propagations: 32392\n  Conflicts: 8\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=9 eligible=9 changed=0\n; stats: conflicts=8 decisions=10760 propagations=32392\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/7626d1a8cbf8e4a989865a32"
+  },
+  {
+    "feature": "array-completion-search",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-shadowed-array-completion-79190.smt2",
+    "control": "model-shadowed-array-completion",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 39973885411,
+    "stdout": "unknown\n(error \"No model available\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1413ms\n\nSAT Solver Statistics:\n  Decisions: 10760\n  Propagations: 32392\n  Conflicts: 8\n  Restarts: 0\n  Conflicts/Decision: 0.001\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=9 eligible=9 changed=9\n; stats: conflicts=8 decisions=10760 propagations=32392\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/730642c60fefefead222c1bcb2df92bf0b153caf/benchmark/migration034-policy-controls-30s/25b1f580463106ed72d3133d"
+  }
+]

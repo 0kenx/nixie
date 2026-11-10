@@ -452,3 +452,48 @@ checks the negated original assertions (Unsat). All three pass with Z3 4.16.0.
 This establishes the displayed finite interpretations on these cases; it does
 not count an ordinary open-universe replay as validation or erase a timeout in
 the unconstrained reference solve.
+
+### Active matched controls for surviving policies
+
+`policy-control-plan.json` preregisters ten common actual SMT seeds plus fresh
+87109, typed semantic nulls, unchanged budgets/certificates and complete-work
+accounting. Diagnostic sources are `022978ad` and array follow-up `730642c6`.
+`policy-control-summary.json` records every seed, answer sequence, baseline
+distribution and intervention count. All ten training pairs per control are
+active. At a common entry state, both arms have the same intervention slots and
+opportunity cap. A rejected null can cause additional rounds; total work after
+the intervention is an outcome, not claimed to be identical.
+
+| Control | Training real/null instructions | Training coverage |
+|---|---:|---|
+| Guard boundary | 0.474199x | Real 10/10 refutes; null 4/10; off 0/10 |
+| Guard scopes | 0.511057x | Same first-check gain; other scopes preserved |
+| Array full proposal | 1.000588x | Real 10/10 Sat; null and off 0/10 |
+| Finite UF set9 | 0.987229x | Real 10/10 Sat; null and off 0/10 |
+| Finite UF set16 | 0.988705x | Real 10/10 Sat; null and off 0/10 |
+| Datatype exact-fit distinctness | 0.969834x | Real 10/10 Sat; null and off 0/10 |
+| Datatype scope sequence | 1.068150x | Real preserves every answer; null loses a check at two seeds |
+| Integer projection | 0.753275x | Real 10/10 Sat; null and off 0/10 |
+| Real projection | 0.939196x | Real 10/10 Sat; null and off 0/10 |
+
+Ratios within five percent are neutral. These are focused cost/coverage results,
+not an aggregate speed claim. Fresh 87109 preserves gains over off; null still
+fails guard, array, finite UF, exact-fit datatype and projection controls. The
+fresh datatype scope null also succeeds, at a neutral 1.043893x real/null cost.
+All 88 control responses containing models pass independent replay; finite UF
+uses explicit, separately consistent domain closure. Partial-consistent results
+are never counted as validated models.
+
+The first array null altered only default pools. Both arms solved all eleven
+seeds at 0.999960x cost because the fill fallback reconstructed valid values.
+That does not establish the full feature's merit. The registered follow-up also
+changes every fill-query result before proposal construction and validation.
+Only real now recovers Sat, including the fresh seed (1.001005x real/null cost).
+Both experiments remain recorded; no cell was rerun.
+
+These five candidates advance to full-sample marginal/cumulative cost and parity
+gates. No diagnostic hook is approved for production. Function-else search is
+rejected for +10.84% unchanged-work cost with no observed coverage benefit.
+Zero-division alone has no isolated benefit. Expanded datatype separation has
+no observed coverage beyond the stronger publication candidate; its selector
+models also require partial-model treatment.

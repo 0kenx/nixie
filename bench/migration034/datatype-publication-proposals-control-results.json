@@ -1,0 +1,2279 @@
+[
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-7919.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9349826,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a18bfd712d888d9510af0895"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-7919.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11275995,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=4 eligible=4 changed=0\npolicy-control seed=7919 slots=9 eligible=9 changed=0\npolicy-control seed=7919 slots=9 eligible=9 changed=0\npolicy-control seed=7919 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 7919,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/2b82ffb46d1df058209a8a02"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-7919.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10445535,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=2 eligible=2 changed=2\npolicy-control seed=7919 slots=4 eligible=4 changed=4\npolicy-control seed=7919 slots=4 eligible=4 changed=4\npolicy-control seed=7919 slots=6 eligible=6 changed=6\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 7919,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 4
+      },
+      {
+        "seed": 7919,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 4
+      },
+      {
+        "seed": 7919,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 6
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/cf504e7cc150ebf5dbadda3e"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-23757.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "unknown",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11582721,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=2 eligible=2 changed=2\npolicy-control seed=23757 slots=12 eligible=12 changed=12\npolicy-control seed=23757 slots=12 eligible=12 changed=12\npolicy-control seed=23757 slots=14 eligible=14 changed=14\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 23757,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      },
+      {
+        "seed": 23757,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      },
+      {
+        "seed": 23757,
+        "slots": 14,
+        "eligible": 14,
+        "changed": 14
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/abbc1a205318a5bd83fcc586"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-23757.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9352107,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d728674cb66af3451ac52666"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-23757.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11273309,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=4 eligible=4 changed=0\npolicy-control seed=23757 slots=9 eligible=9 changed=0\npolicy-control seed=23757 slots=9 eligible=9 changed=0\npolicy-control seed=23757 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 23757,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c8e8d5ce1bb1123478ac2f4b"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-39595.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11718765,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 29\n  Propagations: 97\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.069\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=4 eligible=4 changed=0\npolicy-control seed=39595 slots=9 eligible=9 changed=0\npolicy-control seed=39595 slots=9 eligible=9 changed=0\npolicy-control seed=39595 slots=13 eligible=13 changed=0\n; stats: conflicts=2 decisions=29 propagations=97\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/2e35471141bed6bbc28d446d"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-39595.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10532958,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 29\n  Propagations: 97\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.069\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=1 eligible=1 changed=1\npolicy-control seed=39595 slots=2 eligible=2 changed=2\npolicy-control seed=39595 slots=2 eligible=2 changed=2\npolicy-control seed=39595 slots=3 eligible=3 changed=3\n; stats: conflicts=2 decisions=29 propagations=97\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 39595,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 39595,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c0c400916073956f3ca15e66"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-39595.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9803839,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 29\n  Propagations: 97\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.069\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=29 propagations=97\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/613e5451c09e904fc0f9fadf"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-55433.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9347460,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ca2e25c21d4adf2c084e4b17"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-55433.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11283655,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=4 eligible=4 changed=0\npolicy-control seed=55433 slots=9 eligible=9 changed=0\npolicy-control seed=55433 slots=9 eligible=9 changed=0\npolicy-control seed=55433 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 55433,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9e3db10f6450db322e19ab00"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-55433.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10585834,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=1 eligible=1 changed=1\npolicy-control seed=55433 slots=5 eligible=5 changed=5\npolicy-control seed=55433 slots=5 eligible=5 changed=5\npolicy-control seed=55433 slots=6 eligible=6 changed=6\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 55433,
+        "slots": 5,
+        "eligible": 5,
+        "changed": 5
+      },
+      {
+        "seed": 55433,
+        "slots": 5,
+        "eligible": 5,
+        "changed": 5
+      },
+      {
+        "seed": 55433,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 6
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/bf5cd4d40a983cdd309209d6"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-71271.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10093137,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=1 eligible=1 changed=1\npolicy-control seed=71271 slots=2 eligible=2 changed=2\npolicy-control seed=71271 slots=2 eligible=2 changed=2\npolicy-control seed=71271 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 71271,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 71271,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/341fbb64aeb5c3ccf1f1d1a9"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-71271.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9351059,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5ae466600c42f66eddd1cf85"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-71271.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11277746,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=4 eligible=4 changed=0\npolicy-control seed=71271 slots=9 eligible=9 changed=0\npolicy-control seed=71271 slots=9 eligible=9 changed=0\npolicy-control seed=71271 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 71271,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/348a36c4975518c8f5999d83"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-87109.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11280318,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=4 eligible=4 changed=0\npolicy-control seed=87109 slots=9 eligible=9 changed=0\npolicy-control seed=87109 slots=9 eligible=9 changed=0\npolicy-control seed=87109 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4f1b58693ca575ae6cab6cbb"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-87109.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10806005,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=3\npolicy-control seed=87109 slots=6 eligible=6 changed=6\npolicy-control seed=87109 slots=6 eligible=6 changed=6\npolicy-control seed=87109 slots=9 eligible=9 changed=9\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 87109,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 6
+      },
+      {
+        "seed": 87109,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 6
+      },
+      {
+        "seed": 87109,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 9
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ee21f47cbda7da4a44403ba8"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-87109.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9352988,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/92fa2deb64455a6142b52d58"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-15838.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15519976,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0d7023ae64708a67016664a5"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-15838.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16834864,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1661b1e90521b8fb7549bc18"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-15838.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17370827,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6a0c5a19301f4663cf1e944a"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-31676.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17408022,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/81d20fe3c3046da08f2cfb21"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-31676.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15519675,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/22e2c7ac1014a529c0881c04"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-31676.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16832719,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a217e535121d2d297ad204b3"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-47514.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16854644,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3b950ea206d2c2d44ed42d50"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-47514.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17358899,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/979757d79a0083ee9d09fb4e"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-47514.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15533243,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f115aedac19f4242b19d9cde"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-63352.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15518684,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4a3b7861bef35fe18c4eea29"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-63352.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16831800,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/b8b14e6e3791443a2f04914f"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-63352.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17343726,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/398e6768488433d98118ec08"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-79190.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17384444,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4c076702b2e384f30b2fe947"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-79190.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15531235,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3ac15f99b4300aff743da2c2"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-79190.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16848394,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/932d88d33422a68e3ff8a7c7"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-15838.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11270495,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=4 eligible=4 changed=0\npolicy-control seed=15838 slots=9 eligible=9 changed=0\npolicy-control seed=15838 slots=9 eligible=9 changed=0\npolicy-control seed=15838 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/30962bd8bf98831b71f7bec4"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-15838.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10450004,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=2 eligible=2 changed=2\npolicy-control seed=15838 slots=4 eligible=4 changed=4\npolicy-control seed=15838 slots=4 eligible=4 changed=4\npolicy-control seed=15838 slots=6 eligible=6 changed=6\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 15838,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 4
+      },
+      {
+        "seed": 15838,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 4
+      },
+      {
+        "seed": 15838,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 6
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e1e450e21f0b1c8238aa4043"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-15838.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9318790,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/18a8f639637d3a42aebd37e9"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-31676.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9360760,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/23691eb0162a3ae121a50827"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-31676.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11275227,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=4 eligible=4 changed=0\npolicy-control seed=31676 slots=9 eligible=9 changed=0\npolicy-control seed=31676 slots=9 eligible=9 changed=0\npolicy-control seed=31676 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 31676,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f83873a29a0d6649b267061d"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-31676.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10613167,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=2 eligible=2 changed=2\npolicy-control seed=31676 slots=5 eligible=5 changed=5\npolicy-control seed=31676 slots=5 eligible=5 changed=5\npolicy-control seed=31676 slots=7 eligible=7 changed=7\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 31676,
+        "slots": 5,
+        "eligible": 5,
+        "changed": 5
+      },
+      {
+        "seed": 31676,
+        "slots": 5,
+        "eligible": 5,
+        "changed": 5
+      },
+      {
+        "seed": 31676,
+        "slots": 7,
+        "eligible": 7,
+        "changed": 7
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/21f067317cda79be46bd2468"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-47514.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "unknown",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11444060,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=1 eligible=1 changed=1\npolicy-control seed=47514 slots=11 eligible=11 changed=11\npolicy-control seed=47514 slots=11 eligible=11 changed=11\npolicy-control seed=47514 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 47514,
+        "slots": 11,
+        "eligible": 11,
+        "changed": 11
+      },
+      {
+        "seed": 47514,
+        "slots": 11,
+        "eligible": 11,
+        "changed": 11
+      },
+      {
+        "seed": 47514,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e61135ce2758c6492adadafb"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-47514.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9352425,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/bbc2206bbc4596825ddc6541"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-47514.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11271161,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=4 eligible=4 changed=0\npolicy-control seed=47514 slots=9 eligible=9 changed=0\npolicy-control seed=47514 slots=9 eligible=9 changed=0\npolicy-control seed=47514 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 47514,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/55ea767b91b1713fc032f8cc"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-63352.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11275262,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=4 eligible=4 changed=0\npolicy-control seed=63352 slots=9 eligible=9 changed=0\npolicy-control seed=63352 slots=9 eligible=9 changed=0\npolicy-control seed=63352 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ad64310f058d75cd7bda4bb6"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-63352.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10246746,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=1 eligible=1 changed=1\npolicy-control seed=63352 slots=3 eligible=3 changed=3\npolicy-control seed=63352 slots=3 eligible=3 changed=3\npolicy-control seed=63352 slots=4 eligible=4 changed=4\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      },
+      {
+        "seed": 63352,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 4
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/42f5ede48288c593c6704e90"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-63352.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9353717,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/677c2eb5d271e1e247c7a592"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-79190.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "unknown",
+      "unknown",
+      "unsat",
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 9358013,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n(error \"No model available\")\nunsat\n(error \"No model available\")\nunknown\n(error \"model not certified: model check failed: assertion 2 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c4159469c8c8b993fd2c0b49"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-79190.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 11281403,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full green))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full green))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=4 eligible=4 changed=0\npolicy-control seed=79190 slots=9 eligible=9 changed=0\npolicy-control seed=79190 slots=9 eligible=9 changed=0\npolicy-control seed=79190 slots=13 eligible=13 changed=0\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 4,
+        "eligible": 4,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 9,
+        "eligible": 9,
+        "changed": 0
+      },
+      {
+        "seed": 79190,
+        "slots": 13,
+        "eligible": 13,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f92146c8a83efeffb8efd055"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-enum-publication-79190.smt2",
+    "control": "model-enum-publication",
+    "answers": [
+      "sat",
+      "sat",
+      "unsat",
+      "sat"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 10087779,
+    "stdout": "sat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((distinct b (full red)) true))\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n(((= b (full blue)) true))\nunsat\n(error \"No model available\")\nsat\n(model\n  \n  (define-fun b () B (full blue))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 0ms\n\nSAT Solver Statistics:\n  Decisions: 27\n  Propagations: 94\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=1 eligible=1 changed=1\npolicy-control seed=79190 slots=2 eligible=2 changed=2\npolicy-control seed=79190 slots=2 eligible=2 changed=2\npolicy-control seed=79190 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=27 propagations=94\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 1,
+        "eligible": 1,
+        "changed": 1
+      },
+      {
+        "seed": 79190,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 79190,
+        "slots": 2,
+        "eligible": 2,
+        "changed": 2
+      },
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5e09f317663f7b834e6c7e99"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-7919.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17406535,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/37fb45fdc68984bc3c379bb1"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-7919.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15530764,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/695446e4e9f68ffb688037d9"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-7919.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16836222,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/acad2e9ad2213fbf18e6fd30"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-23757.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16857858,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/33b8082d54d92ea509e6054d"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-23757.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17390747,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a85bccf70a895181810e47a6"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-23757.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15540043,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 56\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=56 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/7a5c00e8bc36c0096371f4b9"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-39595.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 23436748,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 407\n  Propagations: 768\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.027\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=11 decisions=407 propagations=768\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/eabf08064e9a213605e2cb4f"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-39595.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 24746692,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 407\n  Propagations: 768\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.027\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=6 eligible=6 changed=0\n; stats: conflicts=11 decisions=407 propagations=768\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5015440837660903a4abf2f9"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-39595.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 25315000,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 407\n  Propagations: 768\n  Conflicts: 11\n  Restarts: 0\n  Conflicts/Decision: 0.027\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=12 eligible=12 changed=12\n; stats: conflicts=11 decisions=407 propagations=768\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/01013a9cec7b2b4af30e2033"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-55433.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17411981,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6623813957fd3f52943aa939"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-55433.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15519555,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/844f8098054220da0edfccac"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-55433.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16836982,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d0d9756f9d6996c9c92c3a47"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-71271.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16832988,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/ee6db0a387b4166d59e9710a"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-71271.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17343441,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e8ee408d4b390d71551dcc2b"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-71271.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15520242,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8e9db7f7ac82e57ec38e1bf5"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-87109.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 15522794,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e818bc15cbaa345d843f9ca3"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-87109.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 16833678,
+    "stdout": "sat\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n(model\n  \n  (define-fun p1 () Pair (mk e1 f1))\n  \n  (define-fun p2 () Pair (mk e1 f2))\n  \n  (define-fun p3 () Pair (mk e1 f3))\n  \n  (define-fun p4 () Pair (mk e2 f1))\n  \n  (define-fun p5 () Pair (mk e2 f2))\n  \n  (define-fun p6 () Pair (mk e2 f3))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=6 eligible=6 changed=0\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 6,
+        "eligible": 6,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/03d595d3cec169d11b35b52d"
+  },
+  {
+    "feature": "datatype-publication-proposals",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-distinct_over_composite_finite_datatype_exact_fit_is_sat-87109.smt2",
+    "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 17403993,
+    "stdout": "unknown\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n(error \"model not certified: model check failed: assertion 1 reads false under the candidate model\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 1ms\n\nSAT Solver Statistics:\n  Decisions: 60\n  Propagations: 283\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=12 eligible=12 changed=12\n; stats: conflicts=0 decisions=60 propagations=283\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 12,
+        "eligible": 12,
+        "changed": 12
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/78921e9e82954ee96fd7c7be"
+  }
+]
