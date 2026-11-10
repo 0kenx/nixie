@@ -621,6 +621,7 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
+            && !(crate::solver::array_probe_enabled() && self.solver.model_already_certified())
         {
             if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
                 eprintln!("[qround] Sat downgraded: array atoms need theory");
@@ -1609,6 +1610,7 @@ impl Context {
         if result == SolverResult::Sat
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
+            && !(crate::solver::array_probe_enabled() && self.solver.model_already_certified())
         {
             result = SolverResult::Unknown;
         }
@@ -2039,6 +2041,8 @@ impl Context {
                     if result == SolverResult::Sat
                         && self.solver.array_atoms_need_theory(&self.terms)
                         && !self.solver.array_axioms_saturated
+                        && !(crate::solver::array_probe_enabled()
+                            && self.solver.model_already_certified())
                     {
                         result = SolverResult::Unknown;
                     }

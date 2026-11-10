@@ -49,6 +49,8 @@ pub(in crate::context) struct PublishedModel {
     /// The solver's model with the fresh values of `#P2b-71` added, or `None`
     /// when nothing was minted (the solver's model is then read as is).
     pub(super) model: Option<crate::solver::Model>,
+    pub(super) zero_division_sorts: FxHashSet<SortId>,
+    else_overrides: FxHashMap<String, String>,
     pub(super) function_overrides: FxHashMap<String, RawFuncInterp>,
     pub(super) witness_domains: FxHashMap<SortId, Vec<TermId>>,
     pub(super) literal_values: FxHashMap<TermId, String>,
@@ -86,6 +88,8 @@ enum NetReading {
 /// spend (`Context::printed_datatype_model_refuted`); a closed assertion has
 /// no free symbol, so a refutation is a propagation, and the budget only
 /// bounds a pathological one.
+const MAX_ELSE_REPAIRS: usize = 12;
+
 const DATATYPE_NET_CONFLICTS: u64 = 10_000;
 
 /// Prefix used for printed uninterpreted witnesses. The parser accepts legal
@@ -117,10 +121,23 @@ impl Context {
         result: SolverResult,
     ) -> SolverResult {
         self.published = PublishedModel::default();
+        if publication_probe("finite-uf-model-search")
+            && result == SolverResult::Unknown
+            && self.pending_contract_error.is_none()
+        {
+            self.last_result = Some(SolverResult::Sat);
+            if self.publish_finite_uninterpreted() {
+                return SolverResult::Sat;
+            }
+            self.last_result = Some(result);
+        }
         if result != SolverResult::Sat || self.solver.last_answer_was_delta_sat() {
             return result;
         }
 
+        if publication_probe("array-completion-search") {
+            self.keep_a_correct_candidate_model();
+        }
         self.refresh_published_model();
         let minted = self.published.model.is_some();
         if self.goal_is_quantified() {
@@ -144,6 +161,12 @@ impl Context {
             // Continue through the typed-value net even if the unmodified
             // candidate is unreadable: absence of a refutation is no certificate.
             drop(fresh);
+            refutation = self.printed_model_falsifies();
+        }
+        if publication_probe("datatype-publication-proposals") && refutation.is_some() {
+            if self.repair_datatype_publication() {
+                return result;
+            }
             refutation = self.printed_model_falsifies();
         }
         if let Some(reason) = refutation {
@@ -227,6 +250,11 @@ impl Context {
         match self.printed_datatype_model_refuted() {
             NetReading::Clean => result,
             NetReading::False(number) => {
+                if publication_probe("datatype-publication-proposals")
+                    && self.repair_datatype_publication()
+                {
+                    return result;
+                }
                 let reason = format!(
                     "model check failed: assertion {number} reads false under the candidate model"
                 );
@@ -236,6 +264,11 @@ impl Context {
                 SolverResult::Unknown
             }
             NetReading::Refuted(number) => {
+                if publication_probe("datatype-publication-proposals")
+                    && self.repair_datatype_publication()
+                {
+                    return result;
+                }
                 self.withhold_every_symbol(&format!("assertion {number} is false"));
                 result
             }
@@ -528,7 +561,10 @@ impl Context {
     /// either way, it is completed around what it got right when its arrays
     /// allow, and withheld otherwise.
     fn certify_published_model(&mut self) {
-        if self.publish_numeric_certificate() || self.publish_completed_candidate() {
+        if self.publish_numeric_certificate()
+            || (publication_probe("finite-uf-model-search") && self.publish_finite_uninterpreted())
+            || self.publish_completed_candidate()
+        {
             return;
         }
         let Err(reason) = self.certify_printed_goal() else {
@@ -539,6 +575,31 @@ impl Context {
                 return;
             }
             self.published.model = Some(fresh);
+        }
+        if publication_probe("numeric-projection-proposals") && self.repair_projected_functions() {
+            return;
+        }
+        if publication_probe("function-else-search") && self.repair_else_values() {
+            return;
+        }
+        if publication_probe("zero-division-proposal") && self.repair_zero_division_publication() {
+            return;
+        }
+        if publication_probe("array-completion-search")
+            && let Some((printed, mut parse)) = self.printed_constants()
+            && let Ok(funcs) = self.printed_functions(&mut parse)
+        {
+            let goal = self.expanded_goal(&funcs);
+            let hypotheses = self.witness_hypotheses(&parse.witnesses);
+            if self
+                .solver
+                .complete_around_printed(&goal, &printed, &hypotheses, &mut self.terms)
+            {
+                self.refresh_published_model();
+                if self.certify_printed_goal().is_ok() {
+                    return;
+                }
+            }
         }
         self.withhold_published_model(reason);
     }
@@ -871,3 +932,121 @@ impl Context {
 
 #[cfg(test)]
 mod cost_tests;
+
+impl Context {
+    pub(in crate::context) fn else_override(&self, name: &str) -> Option<String> {
+        self.published.else_overrides.get(name).cloned()
+    }
+}
+
+impl Context {
+    fn repair_else_values(&mut self) -> bool {
+        let Some(model) = self.published_model().cloned() else {
+            return false;
+        };
+        let class_values = self.build_class_values(&model);
+        let names: Vec<String> = self
+            .declared_funs
+            .iter()
+            .filter(|d| !d.interpreted && !d.arg_sorts.is_empty())
+            .map(|d| d.name.clone())
+            .collect();
+        let mut alternatives: Vec<(String, Vec<String>)> = Vec::new();
+        for name in names {
+            let Some(((entries, else_value, _), _)) =
+                self.func_interp_reading(&name, &model, &class_values, false)
+            else {
+                continue;
+            };
+            // The table's own entry values first, then the literals the goal
+            // spells of the function's range sort (as `mbqi::model_certify`
+            // searches its defaults).
+            let mut values: Vec<String> = Vec::new();
+            for (_, value) in entries {
+                if value != else_value && !values.contains(&value) {
+                    values.push(value);
+                }
+            }
+            for literal in self.goal_literals_of_range(&name) {
+                if literal != else_value && !values.contains(&literal) {
+                    values.push(literal);
+                }
+            }
+            if !values.is_empty() {
+                alternatives.push((name, values));
+            }
+        }
+        let mut attempts = 0usize;
+        for (name, values) in &alternatives {
+            for value in values {
+                if attempts >= MAX_ELSE_REPAIRS {
+                    break;
+                }
+                attempts += 1;
+                self.published.else_overrides = FxHashMap::default();
+                self.published
+                    .else_overrides
+                    .insert(name.clone(), value.clone());
+                if self.certify_printed_goal().is_ok() {
+                    return true;
+                }
+            }
+        }
+        self.published.else_overrides = FxHashMap::default();
+        false
+    }
+}
+
+impl Context {
+    fn goal_literals_of_range(&self, name: &str) -> Vec<String> {
+        let Some(range) = self
+            .declared_funs
+            .iter()
+            .find(|d| d.name == name)
+            .map(|d| d.ret_sort)
+        else {
+            return Vec::new();
+        };
+        let mut found: Vec<TermId> = Vec::new();
+        let mut stack: Vec<TermId> = self.certified_goal();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current) {
+                continue;
+            }
+            let Some(data) = self.terms.get(current) else {
+                continue;
+            };
+            if data.sort == range
+                && matches!(
+                    data.kind,
+                    TermKind::IntConst(_)
+                        | TermKind::RealConst(_)
+                        | TermKind::BitVecConst { .. }
+                        | TermKind::True
+                        | TermKind::False
+                )
+            {
+                found.push(current);
+            }
+            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+        }
+        found.sort_unstable_by_key(|t| t.raw());
+        found.dedup();
+        found.into_iter().map(|t| self.format_value(t)).collect()
+    }
+}
+
+impl Context {
+    pub(in crate::context) fn with_fresh_values(
+        &mut self,
+        model: &crate::solver::Model,
+    ) -> crate::solver::Model {
+        let minted = self.mint_fresh_values(model);
+        let mut out = model.clone();
+        for (term, value) in minted {
+            out.set(term, value);
+        }
+        out
+    }
+}

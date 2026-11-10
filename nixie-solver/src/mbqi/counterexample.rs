@@ -25,6 +25,8 @@ use nixie_time::{Duration, Instant};
 use num_bigint::BigInt;
 use smallvec::SmallVec;
 
+mod guard_points;
+
 use super::model_completion::CompletedModel;
 use super::{Instantiation, InstantiationReason, QuantifiedFormula};
 
@@ -493,6 +495,13 @@ impl CounterExampleGenerator {
             }
         }
 
+        if counterexamples.is_empty()
+            && crate::solver::optional_probe_enabled("guard-boundary-sampler")
+        {
+            let extra = self.guard_point_counterexamples(quantifier, &candidates, model, manager);
+            self.stats.num_counterexamples_found += extra.len();
+            counterexamples.extend(extra);
+        }
         // Sort by quality (best first)
         counterexamples.sort_by(|a, b| {
             b.quality

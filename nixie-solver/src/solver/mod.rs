@@ -743,7 +743,10 @@ pub struct Solver {
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
     pub(super) has_array_ops: bool,
     /// Shared budget for independent model certificates.
+    pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
     completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
+    replaced_candidate: Option<array_completion_certify::ReplacedCandidate>,
+    candidate_certified_as_printed: bool,
     /// Incremental array-theory bookkeeping (Stage 1 of
     /// `docs/ARRAY_THEORY_PLAN.md`): every `select(array, index)` term
     /// internalised by the encoder, recorded as `(select_term, array, index)`.
@@ -1360,7 +1363,10 @@ impl Solver {
             ff_terms_unconstrained: false,
             ff_dispatch_answered: false,
             has_array_ops: false,
+            certified_array_model: None,
             completion_work: std::sync::Arc::default(),
+            replaced_candidate: None,
+            candidate_certified_as_printed: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
             array_theory: array_theory::ArrayTheory::new(),
@@ -1609,6 +1615,9 @@ impl Solver {
         self.model_euf_snapshot = None;
         self.mbqi.publication_candidate = None;
         self.completion_work = std::sync::Arc::default();
+        self.certified_array_model = None;
+        self.replaced_candidate = None;
+        self.candidate_certified_as_printed = false;
         self.begin_check_budget();
         self.certification_failure = None;
         #[cfg(feature = "std")]
@@ -1626,6 +1635,16 @@ impl Solver {
         let mut raw_result = self.check_with_arith_refinement(manager);
         if raw_result == SolverResult::Sat {
             self.recover_ground_model_definitions(manager);
+        }
+        if array_probe_enabled() && raw_result != SolverResult::Unsat {
+            let original_candidate = (raw_result == SolverResult::Sat)
+                .then(|| self.model.clone())
+                .flatten();
+            if self.certify_sat_by_array_completion(manager) {
+                self.replaced_candidate = original_candidate
+                    .map(|model| array_completion_certify::ReplacedCandidate { model });
+                raw_result = SolverResult::Sat;
+            }
         }
         if raw_result == SolverResult::Sat
             && (!self.functional_collision_lemmas(manager, false).is_empty()
@@ -5084,6 +5103,7 @@ impl Solver {
 
     /// Push a context level
     pub fn push(&mut self) {
+        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // The interface-repair memo compares vocabulary *sizes*; a pop can
@@ -5152,6 +5172,7 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
+        self.certified_array_model = None;
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // Same reasoning as `push`: the size-based memo must not survive a
@@ -5461,6 +5482,7 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        self.certified_array_model = None;
         self.user_state = user_propagation::UserState::default();
         self.sat.reset();
         // The database (and every blocking clause in it) is gone with the
@@ -5609,3 +5631,12 @@ mod scope_rebase_tests;
 mod tests;
 
 // marker
+
+pub(crate) fn optional_probe_enabled(name: &str) -> bool {
+    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default()) == name
+}
+
+pub(crate) fn array_probe_enabled() -> bool {
+    optional_probe_enabled("array-completion-search")
+}

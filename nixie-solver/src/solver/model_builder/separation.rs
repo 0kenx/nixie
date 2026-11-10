@@ -50,6 +50,10 @@ impl Solver {
         model: &mut Model,
         manager: &mut TermManager,
     ) {
+        if crate::solver::optional_probe_enabled("expanded-datatype-separation") {
+            self.probe_separate_datatype_models(decls, hints, injectivity_pairs, model, manager);
+            return;
+        }
         let (mut disequalities, equalities) = self.decided_dt_equalities(model, manager);
         disequalities.extend(injectivity_pairs.iter().copied());
         if disequalities.is_empty() {
