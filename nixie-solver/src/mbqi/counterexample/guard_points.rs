@@ -47,6 +47,17 @@ impl CounterExampleGenerator {
             if list.is_empty() {
                 return Vec::new();
             }
+            let replacements: Vec<_> = new
+                .iter()
+                .map(|&point| (point, crate::policy_control::value(point, manager)))
+                .collect();
+            for slot in &mut list {
+                if let Some((_, value)) = replacements.iter().find(|(original, _)| original == slot)
+                {
+                    *slot = *value;
+                }
+            }
+            new = replacements.into_iter().map(|(_, value)| value).collect();
             lists.push(list);
             fresh.push(new);
         }

@@ -71,6 +71,11 @@ impl Context {
             {
                 continue;
             }
+            let mut outputs: Vec<_> = points.iter().map(|p| p.2.clone()).collect();
+            crate::policy_control::rotate(&mut outputs, points.len() as u64);
+            for (point, value) in points.iter_mut().zip(outputs) {
+                point.2 = value;
+            }
             let Some((_, _, last)) = points.last() else {
                 continue;
             };

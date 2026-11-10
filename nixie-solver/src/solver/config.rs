@@ -124,6 +124,7 @@ impl Solver {
     /// default out-of-the-box behaviour.
     pub fn set_random_seed(&mut self, seed: u64) {
         self.sat.set_random_seed(seed);
+        crate::policy_control::seed(seed);
         self.settings_changed();
     }
 

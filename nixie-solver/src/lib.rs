@@ -98,6 +98,7 @@ const _: () = assert!(!nixie_time::IS_FROZEN);
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
+pub(crate) mod policy_control;
 mod prelude;
 
 mod context;

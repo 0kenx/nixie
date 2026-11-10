@@ -685,7 +685,9 @@ impl Goal {
                         push(extreme, &mut pool, &mut pool_keys, manager);
                     }
                 }
-                pool
+                pool.into_iter()
+                    .map(|v| crate::policy_control::value(v, manager))
+                    .collect()
             })
             .collect()
     }
