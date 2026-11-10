@@ -57,3 +57,8 @@ If a negative model replay is satisfiable, the judge checks the positive pins
 before calling it falsifying. Satisfiable positive pins are reported as a
 partial selector interpretation, not a validated model. The same distinction
 keeps an unresolved selector `get-value` separate from a provably wrong value.
+
+Replays preserve the script's logic: broadening `UF` to `ALL` can change the
+meaning or availability of names such as the uninterpreted sort `Set`.
+Finite-universe closure is separate evidence; ordinary witness replay does not
+silently assume the displayed values exhaust an uninterpreted sort.

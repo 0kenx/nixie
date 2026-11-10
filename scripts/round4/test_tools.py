@@ -121,6 +121,16 @@ class OracleTests(unittest.TestCase):
             self.assertEqual(report['gv_wrong'], expected)
             self.assertEqual(report['gv_unresolved'], 1 - expected)
 
+    def test_replay_preserves_logic_specific_sort_names(self):
+        script = '(set-logic UF)(declare-sort Set 0)(declare-const a Set)(assert (= a a))(check-sat)(get-model)'
+        with patch.object(zjudge, 'z3_run', return_value='unsat') as run, \
+             patch.object(zjudge, 'z3_version', return_value='test comparator'):
+            report = zjudge.judge(script,
+                'sat (model (define-fun a () Set @uc_Set_0))', 1, check_verdicts=False)
+        self.assertTrue(run.call_args.args[0].startswith('(set-logic UF)\n'))
+        self.assertNotIn('(set-logic ALL)', run.call_args.args[0])
+        self.assertEqual(report['model_ok'], 1)
+
 
 if __name__ == '__main__':
     unittest.main()
