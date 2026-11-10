@@ -1,0 +1,14 @@
+{
+  "order": [
+    "guard-boundary-sampler",
+    "finite-uf-model-search",
+    "datatype-publication-proposals",
+    "numeric-projection-proposals",
+    "array-completion-search"
+  ],
+  "source": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+  "matched_controls": "policy-control-summary.json",
+  "model_validation": "policy-control-model-validation.json",
+  "acceptance": "No wrong answers, no new lost solves or completed-to-timeout/error outcomes; <=1.05 full instruction geomean versus both previous accepted prefix and correctness-scoped on decisive and all unchanged completed sequences. Official Z3 parity must not lose a previous decisive result. Final full release suite and production binary cost remain mandatory.",
+  "sat_gate_reuse": "All prefixes use this exact binary. DIMACS processor.rs:805 uses nixie_sat directly; the selector occurs only in SMT context/solver code. One unchanged pinned SAT gate covers these diagnostic modes. SMT policy merit separately uses ten real/null seeds and fresh replay. Final production binary gets its own gate."
+}
