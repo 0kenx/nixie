@@ -207,6 +207,16 @@ impl super::Solver {
             arith: _,           // SCOPED: reset by `rebase_theory_state`
             bv: _,              // SCOPED: reset by `rebase_theory_state`
             debug_tag: _,       // debug only: never read on a semantic path
+            model_euf_snapshot: _, // RESULT: cleared by `invalidate_results`
+            // at the top of `pop` (model-production snapshot).
+            check_deadline: _, // NOT trailed: recomputed by `begin_check_budget`
+            // at every `check` entry; a stale value never gates a new check.
+            check_theory_conflict_ceiling: _, // NOT trailed: ditto
+            certified_array_model: _,         // RESULT: cleared by `invalidate_results`
+            completion_work: _,               // RESULT: reset to a fresh Arc by
+            // `invalidate_results` (per-answer certificate budget).
+            replaced_candidate: _, // RESULT: cleared by `invalidate_results`
+            candidate_certified_as_printed: _, // RESULT: cleared by `invalidate_results`
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.
