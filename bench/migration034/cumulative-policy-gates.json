@@ -44,5 +44,59 @@
     },
     "sat_gate": "shared identical diagnostic binary; perf-gate.log",
     "decision": "provisional-apply-awaiting-production-verification"
+  },
+  {
+    "feature": "guard-boundary-sampler",
+    "name": "cumulative-guard-boundary-sampler",
+    "selected": [
+      "guard-boundary-sampler"
+    ],
+    "previous": "policy-off",
+    "source": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+    "complete_work": {
+      "correctness-scoped": {
+        "pairs": 34,
+        "ratio": 0.9992712360155679
+      },
+      "policy-off": {
+        "pairs": 34,
+        "ratio": 0.9998665999708125
+      }
+    },
+    "incomplete_regressions": [],
+    "cost": {
+      "SAT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0002220160229074,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:policy-off": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.999987628519696,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.998960847632439,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:policy-off": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9998562355115858,
+        "gained": [],
+        "lost": []
+      }
+    },
+    "sat_gate": "shared identical diagnostic binary; perf-gate.log",
+    "parity": {
+      "exit_code": 0,
+      "lost": [],
+      "wrong": [],
+      "version": "4.16.0"
+    },
+    "decision": "provisional-apply-awaiting-production-verification"
   }
 ]
