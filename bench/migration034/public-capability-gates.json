@@ -68,5 +68,63 @@
       }
     ],
     "decision": "drop-at-failed-gate"
+  },
+  {
+    "feature": "refinement-statistics",
+    "source": "d43d41cd447812b3f4f7d9831efde03a9cafdb46",
+    "previous": "overflow-syntax",
+    "steps": [
+      {
+        "step": "focused",
+        "exit_code": 0
+      },
+      {
+        "step": "build-cli",
+        "exit_code": 0
+      },
+      {
+        "step": "cost",
+        "exit_code": 0
+      },
+      {
+        "step": "report",
+        "exit_code": 0
+      },
+      {
+        "step": "parity",
+        "exit_code": 0
+      },
+      {
+        "step": "perf-gate",
+        "exit_code": 0
+      }
+    ],
+    "cost": {
+      "SMT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9976216436530939,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:overflow-syntax": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9999888943418646,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:overflow-syntax": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9996865174907671,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0001090099829226,
+        "gained": [],
+        "lost": []
+      }
+    },
+    "decision": "provisional-apply-awaiting-final-full-suite"
   }
 ]
