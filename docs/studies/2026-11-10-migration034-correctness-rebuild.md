@@ -368,3 +368,43 @@ alias itself is unsafe or expensive. The failed log remains cached. The revised
 control uses `(+ x 1)`, `bvadd`, and a quantified predicate over an uninterpreted
 sort. The complete alias gate must run again on that corrected control; no
 acceptance is inferred from the rejected run.
+
+
+### Printed-value reuse and public capability gates
+
+The per-reading printed-value cache (`db1aaf21`) reuses successful parses only
+inside one fixed sort/constructor context. Witness declarations from the first
+parse remain in that context; failures and parameterized reads are not cached.
+The two independent publication validators remain active. The CLEARSY example
+falls from 71,743,866 to 69,362,349 retired instructions (0.966805x). Across the
+same sample the SMT ratio is 0.997575x versus the correctness-only tree, inside
+the neutrality band; there is no solved-set change. This is removal of repeated
+parsing, not a search-policy or tick-budget change. Final cumulative release
+verification is still required.
+
+The public capabilities are applied one at a time, with focused release tests,
+a default release binary, all 72 sample inputs, Z3 parity, and the unchanged
+pinned performance gate. `public-capability-gates.json` records the actual
+steps, including rejected attempts. Results are provisional until the final
+cumulative full release suite passes.
+
+| Addition | SMT instructions / preceding accepted tree | Benefit |
+|---|---:|---|
+| Overflow syntax | 1.000361x | Seven SMT-LIB overflow predicates; 16 focused tests |
+| Refinement statistics | 0.999687x | Per-query array refinement and embedded-BV counters |
+| Finite-array completeness | 1.000337x | Exact finite pigeonholes and exhaustive small index domains |
+
+These cost differences are neutral, not speedup claims. Each preserves the
+sample's solved set. Finite-array cardinality uses checked integer operations
+and an explicit heap stack; only exact cardinalities justify refutations.
+Complete Bool/BV domains contain at most eight indices, and other domains use
+the existing extensionality path. The optional model-search proposals remain
+separate candidates.
+
+For scale, on the fixed original 23-case SMT cohort, total retired instructions
+are 545,361,526,257 before migration, 959,089,370,086 in the rejected migration,
+and 538,901,944,910 after the cache and overflow addition (0.988155x before).
+This secondary sum does not replace the registered per-instance geometric mean
+(1.076099x at that step), nor does it erase coverage losses. The residual cost
+is concentrated in small model-validation cases; it has not been proved
+irreducible.
