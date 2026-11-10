@@ -28,6 +28,9 @@ use smallvec::SmallVec;
 use super::model_completion::CompletedModel;
 use super::{Instantiation, InstantiationReason, QuantifiedFormula};
 
+// Retain the isolated proposal tests, but do not enable this search policy
+// without the matched-null, multi-seed evidence required by AGENTS.md.
+#[cfg(test)]
 mod guard_points;
 
 /// Compute SMT-LIB Euclidean division and remainder for integers.
@@ -493,15 +496,6 @@ impl CounterExampleGenerator {
                     self.stats.num_counterexamples_found += 1;
                 }
             }
-        }
-
-        // Literal guard boundaries propose additional instances when model
-        // values found none. They do not certify domain coverage or change
-        // the original enumeration's ground/exhaustiveness metadata.
-        if counterexamples.is_empty() {
-            let extra = self.guard_point_counterexamples(quantifier, &candidates, model, manager);
-            self.stats.num_counterexamples_found += extra.len();
-            counterexamples.extend(extra);
         }
 
         // Sort by quality (best first)

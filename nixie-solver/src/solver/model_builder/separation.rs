@@ -9,7 +9,6 @@ use super::*;
 use nixie_sat::{LBool, Var};
 use num_rational::BigRational;
 
-const MAX_OFFSET: i64 = 8;
 const MAX_REPAIR_WORK: usize = 1_000_000;
 
 type Pair = (TermId, TermId);
@@ -53,8 +52,6 @@ impl Solver {
     ) {
         let (mut disequalities, equalities) = self.decided_dt_equalities(model, manager);
         disequalities.extend(injectivity_pairs.iter().copied());
-        disequalities.sort_unstable();
-        disequalities.dedup();
         if disequalities.is_empty() {
             return;
         }
@@ -71,31 +68,27 @@ impl Solver {
             if model.get(left).is_none() || model.get(left) != model.get(right) {
                 continue;
             }
-            // A fixed constructor on the right can force the left side to move.
-            for (term, other) in [(right, left), (left, right)] {
-                let Some(class) = self.separation_class(term, &equalities, manager, &mut work)
-                else {
-                    return;
-                };
-                if class.contains(&other) {
-                    break;
-                }
-                if self.separate_dt_value(
-                    term,
-                    &class,
-                    &pinned,
-                    decls,
-                    hints,
-                    &requirements,
-                    model,
-                    manager,
-                    &mut work,
-                ) {
-                    break;
-                }
-                if work == 0 {
-                    return;
-                }
+            // Retain the pre-migration right-class repair policy. Trying both
+            // sides is a separate search policy requiring controlled evidence.
+            let Some(class) = self.separation_class(right, &equalities, manager, &mut work) else {
+                return;
+            };
+            if class.contains(&left) {
+                continue;
+            }
+            self.separate_dt_value(
+                right,
+                &class,
+                &pinned,
+                decls,
+                hints,
+                &requirements,
+                model,
+                manager,
+                &mut work,
+            );
+            if work == 0 {
+                return;
             }
         }
     }
@@ -203,81 +196,51 @@ impl Solver {
                 return changed;
             }
             let current = args[position];
-            let mut candidates = Vec::new();
-            if field.sort == manager.sorts.int_sort || field.sort == manager.sorts.real_sort {
-                let Some(number) =
-                    super::super::array_completion_certify::evaluate_closed_value_pure(
-                        self, current, manager,
-                    )
-                    .and_then(|value| value.to_big())
-                else {
-                    continue;
-                };
-                for offset in 1..=MAX_OFFSET {
-                    let value = &number + BigRational::from_integer(offset.into());
-                    let value = if field.sort == manager.sorts.int_sort {
-                        if !value.is_integer() {
-                            continue;
-                        }
-                        manager.mk_int(value.to_integer())
-                    } else {
-                        let numerator = manager.mk_int(value.numer().clone());
-                        let denominator = manager.mk_int(value.denom().clone());
-                        manager.mk_rdiv(numerator, denominator)
-                    };
-                    candidates.push(value);
-                }
-            } else if manager.sorts.is_datatype(field.sort) {
-                let Some(field_decl) = resolve_decl(field.sort, manager) else {
-                    continue;
-                };
-                for candidate_constructor in field_decl.constructors {
-                    if spend(work).is_none() {
-                        return changed;
-                    }
-                    let mut args = Vec::new();
-                    for field in &candidate_constructor.fields {
-                        let Some(value) = ground_default_term(manager, field.sort) else {
-                            break;
-                        };
-                        args.push(value);
-                    }
-                    if args.len() == candidate_constructor.fields.len() {
-                        candidates.push(manager.mk_dt_constructor(
-                            &candidate_constructor.name,
-                            args,
-                            field.sort,
-                        ));
-                    }
-                }
+            // Preserve exact arithmetic and validation, but withdraw the
+            // unmeasured +1..+8/constructor-alternative search expansion.
+            if field.sort != manager.sorts.int_sort && field.sort != manager.sorts.real_sort {
+                continue;
             }
+            let Some(number) = super::super::array_completion_certify::evaluate_closed_value_pure(
+                self, current, manager,
+            )
+            .and_then(|value| value.to_big()) else {
+                continue;
+            };
+            let number = number + BigRational::from_integer(1.into());
+            let candidate = if field.sort == manager.sorts.int_sort {
+                if !number.is_integer() {
+                    continue;
+                }
+                manager.mk_int(number.to_integer())
+            } else {
+                let numerator = manager.mk_int(number.numer().clone());
+                let denominator = manager.mk_int(number.denom().clone());
+                manager.mk_rdiv(numerator, denominator)
+            };
             let Some(before) = self.separation_violations(model, requirements, manager, work)
             else {
                 return changed;
             };
-            for candidate in candidates {
-                if candidate == current {
-                    continue;
-                }
-                let mut new_args = args.to_vec();
-                new_args[position] = candidate;
-                let value = manager.mk_dt_constructor(&name, new_args, sort);
-                let mut trial = model.clone();
-                for &member in class {
-                    let accessor = manager.mk_dt_selector(&field.selector, member, field.sort);
-                    trial.set(accessor, candidate);
-                    trial.set(member, value);
-                }
-                let Some(after) = self.separation_violations(&trial, requirements, manager, work)
-                else {
-                    return changed;
-                };
-                if !after.improves(&before) {
-                    continue;
-                }
+            if candidate == current {
+                continue;
+            }
+            let mut new_args = args.to_vec();
+            new_args[position] = candidate;
+            let value = manager.mk_dt_constructor(&name, new_args, sort);
+            let mut trial = model.clone();
+            for &member in class {
+                let accessor = manager.mk_dt_selector(&field.selector, member, field.sort);
+                trial.set(accessor, candidate);
+                trial.set(member, value);
+            }
+            let Some(after) = self.separation_violations(&trial, requirements, manager, work)
+            else {
+                return changed;
+            };
+            if after.improves(&before) {
                 *model = trial;
                 changed = true;
-                break;
             }
             if changed && !hinted.iter().any(|hint| hint == &field.selector) {
                 return true;

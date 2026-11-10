@@ -1,5 +1,11 @@
 # Upstream 0.3.4 migration: SATLIB / SMT-LIB 30-second snapshot
 
+These results describe the migration **before the subsequent policy rollback**.
+The [protocol audit](2026-11-10-migration034-protocol-audit.md) withdraws two
+default search policies that lacked the required matched-null/multi-seed
+evidence. This snapshot does not waive those requirements or establish the
+rollback's performance.
+
 ## Registered protocol (before measurements)
 
 Request: benchmark before/after the migration on SATLIB and SMT-LIB samples,
