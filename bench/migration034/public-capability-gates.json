@@ -56,5 +56,17 @@
       }
     },
     "decision": "provisional-apply-awaiting-final-full-suite"
+  },
+  {
+    "feature": "qf-auf-alias",
+    "source": "d318e29faf8b9cde31aa0d213fc986f77bd0703e",
+    "previous": "overflow-syntax",
+    "steps": [
+      {
+        "step": "focused",
+        "exit_code": 101
+      }
+    ],
+    "decision": "drop-at-failed-gate"
   }
 ]
