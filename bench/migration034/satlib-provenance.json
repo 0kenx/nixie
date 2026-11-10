@@ -1,0 +1,218 @@
+[
+  {
+    "family": "uf50-218",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf50-218.tar.gz",
+    "archive_sha256": "a40862e52dfdce78620b037254579a02dbda8182d2879433658a4c15cb00327c",
+    "members": 1000,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf50-218/uf50-0294.cnf",
+        "archive_member": "uf50-0294.cnf",
+        "sha256": "34edf58fb1a9c31c0d0fbddd1eddb99514a2cacfeca790496d774df8002bfe04"
+      },
+      {
+        "path": "satlib/RND3SAT/uf50-218/uf50-0258.cnf",
+        "archive_member": "uf50-0258.cnf",
+        "sha256": "bacd2398107aa4cd18e5a010b07b7809091740d8173494078c017a976c54e8e5"
+      }
+    ]
+  },
+  {
+    "family": "uuf50-218",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf50-218.tar.gz",
+    "archive_sha256": "24cc9f492673e0f975fecc56b3a4d8ac21c385cc46205d83b7491a787f43e13d",
+    "members": 1000,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf50-218/uuf50-0605.cnf",
+        "archive_member": "UUF50.218.1000/uuf50-0605.cnf",
+        "sha256": "e79aadad29b6862ab009007100e57f378f17b8724e62df11dd4e1b3dfe1191ef"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf50-218/uuf50-0974.cnf",
+        "archive_member": "UUF50.218.1000/uuf50-0974.cnf",
+        "sha256": "234c5c7d688e1db615c8eb0204854b0cadd06c26bb6b014c2359c5fc4fb047d1"
+      }
+    ]
+  },
+  {
+    "family": "uf75-325",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf75-325.tar.gz",
+    "archive_sha256": "f879d4f619e8cd4b24be6c70b86b1bc1ed851cf0c5cc0ee97cd750e0cadb5ff5",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf75-325/uf75-032.cnf",
+        "archive_member": "ai/hoos/Shortcuts/UF75.325.100/uf75-032.cnf",
+        "sha256": "8b2db5cbb9c91ba264d28cbda2235b7f93996c4a745bbf42dc91fb18a53aa305"
+      },
+      {
+        "path": "satlib/RND3SAT/uf75-325/uf75-057.cnf",
+        "archive_member": "ai/hoos/Shortcuts/UF75.325.100/uf75-057.cnf",
+        "sha256": "5ba89818cefee3d867cfa272cf8cf3291306638886d3099584a914e43677a931"
+      }
+    ]
+  },
+  {
+    "family": "uuf75-325",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf75-325.tar.gz",
+    "archive_sha256": "7f8a97aa4d4cbe0d5681746644aac23dc0b5d182065df97e62977716bbccd046",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf75-325/uuf75-086.cnf",
+        "archive_member": "UUF75.325.100/uuf75-086.cnf",
+        "sha256": "bf89595af601edbd8bf3e55ee7dbef187c051db2801b02baeb75e283e1cedaaa"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf75-325/uuf75-074.cnf",
+        "archive_member": "UUF75.325.100/uuf75-074.cnf",
+        "sha256": "9000113936d8b2920801c166b7be050f568db88915f83186ad2ef59e8b57eff3"
+      }
+    ]
+  },
+  {
+    "family": "uf100-430",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf100-430.tar.gz",
+    "archive_sha256": "7f691acb8c45790ef8178dd01bb362cf50da608d478be9965599131f0a763e59",
+    "members": 1000,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf100-430/uf100-0585.cnf",
+        "archive_member": "uf100-0585.cnf",
+        "sha256": "2e2e1b40abdff5d1431b5220bf8e79fc4c162007e7b953185b6e94e38184b283"
+      },
+      {
+        "path": "satlib/RND3SAT/uf100-430/uf100-0684.cnf",
+        "archive_member": "uf100-0684.cnf",
+        "sha256": "b01a0c1e3e84611f91d4562bb663780f265d7e793af30cafcfc32f4646c9d877"
+      }
+    ]
+  },
+  {
+    "family": "uuf100-430",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf100-430.tar.gz",
+    "archive_sha256": "736c6f94fecae346a00501b197c482e146b1c6ab05fb6d2e4666e520b8e8508a",
+    "members": 1000,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf100-430/uuf100-0968.cnf",
+        "archive_member": "UUF100.430.1000/uuf100-0968.cnf",
+        "sha256": "7742caa7d67d0712ec831226fd73be445696a01b1e57698aab61e87f7a4717f7"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf100-430/uuf100-0347.cnf",
+        "archive_member": "UUF100.430.1000/uuf100-0347.cnf",
+        "sha256": "8f75972413becd6de20a7b5e5eae1022f30c6cf0fdb49547b9b23569ffb3a614"
+      }
+    ]
+  },
+  {
+    "family": "uf150-645",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf150-645.tar.gz",
+    "archive_sha256": "4db94fd110acdae8ade1abd1fb0d484e88e4cff21e94ab7db96c7d29860e6080",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf150-645/uf150-044.cnf",
+        "archive_member": "ai/hoos/Research/SAT/Formulae/UF150.645.100/uf150-044.cnf",
+        "sha256": "0fc05ec5b86ec96e5e7a7dabdce8e38ff12d980df00abe792722cc42401bde8d"
+      },
+      {
+        "path": "satlib/RND3SAT/uf150-645/uf150-085.cnf",
+        "archive_member": "ai/hoos/Research/SAT/Formulae/UF150.645.100/uf150-085.cnf",
+        "sha256": "f56e920d7b305aadcca9e091ed542bce7c2b2e46860c378bf0029a648e94eb02"
+      }
+    ]
+  },
+  {
+    "family": "uuf150-645",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf150-645.tar.gz",
+    "archive_sha256": "287ff28ee3f6ab21627d3f758fc3d71d0dd7b64ab3a5bd0edcb663dc47666512",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf150-645/uuf150-075.cnf",
+        "archive_member": "UUF150.645.100/uuf150-075.cnf",
+        "sha256": "02911dda8da962152acdbb5a193e58f3e07b19d0e7fb8b3a0bfa2c0e2fea4c2b"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf150-645/uuf150-017.cnf",
+        "archive_member": "UUF150.645.100/uuf150-017.cnf",
+        "sha256": "ab566435e079bcc5d2172ae3089ee129aeb6b043e147ac0a15d8be659f326509"
+      }
+    ]
+  },
+  {
+    "family": "uf200-860",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf200-860.tar.gz",
+    "archive_sha256": "e9555c366352154b892db52bc40a78b0f9d9cafba014375e77a7f3e7768ed72f",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf200-860/uf200-094.cnf",
+        "archive_member": "uf200-094.cnf",
+        "sha256": "291f8b3cb2d58c58984eaa89b9b82e9c501f90551358292a5962316063b7e2bb"
+      },
+      {
+        "path": "satlib/RND3SAT/uf200-860/uf200-075.cnf",
+        "archive_member": "uf200-075.cnf",
+        "sha256": "a2725e83b8024983563de9a939ccd8687c05162ebf3da4554669b5f8cfaa77c2"
+      }
+    ]
+  },
+  {
+    "family": "uuf200-860",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf200-860.tar.gz",
+    "archive_sha256": "c0cee6ad2a35bc24d9ff02e87fbb6008919a7e4fe6bc98dad12e9379edae03fd",
+    "members": 99,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf200-860/uuf200-083.cnf",
+        "archive_member": "UUF200.860.1000/uuf200-083.cnf",
+        "sha256": "e3349287c2e8c1d11e9a7334449168d886a2f11bf518e877eff344ecdd18333a"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf200-860/uuf200-01.cnf",
+        "archive_member": "UUF200.860.1000/uuf200-01.cnf",
+        "sha256": "371122644c8627b9bb8b651a4879493ae0afe05d8555071415e5cea34ff221b1"
+      }
+    ]
+  },
+  {
+    "family": "uf250-1065",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uf250-1065.tar.gz",
+    "archive_sha256": "ebe9b90d674bfd4d3cc76ed048f144e2728b1758cb8aac157c7ce38bb1d1931d",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uf250-1065/uf250-074.cnf",
+        "archive_member": "ai/hoos/Shortcuts/UF250.1065.100/uf250-074.cnf",
+        "sha256": "6526a8f5498c0582a1df6181a33ac9a3966820fb43625d248869af29b4201efe"
+      },
+      {
+        "path": "satlib/RND3SAT/uf250-1065/uf250-062.cnf",
+        "archive_member": "ai/hoos/Shortcuts/UF250.1065.100/uf250-062.cnf",
+        "sha256": "8294b5c44776a62c04496804b2edb8cd90e0527386c9ff7e79e9f56f0d49d116"
+      }
+    ]
+  },
+  {
+    "family": "uuf250-1065",
+    "url": "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/RND3SAT/uuf250-1065.tar.gz",
+    "archive_sha256": "1b6d59619e3c805947c5602703ff3190dfbfeff55d6cb62187838668b0fd4126",
+    "members": 100,
+    "selected": [
+      {
+        "path": "satlib/RND3SAT/uuf250-1065/uuf250-08.cnf",
+        "archive_member": "UUF250.1065.100/uuf250-08.cnf",
+        "sha256": "c8cb9aedb824d94b6b57f51d70b888927e97dab9df94311f53e5ec98a7477da2"
+      },
+      {
+        "path": "satlib/RND3SAT/uuf250-1065/uuf250-034.cnf",
+        "archive_member": "UUF250.1065.100/uuf250-034.cnf",
+        "sha256": "a15f4a3d09a7d6c8f5d7bd7e8475d8f63a64b5083c91a30d96dd569da7c5aad9"
+      }
+    ]
+  }
+]
