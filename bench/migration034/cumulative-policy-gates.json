@@ -266,5 +266,63 @@
       "version": "4.16.0"
     },
     "decision": "provisional-apply-awaiting-production-verification"
+  },
+  {
+    "feature": "array-completion-search",
+    "name": "cumulative-array-completion-search",
+    "selected": [
+      "guard-boundary-sampler",
+      "finite-uf-model-search",
+      "datatype-publication-proposals",
+      "numeric-projection-proposals",
+      "array-completion-search"
+    ],
+    "previous": "cumulative-numeric-projection-proposals",
+    "source": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+    "complete_work": {
+      "correctness-scoped": {
+        "pairs": 34,
+        "ratio": 0.9993180254497018
+      },
+      "cumulative-numeric-projection-proposals": {
+        "pairs": 34,
+        "ratio": 0.9996613478359805
+      }
+    },
+    "incomplete_regressions": [],
+    "cost": {
+      "SAT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0002398303522102,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:cumulative-numeric-projection-proposals": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9999903803854716,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9989091105673066,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:cumulative-numeric-projection-proposals": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.9995872718887726,
+        "gained": [],
+        "lost": []
+      }
+    },
+    "sat_gate": "shared identical diagnostic binary; perf-gate.log",
+    "parity": {
+      "exit_code": 0,
+      "lost": [],
+      "wrong": [],
+      "version": "4.16.0"
+    },
+    "decision": "provisional-apply-awaiting-production-verification"
   }
 ]
