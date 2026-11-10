@@ -955,6 +955,20 @@ impl TableRow {
             TableRow::Int(row) => row.terms.iter().map(|(v, _)| *v).collect(),
         }
     }
+    /// Whether any term variable satisfies `pred` (no list built).
+    fn any_var(&self, pred: &impl Fn(VarId) -> bool) -> bool {
+        match self {
+            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.iter().any(|(v, _)| pred(*v)),
+            TableRow::Int(row) => row.terms.iter().any(|(v, _)| pred(*v)),
+        }
+    }
+    /// Number of terms — exactly `term_vars().len()` without building it.
+    fn terms_len(&self) -> usize {
+        match self {
+            TableRow::Lin(row) | TableRow::LinNoInt(row) => row.terms.len(),
+            TableRow::Int(row) => row.terms.len(),
+        }
+    }
 }
 
 /// Fraction-free encoding of a canonical row: common denominator =
@@ -3923,29 +3937,43 @@ impl Simplex {
         best_var
     }
     fn find_violating(&self) -> Option<(VarId, Bound)> {
-        let mut worst: Option<(VarId, Bound)> = None;
+        // Deferred clone: track the winning (var, side) and materialize the
+        // `Bound` exactly once, at return.  The winner is the smallest
+        // violating var id, which depends only on the violator set — not on
+        // iteration order — so the selection (and the returned bound) is
+        // identical to the historical eager-clone loop, without cloning a
+        // `Bound` (value + reason list) per violating row on the way there.
+        // A `None` from the final lookup is impossible (the winner's side
+        // was just read as `Some`), but is answered honestly rather than
+        // fabricated.
+        let mut winner: Option<(VarId, bool)> = None;
         for var in self.tableau.keys() {
             let idx = *var as usize;
             let val = self.assignment[idx];
-            let viol = if let Some(lo) = &self.lower[idx]
+            let is_lower = if let Some(lo) = &self.lower[idx]
                 && lo.value.cmp_narrow(&val) == core::cmp::Ordering::Greater
             {
-                Some(lo.clone())
+                true
             } else if let Some(hi) = &self.upper[idx]
                 && hi.value.cmp_narrow(&val) == core::cmp::Ordering::Less
             {
-                Some(hi.clone())
+                false
             } else {
-                None
+                continue;
             };
-            if let Some(bound) = viol
-                && worst.as_ref().is_none_or(|(v, _)| *var < *v)
-            {
-                worst = Some((*var, bound));
+            if winner.as_ref().is_none_or(|(v, _)| *var < *v) {
+                winner = Some((*var, is_lower));
             }
         }
-        worst
+        let (var, is_lower) = winner?;
+        let bound = if is_lower {
+            self.lower[var as usize].as_ref()
+        } else {
+            self.upper[var as usize].as_ref()
+        };
+        bound.map(|b| (var, b.clone()))
     }
+
     /// Find the entering (non-basic) variable for one feasibility pivot.
     ///
     /// Z3's `find_beneficial_entering_tableau_rows`
@@ -4532,10 +4560,7 @@ impl Simplex {
                 // exact evaluation read the point).  Skip the incremental
                 // update; the commit's exact recomputation owns the entry.
                 if !self.wide_points.is_empty()
-                    && new_form
-                        .term_vars()
-                        .iter()
-                        .any(|v| self.wide_points.contains_key(v))
+                    && new_form.any_var(&|v| self.wide_points.contains_key(&v))
                 {
                     self.assignment_current = false;
                     continue;
@@ -4637,7 +4662,9 @@ impl Simplex {
                 // The born-integer entering row: commits in its integer
                 // form — the canonical row materializes lazily like any
                 // other (Phase 3's last piece: the hot path never builds
-                // the entering row's canonical form).
+                // the entering row's canonical form).  The row is inserted
+                // first and its terms read from the `Arc` — no per-pivot
+                // term-list copy.
                 let entering_terms: SmallVec<[VarId; 4]> =
                     born.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
@@ -4670,11 +4697,12 @@ impl Simplex {
                 // The dual-width entering side: the entering variable's
                 // row lives exactly in the wide store (pivoting and
                 // propagation skip it; its value is re-derived exactly).
-                let entering_terms: SmallVec<[VarId; 4]> =
-                    wide.terms.iter().map(|(v, _)| *v).collect();
                 self.rows_ver = self.rows_ver.wrapping_add(1);
                 // Entering and wide-basic: same retirement (the wide point
                 // would shadow this row in every exact read).
+                let entering_terms: SmallVec<[VarId; 4]> =
+                    wide.terms.iter().map(|(v, _)| *v).collect();
+                self.rows_ver = self.rows_ver.wrapping_add(1);
                 self.retire_wide_point(nonbasic_var);
                 self.wide_rows.insert(nonbasic_var, wide);
                 for v in entering_terms {
@@ -4699,6 +4727,12 @@ impl Simplex {
             // columns was a top profiler entry here). The row's PREVIOUS
             // content lives in the tableau or — for a row that just narrowed
             // back — in the wide store; diff against whichever holds it.
+            // Diff without materializing either side's variable list:
+            // the old content is borrowed (tableau or wide store), the new
+            // row is scanned directly, and only the (usually tiny/empty)
+            // dropped/added results are collected — same membership tests,
+            // same iteration orders, same column mutations as the
+            // materialized diff.
             let old_terms: Option<SmallVec<[VarId; 4]>> = match self.tableau.get(&var) {
                 Some(old_row) => Some(old_row.term_vars()),
                 None => self
@@ -4770,6 +4804,9 @@ impl Simplex {
             self.assignment_current = false;
         }
         for (var, new_wide) in wide_updates {
+            // Same borrow-based diff as the narrow commit loop above: no
+            // materialized variable lists, identical membership tests and
+            // mutation orders.
             let old_terms: SmallVec<[VarId; 4]> = match self.tableau.get(&var) {
                 Some(old_row) => old_row.term_vars(),
                 None => self
@@ -5857,9 +5894,7 @@ impl Simplex {
         let narrow_keys: Vec<VarId> = self
             .tableau
             .iter()
-            .filter(|(v, e)| {
-                e.term_vars().len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v)))
-            })
+            .filter(|(v, e)| e.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v))))
             .map(|(v, _)| *v)
             .collect();
         let narrow_rows: Vec<(VarId, LinExpr)> = narrow_keys
