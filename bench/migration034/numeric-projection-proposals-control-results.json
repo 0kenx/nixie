@@ -1,0 +1,1586 @@
+[
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-7919.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955511386,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 75ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e40b193d4e204ed1cd32d412"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-7919.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957719323,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 61ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/774a77f8ee255a3fd977bce5"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-7919.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305199966,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 81ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/edabd152ad12a389649481d7"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-23757.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305517802,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 81ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c0e37f33b7c25891beed5b70"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-23757.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955845192,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 61ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1020ce1c947e275e434ac278"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-23757.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957692102,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3179a16e05393e00011dec5a"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-39595.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 958316916,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6d32bf41f038a2370e88093a"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-39595.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305517696,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 80ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0de54d82c8155795abc43a86"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-39595.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955495266,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 61ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c7af18912c0f285bd8577d90"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-55433.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955580642,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8cfe4347f3f1e05ba2f680a8"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-55433.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957353865,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/8b1ffdc98c7e2c5c27b0103d"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-55433.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1221402686,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 74ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/010ea49a54ff3f907d3c0a07"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-71271.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305819298,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 80ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/caf5d335d291bf95d9d76463"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-71271.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955496999,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 59ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/eeaf59792e41954ff40bef3e"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-71271.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957442165,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/81aeefdc65aaac7143c4e1f8"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-87109.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957596361,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/c552e0a9cdfdf42c90eab7eb"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-87109.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305384909,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 80ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/47466ec3d6934118587deba6"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-87109.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955763963,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f440d3522d8ac8cfec15cf8a"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-15838.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272067110,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/2ceab64320a46543cb4f5b6a"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-15838.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289956596,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e54459c3c156458bca37b46d"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-15838.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312059442,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/13f9a22ec4e45a348407c35b"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-31676.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 303924288,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/788888cc5f852332616dc992"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-31676.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 271950136,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d4628b2268465e85bd64116b"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-31676.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 290079659,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/277bcd10936eb8259affe314"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-47514.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 290159787,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4ebd7b16f46ebc461bd13aba"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-47514.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 303913088,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/654a8d360e59dbba6cb7b2ec"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-47514.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272001393,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/142ad7cbf16e3956ddb321e0"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-63352.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 271971156,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4afdb5a06645550bed427d49"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-63352.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289998126,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/03dc7b94c7e2b44dac763c97"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-63352.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 303903379,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/80917ad5c8000095bb1a8de0"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-79190.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312133495,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/69e072fb5e0ba82ca66e542e"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-79190.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272043526,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/dc3433b0e8fe16cc73e391c0"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-79190.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 290175175,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5aa2704d5a415ccf8b131a97"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-15838.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957349452,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 59ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/43dd48ec82d9b4e6613ff34c"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-15838.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305016705,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 80ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/bb09dd3891e275bc6d07cbbe"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 15838,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-15838.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955507487,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=15838 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 15838,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/cda776bb6ec5655f77805238"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-31676.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955837688,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 63ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/65e3e3c2641053b509799e8c"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-31676.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957337710,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 62ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/a38a0d31a41b8e3e6eed33b1"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 31676,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-31676.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1221904938,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 76ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=31676 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 31676,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/b0f63f257b381fee1dcc4581"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-47514.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1221445441,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 75ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/efcf52867b014453f27d09d2"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-47514.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955521719,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/3077b3e508746939d6007d09"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 47514,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-47514.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957433837,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 62ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=47514 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 47514,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/cc5da8fd02e5835a8ddf4eb7"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-63352.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957309648,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 62ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/649b6da20910bb7eb293f1bf"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-63352.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1221418677,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 75ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/22dcb79b7c4f55787474f5e4"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 63352,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-63352.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955495824,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 59ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=63352 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 63352,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/74e6b71363ea71c2c27e24e9"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-79190.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 955470388,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 61ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/0afa1c538473e2e29fc38add"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-79190.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 957430860,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n(model\n  \n  (define-fun f ((x!0 Int)) Int (ite (<= x!0 0) 0 (ite (<= x!0 5) 30 100)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 60ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/459d810e6663592d4f6332ae"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 79190,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflia_monotone_relevant_terms_sat-79190.smt2",
+    "control": "model-uflia_monotone_relevant_terms_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 1305116614,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n(error \"model not certified: assertion 1 (forall ((x Int) (y Int)) (=> (<= x y) (<= (f x) (f y)))) is false at ((x -1) (y 0))\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 82ms\n\nSAT Solver Statistics:\n  Decisions: 8\n  Propagations: 16\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=79190 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=8 propagations=16\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 79190,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/5b0bd0cead3da3fbffb59566"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-7919.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312046673,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9b0287953f7f998385448992"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-7919.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272150497,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/fd2d347c3fa063694a1fa53a"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 7919,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-7919.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289948885,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=7919 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 7919,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/dd0ae5d70976e853fe81c5da"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-23757.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289993883,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/72ba45644c3d583a882448e3"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-23757.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312273857,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/dafc3b7e14c343e3e84663f0"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 23757,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-23757.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272161307,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=23757 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 23757,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/4c02bd08a0793a1541038014"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-39595.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272346139,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 21\n  Propagations: 30\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.095\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=0 eligible=0 changed=0\n; stats: conflicts=2 decisions=21 propagations=30\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1f799bcfcd33d2a5ce0cd6d7"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-39595.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 290347811,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 21\n  Propagations: 30\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.095\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=0\n; stats: conflicts=2 decisions=21 propagations=30\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/1c1c6c118499ac2b64b3f684"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 39595,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-39595.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312584904,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 21\n  Propagations: 30\n  Conflicts: 2\n  Restarts: 0\n  Conflicts/Decision: 0.095\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=39595 slots=3 eligible=3 changed=3\n; stats: conflicts=2 decisions=21 propagations=30\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 39595,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/e60d4d9153755951c913e93c"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-55433.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 303906478,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d8787c41b73ce23e77219b46"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-55433.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 271995266,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/62019daa2550d5984c761651"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 55433,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-55433.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289997993,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=55433 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 55433,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/6e4260f5461024d4baa68665"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-71271.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 290057300,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 19ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/fa8b2710187e1e46667cc2d6"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-71271.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312031945,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/7bcf0b2a0d7964ff9a0e68c6"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 71271,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-71271.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 271966845,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=71271 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 71271,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/9dbea3ab989029156c5bc439"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "off",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-87109.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 272000306,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 18ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=0 eligible=0 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 0,
+        "eligible": 0,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/d1e76fe4604523ee0be92820"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "real",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-87109.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "sat"
+    ],
+    "outcome": "sat",
+    "exit_code": 0,
+    "instructions": 289974175,
+    "stdout": "sat\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n(model\n  \n  (define-fun f ((x!0 Real)) Real (ite (<= x!0 0.0) 0.0 (ite (<= x!0 1.0) (/ 5 2) 7.0)))\n)\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 20ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=0\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 0
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/fe44b6912ccc254a599f75de"
+  },
+  {
+    "feature": "numeric-projection-proposals",
+    "arm": "null",
+    "seed": 87109,
+    "path": "bench/migration034/candidates/policy-seeds/model-uflra_monotone_var_var_guard_sat-87109.smt2",
+    "control": "model-uflra_monotone_var_var_guard_sat",
+    "answers": [
+      "unknown"
+    ],
+    "outcome": "error",
+    "exit_code": 0,
+    "instructions": 312079810,
+    "stdout": "unknown\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n(error \"model not certified: assertion 1 (forall ((x Real) (y Real)) (=> (<= x y) (<= (f x) (f y)))) could not be certified\")\n\nStatistics:\n  Files processed: 1\n  Successful: 1\n  Total time: 21ms\n\nSAT Solver Statistics:\n  Decisions: 12\n  Propagations: 19\n  Conflicts: 0\n  Restarts: 0\n  Conflicts/Decision: 0.000\n",
+    "stderr": "Processing 1 file(s)...\npolicy-control seed=87109 slots=3 eligible=3 changed=3\n; stats: conflicts=0 decisions=12 propagations=19\n; stats graph: pops=0 inval=0 reread=0 evT=0 evF=0 witDrop=0 cycDrop=0 closureRebuild=0 emitPath=0 emitCut=0 emitCyc=0 emitTopo=0 emitNoCyc=0\n",
+    "telemetry": [
+      {
+        "seed": 87109,
+        "slots": 3,
+        "eligible": 3,
+        "changed": 3
+      }
+    ],
+    "artifacts": "precompile/022978adcb0ce3cba4564deef04e6c5ee038273c/benchmark/migration034-policy-controls-30s/f3936fed212569c91775b0f2"
+  }
+]

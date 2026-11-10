@@ -1,0 +1,2932 @@
+{
+  "z3_version": "Z3 version 4.16.0 - 64 bit",
+  "judge_sha256": "c747be78cd828a8bbe64fc5722bde38d6f1ad6c49ff9f19b15ac2f5f43953b35",
+  "rows": [
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "array-completion-search",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-shadowed-array-completion",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 1,
+        "model_ok": 1,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-set9_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "finite-uf-model-search",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-set16_family_answers_sat",
+      "result": {
+        "models": 2,
+        "model_ok": 2,
+        "finite_domain_results": [
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          },
+          {
+            "domains": {
+              "Elem": 1,
+              "Set": 2
+            },
+            "domain_consistency": "sat",
+            "model_validity": "unsat"
+          }
+        ]
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 7919,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 23757,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 2,
+        "unsat": 1,
+        "unknown": 1,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 1,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "unknown",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 39595,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 55433,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 71271,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 87109,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 15838,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 31676,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 47514,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 2,
+        "unsat": 1,
+        "unknown": 1,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 1,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "unknown",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 63352,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "null",
+      "seed": 79190,
+      "control": "model-enum-publication",
+      "result": {
+        "checks": 4,
+        "sat": 3,
+        "unsat": 1,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 3,
+        "model_ok": 3,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 2,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok",
+          "1": "sat/ok",
+          "2": "unsat",
+          "3": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "datatype-publication-proposals",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-distinct_over_composite_finite_datatype_exact_fit_is_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 15838,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 31676,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 47514,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 63352,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 79190,
+      "control": "model-uflia_monotone_relevant_terms_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 7919,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 23757,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 39595,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 55433,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 71271,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    },
+    {
+      "feature": "numeric-projection-proposals",
+      "arm": "real",
+      "seed": 87109,
+      "control": "model-uflra_monotone_var_var_guard_sat",
+      "result": {
+        "checks": 1,
+        "sat": 1,
+        "unsat": 0,
+        "unknown": 0,
+        "other": 0,
+        "wrong_sat": 0,
+        "wrong_unsat": 0,
+        "z3_unknown": 0,
+        "models": 2,
+        "model_ok": 2,
+        "model_partial_consistent": 0,
+        "falsifying": 0,
+        "model_unresolved": 0,
+        "uc_unresolved": 0,
+        "withheld": 0,
+        "incomplete_pin_fail": 0,
+        "gv_pairs": 0,
+        "gv_wrong": 0,
+        "gv_nonvalue": 0,
+        "gv_error": 0,
+        "gv_unresolved": 0,
+        "events": [],
+        "per_check": {
+          "0": "sat/ok"
+        },
+        "z3_version": "Z3 version 4.16.0 - 64 bit"
+      }
+    }
+  ]
+}

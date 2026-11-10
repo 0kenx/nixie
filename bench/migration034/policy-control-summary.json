@@ -1,0 +1,4785 @@
+{
+  "guard-boundary-sampler": {
+    "guard-boundary-2": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.4741992925703796,
+      "null_over_real_instructions": 2.108817992071513,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "unsat": 10
+        },
+        "null": {
+          "unknown": 6,
+          "unsat": 4
+        }
+      },
+      "baseline_instructions": {
+        "min": 16996455,
+        "median": 17035367.5,
+        "max": 17187278
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.2900102258871844,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "unsat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 120,
+              "eligible": 120,
+              "changed": 120
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "guard-scopes": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.5110570530058085,
+      "null_over_real_instructions": 1.956728694220045,
+      "outcomes": {
+        "off": {
+          "unknown/sat/unsat/sat": 10
+        },
+        "real": {
+          "unsat/sat/unsat/sat": 10
+        },
+        "null": {
+          "unknown/sat/unsat/sat": 6,
+          "unsat/sat/unsat/sat": 4
+        }
+      },
+      "baseline_instructions": {
+        "min": 18090635,
+        "median": 18143702.0,
+        "max": 18239383
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.32937751444812907,
+        "outcomes": {
+          "off": [
+            "unknown",
+            "sat",
+            "unsat",
+            "sat"
+          ],
+          "real": [
+            "unsat",
+            "sat",
+            "unsat",
+            "sat"
+          ],
+          "null": [
+            "unknown",
+            "sat",
+            "unsat",
+            "sat"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 120,
+              "eligible": 120,
+              "changed": 120
+            },
+            {
+              "seed": 87109,
+              "slots": 120,
+              "eligible": 120,
+              "changed": 120
+            },
+            {
+              "seed": 87109,
+              "slots": 120,
+              "eligible": 120,
+              "changed": 120
+            },
+            {
+              "seed": 87109,
+              "slots": 120,
+              "eligible": 120,
+              "changed": 120
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 15838,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 15838,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 15838,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 47514,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 47514,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 47514,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 63352,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 63352,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 63352,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 7919,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 7919,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 7919,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 23757,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 23757,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 23757,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 71271,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 71271,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 71271,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 87109,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 87109,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              },
+              {
+                "seed": 87109,
+                "slots": 120,
+                "eligible": 120,
+                "changed": 120
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "array-completion-search": {
+    "model-shadowed-array-completion": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 1.0005877410256137,
+      "null_over_real_instructions": 0.9994126042109899,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 18414309079,
+        "median": 33073075757.5,
+        "max": 41300012561
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 1.001005302415528,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 9,
+              "eligible": 9,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 9,
+              "eligible": 9,
+              "changed": 9
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "finite-uf-model-search": {
+    "model-set16_family_answers_sat": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.9887046511822678,
+      "null_over_real_instructions": 1.0114243913025245,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 4188935446,
+        "median": 100005080701.5,
+        "max": 607784395856
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.99873058196726,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 26,
+              "eligible": 26,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 124,
+              "eligible": 124,
+              "changed": 124
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "model-set9_family_answers_sat": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.9872291097267897,
+      "null_over_real_instructions": 1.012936095732372,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 9930817800,
+        "median": 22781991016.0,
+        "max": 119999367925
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.9823767175535746,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 26,
+              "eligible": 26,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 124,
+              "eligible": 124,
+              "changed": 124
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 26,
+                "eligible": 26,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 124,
+                "eligible": 124,
+                "changed": 124
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "datatype-publication-proposals": {
+    "model-distinct_over_composite_finite_datatype_exact_fit_is_sat": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.9698341969689548,
+      "null_over_real_instructions": 1.0311040826620912,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 15518684,
+        "median": 15525503.0,
+        "max": 23436748
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.9672307958294398,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 6,
+              "eligible": 6,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 12,
+              "eligible": 12,
+              "changed": 12
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "model-enum-publication": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 1.0681496286134091,
+      "null_over_real_instructions": 0.9361984250260184,
+      "outcomes": {
+        "off": {
+          "unknown/unknown/unsat/unknown": 10
+        },
+        "real": {
+          "sat/sat/unsat/sat": 10
+        },
+        "null": {
+          "sat/sat/unsat/sat": 8,
+          "sat/unknown/unsat/sat": 2
+        }
+      },
+      "baseline_instructions": {
+        "min": 9318790,
+        "median": 9352266.0,
+        "max": 9803839
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 1.0438934647911047,
+        "outcomes": {
+          "off": [
+            "unknown",
+            "unknown",
+            "unsat",
+            "unknown"
+          ],
+          "real": [
+            "sat",
+            "sat",
+            "unsat",
+            "sat"
+          ],
+          "null": [
+            "sat",
+            "sat",
+            "unsat",
+            "sat"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 4,
+              "eligible": 4,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 9,
+              "eligible": 9,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 9,
+              "eligible": 9,
+              "changed": 0
+            },
+            {
+              "seed": 87109,
+              "slots": 13,
+              "eligible": 13,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 3
+            },
+            {
+              "seed": 87109,
+              "slots": 6,
+              "eligible": 6,
+              "changed": 6
+            },
+            {
+              "seed": 87109,
+              "slots": 6,
+              "eligible": 6,
+              "changed": 6
+            },
+            {
+              "seed": 87109,
+              "slots": 9,
+              "eligible": 9,
+              "changed": 9
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 7919,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 7919,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 4
+              },
+              {
+                "seed": 7919,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 4
+              },
+              {
+                "seed": 7919,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 6
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 23757,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 23757,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              },
+              {
+                "seed": 23757,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              },
+              {
+                "seed": 23757,
+                "slots": 14,
+                "eligible": 14,
+                "changed": 14
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 39595,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 39595,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 39595,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 55433,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 55433,
+                "slots": 5,
+                "eligible": 5,
+                "changed": 5
+              },
+              {
+                "seed": 55433,
+                "slots": 5,
+                "eligible": 5,
+                "changed": 5
+              },
+              {
+                "seed": 55433,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 6
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 71271,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 71271,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 71271,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 87109,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 87109,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 6
+              },
+              {
+                "seed": 87109,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 6
+              },
+              {
+                "seed": 87109,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 9
+              }
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 15838,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 15838,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 4
+              },
+              {
+                "seed": 15838,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 4
+              },
+              {
+                "seed": 15838,
+                "slots": 6,
+                "eligible": 6,
+                "changed": 6
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 31676,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 31676,
+                "slots": 5,
+                "eligible": 5,
+                "changed": 5
+              },
+              {
+                "seed": 31676,
+                "slots": 5,
+                "eligible": 5,
+                "changed": 5
+              },
+              {
+                "seed": 31676,
+                "slots": 7,
+                "eligible": 7,
+                "changed": 7
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 47514,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 47514,
+                "slots": 11,
+                "eligible": 11,
+                "changed": 11
+              },
+              {
+                "seed": 47514,
+                "slots": 11,
+                "eligible": 11,
+                "changed": 11
+              },
+              {
+                "seed": 47514,
+                "slots": 12,
+                "eligible": 12,
+                "changed": 12
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 63352,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              },
+              {
+                "seed": 63352,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 4
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 4,
+                "eligible": 4,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 9,
+                "eligible": 9,
+                "changed": 0
+              },
+              {
+                "seed": 79190,
+                "slots": 13,
+                "eligible": 13,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 1,
+                "eligible": 1,
+                "changed": 1
+              },
+              {
+                "seed": 79190,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 79190,
+                "slots": 2,
+                "eligible": 2,
+                "changed": 2
+              },
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "numeric-projection-proposals": {
+    "model-uflia_monotone_relevant_terms_sat": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.7532751899619596,
+      "null_over_real_instructions": 1.3275360895007042,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 955470388,
+        "median": 955509436.5,
+        "max": 955845192
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.7335739477282405,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 3
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "model-uflra_monotone_var_var_guard_sat": {
+      "training_pairs": 10,
+      "real_over_null_instructions": 0.9391955636029975,
+      "null_over_real_instructions": 1.064740974886786,
+      "outcomes": {
+        "off": {
+          "unknown": 10
+        },
+        "real": {
+          "sat": 10
+        },
+        "null": {
+          "unknown": 10
+        }
+      },
+      "baseline_instructions": {
+        "min": 271950136,
+        "median": 272022459.5,
+        "max": 272346139
+      },
+      "eligible_null_pairs": 10,
+      "fresh": {
+        "seed": 87109,
+        "real_over_null_instructions": 0.9291667250117847,
+        "outcomes": {
+          "off": [
+            "unknown"
+          ],
+          "real": [
+            "sat"
+          ],
+          "null": [
+            "unknown"
+          ]
+        },
+        "telemetry": {
+          "off": [
+            {
+              "seed": 87109,
+              "slots": 0,
+              "eligible": 0,
+              "changed": 0
+            }
+          ],
+          "real": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 0
+            }
+          ],
+          "null": [
+            {
+              "seed": 87109,
+              "slots": 3,
+              "eligible": 3,
+              "changed": 3
+            }
+          ]
+        }
+      },
+      "telemetry": [
+        {
+          "seed": 15838,
+          "arms": {
+            "off": [
+              {
+                "seed": 15838,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 15838,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 31676,
+          "arms": {
+            "off": [
+              {
+                "seed": 31676,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 31676,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 47514,
+          "arms": {
+            "off": [
+              {
+                "seed": 47514,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 47514,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 63352,
+          "arms": {
+            "off": [
+              {
+                "seed": 63352,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 63352,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 79190,
+          "arms": {
+            "off": [
+              {
+                "seed": 79190,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 79190,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 7919,
+          "arms": {
+            "off": [
+              {
+                "seed": 7919,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 7919,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 23757,
+          "arms": {
+            "off": [
+              {
+                "seed": 23757,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 23757,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 39595,
+          "arms": {
+            "off": [
+              {
+                "seed": 39595,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 39595,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 55433,
+          "arms": {
+            "off": [
+              {
+                "seed": 55433,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 55433,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 71271,
+          "arms": {
+            "off": [
+              {
+                "seed": 71271,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 71271,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        },
+        {
+          "seed": 87109,
+          "arms": {
+            "off": [
+              {
+                "seed": 87109,
+                "slots": 0,
+                "eligible": 0,
+                "changed": 0
+              }
+            ],
+            "real": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 0
+              }
+            ],
+            "null": [
+              {
+                "seed": 87109,
+                "slots": 3,
+                "eligible": 3,
+                "changed": 3
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}
