@@ -440,3 +440,15 @@ binary or runtime cost. Expanded separation is still dominated on observed
 coverage by datatype publication, which recovers all its cases plus others
 and yields fully validated models on these datatype controls; neither policy
 has passed the matched-null acceptance gate yet.
+
+
+The finite-UF replay exposed another comparator limitation: broadening `UF` to
+`ALL` makes the user sort `Set` collide with Z3's built-in sort. Replay now
+preserves the input logic (13 tool tests pass). For the three recovered set
+controls, a separate closed-domain replay uses one Elem and two Set witnesses,
+checks that those domain/table definitions are consistent (Sat), and then
+checks the negated original assertions (Unsat). All three pass with Z3 4.16.0.
+`finite-domain-model-replays.json` records both queries' identities and results.
+This establishes the displayed finite interpretations on these cases; it does
+not count an ordinary open-universe replay as validation or erase a timeout in
+the unconstrained reference solve.

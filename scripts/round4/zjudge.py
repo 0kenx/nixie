@@ -106,7 +106,7 @@ def base_prefix(items, logic):
     """Sort / datatype declarations and script-level define-funs."""
     out = []
     if logic:
-        out.append("(set-logic ALL)")
+        out.append("(set-logic %s)" % logic)
     for kind, expr in items:
         if kind in ("declare-sort", "define-sort", "declare-datatypes", "declare-datatype", "define-fun", "define-fun-rec", "define-funs-rec"):
             out.append(c.show(expr))
@@ -126,7 +126,7 @@ def replay_text(items, defs, logic, goal):
     written, each declared symbol as the model's define-fun (or its
     declaration when the model omits it), then the goal."""
     ucs = {}
-    lines = ["(set-logic ALL)"] if logic else []
+    lines = ["(set-logic %s)" % logic] if logic else []
     missing = []
     body = []
     for kind, expr in items:
@@ -260,7 +260,7 @@ def judge(script_text: str, stdout: str, cap: int, check_verdicts=True):
             last = (v, items, ci)
             out["per_check"][ci] = v
             if check_verdicts and v in ("sat", "unsat"):
-                txt = "\n".join((["(set-logic ALL)"] if logic else []) +
+                txt = "\n".join((["(set-logic %s)" % logic] if logic else []) +
                                 [c.show(e) for k, e in items if k != "assert"] +
                                 ["(assert %s)" % a for a in asserts_of(items)] + ["(check-sat)"]) + "\n"
                 zv = z3_run(txt, cap)
