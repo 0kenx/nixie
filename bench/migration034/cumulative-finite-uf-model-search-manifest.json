@@ -1,0 +1,926 @@
+{
+  "suite": "migration034-satlib-smtlib-30s",
+  "timeout_s": 30,
+  "selection_salt": "nixie-migration034-20261110:",
+  "seeds": [
+    0
+  ],
+  "seed_note": "One default-configuration snapshot; zero is the store index, no solver seed override.",
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "smt_eligible_pools": {
+    "AUFLIA": {
+      "eligible_files": 3327,
+      "families": 3
+    },
+    "QF_ANIA": {
+      "eligible_files": 152,
+      "families": 5
+    },
+    "QF_AUFLIA": {
+      "eligible_files": 1303,
+      "families": 7
+    },
+    "QF_BV": {
+      "eligible_files": 39467,
+      "families": 54
+    },
+    "QF_IDL": {
+      "eligible_files": 1985,
+      "families": 21
+    },
+    "QF_LIA": {
+      "eligible_files": 12644,
+      "families": 32
+    },
+    "QF_NIA": {
+      "eligible_files": 24993,
+      "families": 15
+    },
+    "QF_UF": {
+      "eligible_files": 7406,
+      "families": 9
+    },
+    "QF_UFIDL": {
+      "eligible_files": 552,
+      "families": 11
+    },
+    "QF_UFLIA": {
+      "eligible_files": 640,
+      "families": 4
+    },
+    "UF": {
+      "eligible_files": 7590,
+      "families": 7
+    },
+    "UFLRA": {
+      "eligible_files": 15,
+      "families": 2
+    }
+  },
+  "arms": [
+    {
+      "name": "before",
+      "engine": "nixie",
+      "sha": "af14b6d2f800685b2737b02189cdae44d23f5459",
+      "binary": "precompile/af14b6d2f800685b2737b02189cdae44d23f5459/nixie",
+      "version": "af14b6d2f800685b2737b02189cdae44d23f5459",
+      "role": "baseline",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "7c2ec704c10abc19238e44a4dc212488bb48447bdf2bb15d0de167be307bce93"
+    },
+    {
+      "name": "after",
+      "engine": "nixie",
+      "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+      "binary": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/nixie-parity",
+      "version": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "5677175a698488d68c323b24ea54f8c7e1299ef2f29c63e40d49a6fa0990aac7"
+    },
+    {
+      "name": "z3",
+      "engine": "z3",
+      "sha": "862c6d948f73133f1229831a0240f2558e8dbfe5",
+      "binary": "/run/current-system/sw/bin/z3",
+      "version": "Z3 version 4.16.0 - 64 bit",
+      "role": "reference",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "git_note": "sha denotes result-hosting Nixie revision, not Z3 source; identity pins the actual binary hash and version",
+      "sha256": "9d864f53188ddc26eae4aa915b515d50885d4481f1d97e1503b225b5a5ee7824"
+    },
+    {
+      "name": "kissat",
+      "engine": "kissat",
+      "sha": "8af8e56f174b778aef3aa45af9f739b2a5f492c2",
+      "binary": "/media/data/proj/temp/kissat/build/kissat",
+      "version": "4.0.4",
+      "role": "reference",
+      "kinds": [
+        "SAT"
+      ],
+      "sha256": "5c91c37e4bcab56c71e304d610e303e239ab1de9809de409fe012d1d73d34fa4"
+    },
+    {
+      "name": "cadical",
+      "engine": "cadical",
+      "sha": "68fdd30944813565004bf3b26b08644cada6e00f",
+      "binary": "/media/data/proj/temp/cadical/build/cadical",
+      "version": "3.0.1",
+      "role": "reference",
+      "kinds": [
+        "SAT"
+      ],
+      "sha256": "015dafc87f3ecf1eca5a85a7dd90252862e669720ebc81a37d5142ca0cb3bb17"
+    },
+    {
+      "name": "rollback",
+      "engine": "nixie",
+      "sha": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+      "binary": "precompile/507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c/nixie",
+      "version": "507ce04c4346c1cc6dab5f8fdf1106e22ecb3b0c",
+      "role": "baseline",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "ff301278a482b27628928966a0a851dcb18178bf94bb338b505bb52e22784653"
+    },
+    {
+      "name": "cost-fixed",
+      "engine": "nixie",
+      "sha": "bcee40a4252bd2af9a2e831bd20d0faa2968ea49",
+      "binary": "precompile/bcee40a4252bd2af9a2e831bd20d0faa2968ea49/nixie",
+      "version": "bcee40a4252bd2af9a2e831bd20d0faa2968ea49",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "6b2676df6c82bc78adb0f2efd29b49b5e0a3faa9579ebecdcbb959d574dcf912"
+    },
+    {
+      "name": "correctness-only",
+      "engine": "nixie",
+      "sha": "4e991ae0cd18e8760c5e2f2c8360290bb08fcf15",
+      "binary": "precompile/4e991ae0cd18e8760c5e2f2c8360290bb08fcf15/nixie",
+      "version": "4e991ae0cd18e8760c5e2f2c8360290bb08fcf15",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "35c8cd7e0018844e07ca81d3b27ec3ef5cb8b6c6f6dd4509cceadece15b68219"
+    },
+    {
+      "name": "correctness-scoped",
+      "engine": "nixie",
+      "sha": "f8a621f4587295f3bff68959fbf46ead81340f00",
+      "binary": "precompile/f8a621f4587295f3bff68959fbf46ead81340f00/nixie",
+      "version": "f8a621f4587295f3bff68959fbf46ead81340f00",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "e9abf3db9c63567ccf5cabd03a43c63c34b9e91c2ba02c83d9379140c59a1846"
+    },
+    {
+      "name": "value-cache",
+      "engine": "nixie",
+      "sha": "db1aaf2198d9452f51fef1f2ac3d04cdb41c6522",
+      "binary": "precompile/db1aaf2198d9452f51fef1f2ac3d04cdb41c6522/nixie",
+      "version": "db1aaf2198d9452f51fef1f2ac3d04cdb41c6522",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "b448003eb01075fca1b96e14cca0e6926816d67e6a3b2c809179f2a719e5918e"
+    },
+    {
+      "name": "overflow-syntax",
+      "engine": "nixie",
+      "sha": "06ed78c11935e67f69cb37a2aa5f4f351e02ed1d",
+      "binary": "precompile/06ed78c11935e67f69cb37a2aa5f4f351e02ed1d/nixie",
+      "version": "06ed78c11935e67f69cb37a2aa5f4f351e02ed1d",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "c174348fbbd592918689bd17f03d4714add505bfd0c255ddba4895c8753b54e7"
+    },
+    {
+      "name": "refinement-statistics",
+      "engine": "nixie",
+      "sha": "d43d41cd447812b3f4f7d9831efde03a9cafdb46",
+      "binary": "precompile/d43d41cd447812b3f4f7d9831efde03a9cafdb46/nixie",
+      "version": "d43d41cd447812b3f4f7d9831efde03a9cafdb46",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "e0f09f74280bb3c7b23a2b96c2c20b6ea00b21b2f63fd1f3c14f61b7b1b80d35"
+    },
+    {
+      "name": "finite-array-completeness",
+      "engine": "nixie",
+      "sha": "2be2bf47e5cdd3dc1773371dbd52e7cb35c90e05",
+      "binary": "precompile/2be2bf47e5cdd3dc1773371dbd52e7cb35c90e05/nixie",
+      "version": "2be2bf47e5cdd3dc1773371dbd52e7cb35c90e05",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "0698ba99a7ce00ac52682860c58da4e1950969fdcc00f9290f48c633965d8233"
+    },
+    {
+      "name": "qf-auf-alias",
+      "engine": "nixie",
+      "sha": "0585a830a3a54b8d045716c1673dafee57ccef26",
+      "binary": "precompile/0585a830a3a54b8d045716c1673dafee57ccef26/nixie",
+      "version": "0585a830a3a54b8d045716c1673dafee57ccef26",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "release, default features, LTO=true, codegen-units=1",
+      "sha256": "50b51924272791cd4810b4dd12cf15d99247ec26a8aa96f3eeae7225d86eeb39"
+    },
+    {
+      "name": "policy-off",
+      "engine": "nixie",
+      "sha": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "binary": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/nixie-diagnostic",
+      "version": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "role": "baseline",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release; no null instrumentation; cumulative diagnostic selector only",
+      "sha256": "e887bb6bbec29b88b984dd7824d68237b17d76301ba9a0b215a896858775b7e5",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": ""
+      }
+    },
+    {
+      "name": "cumulative-guard-boundary-sampler",
+      "engine": "nixie",
+      "sha": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "binary": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/nixie-diagnostic",
+      "version": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release; no null instrumentation; cumulative diagnostic selector only",
+      "sha256": "e887bb6bbec29b88b984dd7824d68237b17d76301ba9a0b215a896858775b7e5",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "guard-boundary-sampler"
+      }
+    },
+    {
+      "name": "cumulative-finite-uf-model-search",
+      "engine": "nixie",
+      "sha": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "binary": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/nixie-diagnostic",
+      "version": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release; no null instrumentation; cumulative diagnostic selector only",
+      "sha256": "e887bb6bbec29b88b984dd7824d68237b17d76301ba9a0b215a896858775b7e5",
+      "diagnostic_environment": {
+        "NIXIE_PUBLICATION_PROBE": "guard-boundary-sampler,finite-uf-model-search"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "kind": "SAT",
+      "family": "uf50-218",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0294.cnf",
+      "sha256": "5c2005ba314ff4ae2a17095f7054710b72e4cd9e9d5d0ed14bbbd84390265b89",
+      "source": "satlib/RND3SAT/uf50-218/uf50-0294.cnf",
+      "source_sha256": "34edf58fb1a9c31c0d0fbddd1eddb99514a2cacfeca790496d774df8002bfe04",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf50-218",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf50-218/uf50-0258.cnf",
+      "sha256": "8d751a5395e88e4d92092eb41ea81434430f07bceccca77bf3c0008d48c2c393",
+      "source": "satlib/RND3SAT/uf50-218/uf50-0258.cnf",
+      "source_sha256": "bacd2398107aa4cd18e5a010b07b7809091740d8173494078c017a976c54e8e5",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf50-218",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf50-218/uuf50-0605.cnf",
+      "sha256": "6688f74124f5f98bdf3e1f565c216fba795d48cca6c3bf7eca4f2439f27faacc",
+      "source": "satlib/RND3SAT/uuf50-218/uuf50-0605.cnf",
+      "source_sha256": "e79aadad29b6862ab009007100e57f378f17b8724e62df11dd4e1b3dfe1191ef",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf50-218",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf50-218/uuf50-0974.cnf",
+      "sha256": "5a7d86d750b860537a17a33e79897254aca5bc317fb829c9e0610a739d411eda",
+      "source": "satlib/RND3SAT/uuf50-218/uuf50-0974.cnf",
+      "source_sha256": "234c5c7d688e1db615c8eb0204854b0cadd06c26bb6b014c2359c5fc4fb047d1",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf75-325",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-032.cnf",
+      "sha256": "0fba628e46484cdeb009dc9817cdb4de71eec0b755cb665ec15169b722720068",
+      "source": "satlib/RND3SAT/uf75-325/uf75-032.cnf",
+      "source_sha256": "8b2db5cbb9c91ba264d28cbda2235b7f93996c4a745bbf42dc91fb18a53aa305",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf75-325",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf75-325/uf75-057.cnf",
+      "sha256": "dab0254687b08d069abdd347a3d3f40c820c9e4dfe3155d375bfbe51d5165e22",
+      "source": "satlib/RND3SAT/uf75-325/uf75-057.cnf",
+      "source_sha256": "5ba89818cefee3d867cfa272cf8cf3291306638886d3099584a914e43677a931",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf75-325",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf75-325/uuf75-086.cnf",
+      "sha256": "2022ba4c36dfa4a901c45684f562241183c4d96b1c8b9b355e0f438f3a2797ef",
+      "source": "satlib/RND3SAT/uuf75-325/uuf75-086.cnf",
+      "source_sha256": "bf89595af601edbd8bf3e55ee7dbef187c051db2801b02baeb75e283e1cedaaa",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf75-325",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf75-325/uuf75-074.cnf",
+      "sha256": "8597e0297992fc4c22e8b34a4cfa84e3138346a2707d62e547088214cd747b33",
+      "source": "satlib/RND3SAT/uuf75-325/uuf75-074.cnf",
+      "source_sha256": "9000113936d8b2920801c166b7be050f568db88915f83186ad2ef59e8b57eff3",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf100-430",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0585.cnf",
+      "sha256": "ecd9be97ecd95fb4193eabd6d21dce5577696f650e36c3ca0a66171490d31858",
+      "source": "satlib/RND3SAT/uf100-430/uf100-0585.cnf",
+      "source_sha256": "2e2e1b40abdff5d1431b5220bf8e79fc4c162007e7b953185b6e94e38184b283",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf100-430",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf100-430/uf100-0684.cnf",
+      "sha256": "c3acaed4b4269d8ab9d442367ff47bea95d4a52edd8127fc4d28c476ff04bc39",
+      "source": "satlib/RND3SAT/uf100-430/uf100-0684.cnf",
+      "source_sha256": "b01a0c1e3e84611f91d4562bb663780f265d7e793af30cafcfc32f4646c9d877",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf100-430",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf100-430/uuf100-0968.cnf",
+      "sha256": "c63bcf7accbfc6d79834871bc2970c87ccdfd25e9d9630b4bce58260783bff62",
+      "source": "satlib/RND3SAT/uuf100-430/uuf100-0968.cnf",
+      "source_sha256": "7742caa7d67d0712ec831226fd73be445696a01b1e57698aab61e87f7a4717f7",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf100-430",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf100-430/uuf100-0347.cnf",
+      "sha256": "7257950161cb19df0033620f3dbf94d6fa541f97534b5e0c6e6727677c565702",
+      "source": "satlib/RND3SAT/uuf100-430/uuf100-0347.cnf",
+      "source_sha256": "8f75972413becd6de20a7b5e5eae1022f30c6cf0fdb49547b9b23569ffb3a614",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf150-645",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-044.cnf",
+      "sha256": "6918ca749082271f2987a6f6eaa5e82660e51938395fee87a2a085ebbcba5618",
+      "source": "satlib/RND3SAT/uf150-645/uf150-044.cnf",
+      "source_sha256": "0fc05ec5b86ec96e5e7a7dabdce8e38ff12d980df00abe792722cc42401bde8d",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf150-645",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf150-645/uf150-085.cnf",
+      "sha256": "ee807756d986c24f8977e2d437601475e5efc3c0904b84a8eefd35f2f57ec6cb",
+      "source": "satlib/RND3SAT/uf150-645/uf150-085.cnf",
+      "source_sha256": "f56e920d7b305aadcca9e091ed542bce7c2b2e46860c378bf0029a648e94eb02",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf150-645",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf150-645/uuf150-075.cnf",
+      "sha256": "e6ad3e4d0e6bcf5de399593ebd2b558ae5f7312dfd38d32c3203309729c8aa29",
+      "source": "satlib/RND3SAT/uuf150-645/uuf150-075.cnf",
+      "source_sha256": "02911dda8da962152acdbb5a193e58f3e07b19d0e7fb8b3a0bfa2c0e2fea4c2b",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf150-645",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf150-645/uuf150-017.cnf",
+      "sha256": "f1fe29d11535dd79d62e0054bad47999f2885c9bc4663951303a12a1a3f1210d",
+      "source": "satlib/RND3SAT/uuf150-645/uuf150-017.cnf",
+      "source_sha256": "ab566435e079bcc5d2172ae3089ee129aeb6b043e147ac0a15d8be659f326509",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf200-860",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-094.cnf",
+      "sha256": "820f1338b86a1a06f1078dce3a0347252923316e40b9e3511513234ff618aa56",
+      "source": "satlib/RND3SAT/uf200-860/uf200-094.cnf",
+      "source_sha256": "291f8b3cb2d58c58984eaa89b9b82e9c501f90551358292a5962316063b7e2bb",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf200-860",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf200-860/uf200-075.cnf",
+      "sha256": "0f17c39336ebcb92a338d7beb4e5d8940d2039e1986aea2ab142499b0c5bdfb0",
+      "source": "satlib/RND3SAT/uf200-860/uf200-075.cnf",
+      "source_sha256": "a2725e83b8024983563de9a939ccd8687c05162ebf3da4554669b5f8cfaa77c2",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf200-860",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf200-860/uuf200-083.cnf",
+      "sha256": "50d15297e2b70318a766a6fb1fb66978f4305f1c4e71c8556639aa1711194459",
+      "source": "satlib/RND3SAT/uuf200-860/uuf200-083.cnf",
+      "source_sha256": "e3349287c2e8c1d11e9a7334449168d886a2f11bf518e877eff344ecdd18333a",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf200-860",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf200-860/uuf200-01.cnf",
+      "sha256": "09b7d9c77afe26dd9cc7b88ac5d30e90f38b13d3d2aff59cc813862bf6ecb3a4",
+      "source": "satlib/RND3SAT/uuf200-860/uuf200-01.cnf",
+      "source_sha256": "371122644c8627b9bb8b651a4879493ae0afe05d8555071415e5cea34ff221b1",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf250-1065",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-074.cnf",
+      "sha256": "956e4e6715443424620494ab594e87bcff0a467440540a7abf705e2408ed1497",
+      "source": "satlib/RND3SAT/uf250-1065/uf250-074.cnf",
+      "source_sha256": "6526a8f5498c0582a1df6181a33ac9a3966820fb43625d248869af29b4201efe",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uf250-1065",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uf250-1065/uf250-062.cnf",
+      "sha256": "627cbb448cdefc4db2c055d1ac79e5af11c6eb812c23521cca925e66fcdf1c01",
+      "source": "satlib/RND3SAT/uf250-1065/uf250-062.cnf",
+      "source_sha256": "8294b5c44776a62c04496804b2edb8cd90e0527386c9ff7e79e9f56f0d49d116",
+      "expected": "sat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf250-1065",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf250-1065/uuf250-08.cnf",
+      "sha256": "8accba8e82b1b14863c5117e606d1188ef1bfc92c98b80ccdb62350f0ccfdded",
+      "source": "satlib/RND3SAT/uuf250-1065/uuf250-08.cnf",
+      "source_sha256": "c8cb9aedb824d94b6b57f51d70b888927e97dab9df94311f53e5ec98a7477da2",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SAT",
+      "family": "uuf250-1065",
+      "path": "precompile/862c6d948f73133f1229831a0240f2558e8dbfe5/benchmark/migration034-satlib-smtlib-30s/corpus/SATLIB/uuf250-1065/uuf250-034.cnf",
+      "sha256": "557769d674c41bbe35fe295d15b5cc632e16e4dfd76a78db6dba650451d55020",
+      "source": "satlib/RND3SAT/uuf250-1065/uuf250-034.cnf",
+      "source_sha256": "a15f4a3d09a7d6c8f5d7bd7e8475d8f63a64b5083c91a30d96dd569da7c5aad9",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "AUFLIA",
+      "subfamily": "20230321-UltimateAutomizerSvcomp2023",
+      "path": "smt-lib/non-incremental/AUFLIA/20230321-UltimateAutomizerSvcomp2023/sll_to_dll_rev-1.i_26.smt2",
+      "sha256": "fcab5c41fca33a5d4a6fa11b851a8aa0ea56993fd041e4eb7d85388c883423a6",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "AUFLIA",
+      "subfamily": "20170829-Rodin",
+      "path": "smt-lib/non-incremental/AUFLIA/20170829-Rodin/smt7651775328626477292.smt2",
+      "sha256": "3121c87307227cba42d9c5783a57f3254e9cd11fbb25f67b176299114db40740",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "AUFLIA",
+      "subfamily": "misc",
+      "path": "smt-lib/non-incremental/AUFLIA/misc/set1.smt2",
+      "sha256": "7365430025a891257a9758ebd90be293fc5c3e9c86e96f89e4c6b39673b62dfa",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "AUFLIA",
+      "subfamily": "20230321-UltimateAutomizerSvcomp2023",
+      "path": "smt-lib/non-incremental/AUFLIA/20230321-UltimateAutomizerSvcomp2023/sll_to_dll_rev-2.i_60.smt2",
+      "sha256": "11557fd337d53c9bb1ad8a1472096c483d54e2cb400ec49e3c37d097fd697246",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_ANIA",
+      "subfamily": "20211213-GrandProduct-Ozdemir",
+      "path": "smt-lib/non-incremental/QF_ANIA/20211213-GrandProduct-Ozdemir/sound/diff/4.smt2",
+      "sha256": "6411c450d194193d087eafa24ef284b9cd2b6e5a6c1032fd763ae2367e5ec67c",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_ANIA",
+      "subfamily": "20230321-UltimateAutomizerSvcomp2023",
+      "path": "smt-lib/non-incremental/QF_ANIA/20230321-UltimateAutomizerSvcomp2023/lcm2.c_AllErrorsAtOnce_Iteration3_0.smt2",
+      "sha256": "878b22a19af35a0a27973a7bc7bd66d1ec86bc98fd5557cf08acdf3f8299cee5",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_ANIA",
+      "subfamily": "UltimateAutomizer",
+      "path": "smt-lib/non-incremental/QF_ANIA/UltimateAutomizer/cs_peterson_true-unreach-call.i.smt2",
+      "sha256": "6d76833a3637197ea095ef249f27fb1fdb539ba7e86e8e3a06bcfcdc11cc8b73",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_ANIA",
+      "subfamily": "20240413-AutomizerLoopAcceleration",
+      "path": "smt-lib/non-incremental/QF_ANIA/20240413-AutomizerLoopAcceleration/ddlm2013.i_AllErrorsAtOnce_Iteration5_0.smt2",
+      "sha256": "72de2bc8565ce1cd41d924812956be399ee728535245ec1e71547b41522557dc",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_AUFLIA",
+      "subfamily": "array_benchmarks",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/array_benchmarks/misc/pipeline-invalid.smt2",
+      "sha256": "dc7f8f51be688669321c8a9a15f2543fc070bc3a4c55b81c763604c34fa73bde",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_AUFLIA",
+      "subfamily": "storeinv",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/storeinv/storeinv_t3_pp_nf_ai_00004_001.cvc.smt2",
+      "sha256": "4236ccbf1c7cc6a7ba98609885bed7fa0a3343eaaed2a8ffdbf3a7bed653d054",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_AUFLIA",
+      "subfamily": "20170829-Rodin",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/20170829-Rodin/smt8654111885011073106.smt2",
+      "sha256": "0a815de33b46d7b888aab51263277ab929307aa9ca8abf91ff66c536dd5d1606",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_AUFLIA",
+      "subfamily": "swap",
+      "path": "smt-lib/non-incremental/QF_AUFLIA/swap/swap_t1_pp_nf_ai_00008_001.cvc.smt2",
+      "sha256": "d8faa93e92177b98cd5264138181413eb2a449aa9b80d5302001e612651396e7",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_BV",
+      "subfamily": "pspace",
+      "path": "smt-lib/non-incremental/QF_BV/pspace/shift1add.29940.smt2",
+      "sha256": "a805452e06405e9145f73e7898cd6bed899dab570a8d6049a850bdfe0a63502e",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_BV",
+      "subfamily": "brummayerbiere4",
+      "path": "smt-lib/non-incremental/QF_BV/brummayerbiere4/unconstrained05.smt2",
+      "sha256": "06d87bb4149188183788fabb06856fb8dda47ec508ffebf6b592cb0eb2373562",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_BV",
+      "subfamily": "stp_samples",
+      "path": "smt-lib/non-incremental/QF_BV/stp_samples/run_03230.trace.cond_030313_0x41821d_00.smt2",
+      "sha256": "a334b39d1d833b2934d3b7822c1abe1569e4f6b98c1ce0d607b14ea1cdb784d8",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_BV",
+      "subfamily": "sage",
+      "path": "smt-lib/non-incremental/QF_BV/sage/app9/bench_3296.smt2",
+      "sha256": "5cd16b387fc077de6c21362e0abb0a8ba0b6a28878abf3fcaeac91284b8e2d1f",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_IDL",
+      "subfamily": "parity",
+      "path": "smt-lib/non-incremental/QF_IDL/parity/05.200.graph.smt2",
+      "sha256": "95a9e90c6f5dece2cce02d53a2f029023f18ddf81f6cbdc88dd9248a18ddd052",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_IDL",
+      "subfamily": "planning",
+      "path": "smt-lib/non-incremental/QF_IDL/planning/plan-16.cvc.smt2",
+      "sha256": "34ac47b63349205a5022828d757a704c325e5db115bafa16c27cf07000c96270",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_IDL",
+      "subfamily": "mathsat",
+      "path": "smt-lib/non-incremental/QF_IDL/mathsat/fischer/FISCHER7-8-ninc.smt2",
+      "sha256": "d5233295914a7f79f6ae653a09fbdc36ecc848540f5750a3df61604398142eb4",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_IDL",
+      "subfamily": "asp",
+      "path": "smt-lib/non-incremental/QF_IDL/asp/GraphColouring/graph-colouring-nodes=150-density=0.1-instance=5.smt2",
+      "sha256": "34294ddcdb77fd32b141d278e1a2e78e7d617a7083097f0a06a89ab411dce068",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_LIA",
+      "subfamily": "tightrhombus",
+      "path": "smt-lib/non-incremental/QF_LIA/tightrhombus/tightrhombus-283-245-5.smt2",
+      "sha256": "0b28f6d903941fade8cce9965d3e7f5070ec7c0a1798f609ce609704939eba3f",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_LIA",
+      "subfamily": "arctic-matrix",
+      "path": "smt-lib/non-incremental/QF_LIA/arctic-matrix/constraint-392137.smt2",
+      "sha256": "50da3c9ede4ad2ce14dce74fd1182702e6e920dbbc4a8b695cf9697dcf37dc15",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_LIA",
+      "subfamily": "20220307-SMPT",
+      "path": "smt-lib/non-incremental/QF_LIA/20220307-SMPT/SwimmingPool-PT-04/RC-02.smt2",
+      "sha256": "3c91c9adc3fd9b35d53649764592a90a1f7dad727cdeca506e6167e6c16daa6e",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_LIA",
+      "subfamily": "wisa",
+      "path": "smt-lib/non-incremental/QF_LIA/wisa/wisa5.smt2",
+      "sha256": "736ba50c3d5e70578083a16c1a1ab3932997fbef479dfe9bc235a31bc00f9db7",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_NIA",
+      "subfamily": "2019-ezsmt",
+      "path": "smt-lib/non-incremental/QF_NIA/2019-ezsmt/car/inst8.ez.smt2",
+      "sha256": "8236c6a24c69027c696313c4b780db3021bd51178d8f601a317400d18e7f5bf3",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_NIA",
+      "subfamily": "LCTES",
+      "path": "smt-lib/non-incremental/QF_NIA/LCTES/digital-stopwatch.locals.nosummaries.smt2",
+      "sha256": "329734373f6c034f75a9a81524c0fde5b2933d1339bacc86ce389c0f99fc28d1",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_NIA",
+      "subfamily": "mcm",
+      "path": "smt-lib/non-incremental/QF_NIA/mcm/18.smt2",
+      "sha256": "6b7eef86b03cab64c123d9a57c53cd7c2d8f31dd7844c6977cd6504cdf7d5bbe",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_NIA",
+      "subfamily": "LassoRanker",
+      "path": "smt-lib/non-incremental/QF_NIA/LassoRanker/aaron3_true-termination.c_Iteration1_Loop+nonterminationTemplate_0.smt2",
+      "sha256": "15e4ae6591d17af79ac5a0f381064efd877295d8d81f246c5ce5e9573a459cdf",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UF",
+      "subfamily": "PEQ",
+      "path": "smt-lib/non-incremental/QF_UF/PEQ/PEQ014_size9.smt2",
+      "sha256": "0476ea28ab2227e35ed09153bb2da47c4b48d0f16f82b5d835b5a01b2d8519ca",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UF",
+      "subfamily": "eq_diamond",
+      "path": "smt-lib/non-incremental/QF_UF/eq_diamond/eq_diamond89.smt2",
+      "sha256": "70d63e4c60ee4a5fed378209f5c37a7aff8058006c6a108740db5bf9407d308f",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UF",
+      "subfamily": "20190906-CLEARSY",
+      "path": "smt-lib/non-incremental/QF_UF/20190906-CLEARSY/0016/00194.smt2",
+      "sha256": "25afc016c6fde1c76c4a44a2040ca90c2de38681d926cecbbd8a2acde141c97a",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UF",
+      "subfamily": "SEQ",
+      "path": "smt-lib/non-incremental/QF_UF/SEQ/SEQ005_size6.smt2",
+      "sha256": "88699c34dae2244a93ba3b79bbc1bbf5dcaaec361d3a62db50e9fd1dea32bf90",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFIDL",
+      "subfamily": "UCLID-pred",
+      "path": "smt-lib/non-incremental/QF_UFIDL/UCLID-pred/ibm_cache/ibm_cache_full1.smt2",
+      "sha256": "73e05de8de1e9955c00da219b85f8d80ec45d73661a926d65b0c99aeaadb6794",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFIDL",
+      "subfamily": "RDS",
+      "path": "smt-lib/non-incremental/QF_UFIDL/RDS/sorted_list_insert_noalloc0.smt2",
+      "sha256": "2c436fb8f358da78843078bf3933917f5e3210266e0e68b548fb08a4dd116448",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFIDL",
+      "subfamily": "20210312-Bouvier",
+      "path": "smt-lib/non-incremental/QF_UFIDL/20210312-Bouvier/vlsat3_f77.smt2",
+      "sha256": "612608c52769b0fb0c2caf5441738a152f579c1ea292377a1ac199228ae804f0",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFIDL",
+      "subfamily": "pete2",
+      "path": "smt-lib/non-incremental/QF_UFIDL/pete2/c6nidw_s.smt2",
+      "sha256": "b958935d992b102c7e53d1d32a3f8706cdaec3bf8dc93fc46652ba3d4f2f5a97",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "20230314-Jaroslav-Bendik-Certora",
+      "path": "smt-lib/non-incremental/QF_UFLIA/20230314-Jaroslav-Bendik-Certora/25959_5dee2e2f6ef44465a2bea4b085818948_67_QF_UFLIA.smt2",
+      "sha256": "6ff1b71ed190aec37315f66aed728794d7f37f1af5f5f6f09621f63789ae57cf",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "TwoSquares",
+      "path": "smt-lib/non-incremental/QF_UFLIA/TwoSquares/smtlib.639533.smt2",
+      "sha256": "b165eef94ffb2e77a894b718852060b2a140c2791cb18ae8650b57fd15af8d22",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UF",
+      "subfamily": "grasshopper",
+      "path": "smt-lib/non-incremental/UF/grasshopper/instantiated/rec_reverse_postcondition_of_rec_reverse_29_2.smt2",
+      "sha256": "4d60bf28cde3632c21aab57c66843a7982c2bd1db8789ff5a454d1e3885cb767",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UF",
+      "subfamily": "wintersteiger",
+      "path": "smt-lib/non-incremental/UF/wintersteiger/fmsd13/fixpoint/small-bug1-fixpoint-8.smt2",
+      "sha256": "315d8b64922c37bdec0d4fc99b7584042d8409603a165e9a420064b24910bc01",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UF",
+      "subfamily": "20170428-Barrett",
+      "path": "smt-lib/non-incremental/UF/20170428-Barrett/cdt-cade2015/nada/distro/gram_lang/x2015_09_10_16_48_25_187_1125625.smt_in.smt2",
+      "sha256": "40c06669a92b09bffc1dc6271c53b206f1f86641a70e95b38ac569790bd706d0",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "UF",
+      "subfamily": "sledgehammer",
+      "path": "smt-lib/non-incremental/UF/sledgehammer/TwoSquares/uf.707021.smt2",
+      "sha256": "c1a2e0633d86a6095cee73650d8cbd422ab139ece5ce85ec045240136b5bb22c",
+      "expected": "unknown"
+    },
+    {
+      "kind": "SMT",
+      "family": "UFLRA",
+      "subfamily": "FFT",
+      "path": "smt-lib/non-incremental/UFLRA/FFT/smtlib.623417.smt2",
+      "sha256": "96092c381dbf79cf941a4c39de51525eb8fd37648cafaaa534da32ee13dd2c72",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UFLRA",
+      "subfamily": "misc",
+      "path": "smt-lib/non-incremental/UFLRA/misc/set16.smt2",
+      "sha256": "af7066c0a1860a14923b4babbfd601463fb7789e2748b8bea37c069c76437803",
+      "expected": "sat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UFLRA",
+      "subfamily": "FFT",
+      "path": "smt-lib/non-incremental/UFLRA/FFT/smtlib.627457.smt2",
+      "sha256": "b3bb366a3d683735ade529c72f9b63e65bd78936c5ab9ac600eaee5fba58cc90",
+      "expected": "unsat"
+    },
+    {
+      "kind": "SMT",
+      "family": "UFLRA",
+      "subfamily": "misc",
+      "path": "smt-lib/non-incremental/UFLRA/misc/list2.smt2",
+      "sha256": "6cbfd0abf427880f8295603b00cc78be22662c113329d76df559b8d0de16d66e",
+      "expected": "sat"
+    }
+  ],
+  "results": "precompile/dca0ce369c2bdb6d743dfc53ee80fd1805be55e5/benchmark/migration034-satlib-smtlib-30s/cumulative-finite-uf-model-search.json",
+  "experiment": {
+    "feature": "finite-uf-model-search",
+    "selected": [
+      "guard-boundary-sampler",
+      "finite-uf-model-search"
+    ],
+    "previous": "cumulative-guard-boundary-sampler",
+    "plan": "cumulative-policy-plan.json"
+  }
+}
