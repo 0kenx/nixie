@@ -62,3 +62,11 @@ Replays preserve the script's logic: broadening `UF` to `ALL` can change the
 meaning or availability of names such as the uninterpreted sort `Set`.
 Finite-universe closure is separate evidence; ordinary witness replay does not
 silently assume the displayed values exhaust an uninterpreted sort.
+
+Witness replay renames complete symbol tokens only. It preserves string literals,
+user declarations and bound names, and allocates fresh replay symbols against
+all observed user symbols. Witnesses occurring only in a get-value goal are
+registered before declarations are emitted. Pure-real logics can reject printed
+`to_real` casts; these remain unresolved in the generic judge. Any explicit
+replay in a broader logic must document why user sort names and formula semantics
+remain valid (see the migration combined-replay controls).
