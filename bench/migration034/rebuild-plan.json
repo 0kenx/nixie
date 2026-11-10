@@ -511,8 +511,8 @@
     },
     {
       "id": "general-function-retry",
-      "status": "withheld",
-      "decision": null,
+      "status": "gate-failed",
+      "decision": "drop",
       "required_evidence": "Focused capability benefit, release checks, Z3 parity, pinned performance gate, full-work cost and cumulative-cost check; search policies also need a valid matched null with >=10 common effective seeds and fresh replay.",
       "source_commits": [
         "5a5ed86d"
@@ -533,7 +533,12 @@
         "UFLIA/idempotent",
         "UFLIA/injective",
         "UFLIA/surjective"
-      ]
+      ],
+      "gate_result": "Default recursive witness recovered, but all eleven common-seed off/real/null runs already solve. Null is inactive at ten seeds and intervention counts differ at the active seed (65 real, 64 null). No valid semantic-merit inference; fresh seed has no gain.",
+      "cost_report": "function-retry-results.json",
+      "matched_control": "retry-control-summary.json",
+      "smt_cost_over_core": 1.0005229342542894,
+      "sat_cost_over_core": 1.0000084242390184
     },
     {
       "id": "diagnostic-tools",

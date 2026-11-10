@@ -1,0 +1,44 @@
+{
+  "training_real_over_null_instructions": 1.019922316403567,
+  "fresh_real_over_null_instructions": 1.0000629837104962,
+  "active_seeds": {
+    "23757": {
+      "retry-null": 64,
+      "retry-off": 0,
+      "retry-real": 65
+    }
+  },
+  "verdict": "drop: no replicated coverage benefit; null inactive in 10/11 seeds and unequal intervention counts at the one active seed; no valid heuristic merit claim",
+  "z3_version": "4.16.0",
+  "model_validation": {
+    "distinct_published_outputs": 1,
+    "judgment": {
+      "checks": 1,
+      "sat": 1,
+      "unsat": 0,
+      "unknown": 0,
+      "other": 0,
+      "wrong_sat": 0,
+      "wrong_unsat": 0,
+      "z3_unknown": 0,
+      "models": 1,
+      "model_ok": 1,
+      "model_partial_consistent": 0,
+      "falsifying": 0,
+      "model_unresolved": 0,
+      "uc_unresolved": 0,
+      "withheld": 0,
+      "incomplete_pin_fail": 0,
+      "gv_pairs": 1,
+      "gv_wrong": 0,
+      "gv_nonvalue": 0,
+      "gv_error": 0,
+      "gv_unresolved": 0,
+      "events": [],
+      "per_check": {
+        "0": "sat/ok"
+      },
+      "z3_version": "Z3 version 4.16.0 - 64 bit"
+    }
+  }
+}

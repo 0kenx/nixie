@@ -1,0 +1,57 @@
+diff --git a/nixie-solver/src/solver/uf_consistency.rs b/nixie-solver/src/solver/uf_consistency.rs
+index 79639c26..01871647 100644
+--- a/nixie-solver/src/solver/uf_consistency.rs
++++ b/nixie-solver/src/solver/uf_consistency.rs
+@@ -402,10 +402,50 @@ impl Solver {
+         manager: &mut TermManager,
+         non_numeric_only: bool,
+     ) -> bool {
++        // Experiment-only control: both active arms encode the same real and
++        // detached-function congruence implications, then assert one unit.
++        // The detached function has the same signature and argument terms.
++        static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++        let mode = MODE.get_or_init(|| {
++            std::env::var("NIXIE_RETRY_CONTROL").unwrap_or_else(|_| "off".into())
++        });
++        if mode == "off" {
++            return false;
++        }
+         let lemmas = self.functional_collision_lemmas(manager, non_numeric_only);
+-        let added = !lemmas.is_empty();
++        let mut added = false;
+         for lemma in lemmas {
+-            self.assert_dt_lemma(lemma, manager);
++            let Some(TermKind::Implies(premise, conclusion)) =
++                manager.get(lemma).map(|n| n.kind.clone())
++            else { continue };
++            let Some(TermKind::Eq(left, right)) =
++                manager.get(conclusion).map(|n| n.kind.clone())
++            else { continue };
++            let Some(left_node) = manager.get(left).cloned() else { continue };
++            let Some(right_node) = manager.get(right).cloned() else { continue };
++            let (TermKind::Apply { func: lf, args: la },
++                 TermKind::Apply { func: rf, args: ra }) =
++                (left_node.kind, right_node.kind)
++            else { continue };
++            if lf != rf || la.len() != ra.len() || left_node.sort != right_node.sort {
++                continue;
++            }
++            let name = nixie_core::reserved::reserved_name("retry-control", &lemma.raw().to_string());
++            let alias_left = manager.mk_apply(&name, la, left_node.sort);
++            let alias_right = manager.mk_apply(&name, ra, right_node.sort);
++            let alias_eq = manager.mk_eq(alias_left, alias_right);
++            let null = manager.mk_implies(premise, alias_eq);
++            // Congruence for either function is valid independently of the
++            // candidate. The exact same encodings exist in both arms.
++            let _ = self.encode(lemma, manager);
++            let _ = self.encode(null, manager);
++            let selected = if mode == "real" { lemma } else { null };
++            if !self.dt_axiom_instances.contains(&selected) {
++                eprintln!("RETRY_CONTROL mode={} lemma={} null={} non_numeric={}",
++                    mode, lemma.raw(), null.raw(), non_numeric_only);
++                self.assert_dt_lemma(selected, manager);
++                added = true;
++            }
+         }
+         added
+     }

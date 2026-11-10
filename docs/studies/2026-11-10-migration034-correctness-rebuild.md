@@ -321,3 +321,36 @@ the host rejected kernel-callchain access. Launcher locale processing occupied
 many samples; it is excluded from solver attribution. No host settings changed.
 Full-process retired instructions, not profile sample percentages or wall time,
 remain the primary cost measurement.
+
+
+### General function retries — drop
+
+The isolated production candidate `001cd07b` restores only the three guarded
+Ackermann refinement/re-solve sites. The clause construction was checked against
+Z3 `src/smt/dyn_ack.cpp:407`: all differing argument equalities guard the result
+equality. The final model guard remains active. On the unchanged 72-input sample,
+SAT cost is **1.000008x** and SMT cost **1.000523x** versus the correctness-only
+baseline, with no gained/lost solves or decisive disagreement. Of the focused
+coverage contracts, only the recursive `sum(k)=6` case recovers Sat with k=3;
+none of the seven lost parity cases recovers.
+
+This apparent benefit did not survive the registered seed controls. Diagnostic
+`487d19b3` encodes both the real congruence implication and the same implication
+for a detached reserved function with identical arguments/signature in both
+active arms, then asserts one through the same path. Only valid congruence
+lemmas are introduced. Mode is read once per process. Ten common seeds and
+held-back 87109 ran once with 30-second limits and full instruction counters.
+**All 33 off/real/null runs solve with k=3.** The off distribution varies greatly;
+the default-seed loss is not a replicated completeness benefit. Ten seeds never
+activate either intervention. At the remaining seed, real asserts 65 units and
+null 64: this is not a fully matched control. `retry-control-summary.json`
+records the ratios but they cannot establish semantic merit. The fresh seed
+also gains nothing. The candidate therefore fails the acceptance protocol and
+is dropped; neither the retry activation nor diagnostic hooks remain enabled.
+
+All raw cells are retained under their source SHAs. This is a negative
+experiment, not a claim that function refinement can never help. Do not retry
+this default-seed argument without an active, matched control and replicated
+coverage benefit. Full-suite revalidation is unnecessary for the rejected
+candidate: its withdrawal restores byte-identical Rust/Cargo source to the
+already verified correctness-only baseline.

@@ -3862,58 +3862,6 @@ impl Solver {
                         // is what makes "recompute after every re-solve" fall
                         // out of the loop structure instead of being a rule
                         // to remember.
-                        // General result sorts need a valid congruence lemma
-                        // before candidate blocking. Numeric repair retains its
-                        // established position after the refutation gate.
-                        if self.assert_functional_consistency(manager, true) {
-                            theory_refinement_rounds += 1;
-                            if theory_refinement_rounds >= max_theory_refinement_rounds {
-                                self.model = None;
-                                self.unsat_core = None;
-                                return SolverResult::Unknown;
-                            }
-                            self.instantiate_arith_axioms(manager);
-                            self.sat.backtrack_to_root();
-                            self.euf.reset();
-                            self.arith.reset();
-                            self.reset_bv_theory_for_round();
-                            self.diff.reset();
-                            self.rebase_theory_state();
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.check_theory_conflict_ceiling,
-                                self.config.max_decisions,
-                                self.config.max_bv_embedded_checks,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                Some(&self.encoded_terms),
-                                self.check_deadline,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
                         let refutation = self.model_refutation_kind(manager);
                         if refutation != model_eval::ModelRefutation::No {
                             // Bounded blocking (upstream #40): this one
@@ -3988,56 +3936,6 @@ impl Solver {
                         // and the argument-pair care-split plus its
                         // trichotomy force the decision.
                         if self.repair_congruence_gap(manager) {
-                            self.sat.backtrack_to_root();
-                            self.euf.reset();
-                            self.arith.reset();
-                            self.reset_bv_theory_for_round();
-                            self.diff.reset();
-                            self.rebase_theory_state();
-                            let zero_term = manager.mk_int(0);
-                            theory_manager = TheoryManager::new(
-                                manager,
-                                &mut self.euf,
-                                &mut self.arith,
-                                &mut self.bv,
-                                &mut self.diff,
-                                &mut self.array_theory,
-                                &self.bv_terms,
-                                &self.var_to_constraint,
-                                &self.var_to_parsed_arith,
-                                &self.term_to_var,
-                                &self.var_to_term,
-                                &self.numarg_proxies,
-                                &self.interface_const_pins,
-                                zero_term,
-                                &self.ite_result_terms,
-                                &mut self.derived_reasons,
-                                self.config.theory_mode,
-                                &mut self.statistics,
-                                self.check_theory_conflict_ceiling,
-                                self.config.max_decisions,
-                                self.config.max_bv_embedded_checks,
-                                self.has_bv_arith_ops,
-                                self.has_array_ops,
-                                Some(&self.encoded_terms),
-                                self.check_deadline,
-                                self.logic.as_deref(),
-                                pure_dl,
-                                sparse_dl,
-                                self.has_injective_distinct,
-                                &self.injective_distinct_specs,
-                            );
-                            continue;
-                        }
-
-                        if self.assert_functional_consistency(manager, false) {
-                            theory_refinement_rounds += 1;
-                            if theory_refinement_rounds >= max_theory_refinement_rounds {
-                                self.model = None;
-                                self.unsat_core = None;
-                                return SolverResult::Unknown;
-                            }
-                            self.instantiate_arith_axioms(manager);
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
@@ -4302,62 +4200,6 @@ impl Solver {
                             "[qround{tag}] iter={mbqi_iteration} result={desc} mc_declined={:?}",
                             self.mbqi.model_checker_last_decline()
                         );
-                    }
-                    // Only a would-be Sat exit is eligible. Repairing every
-                    // intermediate quantified candidate can starve MBQI and
-                    // grow clauses on unchanged repeated checks.
-                    if matches!(
-                        mbqi_result,
-                        MBQIResult::NoQuantifiers | MBQIResult::Satisfied
-                    ) && self.assert_functional_consistency(manager, false)
-                    {
-                        theory_refinement_rounds += 1;
-                        if theory_refinement_rounds >= max_theory_refinement_rounds {
-                            self.model = None;
-                            self.unsat_core = None;
-                            return SolverResult::Unknown;
-                        }
-                        self.instantiate_arith_axioms(manager);
-                        self.sat.backtrack_to_root();
-                        self.euf.reset();
-                        self.arith.reset();
-                        self.reset_bv_theory_for_round();
-                        self.diff.reset();
-                        self.rebase_theory_state();
-                        let zero_term = manager.mk_int(0);
-                        theory_manager = TheoryManager::new(
-                            manager,
-                            &mut self.euf,
-                            &mut self.arith,
-                            &mut self.bv,
-                            &mut self.diff,
-                            &mut self.array_theory,
-                            &self.bv_terms,
-                            &self.var_to_constraint,
-                            &self.var_to_parsed_arith,
-                            &self.term_to_var,
-                            &self.var_to_term,
-                            &self.numarg_proxies,
-                            &self.interface_const_pins,
-                            zero_term,
-                            &self.ite_result_terms,
-                            &mut self.derived_reasons,
-                            self.config.theory_mode,
-                            &mut self.statistics,
-                            self.check_theory_conflict_ceiling,
-                            self.config.max_decisions,
-                            self.config.max_bv_embedded_checks,
-                            self.has_bv_arith_ops,
-                            self.has_array_ops,
-                            Some(&self.encoded_terms),
-                            self.check_deadline,
-                            self.logic.as_deref(),
-                            pure_dl,
-                            sparse_dl,
-                            self.has_injective_distinct,
-                            &self.injective_distinct_specs,
-                        );
-                        continue;
                     }
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
