@@ -354,3 +354,17 @@ this default-seed argument without an active, matched control and replicated
 coverage benefit. Full-suite revalidation is unnecessary for the rejected
 candidate: its withdrawal restores byte-identical Rust/Cargo source to the
 already verified correctness-only baseline.
+
+
+### Alias gate control correction
+
+The first `QF_AUF` candidate (`d318e29f`) failed its added rejection test on
+`(declare-const x Int)(assert (= x 0))`, which returned Sat. Inspection of
+`logic_contract::validate` shows that integer/real sorts are deliberately
+collected as provenance, not enforced as arithmetic operations: they may occur
+as UF decorations. The new test had asserted a stronger contract than the
+existing solver defines. This is a test-design failure, not evidence that the
+alias itself is unsafe or expensive. The failed log remains cached. The revised
+control uses `(+ x 1)`, `bvadd`, and a quantified predicate over an uninterpreted
+sort. The complete alias gate must run again on that corrected control; no
+acceptance is inferred from the rejected run.
