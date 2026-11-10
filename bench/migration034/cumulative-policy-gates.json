@@ -1,0 +1,48 @@
+[
+  {
+    "feature": "policy-off",
+    "name": "policy-off",
+    "selected": [],
+    "previous": "qf-auf-alias",
+    "source": "dca0ce369c2bdb6d743dfc53ee80fd1805be55e5",
+    "complete_work": {
+      "correctness-scoped": {
+        "pairs": 34,
+        "ratio": 0.9994045566125902
+      },
+      "qf-auf-alias": {
+        "pairs": 34,
+        "ratio": 1.0008137724907664
+      }
+    },
+    "incomplete_regressions": [],
+    "cost": {
+      "SAT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0002343904029676,
+        "gained": [],
+        "lost": []
+      },
+      "SAT:qf-auf-alias": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0001047554806552,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:correctness-scoped": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 0.999104483377364,
+        "gained": [],
+        "lost": []
+      },
+      "SMT:qf-auf-alias": {
+        "jointly_solved_agreeing": 24,
+        "instructions_candidate_over_baseline": 1.0011099597844286,
+        "gained": [],
+        "lost": []
+      }
+    },
+    "sat_gate": "shared identical diagnostic binary; perf-gate.log",
+    "decision": "provisional-apply-awaiting-production-verification"
+  }
+]
