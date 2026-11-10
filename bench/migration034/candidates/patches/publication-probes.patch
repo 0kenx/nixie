@@ -1,0 +1,997 @@
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/finite_uninterpreted.rs
+@@ -0,0 +1,345 @@
++//! Bounded finite interpretations for pure quantified UF.
++//!
++//! Following CVC5's finite-model checking, enumerate every tuple of each
++//! chosen universe, including function closure. Unsatisfiability at a bound
++//! says nothing about larger models. A successful proposal is independently
++//! evaluated against all original assertions before publication.
++use super::*;
++
++const MAX_POINTS: usize = 4096;
++
++fn tuples(sorts: &[SortId], domains: &FxHashMap<SortId, Vec<TermId>>) -> Option<Vec<Vec<TermId>>> {
++    let mut rows = vec![Vec::new()];
++    for sort in sorts {
++        let domain = domains.get(sort)?;
++        if rows.len().checked_mul(domain.len())? > MAX_POINTS {
++            return None;
++        }
++        rows = rows
++            .into_iter()
++            .flat_map(|row| {
++                domain.iter().map(move |&value| {
++                    let mut next = row.clone();
++                    next.push(value);
++                    next
++                })
++            })
++            .collect();
++    }
++    Some(rows)
++}
++
++impl Context {
++    pub(super) fn publish_finite_uninterpreted(&mut self) -> bool {
++        let goal = self.certified_goal();
++        let mut sorts = FxHashSet::default();
++        let mut seen = FxHashSet::default();
++        let mut stack = goal.clone();
++        let mut quantified = false;
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            if seen.len() > 4096 {
++                return false;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return false;
++            };
++            sorts.insert(node.sort);
++            match &node.kind {
++                TermKind::Forall { vars, .. } | TermKind::Exists { vars, .. } => {
++                    quantified = true;
++                    sorts.extend(vars.iter().map(|(_, sort)| *sort));
++                }
++                TermKind::True
++                | TermKind::False
++                | TermKind::Var(_)
++                | TermKind::Apply { .. }
++                | TermKind::Eq(..)
++                | TermKind::Distinct(_)
++                | TermKind::And(_)
++                | TermKind::Or(_)
++                | TermKind::Not(_)
++                | TermKind::Implies(..)
++                | TermKind::Xor(..)
++                | TermKind::Ite(..) => {}
++                _ => return false,
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++        }
++        if !quantified {
++            return false;
++        }
++        for decl in &self.declared_consts {
++            sorts.insert(decl.sort);
++        }
++        for decl in &self.declared_funs {
++            if decl.interpreted {
++                continue;
++            }
++            sorts.insert(decl.ret_sort);
++            sorts.extend(decl.arg_sorts.iter().copied());
++        }
++        if sorts
++            .iter()
++            .any(|&s| s != self.terms.sorts.bool_sort && !self.is_uninterpreted_sort(s))
++        {
++            return false;
++        }
++        let mut sorts: Vec<_> = sorts.into_iter().collect();
++        sorts.sort_unstable_by_key(|s| s.0);
++        let saved = self.published.clone();
++        for size in 1..=4 {
++            let mut domains = FxHashMap::default();
++            let mut symbols = FxHashMap::default();
++            for &sort in &sorts {
++                let values = if sort == self.terms.sorts.bool_sort {
++                    vec![self.terms.mk_false(), self.terms.mk_true()]
++                } else {
++                    (0..size)
++                        .map(|i| {
++                            let name = self.format_uninterpreted_witness(sort, i);
++                            let name = name
++                                .strip_prefix('|')
++                                .and_then(|s| s.strip_suffix('|'))
++                                .unwrap_or(&name);
++                            symbols.insert(name.to_string(), sort);
++                            self.terms.mk_var(name, sort)
++                        })
++                        .collect()
++                };
++                domains.insert(sort, values);
++            }
++            if let Some(proposal) = self.finite_uf_proposal(&goal, &domains, symbols) {
++                self.published = proposal;
++                // This independent, query-free certificate checks the actual
++                // rendered functions, constants, and chosen finite universes.
++                if self.datatype_proposal_holds() {
++                    return true;
++                }
++            }
++            self.published = saved.clone();
++        }
++        false
++    }
++
++    fn finite_uf_proposal(
++        &mut self,
++        goal: &[TermId],
++        domains: &FxHashMap<SortId, Vec<TermId>>,
++        symbols: FxHashMap<String, SortId>,
++    ) -> Option<PublishedModel> {
++        let mut constraints = Vec::new();
++        let mut work = MAX_POINTS;
++        for &assertion in goal {
++            constraints.push(expand(assertion, domains, &mut work, &mut self.terms)?);
++        }
++        for (&sort, values) in domains {
++            if sort != self.terms.sorts.bool_sort {
++                constraints.push(self.terms.mk_distinct(values.clone()));
++            }
++        }
++        let mut observations = self
++            .declared_consts
++            .iter()
++            .map(|d| (d.term, d.sort))
++            .collect::<Vec<_>>();
++        let mut applications = Vec::new();
++        for decl in self.declared_funs.clone() {
++            if decl.interpreted || decl.arg_sorts.is_empty() {
++                continue;
++            }
++            for args in tuples(&decl.arg_sorts, domains)? {
++                if observations.len() >= MAX_POINTS {
++                    return None;
++                }
++                let term = self.terms.mk_apply(&decl.name, args.clone(), decl.ret_sort);
++                observations.push((term, decl.ret_sort));
++                applications.push((decl.name.clone(), args, term, decl.ret_sort));
++            }
++        }
++        for &(term, sort) in &observations {
++            if sort == self.terms.sorts.bool_sort {
++                continue;
++            }
++            let choices: Vec<_> = domains
++                .get(&sort)?
++                .iter()
++                .map(|&v| self.terms.mk_eq(term, v))
++                .collect();
++            constraints.push(self.terms.mk_or(choices));
++        }
++        let query = self.terms.mk_and(constraints);
++        let solver = self
++            .solver
++            .publication_candidate_query(query, &mut self.terms)?;
++        let model = solver.model()?;
++        let mut values = FxHashMap::default();
++        for (term, sort) in observations {
++            let value = if sort == self.terms.sorts.bool_sort {
++                let Some(crate::solver::EvalVal::Bool(value)) = solver
++                    .eval_under_interpretation(term, model, &self.terms)
++                    .value_owned()
++                else {
++                    return None;
++                };
++                self.terms.mk_bool(value)
++            } else {
++                let class = solver.euf_class_representative(term)?;
++                domains
++                    .get(&sort)?
++                    .iter()
++                    .copied()
++                    .find(|&v| solver.euf_class_representative(v) == Some(class))?
++            };
++            values.insert(term, value);
++        }
++        let mut proposed = PublishedModel::default();
++        let mut model = crate::solver::Model::new();
++        for decl in &self.declared_consts {
++            let value = *values.get(&decl.term)?;
++            model.set(decl.term, value);
++            proposed.literal_values.insert(
++                decl.term,
++                nixie_core::smtlib::Printer::new(&self.terms).print_term(value),
++            );
++        }
++        for (name, args, term, sort) in applications {
++            let value = *values.get(&term)?;
++            let printer = nixie_core::smtlib::Printer::new(&self.terms);
++            let default = printer.print_term(*domains.get(&sort)?.first()?);
++            let table = proposed
++                .function_overrides
++                .entry(name)
++                .or_insert_with(|| (Vec::new(), default, args.len()));
++            table.0.push((
++                args.into_iter().map(|t| printer.print_term(t)).collect(),
++                printer.print_term(value),
++            ));
++        }
++        proposed.model = Some(model);
++        proposed.witness_symbols = symbols;
++        Some(proposed)
++    }
++}
++
++/// Postorder elimination also handles alternating and negated quantifiers:
++/// each binder becomes its exact finite conjunction or disjunction.
++fn expand(
++    root: TermId,
++    domains: &FxHashMap<SortId, Vec<TermId>>,
++    work: &mut usize,
++    terms: &mut nixie_core::TermManager,
++) -> Option<TermId> {
++    let mut stack = vec![(root, false)];
++    let mut done = FxHashMap::default();
++    while let Some((term, finish)) = stack.pop() {
++        if done.contains_key(&term) {
++            continue;
++        }
++        let kind = terms.get(term)?.kind.clone();
++        if !finish {
++            *work = work.checked_sub(1)?;
++            stack.push((term, true));
++            for child in nixie_core::ast::traversal::get_children(&kind) {
++                stack.push((child, false));
++            }
++            continue;
++        }
++        let result = match kind {
++            TermKind::Forall { vars, body, .. } | TermKind::Exists { vars, body, .. } => {
++                let universal = matches!(terms.get(term)?.kind, TermKind::Forall { .. });
++                let body = *done.get(&body)?;
++                let sorts: Vec<_> = vars.iter().map(|(_, sort)| *sort).collect();
++                let mut variables = Vec::new();
++                for &(name, sort) in &vars {
++                    let name = terms.resolve_str(name).to_string();
++                    variables.push(terms.mk_var(&name, sort));
++                }
++                let rows = tuples(&sorts, domains)?;
++                *work = work.checked_sub(rows.len())?;
++                let instances: Vec<_> = rows
++                    .into_iter()
++                    .map(|row| {
++                        let substitution = variables.iter().copied().zip(row).collect();
++                        terms.substitute(body, &substitution)
++                    })
++                    .collect();
++                if universal {
++                    terms.mk_and(instances)
++                } else {
++                    terms.mk_or(instances)
++                }
++            }
++            _ => {
++                let replacements = nixie_core::ast::traversal::get_children(&kind)
++                    .into_iter()
++                    .map(|child| Some((child, *done.get(&child)?)))
++                    .collect::<Option<FxHashMap<_, _>>>()?;
++                terms.substitute(term, &replacements)
++            }
++        };
++        done.insert(term, result);
++    }
++    done.get(&root).copied()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn propose(source: &str) -> (Context, bool) {
++        let mut ctx = Context::new();
++        ctx.execute_script(source).expect("script");
++        ctx.last_result = Some(SolverResult::Sat);
++        let result = ctx.publish_finite_uninterpreted();
++        (ctx, result)
++    }
++
++    #[test]
++    fn incompatible_quantifiers_cannot_share_different_interpretations() {
++        let (_, valid) = propose(
++            "(declare-sort U 0)(declare-fun p (U) Bool)
++            (assert (forall ((x U)) (p x)))(assert (exists ((x U)) (not (p x))))",
++        );
++        assert!(!valid);
++    }
++
++    #[test]
++    fn finite_function_results_are_closed_and_queries_read_the_same_table() {
++        let (mut ctx, valid) = propose(
++            "(declare-sort U 0)(declare-const a U)(declare-fun f (U) U)
++            (assert (forall ((x U)) (= (f (f x)) x)))
++            (assert (forall ((x U)) (not (= (f x) x))))",
++        );
++        assert!(valid);
++        let a = ctx
++            .declared_consts
++            .iter()
++            .find(|d| d.name == "a")
++            .expect("a")
++            .term;
++        let sort = ctx.terms.get(a).expect("sort").sort;
++        let fa = ctx.terms.mk_apply("f", vec![a], sort);
++        let ffa = ctx.terms.mk_apply("f", vec![fa], sort);
++        let involution = ctx.terms.mk_eq(ffa, a);
++        let fixed = ctx.terms.mk_eq(fa, a);
++        let keys = ["(= (f (f a)) a)", "(= (f a) a)", "a", "(f a)"].map(str::to_owned);
++        let out = ctx.format_get_value(&[involution, fixed, a, fa], &keys);
++        assert!(out.contains("((= (f (f a)) a) true)"), "{out}");
++        assert!(out.contains("((= (f a) a) false)"), "{out}");
++        assert!(out.contains("(f a) @uc_U_"), "{out}");
++    }
++
++    #[test]
++    fn negated_alternation_is_expanded_with_its_original_polarity() {
++        let (_, valid) = propose(
++            "(declare-sort U 0)(assert (not (forall ((x U)) (exists ((y U)) (distinct x y)))))",
++        );
++        assert!(valid);
++        let (_, invalid) =
++            propose("(declare-sort U 0)(assert (not (forall ((x U)) (exists ((y U)) (= x y)))))");
++        assert!(!invalid);
++    }
++}
+--- a/nixie-solver/src/context/model_fmt.rs
++++ b/nixie-solver/src/context/model_fmt.rs
+@@ -18,6 +18,10 @@
+ 
+ use super::{Context, RawFuncInterp};
+ mod array_model;
++mod underspecified;
++mod projected_functions;
++mod datatype_completion;
++mod finite_uninterpreted;
+ mod certified_numeric;
+ mod class_values;
+ mod completed_candidate;
+@@ -446,6 +450,7 @@
+         // Pick `else_value`: the most common entry value (ties → first seen),
+         // matching Z3's habit of reusing an existing value as the default.
+         let else_value = Self::most_common_value(&entries).unwrap_or(default_else);
++        let else_value = self.else_override(func_name).unwrap_or(else_value);
+ 
+         Some(((entries, else_value, arity), is_function))
+     }
+@@ -1714,7 +1719,20 @@
+         if let Some(error) = self.uncertified_model_error() {
+             return error;
+         }
+-        let func_lines = self.func_interp_lines();
++        let mut func_lines = self.func_interp_lines();
++        let mut division_sorts: Vec<_> =
++            self.published.zero_division_sorts.iter().copied().collect();
++        division_sorts.sort_unstable_by_key(|s| s.0);
++        for sort in division_sorts {
++            let (name, sort, value) = if sort == self.terms.sorts.int_sort {
++                ("div0", "Int", "0")
++            } else {
++                ("/0", "Real", "0.0")
++            };
++            func_lines.push(format!(
++                "  (define-fun {name} ((x!0 {sort}) (x!1 {sort})) {sort} {value})"
++            ));
++        }
+         match self.get_model() {
+             None => "(error \"No model available\")".to_string(),
+             Some(model) if model.is_empty() && recfun_lines.is_empty() && func_lines.is_empty() => {
+@@ -2482,3 +2500,9 @@
+         assert_eq!(sorts.get("t").copied(), Some("T"));
+     }
+ }
++
++// Experiment-only per-process selector; absent from production.
++fn publication_probe(name: &str) -> bool {
++    static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    MODE.get_or_init(|| std::env::var("NIXIE_PUBLICATION_PROBE").unwrap_or_default()) == name
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/datatype_completion.rs
+@@ -0,0 +1,169 @@
++//! Bounded concrete constructor proposals, accepted only by exact evaluation
++//! of every original assertion under the resulting printed interpretation.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_datatype_publication(&mut self) -> bool {
++        let declarations: Vec<_> = self
++            .declared_consts
++            .iter()
++            .filter(|d| self.terms.sorts.datatype_name(d.sort).is_some())
++            .map(|d| (d.term, d.sort))
++            .collect();
++        if declarations.is_empty() || declarations.len() > 64 {
++            return false;
++        }
++        let Some(original) = self.published_model().cloned() else {
++            return false;
++        };
++        let mut pools: FxHashMap<SortId, Vec<TermId>> = FxHashMap::default();
++        let mut definitions = Vec::new();
++        let mut stack: Vec<_> = declarations.iter().map(|(_, sort)| *sort).collect();
++        let mut seen = FxHashSet::default();
++        while let Some(sort) = stack.pop() {
++            if !seen.insert(sort) {
++                continue;
++            }
++            if seen.len() > 64 {
++                return false;
++            }
++            let constructors = self
++                .terms
++                .sorts
++                .datatype_name(sort)
++                .and_then(|name| self.terms.sorts.get_datatype(name))
++                .map(|def| {
++                    def.constructors
++                        .iter()
++                        .map(|ctor| {
++                            (
++                                self.terms.sorts.resolve_spur(ctor.name).to_string(),
++                                ctor.selectors
++                                    .iter()
++                                    .map(|(_, sort)| *sort)
++                                    .collect::<Vec<_>>(),
++                            )
++                        })
++                        .collect::<Vec<_>>()
++                });
++            if let Some(constructors) = constructors {
++                for (_, fields) in &constructors {
++                    stack.extend(fields.iter().copied());
++                }
++                definitions.push((sort, constructors));
++            } else if sort == self.terms.sorts.bool_sort {
++                pools.insert(sort, vec![self.terms.mk_false(), self.terms.mk_true()]);
++            } else if let Some(value) =
++                crate::solver::model_builder::ground_default_term(&mut self.terms, sort)
++            {
++                pools.insert(sort, vec![value]);
++            }
++        }
++        // Monotone finite construction: recursive sorts acquire only finite
++        // values. Round/size limits restrict proposals, never certification.
++        for _ in 0..4 {
++            let mut changed = false;
++            for (sort, constructors) in &definitions {
++                for (name, fields) in constructors {
++                    let mut tuples = vec![Vec::new()];
++                    for field in fields {
++                        let Some(values) = pools.get(field) else {
++                            tuples.clear();
++                            break;
++                        };
++                        if tuples
++                            .len()
++                            .checked_mul(values.len())
++                            .is_none_or(|n| n > 128)
++                        {
++                            tuples.clear();
++                            break;
++                        }
++                        tuples = tuples
++                            .into_iter()
++                            .flat_map(|tuple| {
++                                values.iter().map(move |&value| {
++                                    let mut args = tuple.clone();
++                                    args.push(value);
++                                    args
++                                })
++                            })
++                            .collect();
++                    }
++                    for args in tuples {
++                        let value = self.terms.mk_dt_constructor(name, args, *sort);
++                        let pool = pools.entry(*sort).or_default();
++                        if pool.len() < 128 && !pool.contains(&value) {
++                            pool.push(value);
++                            changed = true;
++                        }
++                    }
++                }
++            }
++            if !changed {
++                break;
++            }
++        }
++        let domains: Option<Vec<_>> = declarations
++            .iter()
++            .map(|(_, sort)| pools.get(sort).cloned())
++            .collect();
++        let Some(domains) = domains else {
++            return false;
++        };
++        if domains.iter().any(Vec::is_empty) {
++            return false;
++        }
++        let saved = self.published.model.take();
++        let mut distinct = original.clone();
++        for (index, ((term, _), domain)) in declarations.iter().zip(&domains).enumerate() {
++            let Some(&value) = domain.get(index % domain.len()) else {
++                self.published.model = saved;
++                return false;
++            };
++            distinct.set(*term, value);
++        }
++        self.published.model = Some(distinct);
++        if self.datatype_proposal_holds() {
++            return true;
++        }
++        let Some(total) = domains
++            .iter()
++            .try_fold(1usize, |n, d| n.checked_mul(d.len()).filter(|&n| n <= 256))
++        else {
++            self.published.model = saved;
++            return false;
++        };
++        for mut ordinal in 0..total {
++            let mut model = original.clone();
++            for ((term, _), domain) in declarations.iter().zip(&domains) {
++                let Some(&value) = domain.get(ordinal % domain.len()) else {
++                    self.published.model = saved;
++                    return false;
++                };
++                ordinal /= domain.len();
++                model.set(*term, value);
++            }
++            self.published.model = Some(model);
++            if self.datatype_proposal_holds() {
++                return true;
++            }
++        }
++        self.published.model = saved;
++        false
++    }
++
++    pub(super) fn datatype_proposal_holds(&mut self) -> bool {
++        if let Some((printed, mut parse)) = self.printed_constants()
++            && let Ok(funcs) = self.printed_functions(&mut parse)
++        {
++            let goal: Vec<_> = self
++                .certified_goal()
++                .into_iter()
++                .map(|t| self.expand_printed_functions(t, &funcs))
++                .collect();
++            return self.certified_by_evaluation(&goal, &printed);
++        }
++        false
++    }
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/projected_functions.rs
+@@ -0,0 +1,93 @@
++//! Numeric projection proposals. As in MBQI's relevant-set completion, each
++//! interval maps to a representative; only an independent certificate of the
++//! entire printed interpretation can accept the proposal.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_projected_functions(&mut self) -> bool {
++        let Some(model) = self.published_model().cloned() else {
++            return false;
++        };
++        let classes = self.build_class_values(&model);
++        let names: Vec<_> = self
++            .declared_funs
++            .iter()
++            .filter(|d| {
++                !d.interpreted
++                    && d.arg_sorts.len() == 1
++                    && (d.arg_sorts[0] == self.terms.sorts.int_sort
++                        || d.arg_sorts[0] == self.terms.sorts.real_sort)
++            })
++            .map(|d| d.name.clone())
++            .collect();
++        if names.is_empty() || names.len() > 12 {
++            return false;
++        }
++        let saved = self.published.function_overrides.clone();
++        let mut replacements = Vec::new();
++        for name in names {
++            let Some(((entries, _, _), _)) =
++                self.func_interp_reading(&name, &model, &classes, false)
++            else {
++                continue;
++            };
++            if entries.is_empty() || entries.len() > 128 {
++                continue;
++            }
++            let mut points = Vec::new();
++            let mut readable = true;
++            for (args, value) in entries {
++                let [arg] = args.as_slice() else {
++                    readable = false;
++                    break;
++                };
++                let Ok(term) = nixie_core::smtlib::parse_term(arg, &mut self.terms) else {
++                    readable = false;
++                    break;
++                };
++                let number = match self
++                    .solver
++                    .eval_under_interpretation(term, &crate::solver::Model::new(), &self.terms)
++                    .value_owned()
++                {
++                    Some(crate::solver::EvalVal::Num(n)) => {
++                        num_rational::BigRational::new((*n.numer()).into(), (*n.denom()).into())
++                    }
++                    Some(crate::solver::EvalVal::NumBig(n)) => *n,
++                    _ => {
++                        readable = false;
++                        break;
++                    }
++                };
++                points.push((number, arg.clone(), value));
++            }
++            if !readable {
++                continue;
++            }
++            points.sort();
++            if points
++                .windows(2)
++                .any(|w| w[0].0 == w[1].0 && w[0].2 != w[1].2)
++            {
++                continue;
++            }
++            let Some((_, _, last)) = points.last() else {
++                continue;
++            };
++            let mut body = last.clone();
++            for (_, arg, value) in points.iter().rev().skip(1) {
++                body = format!("(ite (<= x!0 {arg}) {value} {body})");
++            }
++            replacements.push((name, (Vec::new(), body, 1)));
++        }
++        if replacements.is_empty() {
++            return false;
++        }
++        self.published.function_overrides.extend(replacements);
++        if self.certify_printed_goal().is_ok() {
++            return true;
++        }
++        self.published.function_overrides = saved;
++        false
++    }
++}
+--- /dev/null
++++ b/nixie-solver/src/context/model_fmt/underspecified.rs
+@@ -0,0 +1,106 @@
++//! Explicit total choices for SMT-LIB's underspecified division by zero.
++//! These are model proposals, never simplifications used to prove unsat.
++use super::*;
++
++impl Context {
++    pub(super) fn repair_zero_division_publication(&mut self) -> bool {
++        let mut stack = self.certified_goal();
++        let mut seen = FxHashSet::default();
++        let mut reads = Vec::new();
++        let mut sorts = FxHashSet::default();
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return false;
++            };
++            if let TermKind::Div(_, denominator) = node.kind
++                && literal_zero(denominator, &self.terms)
++            {
++                if node.sort != self.terms.sorts.int_sort && node.sort != self.terms.sorts.real_sort
++                {
++                    return false;
++                }
++                reads.push((term, node.sort));
++                sorts.insert(node.sort);
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++        }
++        if reads.is_empty() {
++            return false;
++        }
++        for &sort in &sorts {
++            let symbol = if sort == self.terms.sorts.int_sort {
++                "div0"
++            } else {
++                "/0"
++            };
++            if self.declared_consts.iter().any(|d| d.name == symbol)
++                || self.declared_funs.iter().any(|d| d.name == symbol)
++            {
++                return false;
++            }
++        }
++        let saved = self.published.clone();
++        let Some(mut model) = self.published_model().cloned() else {
++            return false;
++        };
++        for (term, sort) in reads {
++            let value = if sort == self.terms.sorts.int_sort {
++                self.terms.mk_int(0)
++            } else {
++                self.terms
++                    .mk_real(num_rational::Rational64::from_integer(0))
++            };
++            model.set(term, value);
++        }
++        self.published.model = Some(model);
++        self.published.zero_division_sorts = sorts;
++        if self.certify_printed_goal().is_ok() {
++            return true;
++        }
++        self.published = saved;
++        false
++    }
++
++    pub(super) fn fold_published_zero_division(&mut self, root: TermId) -> TermId {
++        if self.published.zero_division_sorts.is_empty() {
++            return root;
++        }
++        let mut stack = vec![root];
++        let mut seen = FxHashSet::default();
++        let mut replacements = FxHashMap::default();
++        while let Some(term) = stack.pop() {
++            if !seen.insert(term) {
++                continue;
++            }
++            let Some(node) = self.terms.get(term) else {
++                return root;
++            };
++            if let TermKind::Div(_, denominator) = node.kind
++                && self.published.zero_division_sorts.contains(&node.sort)
++                && literal_zero(denominator, &self.terms)
++            {
++                let value = if node.sort == self.terms.sorts.int_sort {
++                    self.terms.mk_int(0)
++                } else {
++                    self.terms
++                        .mk_real(num_rational::Rational64::from_integer(0))
++                };
++                replacements.insert(term, value);
++            } else {
++                stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
++            }
++        }
++        self.terms.substitute(root, &replacements)
++    }
++}
++
++fn literal_zero(term: TermId, terms: &nixie_core::TermManager) -> bool {
++    match terms.get(term).map(|t| &t.kind) {
++        Some(TermKind::IntConst(n)) => n.is_zero(),
++        Some(TermKind::RealConst(n)) => n.is_zero(),
++        _ => false,
++    }
++}
+--- a/nixie-solver/src/context/model_fmt/published.rs
++++ b/nixie-solver/src/context/model_fmt/published.rs
+@@ -49,6 +49,8 @@
+     /// The solver's model with the fresh values of `#P2b-71` added, or `None`
+     /// when nothing was minted (the solver's model is then read as is).
+     pub(super) model: Option<crate::solver::Model>,
++    pub(super) zero_division_sorts: FxHashSet<SortId>,
++    else_overrides: FxHashMap<String, String>,
+     pub(super) function_overrides: FxHashMap<String, RawFuncInterp>,
+     pub(super) witness_domains: FxHashMap<SortId, Vec<TermId>>,
+     pub(super) literal_values: FxHashMap<TermId, String>,
+@@ -86,6 +88,8 @@
+ /// spend (`Context::printed_datatype_model_refuted`); a closed assertion has
+ /// no free symbol, so a refutation is a propagation, and the budget only
+ /// bounds a pathological one.
++const MAX_ELSE_REPAIRS: usize = 12;
++
+ const DATATYPE_NET_CONFLICTS: u64 = 10_000;
+ 
+ /// Prefix used for printed uninterpreted witnesses. The parser accepts legal
+@@ -117,6 +121,11 @@
+         result: SolverResult,
+     ) -> SolverResult {
+         self.published = PublishedModel::default();
++        if publication_probe("finite-uf-model-search") && result == SolverResult::Unknown && self.pending_contract_error.is_none() {
++            self.last_result = Some(SolverResult::Sat);
++            if self.publish_finite_uninterpreted() { return SolverResult::Sat; }
++            self.last_result = Some(result);
++        }
+         if result != SolverResult::Sat || self.solver.last_answer_was_delta_sat() {
+             return result;
+         }
+@@ -144,6 +153,10 @@
+             // Continue through the typed-value net even if the unmodified
+             // candidate is unreadable: absence of a refutation is no certificate.
+             drop(fresh);
++            refutation = self.printed_model_falsifies();
++        }
++        if publication_probe("datatype-publication-proposals") && refutation.is_some() {
++            if self.repair_datatype_publication() { return result; }
+             refutation = self.printed_model_falsifies();
+         }
+         if let Some(reason) = refutation {
+@@ -227,6 +240,7 @@
+         match self.printed_datatype_model_refuted() {
+             NetReading::Clean => result,
+             NetReading::False(number) => {
++                if publication_probe("datatype-publication-proposals") && self.repair_datatype_publication() { return result; }
+                 let reason = format!(
+                     "model check failed: assertion {number} reads false under the candidate model"
+                 );
+@@ -236,6 +250,7 @@
+                 SolverResult::Unknown
+             }
+             NetReading::Refuted(number) => {
++                if publication_probe("datatype-publication-proposals") && self.repair_datatype_publication() { return result; }
+                 self.withhold_every_symbol(&format!("assertion {number} is false"));
+                 result
+             }
+@@ -528,7 +543,9 @@
+     /// either way, it is completed around what it got right when its arrays
+     /// allow, and withheld otherwise.
+     fn certify_published_model(&mut self) {
+-        if self.publish_numeric_certificate() || self.publish_completed_candidate() {
++        if self.publish_numeric_certificate()
++            || (publication_probe("finite-uf-model-search") && self.publish_finite_uninterpreted())
++            || self.publish_completed_candidate() {
+             return;
+         }
+         let Err(reason) = self.certify_printed_goal() else {
+@@ -540,6 +557,9 @@
+             }
+             self.published.model = Some(fresh);
+         }
++        if publication_probe("numeric-projection-proposals") && self.repair_projected_functions() { return; }
++        if publication_probe("function-else-search") && self.repair_else_values() { return; }
++        if publication_probe("zero-division-proposal") && self.repair_zero_division_publication() { return; }
+         self.withhold_published_model(reason);
+     }
+ 
+@@ -871,3 +891,107 @@
+ 
+ #[cfg(test)]
+ mod cost_tests;
++
++impl Context {
++    pub(in crate::context) fn else_override(&self, name: &str) -> Option<String> {
++        self.published.else_overrides.get(name).cloned()
++    }
++}
++
++impl Context {
++    fn repair_else_values(&mut self) -> bool {
++        let Some(model) = self.published_model().cloned() else {
++            return false;
++        };
++        let class_values = self.build_class_values(&model);
++        let names: Vec<String> = self
++            .declared_funs
++            .iter()
++            .filter(|d| !d.interpreted && !d.arg_sorts.is_empty())
++            .map(|d| d.name.clone())
++            .collect();
++        let mut alternatives: Vec<(String, Vec<String>)> = Vec::new();
++        for name in names {
++            let Some(((entries, else_value, _), _)) =
++                self.func_interp_reading(&name, &model, &class_values, false)
++            else {
++                continue;
++            };
++            // The table's own entry values first, then the literals the goal
++            // spells of the function's range sort (as `mbqi::model_certify`
++            // searches its defaults).
++            let mut values: Vec<String> = Vec::new();
++            for (_, value) in entries {
++                if value != else_value && !values.contains(&value) {
++                    values.push(value);
++                }
++            }
++            for literal in self.goal_literals_of_range(&name) {
++                if literal != else_value && !values.contains(&literal) {
++                    values.push(literal);
++                }
++            }
++            if !values.is_empty() {
++                alternatives.push((name, values));
++            }
++        }
++        let mut attempts = 0usize;
++        for (name, values) in &alternatives {
++            for value in values {
++                if attempts >= MAX_ELSE_REPAIRS {
++                    break;
++                }
++                attempts += 1;
++                self.published.else_overrides = FxHashMap::default();
++                self.published
++                    .else_overrides
++                    .insert(name.clone(), value.clone());
++                if self.certify_printed_goal().is_ok() {
++                    return true;
++                }
++            }
++        }
++        self.published.else_overrides = FxHashMap::default();
++        false
++    }
++}
++
++impl Context {
++    fn goal_literals_of_range(&self, name: &str) -> Vec<String> {
++        let Some(range) = self
++            .declared_funs
++            .iter()
++            .find(|d| d.name == name)
++            .map(|d| d.ret_sort)
++        else {
++            return Vec::new();
++        };
++        let mut found: Vec<TermId> = Vec::new();
++        let mut stack: Vec<TermId> = self.certified_goal();
++        let mut visited: FxHashSet<TermId> = FxHashSet::default();
++        while let Some(current) = stack.pop() {
++            if !visited.insert(current) {
++                continue;
++            }
++            let Some(data) = self.terms.get(current) else {
++                continue;
++            };
++            if data.sort == range
++                && matches!(
++                    data.kind,
++                    TermKind::IntConst(_)
++                        | TermKind::RealConst(_)
++                        | TermKind::BitVecConst { .. }
++                        | TermKind::True
++                        | TermKind::False
++                )
++            {
++                found.push(current);
++            }
++            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
++        }
++        found.sort_unstable_by_key(|t| t.raw());
++        found.dedup();
++        found.into_iter().map(|t| self.format_value(t)).collect()
++    }
++}
+--- a/nixie-solver/src/context/model_fmt/printed_check.rs
++++ b/nixie-solver/src/context/model_fmt/printed_check.rs
+@@ -443,7 +443,7 @@
+         funcs: &PrintedFunctions,
+     ) -> TermId {
+         if funcs.is_empty() {
+-            return term;
++            return self.fold_published_zero_division(term);
+         }
+         enum Frame {
+             Expand(TermId),
+@@ -577,7 +577,8 @@
+                 }
+             }
+         }
+-        done.get(&term).copied().unwrap_or(term)
++        let expanded = done.get(&term).copied().unwrap_or(term);
++        self.fold_published_zero_division(expanded)
+     }
+ 
+     /// The maximal quantifier nodes of `term` and, outside them, the
+--- a/nixie-solver/src/context/model_fmt/get_value.rs
++++ b/nixie-solver/src/context/model_fmt/get_value.rs
+@@ -180,6 +180,7 @@
+         let mut reading: Option<Option<super::printed_check::PrintedReading>> = None;
+         let mut values = Vec::with_capacity(terms.len());
+         for &term in terms {
++            let term = self.fold_published_zero_division(term);
+             let proposed = if !self.published.function_overrides.is_empty()
+                 || !self.published.literal_values.is_empty()
+             {
