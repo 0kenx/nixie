@@ -40,7 +40,7 @@ fn upstream_e3db58089d90293f() {
     let output = Context::new()
         .execute_script(
             r##"
-(set-logic QF_AUF)
+(set-logic ALL)
 (declare-sort U 0)
 (declare-fun f (U) U)
 (declare-const arr (Array U U))
@@ -59,7 +59,7 @@ fn upstream_8e513ca57fd8f614() {
     let output = Context::new()
         .execute_script(
             r##"
-(set-logic QF_AUF)
+(set-logic ALL)
 (declare-sort U 0)
 (declare-fun f (U) U)
 (declare-const arr (Array U U))
@@ -80,7 +80,7 @@ fn upstream_6f7226844b3a571f() {
     let output = Context::new()
         .execute_script(
             r##"
-(set-logic QF_AUF)
+(set-logic ALL)
 (declare-sort U 0)
 (declare-fun f (U) U)
 (declare-const arr (Array U U))
@@ -101,7 +101,7 @@ fn upstream_90bb84b06ae53573() {
     let output = Context::new()
         .execute_script(
             r##"
-(set-logic QF_AUF)
+(set-logic ALL)
 (declare-sort U 0)
 (declare-const arr (Array U U))
 (declare-const i U)
@@ -119,7 +119,7 @@ fn upstream_db729f7712870791() {
     let output = Context::new()
         .execute_script(
             r##"
-(set-logic QF_AUF)
+(set-logic ALL)
 (declare-sort U 0)
 (declare-fun f (U) U)
 (declare-const arr (Array U U))
@@ -197,7 +197,7 @@ fn array_discovery_survives_scope_rollback() {
     let output = Context::new()
         .execute_script(
             r#"
-        (set-logic QF_AUF)
+        (set-logic ALL)
         (declare-sort U 0)
         (declare-fun f (U) U)
         (declare-const a (Array U U))

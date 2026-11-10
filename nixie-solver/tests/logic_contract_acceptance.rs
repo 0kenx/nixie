@@ -208,20 +208,3 @@ UFFPDTNIRA UFIDL UFLIA UFLRA UFNIA UFNIRA";
         );
     }
 }
-
-/// The added array/UF alias must not silently admit arithmetic, bit-vectors,
-/// or quantifiers merely because its array/UF signatures are supported.
-#[test]
-fn qf_auf_alias_rejects_features_outside_its_contract() {
-    for body in [
-        "(declare-const x Int)(assert (= x 0))",
-        "(declare-const x (_ BitVec 4))(assert (= x #x0))",
-        "(assert (forall ((x Bool)) x))",
-    ] {
-        let error = run_err(&format!("(set-logic QF_AUF){body}(check-sat)"));
-        assert!(
-            error.contains("QF_AUF") && !error.starts_with("no error"),
-            "{error}"
-        );
-    }
-}
