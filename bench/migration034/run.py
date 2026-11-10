@@ -75,6 +75,9 @@ def run_cell(manifest, arm, instance, cpu):
              'argv_options': command(arm, instance)[1:-1],
              'measurement': 'perf-instructions-u-with-timeout-prlimit-v1',
              'configuration': 'default', 'environment': 'clean-nixie-variables'}
+    diagnostic_environment = arm.get('diagnostic_environment', {})
+    if diagnostic_environment:
+        flags['diagnostic_environment'] = [f'{k}={v}' for k, v in sorted(diagnostic_environment.items())]
     key = {'host': manifest['host']['id'], 'sha': arm['sha'],
            'binary': arm['sha256'], 'instance': instance['sha256'],
            'suite': manifest['suite'], 'flags': flags, 'seed': 0}
@@ -97,6 +100,8 @@ def run_cell(manifest, arm, instance, cpu):
     env = {k: v for k, v in os.environ.items()
            if not k.startswith(('NIXIE_', 'OXIZ_', 'Z3_')) and k not in ('STATS',)}
     env['LC_ALL'] = 'C'
+    env.update({k: v.replace('{artifacts}', str(directory))
+                for k, v in diagnostic_environment.items()})
     (directory / 'command.json').write_text(json.dumps(argv, indent=2) + '\n')
     start = time.monotonic()
     emergency = False
