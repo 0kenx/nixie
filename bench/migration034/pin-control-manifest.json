@@ -1,0 +1,433 @@
+{
+  "suite": "migration034-pin-control-30s",
+  "timeout_s": 30,
+  "selection_salt": "nixie-migration034-20261110:",
+  "seeds": [
+    7919,
+    15838,
+    23757,
+    31676,
+    39595,
+    47514,
+    55433,
+    63352,
+    71271,
+    79190,
+    87109
+  ],
+  "seed_note": "Ten paired seeds plus held-back 87109; actual SMT-LIB seed overrides. Retrospective two-case causal diagnostic.",
+  "cpus": [
+    2,
+    5
+  ],
+  "perf": "/nix/store/jcm5ws5z99q816d453qiarvil2fh6lp0-perf-linux-7.1.8/bin/perf",
+  "host": {
+    "id": "workstation",
+    "cpu": "Intel(R) Core(TM) Ultra 7 265K",
+    "os": "Linux-7.3.3-x86_64-with-glibc2.42"
+  },
+  "smt_eligible_pools": {
+    "AUFLIA": {
+      "eligible_files": 3327,
+      "families": 3
+    },
+    "QF_ANIA": {
+      "eligible_files": 152,
+      "families": 5
+    },
+    "QF_AUFLIA": {
+      "eligible_files": 1303,
+      "families": 7
+    },
+    "QF_BV": {
+      "eligible_files": 39467,
+      "families": 54
+    },
+    "QF_IDL": {
+      "eligible_files": 1985,
+      "families": 21
+    },
+    "QF_LIA": {
+      "eligible_files": 12644,
+      "families": 32
+    },
+    "QF_NIA": {
+      "eligible_files": 24993,
+      "families": 15
+    },
+    "QF_UF": {
+      "eligible_files": 7406,
+      "families": 9
+    },
+    "QF_UFIDL": {
+      "eligible_files": 552,
+      "families": 11
+    },
+    "QF_UFLIA": {
+      "eligible_files": 640,
+      "families": 4
+    },
+    "UF": {
+      "eligible_files": 7590,
+      "families": 7
+    },
+    "UFLRA": {
+      "eligible_files": 15,
+      "families": 2
+    }
+  },
+  "arms": [
+    {
+      "name": "pin-real",
+      "engine": "nixie",
+      "sha": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "binary": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/nixie-diagnostic",
+      "version": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "role": "treatment",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release, default features, LTO=true, codegen-units=1",
+      "sha256": "ee4b95ea51d4f5693d7327ab74943389a2e327d59f59ed52e7d4ba55b050fcae",
+      "diagnostic_environment": {
+        "NIXIE_COST_PROBE_TRACE": "1",
+        "NIXIE_COST_PROBE_PIN_MODE": "real",
+        "NIXIE_DUMP_CNF": "{artifacts}/initial.cnf",
+        "NIXIE_DUMP_TERMS": "{artifacts}/terms.txt"
+      }
+    },
+    {
+      "name": "pin-null",
+      "engine": "nixie",
+      "sha": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "binary": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/nixie-diagnostic",
+      "version": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "role": "null",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release, default features, LTO=true, codegen-units=1",
+      "sha256": "ee4b95ea51d4f5693d7327ab74943389a2e327d59f59ed52e7d4ba55b050fcae",
+      "diagnostic_environment": {
+        "NIXIE_COST_PROBE_TRACE": "1",
+        "NIXIE_COST_PROBE_PIN_MODE": "null",
+        "NIXIE_DUMP_CNF": "{artifacts}/initial.cnf",
+        "NIXIE_DUMP_TERMS": "{artifacts}/terms.txt"
+      }
+    },
+    {
+      "name": "pin-off",
+      "engine": "nixie",
+      "sha": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "binary": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/nixie-diagnostic",
+      "version": "83cdf7beb49244deda1aaaa8067c57cb4d451c1f",
+      "role": "baseline",
+      "kinds": [
+        "SAT",
+        "SMT"
+      ],
+      "build": "standard release, default features, LTO=true, codegen-units=1",
+      "sha256": "ee4b95ea51d4f5693d7327ab74943389a2e327d59f59ed52e7d4ba55b050fcae",
+      "diagnostic_environment": {
+        "NIXIE_COST_PROBE_TRACE": "1",
+        "NIXIE_COST_PROBE_PIN_MODE": "off",
+        "NIXIE_DUMP_CNF": "{artifacts}/initial.cnf",
+        "NIXIE_DUMP_TERMS": "{artifacts}/terms.txt"
+      }
+    }
+  ],
+  "instances": [
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/7919-xs_8_13.smt2",
+      "sha256": "691282d87e75ddb3d546593ac9cf46466ab4b174cbb832fa97a3fa905fb056c5",
+      "expected": "unsat",
+      "seed": 7919,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/7919-xs-10-18-2-2-5-3.smt2",
+      "sha256": "01512166b74304918bc57461e7a7588d7830b64018a1fe1326423bf17e97de9b",
+      "expected": "unsat",
+      "seed": 7919,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/15838-xs_8_13.smt2",
+      "sha256": "3992db5c67ab8f059729836d54cc5658b6c70c4674d7e5a095fa2bf00aaa13e8",
+      "expected": "unsat",
+      "seed": 15838,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/15838-xs-10-18-2-2-5-3.smt2",
+      "sha256": "6a097b5a3a84645d1e67fb0e0877644482453e2ca664996787b46598dd8a22cb",
+      "expected": "unsat",
+      "seed": 15838,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/23757-xs_8_13.smt2",
+      "sha256": "bebc63db92286c9669a45cf6cf4dbbb9fe12dd99f225e0e6d997854b6036db22",
+      "expected": "unsat",
+      "seed": 23757,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/23757-xs-10-18-2-2-5-3.smt2",
+      "sha256": "917ec03f9543db0d160540d057f1021b6cbe5d658c08b12f9003640106f83231",
+      "expected": "unsat",
+      "seed": 23757,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/31676-xs_8_13.smt2",
+      "sha256": "400cf5bcb9f78c01dfd6b8abfe843e50496c909d94e19d7bf7237d27eb822b60",
+      "expected": "unsat",
+      "seed": 31676,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/31676-xs-10-18-2-2-5-3.smt2",
+      "sha256": "f8df052620a54a5f183562e7b04541a433df010958612427c82763a25929b85b",
+      "expected": "unsat",
+      "seed": 31676,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/39595-xs_8_13.smt2",
+      "sha256": "9b594312e04aa67849f58cafad051b31d6c16257c5cf0c494afff44fef8e7777",
+      "expected": "unsat",
+      "seed": 39595,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/39595-xs-10-18-2-2-5-3.smt2",
+      "sha256": "97b8661d2e64097dd64f37262240c385f0c07db035b876d0d44640b3335a69cf",
+      "expected": "unsat",
+      "seed": 39595,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/47514-xs_8_13.smt2",
+      "sha256": "6a305af065f16d208bb69261aed88eda13f97394e7ae35ff3be046a21defe0eb",
+      "expected": "unsat",
+      "seed": 47514,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/47514-xs-10-18-2-2-5-3.smt2",
+      "sha256": "4ccbf7a9993f388f1d397eb07bd0ddae7df92f3d50d4fa6ed46d5f72f055f1cc",
+      "expected": "unsat",
+      "seed": 47514,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/55433-xs_8_13.smt2",
+      "sha256": "751e99980d65f4429f87b1991b0942fb875923ba1cb3dda53628443f1b364619",
+      "expected": "unsat",
+      "seed": 55433,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/55433-xs-10-18-2-2-5-3.smt2",
+      "sha256": "9fdc6a52b9fda71a20787a62b1586c5c7f133f8e913eda28fe35d08799e05dff",
+      "expected": "unsat",
+      "seed": 55433,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/63352-xs_8_13.smt2",
+      "sha256": "008f33becb24d0ebb106ceede1cec53093746da31f444cdfb55a639dc39b4239",
+      "expected": "unsat",
+      "seed": 63352,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/63352-xs-10-18-2-2-5-3.smt2",
+      "sha256": "23d2e66e03aad2d841c80eacd326b353a0a2fe4d5cc493436b6ea6aff41fd80b",
+      "expected": "unsat",
+      "seed": 63352,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/71271-xs_8_13.smt2",
+      "sha256": "b31dd696861aec1685cf99a59ff7d953cdf0f8a62b8da6f6971c57a7bedf2fa1",
+      "expected": "unsat",
+      "seed": 71271,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/71271-xs-10-18-2-2-5-3.smt2",
+      "sha256": "2b543cbc17344671dbfc82f4b8c01c1083eb159b7a1df42f1cf3eebedef09505",
+      "expected": "unsat",
+      "seed": 71271,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/79190-xs_8_13.smt2",
+      "sha256": "49a935be520bfada3d041ca371f05edc645508cc55427461c73852f8cb0e2b9e",
+      "expected": "unsat",
+      "seed": 79190,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/79190-xs-10-18-2-2-5-3.smt2",
+      "sha256": "968567f952c6adec08943cafb31d43c84d6b7745ecce7b745aed6ac5ce96d7fd",
+      "expected": "unsat",
+      "seed": 79190,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": false
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "wisas",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/87109-xs_8_13.smt2",
+      "sha256": "bbd6eacabc35f13159e917f7483e5b9f6e44faf2544b039b3dcd542878e7deec",
+      "expected": "unsat",
+      "seed": 87109,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/wisas/xs_8_13.smt2",
+      "original_sha256": "39d82168e5dc0704ba0331f7f6a56b3ca28072e028128ce9e98cabcdc2a828d8",
+      "replay": true
+    },
+    {
+      "kind": "SMT",
+      "family": "QF_UFLIA",
+      "subfamily": "mathsat",
+      "path": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/corpus/87109-xs-10-18-2-2-5-3.smt2",
+      "sha256": "299bbd893154b2d8a6b8bc9aea988d23f3e3fb28e29c550d9ca68b09d27681b1",
+      "expected": "unsat",
+      "seed": 87109,
+      "original_path": "smt-lib/non-incremental/QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2",
+      "original_sha256": "b2245dfd6b88d2b08a5f1f995131ddbc96e4a2f497e6424724b250da4dfdff3f",
+      "replay": true
+    }
+  ],
+  "results": "precompile/83cdf7beb49244deda1aaaa8067c57cb4d451c1f/benchmark/migration034-pin-control/results.json",
+  "selected_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+  ],
+  "diagnostic_warning": "Isolated single-check numeric-pin control, never production. Pre-registration in cost-investigation study."
+}
