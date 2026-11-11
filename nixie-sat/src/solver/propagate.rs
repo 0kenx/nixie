@@ -60,7 +60,7 @@ mod watch_kernel;
 use watch_kernel::{Cursor, Step};
 
 #[path = "list_kernel.rs"]
-mod list_kernel;
+pub(in crate::solver) mod list_kernel;
 #[path = "session_kernel.rs"]
 mod session_kernel;
 

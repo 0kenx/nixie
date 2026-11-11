@@ -1473,6 +1473,11 @@ pub struct Solver {
     pub(super) lrb: LRB,
     /// Statistics
     pub(super) stats: SolverStats,
+    /// Frozen-at-construction snapshot of the process-wide scan gates
+    /// (`NIXIE_CWRITE` trace target, AVX2 block-prefilter switch) so the
+    /// watch-list scan prologue reads a plain field instead of two
+    /// `OnceLock`s per scan (`list_kernel::ScanProbes`; scan #3 item #7).
+    pub(super) scan_probes: crate::solver::propagate::list_kernel::ScanProbes,
     /// OTFS (`NIXIE_OTFS`): the current analysis's newly-marked literals,
     /// collected so an on-the-fly strengthening can restart the analysis and
     /// un-mark exactly what this pass created. Reused across conflicts
@@ -2373,6 +2378,7 @@ impl Solver {
             chb: CHB::new(0),
             lrb: LRB::new(0),
             stats: SolverStats::default(),
+            scan_probes: Default::default(),
             otfs_analyzed: SmallVec::new(),
             otfs_override: None,
             and_gates_override: None,

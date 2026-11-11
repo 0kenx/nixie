@@ -258,6 +258,7 @@ pub(super) fn scan_list<D: ScanDest>(
     clauses: crate::memory::PropagationArena<'_>,
     dest: &mut D,
     vec_mirror: Option<&mut VecScanMirror<'_>>,
+    probes: &ScanProbes,
 ) -> ScanResult {
     // Kept-run prefilter (the safe form): the leading run of satisfied
     // blockers needs no scalar work — keep(None) leaves those entries in
@@ -265,7 +266,7 @@ pub(super) fn scan_list<D: ScanDest>(
     // the prefix.  The pre-read of blockers is monotone-safe: values only
     // go undefined -> true/false within a scan, so a blocker already true
     // cannot become false before the scan would have reached it.
-    let prefix = if use_simd_prefilter() && watches.len() >= 8 {
+    let prefix = if probes.simd_prefilter && watches.len() >= 8 {
         block_filter::kept_run(watches, values)
     } else {
         0
@@ -294,6 +295,7 @@ pub(super) fn scan_list<D: ScanDest>(
         vec_mirror,
         #[cfg(feature = "bcp-work")]
         super::super::PropagationWork::default(),
+        probes,
     );
     // SAFETY: the cursor only returns an initialized-prefix endpoint within
     // this same borrowed slice (possibly its beginning/end for an empty list).
@@ -325,6 +327,42 @@ fn use_simd_prefilter() -> bool {
     }
 }
 
+/// Per-solver snapshot of the process-wide scan gates (the `NIXIE_CWRITE`
+/// clause-write trace target and the AVX2 block-prefilter switch).  Both
+/// used to be read through `OnceLock`s once per watch-list scan; on
+/// binary-heavy instances the scans are tiny and the two probe reads were
+/// a measurable prologue share (7% of a solved satcomp instance's CPU;
+/// scan #3 item #7).  The env gates are frozen at solver construction, so
+/// a snapshot taken then is equivalent for the solver's lifetime — and the
+/// per-scan calls disappear.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ScanProbes {
+    /// `NIXIE_CWRITE` target literal index, if the trace is on.
+    pub cwrite: Option<usize>,
+    /// Whether the SIMD kept-run prefilter runs (AVX2 and no
+    /// `NIXIE_NO_SIMD=1`, with the 8-byte `Watcher` layout check).
+    pub simd_prefilter: bool,
+}
+
+impl Default for ScanProbes {
+    fn default() -> Self {
+        #[cfg(feature = "std")]
+        {
+            Self {
+                cwrite: crate::mut_trace::cwrite_target(),
+                simd_prefilter: use_simd_prefilter(),
+            }
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            Self {
+                cwrite: None,
+                simd_prefilter: false,
+            }
+        }
+    }
+}
+
 struct ScanEnd {
     end: *mut Watcher,
     conflict: ClauseId,
@@ -343,15 +381,12 @@ fn scan<const COMPACT: bool, D: ScanDest>(
     dest: &mut D,
     mut vec_mirror: Option<&mut VecScanMirror<'_>>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
+    probes: &ScanProbes,
 ) -> ScanEnd {
     let scanned_code = (!false_lit).index();
-    // Hoisted per-scan invariants (process-wide `OnceLock`s): the per-visit
-    // calls below cost two Acquire loads + branches per watcher visit —
-    // measurable in line-level profiles (mut_trace.rs / option.rs entries).
-    #[cfg(feature = "std")]
-    let cwrite_probe = crate::mut_trace::cwrite_target();
-    #[cfg(not(feature = "std"))]
-    let cwrite_probe: Option<usize> = None;
+    // The per-scan `OnceLock` reads this used to do (the `NIXIE_CWRITE`
+    // trace target) are snapshotted per solver now — see `ScanProbes`.
+    let cwrite_probe = probes.cwrite;
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
@@ -399,6 +434,7 @@ fn scan<const COMPACT: bool, D: ScanDest>(
                 vec_mirror.as_deref_mut(),
                 #[cfg(feature = "bcp-work")]
                 work,
+                probes,
             );
         };
         let searched = live.searched();
@@ -534,6 +570,7 @@ fn scan<const COMPACT: bool, D: ScanDest>(
                 vec_mirror.as_deref_mut(),
                 #[cfg(feature = "bcp-work")]
                 work,
+                probes,
             );
         }
         if new_searched != searched {
@@ -568,6 +605,7 @@ fn scan<const COMPACT: bool, D: ScanDest>(
                         vec_mirror.as_deref_mut(),
                         #[cfg(feature = "bcp-work")]
                         work,
+                        probes,
                     );
                 }
             }

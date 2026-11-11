@@ -245,6 +245,7 @@ impl Solver {
                     arena.reborrow(),
                     &mut dest,
                     vm_ref.as_deref_mut(),
+                    &self.scan_probes,
                 );
                 let mut r2 = list_kernel::ScanResult::default();
                 if r1.conflict.is_null() {
@@ -257,6 +258,7 @@ impl Solver {
                             arena.reborrow(),
                             &mut dest,
                             vm_ref,
+                            &self.scan_probes,
                         );
                         v.truncate(r2.write);
                     }
@@ -298,6 +300,7 @@ impl Solver {
                     arena.reborrow(),
                     &mut dest,
                     None,
+                    &self.scan_probes,
                 )
             };
             #[cfg(feature = "bcp-work")]
