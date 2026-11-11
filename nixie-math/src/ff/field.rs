@@ -260,6 +260,11 @@ impl FieldCtx {
         let n = self.n_limbs;
         // t has n+2 limbs: the accumulator. Using u128 limbs would overflow
         // on the final adds, so u64 limbs with u128 column arithmetic.
+        // (A stack-backed accumulator for n <= 8 was measured and reverted:
+        // the FF chains' times were unmoved — the CIOS loop arithmetic is
+        // the cost, not the per-call vec allocation — while the nixie-math
+        // rebuild wobbled unrelated SAT instances' codegen layout up to
+        // 1.23x at identical counters.  Scan #3 item #1c, negative result.)
         let mut t = vec![0u64; n + 2];
         for i in 0..n {
             // t += a[i] * b

@@ -132,6 +132,29 @@ registration discipline.
 - coilist is now fully diffuse (max share 7.5%) — batch F removed the
   giant; no further lever.
 
+## Implementation outcomes (same-day follow-up session)
+
+Items #2 (both), #7, #1a, #1c were taken through the gated protocol:
+three landed, one fixup, one reverted with evidence.  All kept batches
+are equivalent-work: bit-identical counters and verdicts across the A/B
+portfolio, parity 171/0/6, perf gate 1.000/1.000.
+
+| batch | commit | change | measured (vs parent) |
+|---|---|---|---|
+| J+K (#2) | `adfab1e2` | FxHash string interner (`Rodeo` alias + Debug-friendly newtype) + hash-reject hashcons probe (parallel `hashes: Vec<u64>` side array; GC's `table.retain` leaves it consistent) | **14.normalised 0.76×** (the profiled front-end unit), bv_ILA_Piccolo 0.80×, Carry 0.89×, 25959 0.90×, SCPC 0.92×, coilist 0.92×; geomean 0.947 |
+| M (#1a) | `c7e5206a` + `9f8cd15a` | ff `linear_core` takes the pivot row instead of cloning it per eliminated row | ff-1024 0.97×, ff-512 0.98× — strictly less work, kept; residual is the certificate bookkeeping itself (snapshot clones + N×G identity polys), structural follow-up documented |
+| L (#7) | `63bed214` | `ScanProbes` solver field snapshots the `NIXIE_CWRITE`/AVX2 gates; per-scan `OnceLock` reads gone | ila96 (profiled) 0.96×, sage 0.97×, coilist 0.97×; arctic 1.08×/peq 1.06× layout wobble; geomean 0.997 |
+| N (#1c) | reverted | stack-backed CIOS accumulator (n ≤ 8) | FF targets UNMOVED (the loop arithmetic is the cost, not the per-call vec allocation) while the nixie-math rebuild wobbled unrelated instances to 1.23× at identical counters — negative result recorded in `field.rs` |
+
+Campaign cumulative vs the original `660166ad` baseline (old set):
+vlsat 0.62×, sll 0.95×, wisa 0.93×, wisas 0.95×, 25959 0.97×, arctic
+1.00×, geomean 0.963; peq 1.20×/seq 1.07× are the standing layout
+drift (identical counters, documented since the first batches).
+
+Process note recorded after M: a clippy gate piped through `tail`
+masked one failure (`needless_range_loop`, fixed in `9f8cd15a`); all
+later gates test clippy's own exit status.
+
 ## Protocol
 
 Unchanged: equivalent-work items → full bar + parity + bit-identical
