@@ -490,7 +490,8 @@ mod tests {
     #[test]
     fn test_model_with_function() {
         let mut model = Model::new();
-        let mut rodeo = crate::interner::Rodeo::default();
+        let mut rodeo =
+            crate::interner::Rodeo::with_hasher(crate::interner::FxBuildHasherDbg::default());
         let f_name = rodeo.get_or_intern("f");
 
         let mut func = FunctionInterpretation::with_default(ModelValue::Int(BigInt::from(0)));

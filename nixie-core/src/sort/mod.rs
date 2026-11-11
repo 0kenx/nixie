@@ -369,7 +369,9 @@ impl SortManager {
             float64_sort_cached: None,
             float128_sort_cached: None,
             aliases: FxHashMap::default(),
-            interner: crate::interner::Rodeo::default(),
+            interner: crate::interner::Rodeo::with_hasher(
+                crate::interner::FxBuildHasherDbg::default(),
+            ),
             parametric_decls: FxHashMap::default(),
             parametric_defs: FxHashMap::default(),
             datatypes: FxHashMap::default(),

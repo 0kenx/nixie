@@ -4,7 +4,41 @@
 //! In no_std mode, provides a simple replacement.
 
 #[cfg(feature = "std")]
-pub use lasso::{Key, Rodeo, Spur};
+pub use lasso::{Key, Spur};
+
+/// The solver-wide string interner: lasso `Rodeo` keyed with FxHash.
+///
+/// lasso's default hasher is std's SipHash `RandomState` (its `ahash`
+/// feature is off in this build); symbol resolution — every sort alias
+/// lookup during parsing, every term symbol intern — was paying SipHash
+/// on each lookup (7% of a large-CNF front-end profile; scan #3 item
+/// #2a).  lasso stores strings in an insertion-ordered `Vec` and the map
+/// is lookup-only, so the hasher swap changes no `Spur` assignment
+/// sequence and no iteration order: pure equivalent-work.
+#[cfg(feature = "std")]
+pub type Rodeo = lasso::Rodeo<Spur, FxBuildHasherDbg>;
+
+/// [`rustc_hash::FxBuildHasher`] plus a `Debug` impl (upstream lacks one,
+/// and `TermManager`/`SortManager` derive `Debug` over their interners).
+#[cfg(feature = "std")]
+#[derive(Default, Clone, Copy)]
+pub struct FxBuildHasherDbg(rustc_hash::FxBuildHasher);
+
+#[cfg(feature = "std")]
+impl core::fmt::Debug for FxBuildHasherDbg {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("FxBuildHasherDbg")
+    }
+}
+
+#[cfg(feature = "std")]
+impl core::hash::BuildHasher for FxBuildHasherDbg {
+    type Hasher = rustc_hash::FxHasher;
+    #[inline]
+    fn build_hasher(&self) -> Self::Hasher {
+        self.0.build_hasher()
+    }
+}
 
 #[cfg(not(feature = "std"))]
 mod no_std_interner {

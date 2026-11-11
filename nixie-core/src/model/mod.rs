@@ -1168,7 +1168,8 @@ mod tests {
     #[test]
     fn test_model_add_and_get_func_interp() {
         let mut model = Model::new();
-        let mut rodeo = crate::interner::Rodeo::default();
+        let mut rodeo =
+            crate::interner::Rodeo::with_hasher(crate::interner::FxBuildHasherDbg::default());
         let f = rodeo.get_or_intern("f");
 
         let mut fi = FuncInterp::new(1, Value::Int(0));
@@ -1186,7 +1187,8 @@ mod tests {
     #[test]
     fn test_model_get_func_interp_missing_returns_none() {
         let model = Model::new();
-        let mut rodeo = crate::interner::Rodeo::default();
+        let mut rodeo =
+            crate::interner::Rodeo::with_hasher(crate::interner::FxBuildHasherDbg::default());
         let g = rodeo.get_or_intern("g");
         assert!(model.get_func_interp(g).is_none());
     }
@@ -1459,7 +1461,8 @@ mod tests {
     fn test_model_merge_preserves_func_interps() {
         let mut m1 = Model::new();
         let mut m2 = Model::new();
-        let mut rodeo = crate::interner::Rodeo::default();
+        let mut rodeo =
+            crate::interner::Rodeo::with_hasher(crate::interner::FxBuildHasherDbg::default());
         let f1 = rodeo.get_or_intern("f1");
         let f2 = rodeo.get_or_intern("f2");
 

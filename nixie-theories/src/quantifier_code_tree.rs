@@ -650,7 +650,10 @@ mod tests {
     use nixie_core::interner::{Key, Rodeo};
 
     fn setup_term_manager() -> (TermManager, Rodeo) {
-        (TermManager::new(), Rodeo::default())
+        (
+            TermManager::new(),
+            Rodeo::with_hasher(nixie_core::interner::FxBuildHasherDbg::default()),
+        )
     }
 
     #[test]

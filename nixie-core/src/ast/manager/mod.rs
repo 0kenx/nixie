@@ -86,6 +86,13 @@ pub struct TermManager {
     /// is a [`HashTable`] and not a `HashMap`: a `HashMap` has no way to
     /// express "the key lives somewhere else". (Ported from upstream v0.3.3.)
     pub(super) table: HashTable<TermId>,
+    /// Hash fast-reject side array, parallel to `terms`: `hashes[i]` is the
+    /// `hash_term_key` value of term `i`'s `(kind, sort)`.  Append-only and
+    /// written exactly once per term (next to the single `terms.push`), so it
+    /// is consistent by construction.  The hashcons probe compares this 8-byte
+    /// entry before loading the full `Term` from the arena — the dominant
+    /// per-candidate cost of parsing large inputs (scan #3 item #2b).
+    pub(super) hashes: Vec<u64>,
     /// True constant
     pub true_id: TermId,
     /// False constant
@@ -149,10 +156,14 @@ impl TermManager {
         let mut manager = Self {
             terms: Vec::with_capacity(expected_terms.max(1024)),
             next_id: AtomicU32::new(0),
-            interner: Rodeo::with_capacity(lasso::Capacity::for_strings(expected_terms.max(1024))),
+            interner: Rodeo::with_capacity_and_hasher(
+                lasso::Capacity::for_strings(expected_terms.max(1024)),
+                crate::interner::FxBuildHasherDbg::default(),
+            ),
             sorts,
             rounding_mode_used: false,
             table: HashTable::with_capacity(expected_terms.max(1024)),
+            hashes: Vec::with_capacity(expected_terms.max(1024)),
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
@@ -229,11 +240,22 @@ impl TermManager {
         let hash = hash_term_key(&kind, sort);
 
         {
-            let Self { terms, table, .. } = self;
+            let Self {
+                terms,
+                table,
+                hashes,
+                ..
+            } = self;
             if let Some(&id) = table.find(hash, |&id| {
-                terms
-                    .get(id.0 as usize)
-                    .is_some_and(|t| t.sort == sort && t.kind == kind)
+                // Hash fast-reject before the Term load: the 8-byte side
+                // array (see `hashes`) screens out foreign-bucket candidates
+                // at ~12x the density of the Term arena, so a candidate Term
+                // is loaded only on a hash match (exact compare still
+                // follows — a hash match alone never proves identity).
+                hashes.get(id.0 as usize).is_some_and(|h| *h == hash)
+                    && terms
+                        .get(id.0 as usize)
+                        .is_some_and(|t| t.sort == sort && t.kind == kind)
             }) {
                 return id;
             }
@@ -243,12 +265,11 @@ impl TermManager {
         // that the id the table stores is already resolvable through `terms`.
         let id = TermId(self.next_id.fetch_add(1, Ordering::Relaxed));
         self.terms.push(Term { id, kind, sort });
+        self.hashes.push(hash);
 
-        let Self { terms, table, .. } = self;
+        let Self { table, hashes, .. } = self;
         table.insert_unique(hash, id, |&id| {
-            terms
-                .get(id.0 as usize)
-                .map_or(0, |t| hash_term_key(&t.kind, t.sort))
+            hashes.get(id.0 as usize).copied().unwrap_or(0)
         });
         id
     }
@@ -268,12 +289,18 @@ impl TermManager {
     #[must_use]
     pub fn find_interned(&self, kind: &TermKind, sort: SortId) -> Option<TermId> {
         let hash = hash_term_key(kind, sort);
-        let Self { terms, table, .. } = self;
+        let Self {
+            terms,
+            table,
+            hashes,
+            ..
+        } = self;
         table
             .find(hash, |&id| {
-                terms
-                    .get(id.0 as usize)
-                    .is_some_and(|t| t.sort == sort && &t.kind == kind)
+                hashes.get(id.0 as usize).is_some_and(|h| *h == hash)
+                    && terms
+                        .get(id.0 as usize)
+                        .is_some_and(|t| t.sort == sort && &t.kind == kind)
             })
             .copied()
     }
