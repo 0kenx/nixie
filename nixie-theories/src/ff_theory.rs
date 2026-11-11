@@ -3126,7 +3126,25 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
                 *c = f.mul(c, &inv);
             }
         }
-        // Eliminate from every other row, merging provenance.
+        // Eliminate from every other row, merging provenance.  The pivot
+        // row is TAKEN out of the arena for the sweep (rows[ri] holds an
+        // empty placeholder that nothing reads: every access below is
+        // either the taken row or rows[rj != ri]) — the previous version
+        // cloned the pivot's coeffs/constant/origin/combo once per
+        // eliminated row purely to split the borrow, and those deep
+        // BTreeMap/Limbs copies were the FF chains' dominant cost
+        // (~40% of the 1024x1536 profile; scan #3 item #1a).  Identical
+        // arithmetic and provenance, no per-row copies.
+        let pivot_row = std::mem::replace(
+            &mut rows[ri],
+            Row {
+                coeffs: BTreeMap::new(),
+                constant: f.zero(),
+                origin: std::collections::BTreeSet::new(),
+                literal: None,
+                combo: Vec::new(),
+            },
+        );
         for rj in 0..rows.len() {
             if rj == ri {
                 continue;
@@ -3134,17 +3152,8 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
             let Some(factor) = rows[rj].coeffs.get(&pivot_var).cloned() else {
                 continue;
             };
-            let (pc, pk, po, pcombo) = {
-                let r = &rows[ri];
-                (
-                    r.coeffs.clone(),
-                    r.constant.clone(),
-                    r.origin.clone(),
-                    r.combo.clone(),
-                )
-            };
             let row = &mut rows[rj];
-            for (v, c) in &pc {
+            for (v, c) in &pivot_row.coeffs {
                 let sub = f.mul(c, &factor);
                 let entry = row.coeffs.entry(*v).or_insert_with(|| f.zero());
                 *entry = f.sub(entry, &sub);
@@ -3152,13 +3161,14 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
                     row.coeffs.remove(v);
                 }
             }
-            row.constant = f.sub(&row.constant, &f.mul(&pk, &factor));
-            for (i, c) in pcombo.iter().enumerate() {
+            row.constant = f.sub(&row.constant, &f.mul(&pivot_row.constant, &factor));
+            for (i, c) in pivot_row.combo.iter().enumerate() {
                 let sub = f.mul(c, &factor);
                 row.combo[i] = f.sub(&row.combo[i], &sub);
             }
-            row.origin.extend(po.iter().copied());
+            row.origin.extend(pivot_row.origin.iter().copied());
         }
+        rows[ri] = pivot_row;
         pivots.push((pivot_var, ri));
     }
 
