@@ -1593,6 +1593,20 @@ pub struct Simplex {
     /// maintenance structure.  Kept in lockstep with `tableau` by
     /// `intern_row` and `pivot`.
     columns: FxHashMap<VarId, Arc<SmallVec<[VarId; 4]>>>,
+    /// Z3 `static_matrix` back-pointer discipline, adapted to nixie's
+    /// immutable rows: `(var, row) -> index of row inside columns[var]`.
+    /// Rows here are content-replaced `Arc` values with no in-place term
+    /// cells, so the back-pointer lives in this side map instead of inside
+    /// the row; a removal reads the slot, `swap_remove`s that position and
+    /// fixes up exactly ONE moved entry's slot — O(1) instead of the linear
+    /// `position` scan that dominated dense QF_LIA (39.6% of arctic
+    /// matrix CPU in the 2026-11-10 scan).  A slot is only ever acted on
+    /// after verifying `columns[var][slot] == row`; disagreement falls
+    /// back to the authoritative scan, so a stale slot can slow a drop
+    /// but never mis-remove.  The resulting vector contents (and hence
+    /// every column iteration order) are identical to the scan-based
+    /// removal by construction.
+    column_slots: FxHashMap<(VarId, VarId), u32>,
     /// Content-addressed row identities: canonical linear form (over stable
     /// VarIds) -> the slack whose row defines it.  Every `add_*` constraint
     /// API routes through [`Self::intern_row_cached`], so repeated assertions
@@ -1696,6 +1710,7 @@ impl Simplex {
             wide_points: FxHashMap::default(),
             wide_pending: false,
             columns: FxHashMap::default(),
+            column_slots: FxHashMap::default(),
             row_ids: FxHashMap::default(),
             wide_row_ids: FxHashMap::default(),
             row_scope_trail: Vec::new(),
@@ -1727,22 +1742,87 @@ impl Simplex {
     /// Column lists are `Arc`-shared with scope snapshots (copy-on-write):
     /// an edit clones exactly the one list it touches, so the snapshot a
     /// Unchecked variants for call sites that PROVE membership (or its
-    /// absence) from the column-exactness invariant: skip the linear scan.
+    /// absence) from the column-exactness invariant: the position scan is
+    /// replaced by the `column_slots` back-pointer (Z3 `static_matrix`
+    /// discipline — see that field's doc).  The slot is verified against
+    /// the vector before use; any disagreement falls back to the
+    /// authoritative scan, and the one entry `swap_remove` displaces gets
+    /// its slot fixed up.  The resulting vector is identical to the
+    /// scan-based removal, so every column iteration order is unchanged.
     fn column_drop_known(&mut self, var: VarId, row: VarId) {
+        let slot = self.column_slots.remove(&(var, row));
+        // The slot fixup for the displaced entry (computed under the
+        // `columns` borrow, applied after it ends).
+        let mut fixup: Option<((VarId, VarId), u32)> = None;
         if let Some(col_arc) = self.columns.get_mut(&var) {
             let col = Arc::make_mut(col_arc);
-            if let Some(pos) = col.iter().position(|&r| r == row) {
-                col.swap_remove(pos);
+            let trusted = slot.is_some_and(|s| {
+                let p = s as usize;
+                p < col.len() && col[p] == row
+            });
+            let pos = if trusted {
+                slot.map_or(0, |s| s as usize)
+            } else {
+                // Slot absent (row not present — the common proven-absent
+                // case) or desynced: the scan is the authority.  A desync
+                // is impossible by the maintenance discipline (every
+                // mutation of `columns` records slots in lockstep); the
+                // scan keeps a drop correct regardless.
+                match col.iter().position(|&r| r == row) {
+                    Some(p) => p,
+                    None => {
+                        // Row absent: restore any removed slot so a later
+                        // drop of the same pair still finds nothing.
+                        if let Some(s) = slot {
+                            self.column_slots.insert((var, row), s);
+                        }
+                        return;
+                    }
+                }
+            };
+            let last = col.pop();
+            if let Some(last) = last
+                && pos < col.len()
+            {
+                col[pos] = last;
+                if last == row {
+                    // Defensive duplicate handling: exactness excludes
+                    // duplicates, but if one ever slipped through, keep a
+                    // slot for the REMAINING occurrence instead of losing
+                    // it (losing it would make a later drop a silent no-op
+                    // and leave a stale column entry).
+                    fixup = Some(((var, row), pos as u32));
+                } else {
+                    fixup = Some(((var, last), pos as u32));
+                }
             }
+        }
+        if let Some((key, s)) = fixup {
+            self.column_slots.insert(key, s);
         }
     }
 
     fn column_push_known(&mut self, var: VarId, row: VarId) {
-        match self.columns.get_mut(&var) {
-            Some(col_arc) => Arc::make_mut(col_arc).push(row),
+        // The new slot (computed under the `columns` borrow, recorded after
+        // it ends).
+        let mut slot: Option<u32> = None;
+        if let Some(col_arc) = self.columns.get_mut(&var) {
+            let col = Arc::make_mut(col_arc);
+            debug_assert!(
+                !col.contains(&row),
+                "column exactness: {row} pushed twice into columns[{var}]"
+            );
+            col.push(row);
+            slot = Some(col.len() as u32 - 1);
+        }
+        match slot {
+            Some(s) => {
+                self.column_slots.insert((var, row), s);
+            }
             None => {
                 self.columns
                     .insert(var, Arc::new(SmallVec::from_slice(&[row])));
+                self.column_slots.insert((var, row), 0);
             }
         }
     }
@@ -4859,6 +4939,31 @@ impl Simplex {
                 );
             }
         }
+        // Slot consistency (dev oracle for the column_slots back-pointers):
+        // every live entry's slot must name its exact position, and no slot
+        // may name a dead position.  This is what makes a trusted slot safe
+        // to swap_remove without re-scanning.
+        for (t, col) in &self.columns {
+            for (p, &r) in col.iter().enumerate() {
+                debug_assert_eq!(
+                    self.column_slots.get(&(*t, r)).copied(),
+                    Some(p as u32),
+                    "column_slots[{t},{r}] is {} but the entry sits at {p}",
+                    self.column_slots
+                        .get(&(*t, r))
+                        .copied()
+                        .map_or(-1, |v| v as i64)
+                );
+            }
+        }
+        for (&(t, r), &s) in &self.column_slots {
+            let live = self
+                .columns
+                .get(&t)
+                .and_then(|c| c.get(s as usize).copied())
+                .is_some_and(|x| x == r);
+            debug_assert!(live, "stale column_slots[{t},{r}]={s} names no live entry");
+        }
         for (t, col) in &self.columns {
             for r in col.iter() {
                 let references = self
@@ -6789,6 +6894,7 @@ impl Simplex {
         self.wide_points.clear();
         self.wide_pending = false;
         self.columns.clear();
+        self.column_slots.clear();
         self.row_ids.clear();
         self.row_scope_trail.clear();
         self.row_scope_marks = vec![0];
