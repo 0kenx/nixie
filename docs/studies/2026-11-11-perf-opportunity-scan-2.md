@@ -159,6 +159,31 @@ dominated by map *size* on storecomm, not key builds.
 - ania-gp7's dominant cost is congruence/hash churn at modest absolute share
   (5.7%) — post-batch-C steady state, no action.
 
+## Implementation outcomes (same-day follow-up session)
+
+Items #1, #2a, #3 were implemented and landed; #5 was implemented,
+measured, and reverted (negative result).  All kept batches are
+equivalent-work: bit-identical STATS counters across the whole A/B
+portfolio, parity 171/0/6, perf gate 1.000/1.000.
+
+| batch | commit | change | target effect | portfolio |
+|---|---|---|---|---|
+| F (#1) | `d30ae6b2` | `term_to_node` insertion trail replaces the pop `retain` (single choke-point `map_term_to_node`; dev oracle debug-asserts trail == retain on every pop) | coilist 14.6→6.5s (**0.44×**, matching the 67% scan share), huffman 0.71×, rbt 0.73× | 0.941 |
+| G (#2a) | `21ae9b7e` | `propagate_bounds_in` shares rows via `Arc` clone instead of deep `LinExpr` clones | arctic 0.88×, sll 0.96×, sage 0.84×; vlsat unmoved (its cost is re-derivation/stamping — the #2 worklist remains the structural fix) | 0.986 |
+| H (#3) | `7e22cdf8` | `nl_eval` machine-width fast paths: `euclidean` checked-i64 div/mod, dual-track i64 accumulators in `fold_node` Add/Mul/Sub/Neg (the profiled BigInt `div_rem` was the Ratio normalization gcd, not `euclidean` — found by re-reading the stack after the first fast path measured 1.00) | AProVE 25.2→20.4s (**0.81×**), vm4 0.94×, coilist 0.92× | 0.965 |
+| I (#5) | reverted | per-walk per-sort candidate index for `build_exists_candidate_lists` | rbt 1.01× at K=1500 (the profiled MBQI phase is UNREACHABLE at fixed counters: K≥5000 never completes — no measurable work unit exists); coilist **1.17× regression** at identical counters (reproducible at K=6000: 14.0→16.4s).  Index build (hash `entry` + bucket `contains` per assignment entry) costs more than the old single-sort-compare scan when walks meet few `Exists` terms | — |
+
+Cumulative vs the campaign's original baseline `660166ad` (same fixed
+budgets, counters identical): vlsat 0.62×, wisa 0.94×, wisas 0.95×,
+arctic 0.95×, sll 0.97×, seq 1.00×; portfolio geomean **0.968** on the
+old set (peq 1.12× and 25959 1.11× remain codegen-layout drift at
+identical counters, as documented in the 2026-11-11 batches study).
+
+Lesson recorded for future MBQI work: the rbt-class MBQI cost is not
+reachable by conflict/decision budgets (the search never completes
+enough conflicts); an MBQI-iteration counter budget would be needed to
+A/B that phase deterministically.
+
 ## Protocol for landing any item above
 
 Unchanged from scan #1: equivalent-work items need the full release bar +
