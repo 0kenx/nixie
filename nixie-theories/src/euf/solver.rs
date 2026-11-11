@@ -278,6 +278,22 @@ pub struct EufSolver {
     /// there is exact.  An application is never mapped onto a pre-existing
     /// congruent node: see [`EufSolver::intern_app`].
     term_to_node: FxHashMap<TermId, u32>,
+    /// Undo trail for `term_to_node` insertions: every intern that CREATES a
+    /// node appends its term, so `pop()` removes exactly the entries the
+    /// index-based `retain` used to remove — O(inserted) instead of a full
+    /// vocabulary scan on every node-creating backtrack (the retain was
+    /// 67% of an MBQI-heavy quantified-UF profile; scan #2 item #1).
+    ///
+    /// Equivalence is exact: all three insert sites run only on a `get()`
+    /// miss, every entry's index is `nodes.len()` at creation, nodes are
+    /// LIFO-truncated, and nodes created before the first `push()` are never
+    /// truncated — so "node >= num_nodes at pop" and "inserted after this
+    /// scope's push mark" name the same entries.  `pop()` debug-asserts the
+    /// equivalence against the retain directly (dev oracle).
+    term_to_node_trail: Vec<TermId>,
+    /// Scope checkpoints into `term_to_node_trail`, parallel to
+    /// `sig_trail_limits`.
+    term_to_node_limits: Vec<usize>,
     /// Disequality constraints
     diseqs: Vec<Diseq>,
     /// Pending merges for congruence closure.
@@ -553,6 +569,8 @@ impl EufSolver {
             nodes: Vec::new(),
             first_app_node: None,
             term_to_node: FxHashMap::default(),
+            term_to_node_trail: Vec::new(),
+            term_to_node_limits: Vec::new(),
             diseqs: Vec::new(),
             pending: Vec::new(),
             use_list: Vec::new(),
@@ -629,7 +647,7 @@ impl EufSolver {
             self.proof_forest.push(SmallVec::new());
             self.node_sig_key.push(None);
             self.class_value.push(Some((value, idx)));
-            self.term_to_node.insert(term, idx);
+            self.map_term_to_node(term, idx);
             return idx;
         }
 
@@ -640,7 +658,7 @@ impl EufSolver {
         self.proof_forest.push(SmallVec::new());
         self.node_sig_key.push(None);
         self.class_value.push(None);
-        self.term_to_node.insert(term, idx);
+        self.map_term_to_node(term, idx);
         idx
     }
 
@@ -785,7 +803,7 @@ impl EufSolver {
         } else {
             Some(sig.clone())
         });
-        self.term_to_node.insert(term, idx);
+        self.map_term_to_node(term, idx);
 
         // Register the application on the *representative* of each argument, so a
         // later merge of that class re-canonicalizes this node.  Trailed so pop()
@@ -1124,6 +1142,15 @@ impl EufSolver {
         self.term_to_node.get(&term).copied()
     }
 
+    /// Record a `term_to_node` mapping.  The ONLY insert path (all former
+    /// call sites are miss-guarded `get()` checks), so every insertion lands
+    /// on the undo trail exactly once — the invariant `pop()`'s trail unwind
+    /// relies on.
+    fn map_term_to_node(&mut self, term: TermId, idx: u32) {
+        self.term_to_node.insert(term, idx);
+        self.term_to_node_trail.push(term);
+    }
+
     /// Iterate over all node indices that are function applications of a given function symbol.
     /// Returns a Vec of node indices.
     pub fn apps_by_func(&self, func_id: u32) -> Vec<u32> {
@@ -1306,6 +1333,9 @@ impl Theory for EufSolver {
         self.uf.push();
         // Record sig_trail checkpoint, mirroring uf.trail_limits.push(...)
         self.sig_trail_limits.push(self.sig_trail.len());
+        // term_to_node insertion checkpoint (see that field's doc for the
+        // trail-vs-retain equivalence argument).
+        self.term_to_node_limits.push(self.term_to_node_trail.len());
         // Record proof_trail checkpoint so pop() can rewind proof-forest edges
         // appended during this scope.
         self.proof_trail_limits.push(self.proof_trail.len());
@@ -1331,7 +1361,6 @@ impl Theory for EufSolver {
     fn pop(&mut self) {
         if let Some(state) = self.context_stack.pop() {
             let num_nodes = state.num_nodes;
-            let removed_nodes = self.nodes.len() > num_nodes;
 
             // A new epoch begins: every equality atom becomes eligible for
             // enqueue again (the SAT core may have unassigned it above the
@@ -1493,16 +1522,32 @@ impl Theory for EufSolver {
 
             // Remove term_to_node mappings that point to removed nodes.  Every
             // term maps to the node created for it (never to a borrowed congruent
-            // one), and nodes are truncated in LIFO order, so this drops exactly
-            // the terms first interned inside the popped scope.
-            // Most theory backtracks only undo merges. Since each map entry
-            // names its own creation node, a scope that created no nodes cannot
-            // have invalidated any entry. Avoid a full-vocabulary scan there;
-            // retain the exact existing removal order when nodes were created.
-            if removed_nodes {
-                self.term_to_node
-                    .retain(|_term, &mut idx| (idx as usize) < num_nodes);
+            // one), nodes are truncated in LIFO order, and every insert is
+            // miss-guarded, so the entries inserted inside this scope are
+            // EXACTLY the entries whose node index no longer exists — unwind
+            // the insertion trail instead of scanning the whole vocabulary
+            // (the full-map `retain` here was 67% of an MBQI-heavy
+            // quantified-UF profile; scan #2 item #1).  A scope that created
+            // no nodes also inserted nothing, so its trail segment is empty
+            // and the unwind degenerates to popping the checkpoint.
+            if let Some(limit) = self.term_to_node_limits.pop() {
+                while self.term_to_node_trail.len() > limit {
+                    if let Some(term) = self.term_to_node_trail.pop() {
+                        self.term_to_node.remove(&term);
+                    }
+                }
             }
+            // Dev oracle: the trail unwind must leave exactly the map the
+            // index-based retain produced (the equivalence argument lives on
+            // `term_to_node_trail`).
+            debug_assert!(
+                {
+                    let mut expected = self.term_to_node.clone();
+                    expected.retain(|_, &mut idx| (idx as usize) < num_nodes);
+                    expected == self.term_to_node
+                },
+                "term_to_node trail unwind diverged from the retain semantics"
+            );
 
             // Rewind sig_trail to the saved limit, undoing all sig/fp insertions
             // made since the matching push().  Mirrors UnionFind::pop() exactly.
@@ -1545,6 +1590,8 @@ impl Theory for EufSolver {
         self.nodes.clear();
         self.first_app_node = None;
         self.term_to_node.clear();
+        self.term_to_node_trail.clear();
+        self.term_to_node_limits.clear();
         self.diseqs.clear();
         self.pending.clear();
         self.use_list.clear();
