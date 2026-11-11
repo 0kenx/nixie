@@ -35,7 +35,7 @@
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_rational::BigRational;
-use num_traits::{One, Signed, Zero};
+use num_traits::{One, Signed, ToPrimitive, Zero};
 use rustc_hash::FxHashMap;
 use std::collections::BTreeMap;
 
@@ -492,22 +492,94 @@ fn fold_node(
             Some(Value::Truth(true))
         }
 
-        TermKind::Neg(a) => Some(Value::Num(-num(*a)?)),
+        TermKind::Neg(a) => {
+            let v = num(*a)?;
+            // i64 fast path: an integral machine-width negation stays
+            // integral, so the bignum normalization never runs.  i64::MIN
+            // (checked_neg None) and wide values fall back exactly.
+            let fast = v
+                .to_i64()
+                .filter(|_| v.is_integer())
+                .and_then(|x| x.checked_neg())
+                .map(|x| BigRational::from_integer(BigInt::from(x)));
+            Some(Value::Num(fast.unwrap_or_else(|| -v)))
+        }
         TermKind::Add(args) => {
+            // Dual-track accumulator: stay in i64 while every operand and
+            // the running sum are machine-width integers (denominator 1, so
+            // the Ratio normalization gcd — a BigInt div_rem per bignum
+            // Add/Mul — never runs); promote to BigRational on the first
+            // non-integral, wide, or overflowing element and continue
+            // exactly from there.  Checked ops only, so every corner falls
+            // back rather than wrapping.  (~13% of a QF_NIA ground-eval
+            // profile was that gcd; scan #2 item #3.)
+            let mut small: Option<i64> = Some(0);
             let mut acc = BigRational::zero();
             for &a in args {
-                acc += num(a)?;
+                let v = num(a)?;
+                let vi = v.to_i64().filter(|_| v.is_integer());
+                match (small, vi) {
+                    (Some(s), Some(x)) => match s.checked_add(x) {
+                        Some(s2) => small = Some(s2),
+                        None => {
+                            acc += BigRational::from_integer(BigInt::from(s));
+                            acc += v;
+                            small = None;
+                        }
+                    },
+                    (Some(s), None) => {
+                        acc += BigRational::from_integer(BigInt::from(s));
+                        acc += v;
+                        small = None;
+                    }
+                    (None, _) => acc += v,
+                }
             }
-            Some(Value::Num(acc))
+            Some(Value::Num(
+                small.map_or(acc, |s| BigRational::from_integer(BigInt::from(s))),
+            ))
         }
         TermKind::Mul(args) => {
+            // Same dual-track discipline as Add.  No short-circuit on zero:
+            // every operand is still evaluated (`num(a)?`), matching the old
+            // fold exactly including its None propagation.
+            let mut small: Option<i64> = Some(1);
             let mut acc = BigRational::one();
             for &a in args {
-                acc *= num(a)?;
+                let v = num(a)?;
+                let vi = v.to_i64().filter(|_| v.is_integer());
+                match (small, vi) {
+                    (Some(s), Some(x)) => match s.checked_mul(x) {
+                        Some(s2) => small = Some(s2),
+                        None => {
+                            acc *= BigRational::from_integer(BigInt::from(s));
+                            acc *= v;
+                            small = None;
+                        }
+                    },
+                    (Some(s), None) => {
+                        acc *= BigRational::from_integer(BigInt::from(s));
+                        acc *= v;
+                        small = None;
+                    }
+                    (None, _) => acc *= v,
+                }
             }
-            Some(Value::Num(acc))
+            Some(Value::Num(
+                small.map_or(acc, |s| BigRational::from_integer(BigInt::from(s))),
+            ))
         }
-        TermKind::Sub(a, b) => Some(Value::Num(num(*a)? - num(*b)?)),
+        TermKind::Sub(a, b) => {
+            let x = num(*a)?;
+            let y = num(*b)?;
+            let fast = (|| {
+                let xi = x.to_i64().filter(|_| x.is_integer())?;
+                let yi = y.to_i64().filter(|_| y.is_integer())?;
+                xi.checked_sub(yi)
+                    .map(|d| BigRational::from_integer(BigInt::from(d)))
+            })();
+            Some(Value::Num(fast.unwrap_or_else(|| x - y)))
+        }
         TermKind::Div(a, b) => euclidean(manager, node.sort, num(*a)?, num(*b)?, DivPart::Quotient),
         TermKind::Mod(a, b) => euclidean(manager, node.sort, num(*a)?, num(*b)?, DivPart::Residue),
         TermKind::Lt(a, b) => Some(Value::Truth(num(*a)? < num(*b)?)),
@@ -576,6 +648,39 @@ fn euclidean(
     }
     if !dividend.is_integer() || !divisor.is_integer() {
         return None;
+    }
+    // i64 fast path: AProVE/VeryMax-style workloads evaluate div/mod on
+    // machine-width operands constantly, and the bignum `/`-`*`-`-` below
+    // was ~14% of a QF_NIA profile (scan #2 item #3).  Same Euclidean
+    // convention as the bignum path; `checked_*` falls back to exact bignums
+    // on every corner (zero divisor handled above, i64::MIN / -1, overflow).
+    if let (Some(mi), Some(ni)) = (
+        num_traits::ToPrimitive::to_i64(dividend.numer()),
+        num_traits::ToPrimitive::to_i64(divisor.numer()),
+    ) && let (Some(quotient), Some(residue)) = (mi.checked_div(ni), mi.checked_rem(ni))
+    {
+        // Truncating division first, then correct the remainder into
+        // `[0, |n|)` — the same convention as the bignum path below.  All
+        // arithmetic stays checked: any corner (i64::MIN/-1 overflowed in
+        // checked_div above; the corrections are in-range by construction)
+        // falls through to the exact bignum path instead of wrapping.
+        let corrected = if residue < 0 {
+            if ni > 0 {
+                Some((quotient.checked_sub(1)?, residue.checked_add(ni)?))
+            } else {
+                Some((quotient.checked_add(1)?, residue.checked_sub(ni)?))
+            }
+        } else {
+            Some((quotient, residue))
+        };
+        if let Some((quotient, residue)) = corrected {
+            return Some(Value::Num(BigRational::from_integer(BigInt::from(
+                match part {
+                    DivPart::Quotient => quotient,
+                    DivPart::Residue => residue,
+                },
+            ))));
+        }
     }
     let m = dividend.to_integer();
     let n = divisor.to_integer();
@@ -761,6 +866,93 @@ mod tests {
             evaluate(residue, &tm, &interp).and_then(|v| v.as_num().cloned()),
             Some(rat(1))
         );
+    }
+
+    /// The i64 fast path in `euclidean` must agree with the exact bignum
+    /// fallback on every corner it can take, and must FALL BACK on the
+    /// corners it cannot (i64::MIN / -1 overflows the checked machine ops;
+    /// wider-than-i64 operands route to bignums directly).  Pins the
+    /// equivalence by evaluating the same value pairs through the public
+    /// path and comparing against the mathematically expected Euclidean
+    /// results (regression for the fast path added in scan #2 item #3).
+    #[test]
+    fn test_euclidean_fast_path_matches_bignum_fallback() {
+        let tm = TermManager::new();
+        let int_sort = tm.sorts.int_sort;
+        // (m, n) pairs chosen to hit: both signs, |n| = 1, exact division,
+        // correction on both branches, i64 rails, and the overflow fallback.
+        let cases: &[(i64, i64)] = &[
+            (7, 2),
+            (-7, 2),
+            (7, -2),
+            (-7, -2),
+            (6, 3),
+            (-6, 3),
+            (6, -3),
+            (-6, -3),
+            (5, 1),
+            (5, -1),
+            (-5, -1),
+            (i64::MAX, 3),
+            (i64::MIN + 1, 3),
+            (i64::MIN, i64::MAX),
+            (i64::MIN, -1), // checked_div overflow: must fall back to bignums
+        ];
+        for &(m, n) in cases {
+            let bm = BigInt::from(m);
+            let bn = BigInt::from(n);
+            let expected_q = &bm / &bn
+                + if (&bm - (&bm / &bn) * &bn).is_negative() {
+                    if bn.is_positive() {
+                        BigInt::from(-1)
+                    } else {
+                        BigInt::one()
+                    }
+                } else {
+                    BigInt::zero()
+                };
+            let expected_r = &bm - &expected_q * &bn;
+            // Reference: 0 <= r < |n| by the Euclidean convention.
+            assert!(!expected_r.is_negative() && expected_r < bn.abs());
+
+            let q = euclidean(
+                &tm,
+                int_sort,
+                BigRational::from(bm.clone()),
+                BigRational::from(bn.clone()),
+                DivPart::Quotient,
+            )
+            .and_then(|v| v.as_num().cloned());
+            let r = euclidean(
+                &tm,
+                int_sort,
+                BigRational::from(bm.clone()),
+                BigRational::from(bn.clone()),
+                DivPart::Residue,
+            )
+            .and_then(|v| v.as_num().cloned());
+            assert_eq!(
+                q,
+                Some(BigRational::from(expected_q.clone())),
+                "quotient {m}/{n}"
+            );
+            assert_eq!(
+                r,
+                Some(BigRational::from(expected_r.clone())),
+                "residue {m}%{n}"
+            );
+        }
+        // Wider-than-i64 operands route through bignums (the fallback path).
+        let big = BigInt::from(i64::MAX as i128 + 7);
+        let q = euclidean(
+            &tm,
+            int_sort,
+            BigRational::from(big.clone()),
+            BigRational::from_integer(BigInt::from(3)),
+            DivPart::Quotient,
+        )
+        .and_then(|v| v.as_num().cloned());
+        assert_eq!(q, Some(BigRational::from_integer(&big / BigInt::from(3))));
     }
 
     #[test]
