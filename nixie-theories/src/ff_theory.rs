@@ -3145,14 +3145,13 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
                 combo: Vec::new(),
             },
         );
-        for rj in 0..rows.len() {
+        for (rj, row) in rows.iter_mut().enumerate() {
             if rj == ri {
                 continue;
             }
-            let Some(factor) = rows[rj].coeffs.get(&pivot_var).cloned() else {
+            let Some(factor) = row.coeffs.get(&pivot_var).cloned() else {
                 continue;
             };
-            let row = &mut rows[rj];
             for (v, c) in &pivot_row.coeffs {
                 let sub = f.mul(c, &factor);
                 let entry = row.coeffs.entry(*v).or_insert_with(|| f.zero());
