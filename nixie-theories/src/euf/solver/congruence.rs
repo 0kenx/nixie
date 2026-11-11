@@ -521,10 +521,12 @@ impl EufSolver {
             // Collect congruence merges to enqueue
             propagation_buf.clear();
 
-            // ======== Change A: Reusable canonicalization buffer ========
-            // Declared once outside the loop so the SmallVec's heap backing (if it
-            // ever spills past the inline capacity of 4) is allocated at most once
-            // per merge event rather than once per use-list entry.
+            // ======== Change A: Reusable canonicalization buffers ========
+            // Declared once outside the loop so each SmallVec's heap backing
+            // (if it ever spills past the inline capacity of 4) is allocated
+            // at most once per merge event rather than once per use-list
+            // entry — both the raw argument copy and the canonical form.
+            let mut args_buf: SmallVec<[u32; 4]> = SmallVec::new();
             let mut canon_buf: SmallVec<[u32; 4]> = SmallVec::new();
 
             for i in 0..use_len {
@@ -538,11 +540,11 @@ impl EufSolver {
                 }
                 let func = node_func_val;
 
-                // Read args by index to avoid cloning the SmallVec
-                let args_len = self.nodes[user as usize].args.len();
-                let mut args_copy: SmallVec<[u32; 4]> = SmallVec::with_capacity(args_len);
-                for j in 0..args_len {
-                    args_copy.push(self.nodes[user as usize].args[j]);
+                // Read args into the per-merge-event buffer (index walk, no
+                // per-entry allocation; cleared and refilled per entry).
+                args_buf.clear();
+                for j in 0..self.nodes[user as usize].args.len() {
+                    args_buf.push(self.nodes[user as usize].args[j]);
                 }
 
                 // Fetch function properties once per use-list entry (per unique func),
@@ -550,7 +552,7 @@ impl EufSolver {
                 let props = self.get_function_props(func);
 
                 // Canonicalize arguments into the reusable buffer (avoids per-iteration alloc).
-                self.canonicalize_args_with_props_into(&props, &args_copy, &mut canon_buf);
+                self.canonicalize_args_with_props_into(&props, &args_buf, &mut canon_buf);
 
                 // ======== Optimization 2: Fingerprint pre-filter ========
                 // Compute the new fingerprint for the updated canonical args and
@@ -558,13 +560,31 @@ impl EufSolver {
                 let new_fp = ENodeFingerprint::compute(func, &canon_buf);
                 self.nodes[user as usize].fingerprint = new_fp;
 
-                // Fast-exit guard before the costly sig_table lookup: `sig_table.get`
-                // hashes over (u32, SmallVec), which is expensive.  Every signature
+                // Fast-exit guard before the signature match: every signature
                 // insertion also pushes the node's fingerprint, so "fingerprint
-                // absent" implies "signature absent" and the lookup can be skipped.
-                if self.fingerprint_table.contains_key(&new_fp) {
-                    let sig = (func, canon_buf.clone());
-                    if let Some(&existing) = self.sig_table.get(&sig) {
+                // absent" implies "signature absent" and the match can be
+                // skipped.  On hit, scan the (small) fingerprint bucket and
+                // compare each node's CURRENT signature (`node_sig_key`)
+                // directly — content-identical to probing `sig_table` with a
+                // freshly cloned `(func, args)` key, without building or
+                // hashing that key on this hot path.  A bucket node whose
+                // signature has since changed simply fails the exact
+                // comparison, exactly as `lookup_valid_sig` would evict it.
+                if let Some(bucket) = self.fingerprint_table.get(&new_fp) {
+                    let mut matched: Option<u32> = None;
+                    for &candidate in bucket {
+                        if let Some(key) = self
+                            .node_sig_key
+                            .get(candidate as usize)
+                            .and_then(|k| k.as_ref())
+                            && key.0 == func
+                            && key.1.as_slice() == canon_buf.as_slice()
+                        {
+                            matched = Some(candidate);
+                            break;
+                        }
+                    }
+                    if let Some(existing) = matched {
                         if existing != user && !self.uf.same(user, existing) {
                             // Congruence detected. The proof-forest edge is *not*
                             // appended here – it is appended by the main loop when the
