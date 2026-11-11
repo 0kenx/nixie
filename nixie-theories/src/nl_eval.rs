@@ -36,7 +36,8 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Signed, Zero};
-use std::collections::{BTreeMap, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BTreeMap;
 
 /// A value in a candidate interpretation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,13 +90,13 @@ pub struct ArrayValue {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Interpretation {
     /// Numeric leaves.
-    numeric: HashMap<TermId, BigRational>,
+    numeric: FxHashMap<TermId, BigRational>,
     /// Boolean leaves.
-    truths: HashMap<TermId, bool>,
+    truths: FxHashMap<TermId, bool>,
     /// Cells of free array symbols, keyed by `(root, index value)`.
     cells: BTreeMap<(TermId, BigRational), Value>,
     /// Value returned for a cell of `root` that `cells` does not list.
-    fallbacks: HashMap<TermId, Value>,
+    fallbacks: FxHashMap<TermId, Value>,
 }
 
 impl Interpretation {
@@ -185,7 +186,7 @@ impl Interpretation {
 /// is gated on the weaker, still-sound "definitely not a model" test.)
 #[must_use]
 pub fn refuted_under(formulas: &[TermId], manager: &TermManager, interp: &Interpretation) -> bool {
-    let mut memo: HashMap<TermId, Value> = HashMap::new();
+    let mut memo: FxHashMap<TermId, Value> = FxHashMap::default();
     formulas.iter().any(|&f| {
         matches!(
             evaluate_memo(f, manager, interp, &mut memo),
@@ -210,7 +211,7 @@ pub fn refuted_under(formulas: &[TermId], manager: &TermManager, interp: &Interp
 /// `congruence_holds` rejects exactly that.
 #[must_use]
 pub fn holds_under(formulas: &[TermId], manager: &TermManager, interp: &Interpretation) -> bool {
-    let mut memo: HashMap<TermId, Value> = HashMap::new();
+    let mut memo: FxHashMap<TermId, Value> = FxHashMap::default();
     let every_formula_true = formulas.iter().all(|&f| {
         matches!(
             evaluate_memo(f, manager, interp, &mut memo),
@@ -240,7 +241,7 @@ fn congruence_holds(
     formulas: &[TermId],
     manager: &TermManager,
     interp: &Interpretation,
-    memo: &HashMap<TermId, Value>,
+    memo: &FxHashMap<TermId, Value>,
 ) -> bool {
     let mut groups: Vec<(nixie_core::interner::Spur, Vec<Value>, Value)> = Vec::new();
     let mut seen: std::collections::HashSet<TermId> = std::collections::HashSet::new();
@@ -316,7 +317,7 @@ fn denote_same_tuple(left: &[Value], right: &[Value], interp: &Interpretation) -
 /// Evaluate one term under `interp`, or `None` when the evaluator declines.
 #[must_use]
 pub fn evaluate(term: TermId, manager: &TermManager, interp: &Interpretation) -> Option<Value> {
-    let mut memo: HashMap<TermId, Value> = HashMap::new();
+    let mut memo: FxHashMap<TermId, Value> = FxHashMap::default();
     evaluate_memo(term, manager, interp, &mut memo)
 }
 
@@ -331,7 +332,7 @@ pub fn evaluate_memo(
     term: TermId,
     manager: &TermManager,
     interp: &Interpretation,
-    memo: &mut HashMap<TermId, Value>,
+    memo: &mut FxHashMap<TermId, Value>,
 ) -> Option<Value> {
     /// What the walker is doing with a node this visit.
     enum Task {
@@ -429,7 +430,7 @@ fn fold_node(
     id: TermId,
     manager: &TermManager,
     interp: &Interpretation,
-    memo: &HashMap<TermId, Value>,
+    memo: &FxHashMap<TermId, Value>,
 ) -> Option<Value> {
     let node = manager.get(id)?;
     let kind = &node.kind;
