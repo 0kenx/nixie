@@ -91,15 +91,40 @@ geomean: the LRU-1024 clear was effectively free in practice. No
 demonstrated benefit → reverted to keep the diff minimal (same
 discipline as D).
 
-### DEFERRED (with evidence, not attempted-blind) — #3b, #8, #9
+### LANDED (follow-up session) — #3b: O(1) column removal via slot back-pointers (`f5fb11ef`)
 
-- **#3b simplex column O(1) maintenance** (Z3 `static_matrix`
-  back-pointers): the real fix for arctic's 39.6% `column_drop_known`
-  scan. Nixie's immutable `Arc` rows cannot host Z3's in-row offsets; a
-  side-table slot index breaks on `substitute_row_fast`'s row rebuilds,
-  and hash-set columns change iteration order (heuristic reclassification).
-  Needs its own registered design; arctic's residual +8% vs baseline is
-  documented layout sensitivity, not search cost (counters identical).
+The deferral above was revisited: the side-table design does NOT need
+to track slots inside rows at all.  `column_slots: FxHashMap<(var,
+row), u32>` names each entry's position in `columns[var]`; drops read
+the slot, verify it against the vector, `swap_remove` that position
+and fix up exactly one displaced slot — Z3's `static_matrix`
+discipline with the back-pointer in a side map (nixie's rows are
+immutable `Arc` values, so in-row offsets were never an option).
+The mutation surface is provably closed: `column_drop_known`,
+`column_push_known` and `reset`'s `columns.clear()` are the ONLY
+writers (pop restores nothing — the Dutertre–de Moura contract makes
+bounds the sole backtrackable state), `Simplex` is not `Clone`, and
+`debug_verify_columns` now pins slot↔position consistency in both
+directions after every pivot in dev builds.  Because `swap_remove`
+semantics are untouched, column contents and every iteration order
+are identical by construction.
+
+Measured vs the untouched `660166ad` baseline, identical counters:
+arctic 600k-decisions 8.49→7.73s (0.91×) and 1M-decisions
+29.6→24.2s (**0.82×**, the win grows with column density — the
+asymptotic O(len)→O(1) effect, not layout); wisa 0.93, wisas 0.95,
+sll 0.96; portfolio geomean 0.963 (from 0.969).  This is the first
+change of the campaign to land arctic BELOW its untouched baseline —
+the O(1) drop beats the per-crate layout tax that every previous
+simplex edit paid.
+
+### DEFERRED (with evidence, not attempted-blind) — #8, #9
+
+- **#3b** — landed above (kept here for history: the original deferral
+  feared side-table maintenance would break on row rebuilds; the
+  insight that slots are per-(var,row) COLUMN positions — rebuilt
+  wholesale by the same push/drop calls that rebuild rows — removed
+  the obstacle).
 - **#8 gate-subsume arena fetches**: the canonical sets are already
   materialized (`sets` map) — the arena `get` is one-per-clause per
   round, diluted end-to-end (bv-sage budget 0.99–1.00). No contained
@@ -129,6 +154,9 @@ Serialized, fixed CPU, min-of-reps, identical counters on every instance:
 | uflia-25959 | 3.96 | 4.13 | 1.04 |
 | lia-arctic (K=600k dec) | 8.49 | 9.11 | 1.07 |
 | uf-peq (K=10k conf) | 10.70 | 11.80 | 1.10 |
+
+After `f5fb11ef` (#3b): arctic 7.73 (0.91×) / 24.2s at 1M decisions
+(0.82×), geomean 0.963; see the #3b section.
 
 Geomean (12 timed instances) ≈ **0.969**, with two family-level wins
 (QF_UFIDL −38%, NIA model-search −37%) and layout-lottery taxes of
