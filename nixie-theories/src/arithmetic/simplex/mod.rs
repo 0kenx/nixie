@@ -6002,9 +6002,15 @@ impl Simplex {
             .filter(|(v, e)| e.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v))))
             .map(|(v, _)| *v)
             .collect();
-        let narrow_rows: Vec<(VarId, LinExpr)> = narrow_keys
+        // Arc clone (refcount bump), NOT a deep LinExpr copy: the original
+        // deep clone existed only to release the `&self` borrow before the
+        // `&mut self` derivation calls below, and re-copying every narrow
+        // row's terms on every fixpoint pass was measurable on UFIDL
+        // (scan #2 item #2a).  The Arc keeps the row shared with the
+        // tableau, which is immutable for the duration of this pass.
+        let narrow_rows: Vec<(VarId, Arc<LinExpr>)> = narrow_keys
             .into_iter()
-            .filter_map(|v| self.row_lin(v).map(|arc| (v, arc.as_ref().clone())))
+            .filter_map(|v| self.row_lin(v).map(|arc| (v, Arc::clone(&arc))))
             .collect();
         for (basic_var, expr) in &narrow_rows {
             let stamp = self.row_stamp(
