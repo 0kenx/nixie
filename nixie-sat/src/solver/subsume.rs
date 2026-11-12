@@ -429,11 +429,8 @@ impl Solver {
     fn formula_is_wide_uniform_cnf(&self) -> bool {
         let mut hist = [0u32; 33];
         let mut n = 0u32;
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned {
+        for (cid, c) in self.clauses.iter_views() {
+            if c.learned {
                 continue;
             }
             let size = c.lits.len();
@@ -476,10 +473,7 @@ impl Solver {
             !c.deleted && !c.learned && c.lits.len() >= 2
         };
         let mut occ: Vec<u32> = vec![0; num_lits];
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
+        for (cid, c) in self.clauses.iter_views() {
             if !eligible(&c) {
                 continue;
             }
@@ -494,10 +488,7 @@ impl Solver {
             }
         }
         let mut projected: u64 = 0;
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
+        for (cid, c) in self.clauses.iter_views() {
             if !eligible(&c) {
                 continue;
             }
@@ -532,11 +523,8 @@ impl Solver {
         }
         let mut occs: Vec<Vec<ClauseId>> = vec![Vec::new(); num_lits];
         let mut sched: Vec<(u32, ClauseId)> = Vec::new();
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned || c.lits.len() < 2 {
+        for (cid, c) in self.clauses.iter_views() {
+            if c.learned || c.lits.len() < 2 {
                 continue;
             }
             if c.lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
@@ -748,11 +736,8 @@ impl Solver {
         // (potential subsumers) are connected first.
         const CLS_LIMIT: usize = 100; // cadical subsumeclslim
         let mut has_candidate = false;
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.lits.len() > CLS_LIMIT || c.lits.len() < 3 {
+        for (cid, c) in self.clauses.iter_views() {
+            if c.lits.len() > CLS_LIMIT || c.lits.len() < 3 {
                 continue;
             }
             // Learned clauses: only those worth keeping participate (cadical

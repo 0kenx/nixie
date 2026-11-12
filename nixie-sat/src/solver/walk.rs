@@ -240,10 +240,7 @@ impl Solver {
             let mut slot_buf: Vec<Lit> = Vec::new();
             let mut slot_end: Vec<u32> = Vec::new();
             let mut dense_true: Vec<u32> = Vec::new();
-            for id in self.clauses.iter_ids() {
-                let Some(clause) = self.clauses.get(id) else {
-                    continue;
-                };
+            for (id, clause) in self.clauses.iter_views() {
                 if clause.learned || clause.lits.len() < 2 {
                     continue;
                 }
@@ -372,10 +369,7 @@ impl Solver {
             // contract does not).
             #[cfg(debug_assertions)]
             let mut bin_expect: Vec<u32> = vec![0; self.num_vars * 2];
-            for id in self.clauses.iter_ids() {
-                let Some(clause) = self.clauses.get(id) else {
-                    continue;
-                };
+            for (id, clause) in self.clauses.iter_views() {
                 if clause.learned || clause.lits.len() < 2 {
                     continue;
                 }
@@ -451,10 +445,7 @@ impl Solver {
                 c
             };
             let mut next_idx = 0u32;
-            for id in self.clauses.iter_ids() {
-                let Some(clause) = self.clauses.get(id) else {
-                    continue;
-                };
+            for (id, clause) in self.clauses.iter_views() {
                 if clause.learned
                     || clause.lits.len() < 2
                     || clause.lits.iter().any(|&l| excluded(l))
