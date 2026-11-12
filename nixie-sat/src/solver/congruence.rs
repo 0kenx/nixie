@@ -608,11 +608,8 @@ impl Solver {
         // clause database (additions), and the binary lookups go through
         // the BIG, whose attach-time registration keeps it current.
         let mut work: Vec<[Lit; 3]> = Vec::new();
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned || c.lits.len() != 3 {
+        for (_cid, c) in self.clauses.iter_views() {
+            if c.learned || c.lits.len() != 3 {
                 continue;
             }
             // Level-0-assigned vars: the clause is satisfied or simplifiable

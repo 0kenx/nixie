@@ -823,9 +823,21 @@ impl ClauseDatabase {
     /// Iterate over all non-deleted clause IDs, in id (allocation) order –
     /// the same order the previous `Vec<Clause>` index walked.
     pub fn iter_ids(&self) -> impl Iterator<Item = ClauseId> + '_ {
-        (0..self.refs.len())
-            .map(|i| ClauseId::new(i as u32))
-            .filter(|&id| !self.view(id).is_some_and(|v| v.deleted))
+        self.iter_views().map(|(id, _)| id)
+    }
+
+    /// Single-pass live-clause scan: one view construction per id
+    /// (`iter_ids` + `get` per body builds TWO — the deleted filter's and
+    /// the body's — over a database whose headers are scattered across
+    /// cache lines; whole-DB scan passes like inprocessing pay double the
+    /// memory traffic for the same result).  Deleted clauses are skipped
+    /// here; id order matches `iter_ids`.
+    pub fn iter_views(&self) -> impl Iterator<Item = (ClauseId, ClauseView<'_>)> + '_ {
+        (0..self.refs.len()).filter_map(|i| {
+            let id = ClauseId::new(i as u32);
+            let v = self.view(id)?;
+            (!v.deleted).then_some((id, v))
+        })
     }
 
     /// Bump activity of a clause.
