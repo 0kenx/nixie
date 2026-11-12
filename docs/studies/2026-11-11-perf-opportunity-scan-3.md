@@ -151,6 +151,29 @@ vlsat 0.62×, sll 0.95×, wisa 0.93×, wisas 0.95×, 25959 0.97×, arctic
 1.00×, geomean 0.963; peq 1.20×/seq 1.07× are the standing layout
 drift (identical counters, documented since the first batches).
 
+Second follow-up session (2026-11-12), continuing the standing items:
+
+- **vlsat derive rescan** (`62323220`): the fused pass rescanned every
+  `var_to_parsed_arith` entry per call — 75.6% of a 25 s vlsat3_f77
+  profile (the `assigned_pol_of` frames).  An ever-undecided atom
+  worklist (built once per manager — the borrowed map is frozen for its
+  lifetime; entries borrowed so the loop needs no lookups; compacted per
+  call since `assigned_pol_of` is ever-set semantics) preserves the
+  exact iteration order and skip conditions.  vlsat 0.95×/0.93×
+  (A/B budget / deeper K=6000–10000), counters identical.  The 75%
+  converts only partially: most of it is the cache walk over a
+  mostly-undecided map, which the worklist shares — the rest needs the
+  bound-watch redesign (derive only atoms whose variables' bounds
+  changed), still deferred as trajectory-risk.
+- **`iter_views`** (`3fa55066`): single-pass live-clause scan replacing
+  the double view construction in whole-DB passes; first user
+  `extract_binary_resolvents` (21.9% of sage).  Batch A/B read sage
+  1.05×/arctic 1.11× at identical counters; interleaved re-measurement
+  contradicted both (sage 0.97×, arctic 1.00×) — kept on mechanism +
+  interleaved evidence.  Lesson repeated: batch-level cells wobble ±10%
+  at identical counters; interleave before believing a regression the
+  mechanism cannot explain.
+
 Process note recorded after M: a clippy gate piped through `tail`
 masked one failure (`needless_range_loop`, fixed in `9f8cd15a`); all
 later gates test clippy's own exit status.
