@@ -499,6 +499,21 @@ pub(crate) struct TheoryManager<'a> {
     bv_atom_unmodelled: bool,
     bv_relevant: bool,
     bv_euf_undecided: bool,
+    /// Worklist of not-yet-assigned arithmetic atoms, in
+    /// `var_to_parsed_arith` iteration order (see
+    /// `derive_arith_bound_propagations`): entries BORROW the map (same
+    /// `'a` as the manager's map reference), so the loop body reads them
+    /// with no per-atom lookups.  `None` until the first derive call: the
+    /// borrowed map is frozen for the manager's lifetime (a shared borrow
+    /// — Solver can only insert/remove between manager generations), so
+    /// the list is built exactly once and then only shrinks:
+    /// `assigned_pol_of` has ever-set semantics (the polarity maps are
+    /// deliberately never pruned on backtrack), so an assigned atom is
+    /// skipped forever and is compacted out here on first observation.
+    /// The full-map rescan this replaces was 75.6% of a QF_UFIDL profile
+    /// (vlsat3_f77; 2026-11-12 profile split of the standing 77% derive
+    /// share).
+    undecided_arith_atoms: Option<Vec<(&'a Var, &'a ParsedArithConstraint)>>,
     boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
     bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
@@ -705,6 +720,7 @@ impl<'a> TheoryManager<'a> {
             ite_result_terms,
             derived_reasons,
             level_stack: vec![0],
+            undecided_arith_atoms: None,
             asserted_arith_eqs: FxHashSet::default(),
             asserted_arith_eq_trail: Vec::new(),
             asserted_arith_eq_marks: vec![0],
@@ -2299,6 +2315,23 @@ impl<'a> TheoryManager<'a> {
             return None;
         }
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        // Worklist of never-assigned atoms (built once — see the field's
+        // doc): the map iteration order below is the exact order the old
+        // full scan produced, filtered by the same two skip conditions
+        // (eq_placeholder at build, assigned-at-compaction), so the derive
+        // output is identical while each call walks only the atoms that can
+        // still fire.
+        let mut worklist = self.undecided_arith_atoms.take().unwrap_or_else(|| {
+            self.var_to_parsed_arith
+                .iter()
+                .filter(|(_, p)| !p.eq_placeholder)
+                .collect::<Vec<_>>()
+        });
+        {
+            let stamps = &self.assigned_pol_gen;
+            let cur = self.assigned_pol_cur;
+            worklist.retain(|&(v, _)| stamps.get(v.index()).copied() != Some(cur));
+        }
         // Tighten the tableau's variable bounds ONCE (to a fixpoint) so the
         // per-atom derivation below sees transitive (recurrence-derived)
         // bounds cheaply.  Done here rather than inside
@@ -2311,11 +2344,12 @@ impl<'a> TheoryManager<'a> {
         // `var_to_parsed_arith` reference field — separate borrows, and no
         // derivation runs before the tighten.
         let mut tightened = false;
-        for (&var, parsed) in self.var_to_parsed_arith {
-            // Skip equality-constrained atoms: `var_to_parsed_arith` carries
-            // an `Le` placeholder for them, so probing the bound and
-            // propagating would treat a disequality as a single comparison
-            // (unsound). See `encode.rs` `TermKind::Eq`.
+        for &(var, parsed) in &worklist {
+            let var = *var;
+            // Built-time filter (eq_placeholder) and call-time compaction
+            // (ever-assigned) already removed these; the re-checks are the
+            // loop's original guards kept in place — each is one branch on
+            // an atom that cannot pass it.
             if parsed.eq_placeholder {
                 continue;
             }
@@ -2423,6 +2457,7 @@ impl<'a> TheoryManager<'a> {
                 ));
             }
         }
+        self.undecided_arith_atoms = Some(worklist);
         if props.is_empty() { None } else { Some(props) }
     }
 
