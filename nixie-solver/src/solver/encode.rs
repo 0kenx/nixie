@@ -3641,7 +3641,7 @@ impl Solver {
                 return lit;
             }
         }
-        if depth > super::ENCODE_DEPTH_LIMIT {
+        if depth > super::encode_depth_limit() {
             self.encode_depth_exceeded = true;
             let var = self.get_or_create_var(term);
             return Lit::pos(var);

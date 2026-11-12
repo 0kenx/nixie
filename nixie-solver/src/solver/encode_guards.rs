@@ -446,7 +446,7 @@ impl Solver {
         manager: &TermManager,
         best: &mut FxHashMap<TermId, u32>,
     ) -> bool {
-        let limit = super::ENCODE_DEPTH_LIMIT;
+        let limit = super::encode_depth_limit();
         let mut stack: Vec<(TermId, u32)> = vec![(root, 1)];
         while let Some((t, depth)) = stack.pop() {
             if depth > limit {

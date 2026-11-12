@@ -1030,7 +1030,43 @@ pub struct Solver {
 /// died on the native stack.  Every other recursive pass that runs behind
 /// the assert-time gate (`simplify`, `collect_polarities`, Skolemization,
 /// `eval_in_model`) inherits the same tightened bound.
+/// Depth cap for the Tseitin encoder's structural recursion (the honesty
+/// gate above `check` degrades to `Unknown` when an input exceeds it).
+///
+/// 512 guarded the 8 MiB process stack; the CLI now runs on a 1 GiB
+/// big-stack worker (see `nixie-cli/src/main.rs`), so the cap can be the
+/// *policy* limit it was meant to be: 32768 covers every naturally-occurring
+/// depth class measured (756-deep `nec-smt` ite chains, 5000-deep `str.++`
+/// concatenations) with ~30x headroom, while bounding native frame growth
+/// (~16 KiB/frame worst walker × 32768 ≈ 512 MiB, half the worker stack).
+/// Embedders without the big-stack worker should scale this to their stack.
 pub(super) const ENCODE_DEPTH_LIMIT: u32 = 512;
+
+/// The live encoder depth cap: [`ENCODE_DEPTH_LIMIT`] until
+/// [`set_encode_depth_limit`] raises it.  Process-wide and read at every
+/// encode, so it must be set before the first `assert`/`check` (the CLI
+/// sets it once at startup — see `nixie-cli/src/main.rs`).
+static ENCODE_DEPTH_LIMIT_LIVE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(ENCODE_DEPTH_LIMIT);
+
+/// Raise the Tseitin encoder's structural depth cap above the 512 default.
+///
+/// # Contract (soundness)
+/// The cap exists to keep the encoder's and the assertion walkers' *native
+/// recursion* within the running thread's stack: the default 512 is sized
+/// for an 8 MiB stack (~16 KiB/frame worst walker).  Callers MAY raise it
+/// only to a value that fits the stack the solving thread actually runs on
+/// — e.g. 32768 on the CLI's 1 GiB big-stack worker.  The honesty gate
+/// (an input deeper than the cap answers `Unknown`, never a guess) is
+/// unchanged; a too-high value risks a stack-overflow abort instead.
+pub fn set_encode_depth_limit(limit: u32) {
+    ENCODE_DEPTH_LIMIT_LIVE.store(limit, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The live encoder depth cap (see [`set_encode_depth_limit`]).
+pub(super) fn encode_depth_limit() -> u32 {
+    ENCODE_DEPTH_LIMIT_LIVE.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// A fully-evaluated ground value used by the model-verification soundness gate
 /// ([`Solver::model_refutes_assertions`]).  Integers and reals are unified as an

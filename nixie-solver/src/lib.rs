@@ -119,6 +119,7 @@ pub use solver::{CpLemma, CpProof};
 
 pub use solver::{
     CertificationMode, Model, Proof, ProofStep, Solver, SolverConfig, SolverResult, TheoryMode,
+    set_encode_depth_limit,
 };
 
 // Re-export types from nixie-sat

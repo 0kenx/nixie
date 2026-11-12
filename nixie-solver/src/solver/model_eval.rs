@@ -34,7 +34,7 @@ mod interpretation;
 
 use super::model_eval_bv::{self, BvBinaryOp, BvCompareOp};
 use super::types::Model;
-use super::{ENCODE_DEPTH_LIMIT, EvalVal, Solver};
+use super::{EvalVal, Solver, encode_depth_limit};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
@@ -1806,7 +1806,7 @@ impl Solver {
         manager: &TermManager,
         depth: u32,
     ) -> Opened {
-        if depth > ENCODE_DEPTH_LIMIT {
+        if depth > encode_depth_limit() {
             return Opened::Done(EvalOutcome::UNDETERMINED);
         }
         let Some(t) = manager.get(term) else {
@@ -2236,8 +2236,8 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
 #[cfg(test)]
 mod tests {
     use super::{
-        ENCODE_DEPTH_LIMIT, EagerKind, EvalOutcome, EvalVal, combine_eager, combine_eq,
-        combine_eq_certify, combine_int_div_mod,
+        EagerKind, EvalOutcome, EvalVal, combine_eager, combine_eq, combine_eq_certify,
+        combine_int_div_mod, encode_depth_limit,
     };
     use crate::solver::Solver;
     use crate::solver::types::Model;
@@ -2705,11 +2705,11 @@ mod tests {
     #[test]
     fn deeply_nested_assertion_evaluates_on_a_worker_stack() {
         // Track the real budget so the pin survives future limit changes:
-        // stay just inside ENCODE_DEPTH_LIMIT (the chain is DEPTH levels deep,
-        // and the `(>= chain 1)` assertion adds one more).
-        const DEPTH: i64 = ENCODE_DEPTH_LIMIT as i64 - 50;
+        // stay just inside the live encoder depth cap (the chain is DEPTH
+        // levels deep, and the `(>= chain 1)` assertion adds one more).
+        let depth: i64 = encode_depth_limit() as i64 - 50;
 
-        let refused = on_worker_stack(|| {
+        let refused = on_worker_stack(move || {
             let mut manager = TermManager::new();
             let one = manager.mk_int(1);
             // Built node-by-node (`intern_term`), not via `mk_sub`: the
@@ -2717,10 +2717,10 @@ mod tests {
             // construction, and the depth this test exists to exercise would
             // never exist.
             let mut chain = manager.mk_int(0);
-            for _ in 0..DEPTH {
+            for _ in 0..depth {
                 chain = unfolded(TermKind::Sub(chain, one), &mut manager);
             }
-            // `chain` is exactly `-DEPTH`, so `(>= chain 0)` is false: the gate
+            // `chain` is exactly `-depth`, so `(>= chain 0)` is false: the gate
             // must refute, and refute for the right reason.
             let value = outcome(&manager, chain);
             let assertion = manager.mk_ge(chain, one);
@@ -2729,7 +2729,7 @@ mod tests {
 
         assert_eq!(
             refused.0,
-            EvalOutcome::Value(EvalVal::Num(Rational64::from_integer(-DEPTH)))
+            EvalOutcome::Value(EvalVal::Num(Rational64::from_integer(-depth)))
         );
         assert!(refused.1);
     }

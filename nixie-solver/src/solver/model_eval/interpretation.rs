@@ -173,7 +173,7 @@ impl Solver {
         manager: &TermManager,
     ) -> EvalOutcome {
         Self::eval_with_reader(term, 0, |term, depth| {
-            if depth > ENCODE_DEPTH_LIMIT {
+            if depth > super::super::encode_depth_limit() {
                 return Opened::Done(EvalOutcome::UNDETERMINED);
             }
             if let Some(data) = manager.get(term)
@@ -208,7 +208,7 @@ impl Solver {
         manager: &TermManager,
         depth: u32,
     ) -> Opened {
-        if depth > ENCODE_DEPTH_LIMIT {
+        if depth > super::super::encode_depth_limit() {
             return Opened::Done(EvalOutcome::UNDETERMINED);
         }
         let Some(data) = manager.get(term) else {

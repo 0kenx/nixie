@@ -590,8 +590,41 @@ enum InputFormat {
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    // Deep term DAGs (multi-thousand-deep `ite` chains, long `str.++`
+    // concatenations) make the Tseitin encoder and the assertion walkers
+    // recurse proportionally; the 8 MiB default main-thread stack caps the
+    // input depth the solver can answer honestly.  Run the whole CLI on a
+    // dedicated large-stack worker (default 1 GiB, `NIXIE_STACK_MB`
+    // override), the same big-stack-worker pattern the reference solvers
+    // use, so the encoder's depth cap is the policy limit rather than the
+    // process stack.  `std::process::exit` calls inside `cli_main` remain
+    // process-wide from any thread.
+    let stack_mb: usize = std::env::var("NIXIE_STACK_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1024);
+    let worker = std::thread::Builder::new()
+        .stack_size(stack_mb.saturating_mul(1024 * 1024))
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap_or_else(|e| panic!("tokio runtime: {e}"));
+            rt.block_on(cli_main());
+        })
+        .unwrap_or_else(|e| panic!("stack worker spawn ({stack_mb} MiB): {e}"));
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+async fn cli_main() {
+    // This process's solving stack is the 1 GiB worker `main` spawned, so
+    // raise the encoder's depth cap from its 8 MiB-stack default (512) to
+    // the policy limit (~16 KiB/frame worst walker × 32768 ≈ 512 MiB).
+    // Inputs deeper than that still honestly answer `Unknown`.
+    nixie_solver::set_encode_depth_limit(32768);
     // NIXIE_PPROF=<path>: sample the whole process at 250 Hz (SIGPROF) and
     // write a flamegraph to <path> on exit.  Build with
     // `--features pprof-signal` (off by default: the pprof dependency is
