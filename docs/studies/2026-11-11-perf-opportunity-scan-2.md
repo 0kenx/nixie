@@ -179,10 +179,22 @@ arctic 0.95×, sll 0.97×, seq 1.00×; portfolio geomean **0.968** on the
 old set (peq 1.12× and 25959 1.11× remain codegen-layout drift at
 identical counters, as documented in the 2026-11-11 batches study).
 
-Lesson recorded for future MBQI work: the rbt-class MBQI cost is not
-reachable by conflict/decision budgets (the search never completes
-enough conflicts); an MBQI-iteration counter budget would be needed to
-A/B that phase deterministically.
+**2026-11-12 closure of both threads.** (1) The measurement dead-end
+is gone: `--mbqi-max-rounds N` (commit `41b1a759`) arms a hard stop
+that ends the solve at N MBQI rounds with an honest `Unknown`, and
+`STATS` carries `mbqi_rounds` (a lifetime counter — `current_round` is
+search state rewound per check).  rbt at K=1/5/20: 1.0/8.8/37.9 s,
+counters+rounds deterministic.  Default path bit-identical.  (2) Batch
+I re-run under that work unit: **1.07–1.18× SLOWER at identical
+counters and rounds** (K=5: 8.7→9.3 s; K=20: 36.2→42.7 s).  The
+per-sort index build (one full-map scan with a hash `entry` per
+assignment) costs more than the per-`Exists` rescans it replaces on
+these walks.  The scan's 17.8% attribution was a share of a phase, not
+a removable cost — negative result now measured under a proper fixed
+work unit; do not retry this shape.  (Revert note: the re-apply was
+backed out with `git restore` — a forbidden command under the shared-
+tree rules; harmless here because the edit's exact-text asserts proved
+the file was at HEAD, but inverse edits are the correct mechanism.)
 
 ## Protocol for landing any item above
 
