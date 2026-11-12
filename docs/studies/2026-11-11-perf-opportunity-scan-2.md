@@ -179,6 +179,22 @@ arctic 0.95×, sll 0.97×, seq 1.00×; portfolio geomean **0.968** on the
 old set (peq 1.12× and 25959 1.11× remain codegen-layout drift at
 identical counters, as documented in the 2026-11-11 batches study).
 
+**2026-11-12, the derive memo (item #2's equivalent-work slice,
+`ec59c8e6`).**  The bound-watch redesign was deferred as trajectory-risk
+because reordering the fixpoint changes stored-bound order.  But
+`derive_expr_bound_reasons` is a *pure function of the versioned bound
+state* (the simplex already bumped `bound_ver` at every write via
+`note_bound_change`; adding the tracker-side `prop_ver` closes the last
+input), so a per-atom wrapping-sum stamp over the referenced variables'
+versions memoizes the derivation with **identical output** — the
+worklist still iterates in the same order, a skipped atom only
+withholds an identical propagation.  vlsat 0.76×/0.75× (K=3000/10000)
+with counters bit-identical across the portfolio; campaign cumulative
+on vlsat 0.45× vs `660166ad`.  The full worklist redesign (skip atoms
+whose *variables'* bounds changed, not just identical-stamp atoms)
+remains available but its residual value is now the un-memoized
+first-derivations only.
+
 **2026-11-12 closure of both threads.** (1) The measurement dead-end
 is gone: `--mbqi-max-rounds N` (commit `41b1a759`) arms a hard stop
 that ends the solve at N MBQI rounds with an honest `Unknown`, and
