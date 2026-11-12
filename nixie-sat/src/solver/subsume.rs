@@ -429,7 +429,7 @@ impl Solver {
     fn formula_is_wide_uniform_cnf(&self) -> bool {
         let mut hist = [0u32; 33];
         let mut n = 0u32;
-        for (cid, c) in self.clauses.iter_views() {
+        for (_cid, c) in self.clauses.iter_views() {
             if c.learned {
                 continue;
             }
@@ -473,7 +473,7 @@ impl Solver {
             !c.deleted && !c.learned && c.lits.len() >= 2
         };
         let mut occ: Vec<u32> = vec![0; num_lits];
-        for (cid, c) in self.clauses.iter_views() {
+        for (_cid, c) in self.clauses.iter_views() {
             if !eligible(&c) {
                 continue;
             }
@@ -488,7 +488,7 @@ impl Solver {
             }
         }
         let mut projected: u64 = 0;
-        for (cid, c) in self.clauses.iter_views() {
+        for (_cid, c) in self.clauses.iter_views() {
             if !eligible(&c) {
                 continue;
             }

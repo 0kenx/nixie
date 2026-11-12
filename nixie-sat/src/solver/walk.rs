@@ -240,7 +240,7 @@ impl Solver {
             let mut slot_buf: Vec<Lit> = Vec::new();
             let mut slot_end: Vec<u32> = Vec::new();
             let mut dense_true: Vec<u32> = Vec::new();
-            for (id, clause) in self.clauses.iter_views() {
+            for (_id, clause) in self.clauses.iter_views() {
                 if clause.learned || clause.lits.len() < 2 {
                     continue;
                 }
