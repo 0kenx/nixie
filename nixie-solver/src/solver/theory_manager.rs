@@ -514,6 +514,12 @@ pub(crate) struct TheoryManager<'a> {
     /// (vlsat3_f77; 2026-11-12 profile split of the standing 77% derive
     /// share).
     undecided_arith_atoms: Option<Vec<(&'a Var, &'a ParsedArithConstraint)>>,
+    /// Per-atom memoization stamp for the derive pass: the atom's
+    /// `ArithSolver::expr_bound_version` at its last derivation.  A repeat
+    /// call with an unchanged stamp reproduces the identical derivation
+    /// (pure function of the versioned bounds), so the atom is skipped
+    /// outright — same propagations out, no re-derivation work.
+    atom_derive_ver: FxHashMap<Var, u64>,
     boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
     bv_embedded_check_ceiling: u64,
     /// Set to `true` when a theory reported a conflict whose justification this
@@ -721,6 +727,7 @@ impl<'a> TheoryManager<'a> {
             derived_reasons,
             level_stack: vec![0],
             undecided_arith_atoms: None,
+            atom_derive_ver: FxHashMap::default(),
             asserted_arith_eqs: FxHashSet::default(),
             asserted_arith_eq_trail: Vec::new(),
             asserted_arith_eq_marks: vec![0],
@@ -2360,6 +2367,16 @@ impl<'a> TheoryManager<'a> {
                 self.arith.tighten_tableau_bounds();
                 tightened = true;
             }
+            // Memo stamp, read AFTER the once-per-call tighten so it names
+            // the exact state the derivation below reads: an unchanged
+            // bound-version sum reproduces the identical derivation (a
+            // pure function of the versioned bounds — see
+            // `ArithSolver::expr_bound_version`), so the atom contributes
+            // nothing new and is skipped outright.
+            let ver = self.arith.expr_bound_version(&parsed.terms);
+            if self.atom_derive_ver.get(&var) == Some(&ver) {
+                continue;
+            }
             let (less, strict) = match parsed.constraint_type {
                 ArithConstraintType::Lt => (true, true),
                 ArithConstraintType::Le => (true, false),
@@ -2381,6 +2398,10 @@ impl<'a> TheoryManager<'a> {
                 Rational64::from_integer(0),
                 tighten,
             );
+            // Record the stamp for every completed derivation (fired or
+            // not): re-running it on unchanged bounds reproduces the same
+            // result, including the same no-fire.
+            self.atom_derive_ver.insert(var, ver);
             // Determine whether the atom `e ○ c` is forced TRUE or FALSE.
             //
             //   less (e ≤ c / e < c): TRUE ⇔ upper(e) ≤/< c ;  FALSE ⇔ lower(e) >/≥ c

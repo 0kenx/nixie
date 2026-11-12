@@ -204,6 +204,13 @@ pub struct ArithSolver {
     /// the simplex's own trail).  Used for propagation only – never consulted
     /// by `check()`/feasibility, so it cannot affect soundness of the solve.
     prop_lower: Vec<Option<PropBoundEntry>>,
+    /// Per-variable version of the prop tracker's bounds (bumped on every
+    /// `prop_set_*` write and undo restore): the memoization stamp for
+    /// `derive_expr_bound_reasons` sums these with the simplex's own
+    /// `bound_ver`, so a derivation is skipped only when every input it
+    /// reads — tracker bounds, simplex bounds, and the bound-carried
+    /// reason/aux-reason lists rewritten with them — is unchanged.
+    prop_ver: Vec<u64>,
     /// See [`Self::prop_lower`].
     prop_upper: Vec<Option<PropBoundEntry>>,
     /// Undo trail for `prop_lower`/`prop_upper`, with a `Scope` marker pushed
@@ -455,6 +462,7 @@ impl ArithSolver {
             int_equalities: Vec::new(),
             int_eq_verdict_cache: None,
             prop_lower: Vec::new(),
+            prop_ver: Vec::new(),
             prop_upper: Vec::new(),
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
@@ -1215,6 +1223,7 @@ impl ArithSolver {
             self.prop_undo
                 .push(PropBoundUndo::Lower(var, self.prop_lower[idx]));
             self.prop_lower[idx] = Some(PropBoundEntry { value, reason });
+            self.note_prop_bound_change(idx);
         }
     }
 
@@ -1231,6 +1240,7 @@ impl ArithSolver {
             self.prop_undo
                 .push(PropBoundUndo::Upper(var, self.prop_upper[idx]));
             self.prop_upper[idx] = Some(PropBoundEntry { value, reason });
+            self.note_prop_bound_change(idx);
         }
     }
 
@@ -4042,11 +4052,13 @@ impl Theory for ArithSolver {
                         let idx = var as usize;
                         if idx < self.prop_lower.len() {
                             self.prop_lower[idx] = prev;
+                            self.note_prop_bound_change(idx);
                         }
                     }
                     PropBoundUndo::Upper(var, prev) => {
                         if (var as usize) < self.prop_upper.len() {
                             self.prop_upper[var as usize] = prev;
+                            self.note_prop_bound_change(var as usize);
                         }
                     }
                 }
@@ -4421,6 +4433,39 @@ impl ArithSolver {
     /// Oliveira bound derivation: a *relaxation* that is never tighter than
     /// the true bound, so any atom it forces is genuinely forced (sound).
     ///
+    fn note_prop_bound_change(&mut self, idx: usize) {
+        if idx >= self.prop_ver.len() {
+            self.prop_ver.resize(idx + 1, 0);
+        }
+        self.prop_ver[idx] = self.prop_ver[idx].wrapping_add(1);
+    }
+
+    /// Memoization stamp for [`Self::derive_expr_bound_reasons`]: the
+    /// wrapping sum of every referenced variable's prop-tracker and simplex
+    /// bound versions.  The derivation is a pure function of those bounds
+    /// (values, reasons, aux-reason lists — all rewritten only through the
+    /// versioned write sites), so an unchanged sum means an unchanged
+    /// result.  A wrapping-sum collision needs two changes that cancel
+    /// exactly; a hit would surface as counter drift in the A/B identity
+    /// gate, never as a wrong verdict (a skipped derivation only withholds
+    /// an identical propagation).
+    #[must_use]
+    pub fn expr_bound_version(&self, terms: &[(TermId, Rational64)]) -> u64 {
+        let mut sum = 0u64;
+        for &(term, _) in terms {
+            if let Some(&var) = self.term_to_var.get(&term) {
+                let vi = var as usize;
+                if let Some(v) = self.simplex.bound_ver_of(vi) {
+                    sum = sum.wrapping_add(v);
+                }
+                if vi < self.prop_ver.len() {
+                    sum = sum.wrapping_add(self.prop_ver[vi]);
+                }
+            }
+        }
+        sum
+    }
+
     /// Optionally tighten the tableau's variable bounds first via
     /// [`Simplex::propagate_bounds`] (`tighten = true`) so derived (transitive)
     /// bounds feed the expression derivation – needed to catch propagation

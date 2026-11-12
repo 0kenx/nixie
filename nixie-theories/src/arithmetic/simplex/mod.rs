@@ -7623,6 +7623,12 @@ impl Simplex {
     /// nothing moves; a non-basic variable's assignment snaps into its new
     /// bound window and the delta propagates to exactly the rows in its
     /// column ([`Self::on_nonbasic_bound_change`]).
+    /// Read access for the derive memo stamp (ArithSolver::expr_bound_version
+    /// sums these with the tracker-side prop_ver).
+    pub(super) fn bound_ver_of(&self, idx: usize) -> Option<u64> {
+        self.bound_ver.get(idx).copied()
+    }
+
     fn note_bound_change(&mut self, idx: usize) {
         if idx >= self.bound_ver.len() {
             self.bound_ver.resize(idx + 1, 0);
