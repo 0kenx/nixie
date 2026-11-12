@@ -4516,36 +4516,49 @@ impl ArithSolver {
             if coef.is_zero() {
                 continue;
             }
+            // Each candidate bound carries its FULL antecedent set:
+            // - tracker entries are single-atom consequences by construction
+            //   ([`Self::record_prop_bound`] / [`Self::note_fixed_var`] only
+            //   record genuine one-atom implications), so their single
+            //   `reason` is complete;
+            // - simplex bounds can be row-derived (`slice6` machinery), whose
+            //   justification is the union of the contributing endpoints'
+            //   reasons — `all_reasons()` (primary + aux), the same
+            //   collection `derive_var_bound_big_parts` audits.  Taking only
+            //   the primary `reason` here was the insufficient-subset hole
+            //   that kept the propagator gated to the difference-logic
+            //   family; the old both-sides `aux_reasons` shotgun compensated
+            //   only partially (it could cite the UNUSED side's reasons —
+            //   sound but bloated — and never the primary of a side whose
+            //   value came from the tracker).
             let bound = if coef.is_positive() {
                 // needs lower(var): tracker first, then simplex
                 self.prop_get_lower(var)
-                    .map(|e| (e.value, e.reason))
+                    .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
-                        self.simplex
-                            .get_lower(var)
-                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                        self.simplex.get_lower(var).and_then(|b| {
+                            b.value
+                                .narrow()
+                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                        })
                     })
             } else {
                 self.prop_get_upper(var)
-                    .map(|e| (e.value, e.reason))
+                    .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
-                        self.simplex
-                            .get_upper(var)
-                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                        self.simplex.get_upper(var).and_then(|b| {
+                            b.value
+                                .narrow()
+                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                        })
                     })
             };
-            let Some((bv, br)) = bound else {
+            let Some((bv, brs)) = bound else {
                 lo_ok = false;
                 break;
             };
             lo_val += bv * coef;
-            lo_reasons.push(br);
-            if let Some(b) = self.simplex.get_lower(var) {
-                lo_reasons.extend(b.aux_reasons.iter().copied());
-            }
-            if let Some(b) = self.simplex.get_upper(var) {
-                lo_reasons.extend(b.aux_reasons.iter().copied());
-            }
+            lo_reasons.extend(brs);
         }
         // Upper bound of e.
         let mut hi_val = DeltaRational::from_rational(constant);
@@ -4557,33 +4570,31 @@ impl ArithSolver {
             }
             let bound = if coef.is_positive() {
                 self.prop_get_upper(var)
-                    .map(|e| (e.value, e.reason))
+                    .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
-                        self.simplex
-                            .get_upper(var)
-                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                        self.simplex.get_upper(var).and_then(|b| {
+                            b.value
+                                .narrow()
+                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                        })
                     })
             } else {
                 self.prop_get_lower(var)
-                    .map(|e| (e.value, e.reason))
+                    .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
-                        self.simplex
-                            .get_lower(var)
-                            .and_then(|b| b.value.narrow().map(|v| (v, b.reason)))
+                        self.simplex.get_lower(var).and_then(|b| {
+                            b.value
+                                .narrow()
+                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                        })
                     })
             };
-            let Some((bv, br)) = bound else {
+            let Some((bv, brs)) = bound else {
                 hi_ok = false;
                 break;
             };
             hi_val += bv * coef;
-            hi_reasons.push(br);
-            if let Some(b) = self.simplex.get_lower(var) {
-                hi_reasons.extend(b.aux_reasons.iter().copied());
-            }
-            if let Some(b) = self.simplex.get_upper(var) {
-                hi_reasons.extend(b.aux_reasons.iter().copied());
-            }
+            hi_reasons.extend(brs);
         }
         lo_reasons.sort_unstable();
         lo_reasons.dedup();
