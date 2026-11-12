@@ -129,12 +129,20 @@ pub struct MBQIIntegration {
     blind_attempted: bool,
     /// Current round number
     current_round: usize,
+    /// Lifetime round-consumption counter (STATS reporting): unlike
+    /// `current_round`, NEVER rewound by `restore_search_state` — the
+    /// per-check round counter is search state, the report is a stat.
+    rounds_consumed_total: usize,
     /// Per-round instantiation budget.
     budget: MBQIBudget,
     /// Conflict-driven quantifier activity.
     conflict_scores: ConflictScores,
     /// Maximum rounds
     max_rounds: usize,
+    /// Set only by the explicit `mbqi-max-rounds` option (NOT by the
+    /// test-only `set_max_rounds`): reaching `max_rounds` then ends the
+    /// solve instead of merely disabling further MBQI rounds.
+    hard_round_limit: bool,
     /// Time limit
     #[cfg(feature = "std")]
     time_limit: Option<Duration>,
@@ -207,6 +215,7 @@ impl MBQIIntegration {
             extra_candidates: FxHashMap::default(),
             blind_attempted: false,
             current_round: 0,
+            rounds_consumed_total: 0,
             budget: MBQIBudget::new(1024),
             conflict_scores: ConflictScores::new(0.95),
             active_table_quantifiers: FxHashSet::default(),
@@ -220,6 +229,7 @@ impl MBQIIntegration {
             gate_violations_seen: FxHashMap::default(),
             gate_materialized: false,
             max_rounds: 100,
+            hard_round_limit: false,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
             #[cfg(feature = "std")]
@@ -955,6 +965,7 @@ impl MBQIIntegration {
         }
 
         self.current_round += 1;
+        self.rounds_consumed_total += 1;
         if self.current_round > 1 {
             self.conflict_scores.decay_on_restart();
         }
@@ -1743,6 +1754,7 @@ impl MBQIIntegration {
         self.blind_attempted = false;
         self.active_table_quantifiers.clear();
         self.current_round = 0;
+        self.rounds_consumed_total = 0;
         self.budget = MBQIBudget::new(self.budget.global_budget);
         self.conflict_scores = ConflictScores::new(self.conflict_scores.decay_factor);
         #[cfg(feature = "std")]
@@ -1823,6 +1835,36 @@ impl MBQIIntegration {
     }
 
     /// Set maximum rounds
+    /// Rounds consumed so far, lifetime (survives `restore_search_state`'s
+    /// per-check rewind of `current_round`; reset only by `clear()`).
+    #[must_use]
+    pub fn rounds_consumed(&self) -> usize {
+        self.rounds_consumed_total
+    }
+
+    /// `true` when the round limit was set through the explicit
+    /// `mbqi-max-rounds` option AND consumed: the A/B work-unit contract
+    /// (hit the bound → the whole solve ends with an honest `Unknown`,
+    /// instead of the default behavior where an exhausted MBQI merely
+    /// becomes inert and the search continues without it).
+    #[must_use]
+    pub fn hard_stop_when_exhausted(&self) -> bool {
+        self.hard_round_limit
+    }
+
+    /// Round limit consumed (regardless of who set it).
+    #[must_use]
+    pub fn round_limit_reached(&self) -> bool {
+        self.current_round >= self.max_rounds
+    }
+
+    /// Set the round limit AND arm the hard stop (the explicit option's
+    /// semantics; see `hard_stop_when_exhausted`).
+    pub fn set_max_rounds_hard(&mut self, max: usize) {
+        self.max_rounds = max;
+        self.hard_round_limit = true;
+    }
+
     pub fn set_max_rounds(&mut self, max: usize) {
         self.max_rounds = max;
     }

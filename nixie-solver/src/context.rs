@@ -1242,6 +1242,11 @@ impl Context {
                     self.solver.set_config(config);
                 }
             }
+            "mbqi-max-rounds" | "mbqi_max_rounds" => {
+                if let Ok(n) = value.trim().parse::<usize>() {
+                    self.solver.set_mbqi_max_rounds(n);
+                }
+            }
             "max-decisions" | "max_decisions" => {
                 if let Ok(n) = value.trim().parse::<u64>() {
                     let mut config = self.solver.config().clone();
@@ -2334,6 +2339,12 @@ impl Context {
     #[must_use]
     pub fn stats(&self) -> &nixie_sat::SolverStats {
         self.solver.stats()
+    }
+
+    /// MBQI rounds consumed so far (for the `STATS` line).
+    #[must_use]
+    pub fn mbqi_rounds(&self) -> usize {
+        self.solver.mbqi_rounds()
     }
 
     /// Absorb final counters from an out-of-band SAT solve.

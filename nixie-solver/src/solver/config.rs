@@ -63,6 +63,20 @@ impl Solver {
         &self.config
     }
 
+    /// Bound the total number of MBQI rounds for a single solve
+    /// invocation (A/B work units for MBQI-phase measurement; the default
+    /// 100 is unchanged when never called).  Reaching the bound makes MBQI
+    /// report `Unknown` — an honest resource limit, never a verdict.
+    pub fn set_mbqi_max_rounds(&mut self, max: usize) {
+        self.mbqi.set_max_rounds_hard(max);
+    }
+
+    /// MBQI rounds consumed so far (for the `STATS` line).
+    #[must_use]
+    pub fn mbqi_rounds(&self) -> usize {
+        self.mbqi.rounds_consumed()
+    }
+
     /// Replace the whole search configuration.
     pub fn set_config(&mut self, config: SolverConfig) {
         self.config = config;

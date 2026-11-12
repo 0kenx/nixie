@@ -324,6 +324,10 @@ struct Args {
     #[arg(long, default_value = "0")]
     decision_limit: u64,
 
+    /// Resource limit: total MBQI rounds for a solve (0 = solver default)
+    #[arg(long, default_value = "0")]
+    mbqi_max_rounds: u64,
+
     /// Minimize the satisfying model (find minimal solution)
     #[arg(long)]
     minimize_model: bool,
@@ -1042,6 +1046,9 @@ pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) -> Result<(),
     }
     if args.decision_limit > 0 {
         ctx.set_option("max-decisions", &format!("{}", args.decision_limit));
+    }
+    if args.mbqi_max_rounds > 0 {
+        ctx.set_option("mbqi-max-rounds", &format!("{}", args.mbqi_max_rounds));
     }
     // `--memory-limit` has no corresponding lever in `nixie-solver` today: a
     // real wall-clock/heap bound would require either an unsafe global
@@ -2031,8 +2038,11 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
             if args.stats || std::env::var_os("STATS").is_some() {
                 let stats = ctx.stats();
                 eprintln!(
-                    "; stats: conflicts={} decisions={} propagations={}",
-                    stats.conflicts, stats.decisions, stats.propagations
+                    "; stats: conflicts={} decisions={} propagations={} mbqi_rounds={}",
+                    stats.conflicts,
+                    stats.decisions,
+                    stats.propagations,
+                    ctx.mbqi_rounds()
                 );
                 {
                     use nixie_solver::{GRAPH_TRACE, GraphTraceKind};

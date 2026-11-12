@@ -4136,6 +4136,26 @@ impl Solver {
                     }
 
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
+                    // A/B work unit (the rbt-class MBQI phase is otherwise
+                    // unreachable at fixed conflict/decision budgets —
+                    // scan #2's measurement dead-end): an explicitly armed
+                    // round limit ends the solve with an honest Unknown the
+                    // moment MBQI reports it exhausted.  The default
+                    // `max_rounds` cap (unset flag) keeps the historical
+                    // soft semantics — MBQI goes inert, search continues.
+                    if matches!(mbqi_result, MBQIResult::Unknown)
+                        && self.mbqi.hard_stop_when_exhausted()
+                        && self.mbqi.round_limit_reached()
+                    {
+                        if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                            eprintln!(
+                                "[mbqi-limit] stop: rounds={} max_hard={}",
+                                self.mbqi.rounds_consumed(),
+                                self.mbqi.hard_stop_when_exhausted()
+                            );
+                        }
+                        return SolverResult::Unknown;
+                    }
                     // Constructor/hint tables own these quantifiers'
                     // defining role this round: suspend their E-matching
                     // (a trigger match at a compound term mints the next
