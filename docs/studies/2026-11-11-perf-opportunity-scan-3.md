@@ -174,6 +174,18 @@ Second follow-up session (2026-11-12), continuing the standing items:
   at identical counters; interleave before believing a regression the
   mechanism cannot explain.
 
+- **`iter_views` rollout to subsume/walk** (`af6fe35a` + `71d8a22b`):
+  the five whole-DB subsume sites and three walk sites had the same
+  double-view shape; converted (`subsume_round_impl` was 7% of frb35).
+  sage 0.93×; the MBQI cells read +8–9% but interleave dead even
+  (huffman P 9.9/9.9/10.4 vs C 10.0/9.9/10.6) — third occurrence of
+  batch-cell noise exceeding the effect this session.  Checkpoint gates
+  green at `71d8a22b` (full 12798, parity 171/0/6, gate PASS).
+- The clippy-masking failure RECURRED at `af6fe35a` (unused id
+  bindings; the gate and commit were separate shell lines despite the
+  `c7e5206a` lesson) — fixed in `71d8a22b`; the rule is now: gates
+  `&&`-chained into the commit command itself.
+
 Process note recorded after M: a clippy gate piped through `tail`
 masked one failure (`needless_range_loop`, fixed in `9f8cd15a`); all
 later gates test clippy's own exit status.
