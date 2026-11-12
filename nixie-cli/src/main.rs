@@ -592,6 +592,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[tokio::main]
 async fn main() {
+    // NIXIE_PPROF=<path>: sample the whole process at 250 Hz (SIGPROF) and
+    // write a flamegraph to <path> on exit.  Build with
+    // `--features pprof-signal` (off by default: the pprof dependency is
+    // profiling-only).  Usage: NIXIE_PPROF=/tmp/x.svg ./nixie ...
+    #[cfg(feature = "pprof-signal")]
+    let _profiler_guard = std::env::var_os("NIXIE_PPROF").map(ProfDump::new);
     match maybe_handle_dashboard_render_command() {
         Ok(true) => return,
         Ok(false) => {}
@@ -2116,6 +2122,42 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
                     "(error {})",
                     nixie_core::smtlib::format_string_literal(&e.to_string())
                 )
+            }
+        }
+    }
+}
+
+/// Writes the collected SIGPROF flamegraph to the path when dropped (main's
+/// exit), so every return path of `main` dumps the profile.
+#[cfg(feature = "pprof-signal")]
+struct ProfDump {
+    guard: pprof::ProfilerGuard<'static>,
+    path: std::path::PathBuf,
+}
+
+#[cfg(feature = "pprof-signal")]
+impl ProfDump {
+    fn new(path: std::ffi::OsString) -> Self {
+        Self {
+            guard: pprof::ProfilerGuardBuilder::default()
+                .frequency(250)
+                .blocklist(&["libc", "libgcc", "pthread", "vdso"])
+                .build()
+                .expect("start profiler"),
+            path: path.into(),
+        }
+    }
+}
+
+#[cfg(feature = "pprof-signal")]
+impl Drop for ProfDump {
+    fn drop(&mut self) {
+        if let Ok(report) = self.guard.report().build() {
+            let file = std::fs::File::create(&self.path).ok();
+            if let Some(mut file) = file
+                && report.flamegraph(&mut file).is_err()
+            {
+                eprintln!("[pprof] flamegraph write failed");
             }
         }
     }

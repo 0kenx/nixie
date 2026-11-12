@@ -38,6 +38,7 @@ walkdir = { workspace = true }
 globset = { workspace = true }
 notify = { workspace = true }
 sysinfo = { workspace = true }
+pprof = { version = "0.13", features = ["flamegraph"], optional = true }
 rayon = { workspace = true }
 dirs = { workspace = true }
 tower-lsp = { workspace = true }
@@ -51,3 +52,7 @@ rustc-hash = { workspace = true, features = ["std"] }
 
 [lints.clippy]
 unwrap_used = "deny"
+
+[features]
+default = []
+pprof-signal = ["dep:pprof"]
