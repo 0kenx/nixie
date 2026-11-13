@@ -294,9 +294,16 @@ struct IntEquation {
 /// A propagation-only single-variable constant bound (see
 /// `ArithSolver::prop_lower`).
 #[derive(Debug, Clone, Copy)]
+/// `reason` is the justifying ATOM TERM, not an index into
+/// `ArithSolver::reasons`: that index space is TRUNCATED on scope rollback
+/// (`pop` rewinds to `state.num_reasons`) while tracker entries restored by
+/// the undo trail can outlive the rewind, so a stored id later aliases a
+/// DIFFERENT atom (observed as the convert-family invalid propagation
+/// clauses: a bound on one variable citing an atom minted for another).
+/// Terms are hash-consed and immortal — citing them cannot alias.
 struct PropBoundEntry {
     value: DeltaRational,
-    reason: u32,
+    reason: TermId,
 }
 
 /// One undo step for the propagation-bound trail.
@@ -455,10 +462,10 @@ fn checked_scale_add(
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy)]
 pub struct DebugTermBounds {
-    /// Tracker lower bound (value, reason id).
-    pub tracker_lo: Option<(DeltaRational, u32)>,
-    /// Tracker upper bound (value, reason id).
-    pub tracker_hi: Option<(DeltaRational, u32)>,
+    /// Tracker lower bound (value, reason atom term).
+    pub tracker_lo: Option<(DeltaRational, TermId)>,
+    /// Tracker upper bound (value, reason atom term).
+    pub tracker_hi: Option<(DeltaRational, TermId)>,
     /// Simplex live (lower, upper) values.
     pub simplex: Option<(Option<DeltaRational>, Option<DeltaRational>)>,
 }
@@ -1244,7 +1251,10 @@ impl ArithSolver {
 
     /// Record a propagation lower bound `var ≥ value` (with `reason`), keeping
     /// the tightest (monotonic).  Sound: a valid consequence of one atom.
-    fn prop_set_lower(&mut self, var: VarId, value: DeltaRational, reason: u32) {
+    fn prop_set_lower(&mut self, var: VarId, value: DeltaRational, reason: TermId) {
+        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            eprintln!("[twrite] lo var={var} v={value:?} r={reason:?}");
+        }
         self.prop_ensure(var);
         let idx = var as usize;
         let tighten = match self.prop_lower[idx] {
@@ -1261,7 +1271,10 @@ impl ArithSolver {
 
     /// Record a propagation upper bound `var ≤ value` (with `reason`), keeping
     /// the tightest (monotonic).  Sound: a valid consequence of one atom.
-    fn prop_set_upper(&mut self, var: VarId, value: DeltaRational, reason: u32) {
+    fn prop_set_upper(&mut self, var: VarId, value: DeltaRational, reason: TermId) {
+        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            eprintln!("[twrite] hi var={var} v={value:?} r={reason:?}");
+        }
         self.prop_ensure(var);
         let idx = var as usize;
         let tighten = match self.prop_upper[idx] {
@@ -1298,7 +1311,7 @@ impl ArithSolver {
         coef: Rational64,
         rhs: Rational64,
         kind: PropCmp,
-        reason: u32,
+        reason: TermId,
     ) {
         if coef.is_zero() {
             return;
@@ -1310,6 +1323,9 @@ impl ArithSolver {
         // OPTIMIZATION: declining to record a bound that does not fit
         // costs completeness only, never soundness.  Unchecked, it wrapped
         // in release and propagated a fabricated bound.
+        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            eprintln!("[rpb] var={var} coef={coef} rhs={rhs} kind={kind:?} reason={reason:?}");
+        }
         use num_traits::CheckedDiv;
         let Some(ratio) = rhs.checked_div(&coef) else {
             return;
@@ -1456,17 +1472,25 @@ impl ArithSolver {
             self.simplex.set_upper(slack, Rational64::zero(), reason_id);
             return;
         }
-        let mut expr = LinExpr::new();
-        let mut single: Option<(VarId, Rational64)> = None;
+        // Single-term detection must be a COUNT, not a two-state latch:
+        // the previous `None => Some, Some(_) => None` form re-armed on the
+        // THIRD term (state `None` again after the second), so any 3+-term
+        // atom recorded a spurious single-variable bound on its LAST term,
+        // justified by the whole multi-term atom — the invalid-clause
+        // generator behind the convert-family false `unsat` (difference
+        // logic never fired it: DL atoms are 2-term).
+        let mut n_nonzero = 0usize;
+        let mut first: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            expr.add_term(var, *coef);
-            single = match single {
-                None => Some((var, *coef)),
-                Some(_) => None, // more than one term
-            };
+            if !coef.is_zero() {
+                n_nonzero += 1;
+                if first.is_none() {
+                    first = Some((var, *coef));
+                }
+            }
         }
-        let _ = &mut expr;
+        let single = if n_nonzero == 1 { first } else { None };
 
         let reason_id = self.add_reason(reason);
         // One shared, interned row per linear form; the assertion itself is
@@ -1475,7 +1499,10 @@ impl ArithSolver {
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Le, reason);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason_id);
+            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+                eprintln!("[asrt] Le n_terms={} reason={reason:?}", lhs.len());
+            }
+            self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason);
         }
     }
 
@@ -1488,24 +1515,35 @@ impl ArithSolver {
             self.simplex.set_lower(slack, Rational64::zero(), reason_id);
             return;
         }
-        let mut expr = LinExpr::new();
-        let mut single: Option<(VarId, Rational64)> = None;
+        // Single-term detection must be a COUNT, not a two-state latch:
+        // the previous `None => Some, Some(_) => None` form re-armed on the
+        // THIRD term (state `None` again after the second), so any 3+-term
+        // atom recorded a spurious single-variable bound on its LAST term,
+        // justified by the whole multi-term atom — the invalid-clause
+        // generator behind the convert-family false `unsat` (difference
+        // logic never fired it: DL atoms are 2-term).
+        let mut n_nonzero = 0usize;
+        let mut first: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            expr.add_term(var, *coef);
-            single = match single {
-                None => Some((var, *coef)),
-                Some(_) => None,
-            };
+            if !coef.is_zero() {
+                n_nonzero += 1;
+                if first.is_none() {
+                    first = Some((var, *coef));
+                }
+            }
         }
-        let _ = &mut expr;
+        let single = if n_nonzero == 1 { first } else { None };
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Ge, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason_id);
+            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+                eprintln!("[asrt] Ge n_terms={} reason={reason:?}", lhs.len());
+            }
+            self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason);
         }
     }
 
@@ -1723,10 +1761,14 @@ impl ArithSolver {
     /// (`Var = IntConst/RealConst`) before calling.
     pub fn note_fixed_var(&mut self, term: TermId, value: Rational64, reason: TermId) {
         let var = self.intern(term);
+        // Keep the reason REGISTERED (conflict explanations cite reason
+        // ids; the tracker entry cites the immortal TERM, but `reasons`
+        // consumers still expect the id to resolve).
         let reason_id = self.add_reason(reason);
+        let _ = reason_id;
         let dr = DeltaRational::from_rational(value);
-        self.prop_set_lower(var, dr, reason_id);
-        self.prop_set_upper(var, dr, reason_id);
+        self.prop_set_lower(var, dr, reason);
+        self.prop_set_upper(var, dr, reason);
     }
 
     /// Tighten the simplex's tableau variable bounds to a fixpoint by running
@@ -1802,14 +1844,26 @@ impl ArithSolver {
         // make the first coefficient positive, flipping the strict
         // inequality's direction); the row key therefore also uses the
         // direction-preserving comparison canonicalization.
-        let mut single: Option<(VarId, Rational64)> = None;
+        // Single-term detection must be a COUNT, not a two-state latch:
+        // the previous `None => Some, Some(_) => None` form re-armed on the
+        // THIRD term (state `None` again after the second), so any 3+-term
+        // atom recorded a spurious single-variable bound on its LAST term,
+        // justified by the whole multi-term atom — the invalid-clause
+        // generator behind the convert-family false `unsat` (difference
+        // logic never fired it: DL atoms are 2-term).
+        let mut n_nonzero = 0usize;
+        let mut first: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            single = match single {
-                None => Some((var, *coef)),
-                Some(_) => None,
-            };
+            let _ = var;
+            if !coef.is_zero() {
+                n_nonzero += 1;
+                if first.is_none() {
+                    first = Some((var, *coef));
+                }
+            }
         }
+        let single = if n_nonzero == 1 { first } else { None };
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
@@ -1817,7 +1871,10 @@ impl ArithSolver {
         self.simplex
             .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason_id);
+            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+                eprintln!("[asrt] Lt n_terms={} reason={reason:?}", lhs.len());
+            }
+            self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason);
         }
     }
 
@@ -1849,14 +1906,26 @@ impl ArithSolver {
         // For reals, use delta-rationals: `lhs > rhs` is the strict lower
         // bound `slack > 0` on the interned row for `lhs - rhs` (the SAME
         // row `assert_le` interns, so both polarities share it).
-        let mut single: Option<(VarId, Rational64)> = None;
+        // Single-term detection must be a COUNT, not a two-state latch:
+        // the previous `None => Some, Some(_) => None` form re-armed on the
+        // THIRD term (state `None` again after the second), so any 3+-term
+        // atom recorded a spurious single-variable bound on its LAST term,
+        // justified by the whole multi-term atom — the invalid-clause
+        // generator behind the convert-family false `unsat` (difference
+        // logic never fired it: DL atoms are 2-term).
+        let mut n_nonzero = 0usize;
+        let mut first: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
             let var = self.intern(*term);
-            single = match single {
-                None => Some((var, *coef)),
-                Some(_) => None,
-            };
+            let _ = var;
+            if !coef.is_zero() {
+                n_nonzero += 1;
+                if first.is_none() {
+                    first = Some((var, *coef));
+                }
+            }
         }
+        let single = if n_nonzero == 1 { first } else { None };
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
@@ -1864,7 +1933,10 @@ impl ArithSolver {
         self.simplex
             .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason_id);
+            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+                eprintln!("[asrt] Gt n_terms={} reason={reason:?}", lhs.len());
+            }
+            self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason);
         }
     }
 
@@ -4501,7 +4573,7 @@ impl ArithSolver {
     /// Debug accessors for the `NIXIE_APROP_VERIFY` oracle dump: which
     /// store (tracker vs simplex) holds a variable's bound and its reasons.
     #[doc(hidden)]
-    pub fn debug_prop_bound(&self, var: VarId, lower: bool) -> Option<(DeltaRational, u32)> {
+    pub fn debug_prop_bound(&self, var: VarId, lower: bool) -> Option<(DeltaRational, TermId)> {
         if lower {
             self.prop_get_lower(var).map(|e| (e.value, e.reason))
         } else {
@@ -4511,6 +4583,8 @@ impl ArithSolver {
 
     /// Debug: tracker + simplex bound state for a TERM (mapped through the
     /// arith-side `term_to_var`, the same map the derivation uses).
+    /// Debug: a compact kind tag for one term (the reason-id resolver in
+    /// the derive trace).
     /// Debug: replay `derive_expr_bound_reasons`'s per-term bound choice
     /// (side, value, reason ids) for both directions — the value-level
     /// trace for the `NIXIE_APROP_VERIFY` oracle.
@@ -4523,28 +4597,53 @@ impl ArithSolver {
                 let _ = write!(out, " {t:?}:no-var");
                 continue;
             };
-            let lo: Option<(DeltaRational, Vec<u32>)> = self
+            let _ = write!(out, " {t:?}:v{v}");
+            let lo: Option<(DeltaRational, Vec<String>, bool)> = self
                 .prop_get_lower(v)
-                .map(|e| (e.value, vec![e.reason]))
+                .map(|e| (e.value, vec![format!("{:?}", e.reason)], false))
                 .or_else(|| {
                     self.simplex.get_lower(v).and_then(|b| {
-                        b.value
-                            .narrow()
-                            .map(|val| (val, b.all_reasons().collect::<Vec<_>>()))
+                        b.value.narrow().map(|val| {
+                            (
+                                val,
+                                b.all_reasons()
+                                    .map(|r| match self.reasons.get(r as usize) {
+                                        Some(t) => format!("{r}:{t:?}"),
+                                        None => format!("{r}:DANGLING"),
+                                    })
+                                    .collect::<Vec<_>>(),
+                                true,
+                            )
+                        })
                     })
                 });
-            let hi: Option<(DeltaRational, Vec<u32>)> = self
+            let hi: Option<(DeltaRational, Vec<String>, bool)> = self
                 .prop_get_upper(v)
-                .map(|e| (e.value, vec![e.reason]))
+                .map(|e| (e.value, vec![format!("{:?}", e.reason)], false))
                 .or_else(|| {
                     self.simplex.get_upper(v).and_then(|b| {
-                        b.value
-                            .narrow()
-                            .map(|val| (val, b.all_reasons().collect::<Vec<_>>()))
+                        b.value.narrow().map(|val| {
+                            (
+                                val,
+                                b.all_reasons()
+                                    .map(|r| match self.reasons.get(r as usize) {
+                                        Some(t) => format!("{r}:{t:?}"),
+                                        None => format!("{r}:DANGLING"),
+                                    })
+                                    .collect::<Vec<_>>(),
+                                true,
+                            )
+                        })
                     })
                 });
-            let fmt_b = |b: Option<(DeltaRational, Vec<u32>)>, want: &str| match b {
-                Some((val, rids)) => format!("{want}={val:?}/r{rids:?}"),
+            let fmt_b = |b: Option<(DeltaRational, Vec<String>, bool)>, want: &str| match b {
+                Some((val, rts, sx)) => {
+                    format!(
+                        "{want}={val:?}/{}[{}]",
+                        if sx { "SX" } else { "TR" },
+                        rts.join(",")
+                    )
+                }
                 None => format!("{want}=NONE"),
             };
             let _ = write!(
@@ -4688,20 +4787,15 @@ impl ArithSolver {
         // also feed the derivation when `tighten` was requested.  Each bound's
         // antecedent is its `reason` id; collecting all of them yields a sound
         // explanation of the derived expression bound.
-        let map_reasons = |rids: &SmallVec<[u32; 4]>| -> Vec<TermId> {
-            let mut out: Vec<TermId> = Vec::with_capacity(rids.len());
-            for &rid in rids {
-                if let Some(&t) = self.reasons.get(rid as usize) {
-                    out.push(t);
-                }
-            }
+        let map_reasons = |rts: &SmallVec<[TermId; 4]>| -> Vec<TermId> {
+            let mut out: Vec<TermId> = rts.to_vec();
             out.sort_unstable();
             out.dedup();
             out
         };
         // Lower bound of e = Σ coefᵢ·varᵢ + constant.
         let mut lo_val = DeltaRational::from_rational(constant);
-        let mut lo_reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut lo_reasons: SmallVec<[TermId; 4]> = SmallVec::new();
         let mut lo_ok = true;
         for &(var, coef) in &var_terms {
             if coef.is_zero() {
@@ -4728,9 +4822,17 @@ impl ArithSolver {
                     .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
                         self.simplex.get_lower(var).and_then(|b| {
-                            b.value
-                                .narrow()
-                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                            b.value.narrow().and_then(|v| {
+                                // Map reason ids to their atom TERMS; a
+                                // dangling id (scope-recycled index) declines
+                                // the bound — citing a possibly-aliased atom
+                                // is exactly the invalid-clause shape.
+                                let mut ts = SmallVec::<[TermId; 4]>::new();
+                                for r in b.all_reasons() {
+                                    ts.push(*self.reasons.get(r as usize)?);
+                                }
+                                Some((v, ts))
+                            })
                         })
                     })
             } else {
@@ -4738,9 +4840,17 @@ impl ArithSolver {
                     .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
                         self.simplex.get_upper(var).and_then(|b| {
-                            b.value
-                                .narrow()
-                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                            b.value.narrow().and_then(|v| {
+                                // Map reason ids to their atom TERMS; a
+                                // dangling id (scope-recycled index) declines
+                                // the bound — citing a possibly-aliased atom
+                                // is exactly the invalid-clause shape.
+                                let mut ts = SmallVec::<[TermId; 4]>::new();
+                                for r in b.all_reasons() {
+                                    ts.push(*self.reasons.get(r as usize)?);
+                                }
+                                Some((v, ts))
+                            })
                         })
                     })
             };
@@ -4755,10 +4865,6 @@ impl ArithSolver {
             // that forced an atom whose true expression minimum was ~1e20
             // below the threshold).  Overflow declines the derivation -
             // completeness cost, never soundness.
-            if brs.contains(&BRANCH_REASON) {
-                lo_ok = false;
-                break;
-            }
             let Some(term_lo) = checked_scale_add(lo_val, bv, coef) else {
                 lo_ok = false;
                 break;
@@ -4768,7 +4874,7 @@ impl ArithSolver {
         }
         // Upper bound of e.
         let mut hi_val = DeltaRational::from_rational(constant);
-        let mut hi_reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut hi_reasons: SmallVec<[TermId; 4]> = SmallVec::new();
         let mut hi_ok = true;
         for &(var, coef) in &var_terms {
             if coef.is_zero() {
@@ -4779,9 +4885,17 @@ impl ArithSolver {
                     .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
                         self.simplex.get_upper(var).and_then(|b| {
-                            b.value
-                                .narrow()
-                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                            b.value.narrow().and_then(|v| {
+                                // Map reason ids to their atom TERMS; a
+                                // dangling id (scope-recycled index) declines
+                                // the bound — citing a possibly-aliased atom
+                                // is exactly the invalid-clause shape.
+                                let mut ts = SmallVec::<[TermId; 4]>::new();
+                                for r in b.all_reasons() {
+                                    ts.push(*self.reasons.get(r as usize)?);
+                                }
+                                Some((v, ts))
+                            })
                         })
                     })
             } else {
@@ -4789,9 +4903,17 @@ impl ArithSolver {
                     .map(|e| (e.value, smallvec::smallvec![e.reason]))
                     .or_else(|| {
                         self.simplex.get_lower(var).and_then(|b| {
-                            b.value
-                                .narrow()
-                                .map(|v| (v, b.all_reasons().collect::<SmallVec<[u32; 4]>>()))
+                            b.value.narrow().and_then(|v| {
+                                // Map reason ids to their atom TERMS; a
+                                // dangling id (scope-recycled index) declines
+                                // the bound — citing a possibly-aliased atom
+                                // is exactly the invalid-clause shape.
+                                let mut ts = SmallVec::<[TermId; 4]>::new();
+                                for r in b.all_reasons() {
+                                    ts.push(*self.reasons.get(r as usize)?);
+                                }
+                                Some((v, ts))
+                            })
                         })
                     })
             };
@@ -4799,10 +4921,6 @@ impl ArithSolver {
                 hi_ok = false;
                 break;
             };
-            if brs.contains(&BRANCH_REASON) {
-                hi_ok = false;
-                break;
-            }
             let Some(term_hi) = checked_scale_add(hi_val, bv, coef) else {
                 hi_ok = false;
                 break;
