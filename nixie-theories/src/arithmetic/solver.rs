@@ -431,6 +431,19 @@ enum FracVar {
     Underivable,
 }
 
+/// Debug snapshot for the `NIXIE_APROP_VERIFY` oracle dump (see
+/// `ArithSolver::debug_term_bounds`).
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy)]
+pub struct DebugTermBounds {
+    /// Tracker lower bound (value, reason id).
+    pub tracker_lo: Option<(DeltaRational, u32)>,
+    /// Tracker upper bound (value, reason id).
+    pub tracker_hi: Option<(DeltaRational, u32)>,
+    /// Simplex live (lower, upper) values.
+    pub simplex: Option<(Option<DeltaRational>, Option<DeltaRational>)>,
+}
+
 impl ArithSolver {
     /// Active input reasons, for a nonminimal core after exhaustive interface
     /// case splitting. Branch-local reasons are excluded by snapshotting first.
@@ -4464,6 +4477,71 @@ impl ArithSolver {
             }
         }
         sum
+    }
+
+    /// Debug accessors for the `NIXIE_APROP_VERIFY` oracle dump: which
+    /// store (tracker vs simplex) holds a variable's bound and its reasons.
+    #[doc(hidden)]
+    pub fn debug_prop_bound(&self, var: VarId, lower: bool) -> Option<(DeltaRational, u32)> {
+        if lower {
+            self.prop_get_lower(var).map(|e| (e.value, e.reason))
+        } else {
+            self.prop_get_upper(var).map(|e| (e.value, e.reason))
+        }
+    }
+
+    /// Debug: tracker + simplex bound state for a TERM (mapped through the
+    /// arith-side `term_to_var`, the same map the derivation uses).
+    /// Debug: tracker (value, reason) pair per direction plus the simplex's
+    /// live (lo, hi) values, all for one TERM.
+    #[doc(hidden)]
+    pub fn debug_term_bounds(&self, term: TermId) -> Option<DebugTermBounds> {
+        let &v = self.term_to_var.get(&term)?;
+        Some(DebugTermBounds {
+            tracker_lo: self.debug_prop_bound(v, true),
+            tracker_hi: self.debug_prop_bound(v, false),
+            simplex: self.debug_simplex_bounds_simple(v),
+        })
+    }
+
+    /// Debug: the simplex's live bounds (values only).
+    #[doc(hidden)]
+    pub fn debug_simplex_bounds_simple(
+        &self,
+        var: VarId,
+    ) -> Option<(Option<DeltaRational>, Option<DeltaRational>)> {
+        let lo = self.simplex.get_lower(var).and_then(|b| b.value.narrow());
+        let hi = self.simplex.get_upper(var).and_then(|b| b.value.narrow());
+        if lo.is_none() && hi.is_none() {
+            None
+        } else {
+            Some((lo, hi))
+        }
+    }
+
+    /// Debug: the simplex's live bounds for `var` (value, primary, aux len).
+    #[doc(hidden)]
+    pub fn debug_simplex_bounds(
+        &self,
+        var: VarId,
+    ) -> Option<(Option<DeltaRational>, Option<DeltaRational>, usize, usize)> {
+        let lo = self
+            .simplex
+            .get_lower(var)
+            .and_then(|b| b.value.narrow().map(|v| (v, b.reason, b.aux_reasons.len())));
+        let hi = self
+            .simplex
+            .get_upper(var)
+            .and_then(|b| b.value.narrow().map(|v| (v, b.reason, b.aux_reasons.len())));
+        match (lo, hi) {
+            (None, None) => None,
+            (l, h) => Some((
+                l.map(|x| x.0),
+                h.map(|x| x.0),
+                l.map(|x| x.2).unwrap_or(0),
+                h.map(|x| x.2).unwrap_or(0),
+            )),
+        }
     }
 
     /// Debug oracle for the bound-propagation channel (env-gated caller):

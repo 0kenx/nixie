@@ -2513,17 +2513,63 @@ impl<'a> TheoryManager<'a> {
                             .join(" + ");
                         let rs = reason_terms
                             .iter()
-                            .map(|&t| match self.manager.get(t).map(|x| &x.kind) {
-                                Some(nixie_core::TermKind::Var(n)) => {
-                                    self.manager.resolve_str(*n).to_string()
+                            .map(|&t| {
+                                fn d1(
+                                    m: &nixie_core::TermManager,
+                                    t: nixie_core::TermId,
+                                ) -> String {
+                                    match m.get(t).map(|x| &x.kind) {
+                                        Some(nixie_core::TermKind::Var(n)) => {
+                                            m.resolve_str(*n).to_string()
+                                        }
+                                        Some(nixie_core::TermKind::IntConst(n)) => {
+                                            format!("c{n}")
+                                        }
+                                        Some(nixie_core::TermKind::Le(a, b))
+                                        | Some(nixie_core::TermKind::Lt(a, b)) => {
+                                            format!("({}..{})", d1(m, *a), d1(m, *b))
+                                        }
+                                        Some(nixie_core::TermKind::Ite(c, a, b)) => {
+                                            format!(
+                                                "ite({},{},{})",
+                                                d1(m, *c),
+                                                d1(m, *a),
+                                                d1(m, *b)
+                                            )
+                                        }
+                                        Some(nixie_core::TermKind::Mod(a, b)) => {
+                                            format!("mod({},{})", d1(m, *a), d1(m, *b))
+                                        }
+                                        Some(nixie_core::TermKind::Div(a, b)) => {
+                                            format!("div({},{})", d1(m, *a), d1(m, *b))
+                                        }
+                                        Some(nixie_core::TermKind::Add(_)) => "add".into(),
+                                        Some(nixie_core::TermKind::Mul(_)) => "mul".into(),
+                                        Some(k) => format!("{k:?}"),
+                                        None => format!("t{t:?}"),
+                                    }
                                 }
-                                Some(k) => format!("{k:?}"),
-                                None => format!("t{t:?}"),
+                                d1(self.manager, t)
                             })
                             .collect::<Vec<_>>()
                             .join(",");
+                        // Which store provided each term's bound: tracker
+                        // (single-atom consequence) vs simplex (row-derived),
+                        // with the live bounds and their reason ids.
+                        let store_s = parsed
+                            .terms
+                            .iter()
+                            .map(|&(t, _)| match self.arith.debug_term_bounds(t) {
+                                Some(b) => format!(
+                                    "[{t:?} tr_lo={:?} tr_hi={:?} sx={:?}]",
+                                    b.tracker_lo, b.tracker_hi, b.simplex
+                                ),
+                                None => format!("[{t:?} no-arith-var]"),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ");
                         eprintln!(
-                            "[aprop-INVALID] atom={var:?} truth={truth} less={less} strict={strict} c={} {terms_s} <= reasons: {rs}",
+                            "[aprop-INVALID] atom={var:?} truth={truth} less={less} strict={strict} c={} {terms_s} <= reasons: {rs} :: {store_s}",
                             parsed.constant,
                         );
                         continue;
