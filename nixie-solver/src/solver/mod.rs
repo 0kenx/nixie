@@ -5647,10 +5647,13 @@ impl Solver {
         self.debug_check_invariants("after reset");
     }
 
-    /// Get solver statistics
+    /// Get solver statistics (SAT counters plus the theory propagation
+    /// count from the CDCL(T) layer's own statistics).
     #[must_use]
-    pub fn stats(&self) -> &nixie_sat::SolverStats {
-        self.sat.stats()
+    pub fn stats(&self) -> nixie_sat::SolverStats {
+        let mut stats = self.sat.stats().clone();
+        stats.theory_propagations = self.statistics.theory_propagations;
+        stats
     }
 
     /// Absorb final counters from an out-of-band `nixie_sat::Solver` run.

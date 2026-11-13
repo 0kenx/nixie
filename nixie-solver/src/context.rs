@@ -2337,7 +2337,7 @@ impl Context {
 
     /// Get solver statistics
     #[must_use]
-    pub fn stats(&self) -> &nixie_sat::SolverStats {
+    pub fn stats(&self) -> nixie_sat::SolverStats {
         self.solver.stats()
     }
 

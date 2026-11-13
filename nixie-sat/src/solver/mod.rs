@@ -1048,6 +1048,12 @@ pub struct SolverStats {
     pub binary_clauses: u64,
     /// Number of unit clauses learned
     pub unit_clauses: u64,
+    /// Theory propagations applied (literals the CDCL(T) layer forced from
+    /// theory consequences, e.g. LP bound propagation).  Kept on the SAT
+    /// stats struct so the CLI/`STATS` line reports it next to the search
+    /// counters; the solver's `SolverStatistics::theory_propagations`
+    /// upstreams into this on read.
+    pub theory_propagations: u64,
     /// Number of variables eliminated by equivalent-literal substitution.
     pub substitutions: u64,
     /// Clauses retired by gate-modulo forward subsumption inside the

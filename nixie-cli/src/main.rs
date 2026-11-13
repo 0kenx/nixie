@@ -2077,11 +2077,12 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
             if args.stats || std::env::var_os("STATS").is_some() {
                 let stats = ctx.stats();
                 eprintln!(
-                    "; stats: conflicts={} decisions={} propagations={} mbqi_rounds={}",
+                    "; stats: conflicts={} decisions={} propagations={} mbqi_rounds={} theory_props={}",
                     stats.conflicts,
                     stats.decisions,
                     stats.propagations,
-                    ctx.mbqi_rounds()
+                    ctx.mbqi_rounds(),
+                    stats.theory_propagations
                 );
                 {
                     use nixie_solver::{GRAPH_TRACE, GraphTraceKind};

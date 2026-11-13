@@ -392,12 +392,22 @@ pub(crate) struct TheoryManager<'a> {
     /// Whether formula contains BV arithmetic operations (division/remainder)
     #[allow(dead_code)]
     has_bv_arith_ops: bool,
-    /// Whether the problem's logic is the difference-logic family
-    /// (QF_IDL/QF_UFIDL), for which the cheap derived-reason bound propagator
-    /// is SOUND (validated: 0 differential disagreements on the IDL/UFIDL
-    /// sample).  On denser logics the derived reason can be an insufficient
-    /// subset of the true Farkas proof, so bound propagation is gated to this
-    /// family.
+    /// Whether the problem's logic is a family where the derived-reason
+    /// bound propagator is armed.  Originally the difference-logic family
+    /// only (QF_UFIDL; tracker bounds are single-atom consequences there, so
+    /// reasons were complete by construction).  `derive_expr_bound_reasons`
+    /// now contributes each bound's FULL antecedent set on the simplex
+    /// fallback too (`all_reasons()`, the slice6-audited collection), so a
+    /// future widening has sound reasons to build on.  **The 2026-11-12
+    /// QF_IDL/QF_LIA widening attempt was REVERTED**: it flipped two
+    /// convert-family instances to false `unsat` (z3 and the pre-widening
+    /// binary both `sat`), and the `NIXIE_APROP_VERIFY` oracle (a scoped LP
+    /// probe at push time) caught 198 invalid clauses on one instance -
+    /// including single-reason one-term clauses the live rows cannot
+    /// explain.  The hole is in the VALUE derivation's inputs on dense
+    /// logics (conditional state read as global - ite-column pins and
+    /// friends), not in reason collection.  Do not re-widen without first
+    /// making the verify oracle run clean on the target family.
     is_dl_family: bool,
     /// A large-`distinct` injective-map encoding is live (borrowed from the
     /// `Solver`).  Gates the co-located care-split proposals in
@@ -2472,6 +2482,53 @@ impl<'a> TheoryManager<'a> {
                 }
             }
             if ok && !reason_lits.is_empty() {
+                // VERIFY probe (unlandable debug oracle): the clause is valid
+                // iff the current theory rows (which already contain every
+                // asserted reason atom) plus the NEGATED forced literal are
+                // unsatisfiable.  A satisfiable LP means the propagation is
+                // invalid - dump the clause shape and drop it.
+                static APROP_VERIFY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+                if *APROP_VERIFY.get_or_init(|| std::env::var_os("NIXIE_APROP_VERIFY").is_some()) {
+                    let valid = self.arith.prop_verify_probe(
+                        &parsed.terms,
+                        parsed.constant,
+                        less,
+                        strict,
+                        !truth,
+                    );
+                    if !valid {
+                        let terms_s = parsed
+                            .terms
+                            .iter()
+                            .map(|&(t, c)| {
+                                let name = match self.manager.get(t).map(|x| &x.kind) {
+                                    Some(nixie_core::TermKind::Var(n)) => {
+                                        self.manager.resolve_str(*n).to_string()
+                                    }
+                                    _ => format!("t{t:?}"),
+                                };
+                                format!("{}*{c}", name)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" + ");
+                        let rs = reason_terms
+                            .iter()
+                            .map(|&t| match self.manager.get(t).map(|x| &x.kind) {
+                                Some(nixie_core::TermKind::Var(n)) => {
+                                    self.manager.resolve_str(*n).to_string()
+                                }
+                                Some(k) => format!("{k:?}"),
+                                None => format!("t{t:?}"),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        eprintln!(
+                            "[aprop-INVALID] atom={var:?} truth={truth} less={less} strict={strict} c={} {terms_s} <= reasons: {rs}",
+                            parsed.constant,
+                        );
+                        continue;
+                    }
+                }
                 props.push((
                     if truth { Lit::pos(var) } else { Lit::neg(var) },
                     reason_lits,

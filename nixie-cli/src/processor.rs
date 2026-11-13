@@ -431,7 +431,7 @@ fn process_files_sequential(
         }
 
         let result = process_single_file(file, &mut file_ctx, args, cache);
-        accumulate_sat_stats(&mut aggregated_sat_stats, file_ctx.stats());
+        accumulate_sat_stats(&mut aggregated_sat_stats, &file_ctx.stats());
         results.push(result);
 
         if let Some(ref pb) = progress {

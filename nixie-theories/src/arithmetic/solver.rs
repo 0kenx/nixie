@@ -4466,6 +4466,54 @@ impl ArithSolver {
         sum
     }
 
+    /// Debug oracle for the bound-propagation channel (env-gated caller):
+    /// check, in a SCRATCH SCOPE on top of the live rows, whether the
+    /// negation of the forced literal is satisfiable together with every
+    /// currently asserted row.  Returns `true` when the propagation clause
+    /// is VALID (negation unsat); `false` = INVALID - the caller dumps and
+    /// drops.  `(less, strict)` describe the comparison; `negate` flips it
+    /// (probing the forced literal's negation).
+    #[doc(hidden)]
+    pub fn prop_verify_probe(
+        &mut self,
+        terms: &[(TermId, Rational64)],
+        constant: Rational64,
+        less: bool,
+        strict: bool,
+        negate: bool,
+    ) -> bool {
+        let mut var_terms: Vec<(VarId, Rational64)> = Vec::with_capacity(terms.len());
+        for &(t, c) in terms {
+            let Some(&v) = self.term_to_var.get(&t) else {
+                return true;
+            };
+            var_terms.push((v, c));
+        }
+        self.simplex.push();
+        // Atom:  sum(terms) ○ -constant   (the parse moved the folded
+        // constant to the RHS as `constant`, so the LHS-RHS row is
+        // sum + constant' ○ 0 with constant' = -constant).
+        let mut e = LinExpr::new();
+        for (v, c) in &var_terms {
+            e.add_term(*v, *c);
+        }
+        e.constant = -constant;
+        let (less, strict) = if negate {
+            (!less, !strict)
+        } else {
+            (less, strict)
+        };
+        match (less, strict) {
+            (true, false) => self.simplex.add_le(e, BRANCH_REASON),
+            (false, false) => self.simplex.add_ge(e, BRANCH_REASON),
+            (true, true) => self.simplex.add_strict_lt(e, BRANCH_REASON),
+            (false, true) => self.simplex.add_strict_gt(e, BRANCH_REASON),
+        }
+        let sat = self.simplex.check().is_ok();
+        self.simplex.pop();
+        !sat
+    }
+
     /// Optionally tighten the tableau's variable bounds first via
     /// [`Simplex::propagate_bounds`] (`tighten = true`) so derived (transitive)
     /// bounds feed the expression derivation – needed to catch propagation
@@ -4557,6 +4605,18 @@ impl ArithSolver {
                 lo_ok = false;
                 break;
             };
+            // A bound carrying the BRANCH_REASON sentinel is SEARCH-LOCAL
+            // (scoped by a case split, justified by no atom): a derivation
+            // through it is valid only inside that branch.  Decline the
+            // whole bound — `derive_var_bound_big_parts` does the same —
+            // instead of letting `map_reasons` silently drop the sentinel
+            // and emit a clause whose remaining reasons do not imply the
+            // bound (the convert-family false `unsat`: the derivation used
+            // a branch-local pin, the clause cited only the real atoms).
+            if brs.contains(&BRANCH_REASON) {
+                lo_ok = false;
+                break;
+            }
             lo_val += bv * coef;
             lo_reasons.extend(brs);
         }
@@ -4593,6 +4653,10 @@ impl ArithSolver {
                 hi_ok = false;
                 break;
             };
+            if brs.contains(&BRANCH_REASON) {
+                hi_ok = false;
+                break;
+            }
             hi_val += bv * coef;
             hi_reasons.extend(brs);
         }
