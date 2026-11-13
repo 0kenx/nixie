@@ -20,6 +20,7 @@ pub mod normal_forms;
 pub mod parallel;
 pub mod pattern;
 pub mod pool;
+pub mod pp;
 pub mod proof;
 pub mod proof_transform;
 pub mod rewriting;

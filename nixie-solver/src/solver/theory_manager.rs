@@ -407,7 +407,13 @@ pub(crate) struct TheoryManager<'a> {
     /// explain.  The hole is in the VALUE derivation's inputs on dense
     /// logics (conditional state read as global - ite-column pins and
     /// friends), not in reason collection.  Do not re-widen without first
-    /// making the verify oracle run clean on the target family.
+    /// making the verify oracle run clean on the target family.  Two real
+    /// defects found so far: the i64-wrapping accumulation (fixed below in
+    /// `checked_scale_add`) and a remaining multi-term shape involving
+    /// derived/transitive bounds (pinned vars with distinct per-side
+    /// reasons; the `NIXIE_APROP_VERIFY=2` SMT reconstruction narrows each
+    /// case - 50 of 229 flagged clauses on convert-1552 are genuinely
+    /// invalid after the overflow fix).
     is_dl_family: bool,
     /// A large-`distinct` injective-map encoding is live (borrowed from the
     /// `Solver`).  Gates the co-located care-split proposals in
@@ -2572,6 +2578,77 @@ impl<'a> TheoryManager<'a> {
                             "[aprop-INVALID] atom={var:?} truth={truth} less={less} strict={strict} c={} {terms_s} <= reasons: {rs} :: {store_s}",
                             parsed.constant,
                         );
+                        // Per-term value trace: which bound the derivation
+                        // read (side, value, reason ids) per term.
+                        let trace = self.arith.debug_derive_trace(&parsed.terms);
+                        eprintln!("[aprop-TRACE] {trace}");
+                        // VERIFY=2: reconstruct the clause as SMT-LIB and
+                        // write it for external checking (reasons true,
+                        // forced literal negated - a `sat` from the checker
+                        // is a genuinely invalid clause).
+                        static CLAUSE_N: std::sync::atomic::AtomicU32 =
+                            std::sync::atomic::AtomicU32::new(0);
+                        if std::env::var("NIXIE_APROP_VERIFY").as_deref() == Ok("2") {
+                            let n = CLAUSE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if n < 500 {
+                                let atom_t = parsed.reason_term;
+                                let mut vars = std::collections::BTreeSet::new();
+                                nixie_core::ast::pp::collect_var_names(
+                                    self.manager,
+                                    atom_t,
+                                    &mut vars,
+                                );
+                                let mut body = String::new();
+                                for &r in &reason_terms {
+                                    nixie_core::ast::pp::collect_var_names(
+                                        self.manager,
+                                        r,
+                                        &mut vars,
+                                    );
+                                    // The reason literal's polarity is the
+                                    // ASSIGNED polarity recorded above.
+                                    let pol = self
+                                        .term_to_var
+                                        .get(&r)
+                                        .and_then(|rv| self.assigned_pol_of(*rv));
+                                    let rs = nixie_core::ast::pp::to_smt2(self.manager, r);
+                                    use std::fmt::Write as _;
+                                    match pol {
+                                        Some(true) => {
+                                            let _ = writeln!(&mut body, "(assert {rs})");
+                                        }
+                                        Some(false) => {
+                                            let _ = writeln!(&mut body, "(assert (not {rs}))");
+                                        }
+                                        None => {
+                                            let _ =
+                                                writeln!(&mut body, "; UNASSIGNED reason dropped");
+                                        }
+                                    }
+                                }
+                                let atom_s = nixie_core::ast::pp::to_smt2(self.manager, atom_t);
+                                use std::fmt::Write as _;
+                                let _ = writeln!(
+                                    &mut body,
+                                    "(assert {})",
+                                    if truth {
+                                        format!("(not {atom_s})")
+                                    } else {
+                                        atom_s.clone()
+                                    }
+                                );
+                                let _ = writeln!(&mut body, "(check-sat)");
+                                let mut file = String::from("(set-logic QF_LIA)\n");
+                                for v in &vars {
+                                    let _ = writeln!(&mut file, "(declare-fun {v} () Int)");
+                                }
+                                file.push_str(&body);
+                                let _ = std::fs::write(
+                                    format!("/tmp/aprop_clauses/clause{n:03}.smt2"),
+                                    file,
+                                );
+                            }
+                        }
                         continue;
                     }
                 }

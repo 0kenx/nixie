@@ -431,6 +431,25 @@ enum FracVar {
     Underivable,
 }
 
+/// Checked `acc + bound * coef` over both `DeltaRational` components:
+/// `None` on any i64 overflow (the caller must decline the derivation —
+/// a wrapped value would fabricate the bound it is deriving).
+fn checked_scale_add(
+    acc: DeltaRational,
+    bound: DeltaRational,
+    coef: Rational64,
+) -> Option<DeltaRational> {
+    use num_traits::Zero as _;
+    let real = crate::arithmetic::simplex::checked_mul_r64(bound.real, coef)
+        .and_then(|p| crate::arithmetic::simplex::checked_add_r64(acc.real, p))?;
+    let delta = crate::arithmetic::simplex::checked_mul_r64(bound.delta, coef)
+        .and_then(|p| crate::arithmetic::simplex::checked_add_r64(acc.delta, p))?;
+    if real.is_zero() && delta.is_zero() {
+        return Some(DeltaRational::zero());
+    }
+    Some(DeltaRational { real, delta })
+}
+
 /// Debug snapshot for the `NIXIE_APROP_VERIFY` oracle dump (see
 /// `ArithSolver::debug_term_bounds`).
 #[doc(hidden)]
@@ -4492,6 +4511,52 @@ impl ArithSolver {
 
     /// Debug: tracker + simplex bound state for a TERM (mapped through the
     /// arith-side `term_to_var`, the same map the derivation uses).
+    /// Debug: replay `derive_expr_bound_reasons`'s per-term bound choice
+    /// (side, value, reason ids) for both directions — the value-level
+    /// trace for the `NIXIE_APROP_VERIFY` oracle.
+    #[doc(hidden)]
+    pub fn debug_derive_trace(&self, terms: &[(TermId, Rational64)]) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for &(t, coef) in terms {
+            let Some(&v) = self.term_to_var.get(&t) else {
+                let _ = write!(out, " {t:?}:no-var");
+                continue;
+            };
+            let lo: Option<(DeltaRational, Vec<u32>)> = self
+                .prop_get_lower(v)
+                .map(|e| (e.value, vec![e.reason]))
+                .or_else(|| {
+                    self.simplex.get_lower(v).and_then(|b| {
+                        b.value
+                            .narrow()
+                            .map(|val| (val, b.all_reasons().collect::<Vec<_>>()))
+                    })
+                });
+            let hi: Option<(DeltaRational, Vec<u32>)> = self
+                .prop_get_upper(v)
+                .map(|e| (e.value, vec![e.reason]))
+                .or_else(|| {
+                    self.simplex.get_upper(v).and_then(|b| {
+                        b.value
+                            .narrow()
+                            .map(|val| (val, b.all_reasons().collect::<Vec<_>>()))
+                    })
+                });
+            let fmt_b = |b: Option<(DeltaRational, Vec<u32>)>, want: &str| match b {
+                Some((val, rids)) => format!("{want}={val:?}/r{rids:?}"),
+                None => format!("{want}=NONE"),
+            };
+            let _ = write!(
+                out,
+                " {t:?}*{coef}[{}{}]",
+                fmt_b(lo, "lo"),
+                fmt_b(hi, ",hi"),
+            );
+        }
+        out
+    }
+
     /// Debug: tracker (value, reason) pair per direction plus the simplex's
     /// live (lo, hi) values, all for one TERM.
     #[doc(hidden)]
@@ -4683,19 +4748,22 @@ impl ArithSolver {
                 lo_ok = false;
                 break;
             };
-            // A bound carrying the BRANCH_REASON sentinel is SEARCH-LOCAL
-            // (scoped by a case split, justified by no atom): a derivation
-            // through it is valid only inside that branch.  Decline the
-            // whole bound — `derive_var_bound_big_parts` does the same —
-            // instead of letting `map_reasons` silently drop the sentinel
-            // and emit a clause whose remaining reasons do not imply the
-            // bound (the convert-family false `unsat`: the derivation used
-            // a branch-local pin, the clause cited only the real atoms).
+            // CHECKED accumulation: an i64-wrapping product or sum would
+            // fabricate the bound it is trying to derive (LIA atoms reach
+            // ~4.3e9 bounds against ~1.8e19 coefficients; the convert
+            // family's false `unsat` was exactly a wrapped accumulation
+            // that forced an atom whose true expression minimum was ~1e20
+            // below the threshold).  Overflow declines the derivation -
+            // completeness cost, never soundness.
             if brs.contains(&BRANCH_REASON) {
                 lo_ok = false;
                 break;
             }
-            lo_val += bv * coef;
+            let Some(term_lo) = checked_scale_add(lo_val, bv, coef) else {
+                lo_ok = false;
+                break;
+            };
+            lo_val = term_lo;
             lo_reasons.extend(brs);
         }
         // Upper bound of e.
@@ -4735,7 +4803,11 @@ impl ArithSolver {
                 hi_ok = false;
                 break;
             }
-            hi_val += bv * coef;
+            let Some(term_hi) = checked_scale_add(hi_val, bv, coef) else {
+                hi_ok = false;
+                break;
+            };
+            hi_val = term_hi;
             hi_reasons.extend(brs);
         }
         lo_reasons.sort_unstable();
