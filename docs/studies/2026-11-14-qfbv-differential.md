@@ -38,6 +38,24 @@ sydr_2856 0.795×, peq 0.946×, others neutral.  **Honest family verdict:
 no solve-count flip at matched 15 s caps** (asp 3→3, Sydr 13→13, Sage2
 9→8 with one boundary wobble) — the class gap stays architectural.
 
+## Lean-BV path LANDED (`19101c14`)
+
+The precondition implemented for the pure case: problems declaring
+exactly `QF_BV` (no UF/array symbols can exist) skip the EUF
+interning+merge+congruence walk for BV-sorted equality atoms — their
+bit-blast comparators decide them completely.  Gated on the declared
+logic string; mixed/UF/missing-logic inputs keep full EUF, so
+congruence-dependent completeness is untouched elsewhere.
+
+Measured: **142/165 on the same stratified sample (was 138/165), zero
+wrong verdicts** — Sydr 10→13, asp 2→3, spear 19→20; gryzzles-as-BV
+13.2 s → 7.5 s (1.76×).  Solver suite 3102 (420 BV tests), full
+workspace 12 800, parity 171/0/6, perf gate PASS.  The remaining
+class gap (asp/Sage2 vs z3) is the residual per-literal callback cost
+on the general CDCL(T) loop — a fully lean blast-and-solve path would
+require eager blasting + a solver-level bypass, which stays recorded as
+the larger architectural item.
+
 ## Precondition for the class gap
 
 A lean blast-and-solve path for pure-BV inputs (blast eagerly, run the
