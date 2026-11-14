@@ -2193,6 +2193,19 @@ impl ArithSolver {
     /// branch-and-bound – the full LP/integer feasibility solve stays with
     /// [`Self::check`] at final-check time.  A `None` result proves nothing.
     pub fn check_bound_conflicts(&mut self) -> Result<TheoryResult> {
+        // Row-driven schedule (NIXIE_ROWPROP=1): derive row consequences
+        // HERE so crossings surface at ASSERTION time instead of
+        // final-check.  Amortized by the derivation stamps — only rows
+        // whose variables' bound versions changed re-derive — and it keeps
+        // `check`'s discipline verbatim: discard any stale pending
+        // crossing first, then tighten, then consume only what THIS
+        // tighten planted (reason ids recycle across pops; no pop runs
+        // between the tighten and the consume here).
+        static ROWPROP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *ROWPROP.get_or_init(|| std::env::var("NIXIE_ROWPROP").as_deref() == Ok("1")) {
+            let _ = self.simplex.bound_crossing_conflict();
+            self.tighten_tableau_bounds();
+        }
         match self.simplex.bound_crossing_conflict() {
             None => Ok(TheoryResult::Sat),
             Some(reasons) => {

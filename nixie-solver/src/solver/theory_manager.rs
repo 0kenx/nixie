@@ -769,12 +769,14 @@ impl<'a> TheoryManager<'a> {
             is_dl_family: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
-            // QF_LIA measured 2026-11-13: correctness-clean (oracle 0/500
-            // invalid) but NET -4 solved on the 70-instance sample (45->41:
-            // pb2010 unsat losses and both convert instances slow to
-            // timeout) - the per-assignment+memo channel shape does not
-            // convert to conflicts on dense LIA.  Re-widen only with a
-            // row-driven schedule (z3 `theory_arith` propagate shape).
+            // QF_LIA measured 2026-11-13, twice: correctness-clean (oracle
+            // 0/500 invalid) but NET NEGATIVE solve-rate both without
+            // (45->41) and with (44->36) the row-driven conflict schedule
+            // (NIXIE_ROWPROP: bofill conflict density 13->85 per 50k
+            // decisions, yet the convert family collapses 6-solved->0).
+            // The z3 gap here is architectural (integrated branching hints,
+            // bound watches, threshold filtering), not a channel toggle -
+            // closing this thread until a theory_arith-scale redesign.
             bound_prop_armed: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
