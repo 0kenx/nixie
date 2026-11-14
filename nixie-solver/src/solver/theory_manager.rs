@@ -415,6 +415,12 @@ pub(crate) struct TheoryManager<'a> {
     /// case - 50 of 229 flagged clauses on convert-1552 are genuinely
     /// invalid after the overflow fix).
     is_dl_family: bool,
+    /// Whether the LP bound-propagation CHANNEL is armed for this logic
+    /// (`is_dl_family` historically gated BOTH this channel and the
+    /// tentative arrangement round; they widen independently — the
+    /// arrangement round has its own shape coverage prerequisites, so a
+    /// channel widening must not silently enable it).
+    bound_prop_armed: bool,
     /// A large-`distinct` injective-map encoding is live (borrowed from the
     /// `Solver`).  Gates the co-located care-split proposals in
     /// [`Self::nelson_oppen_combine`]: without an injective encoding in the
@@ -761,6 +767,15 @@ impl<'a> TheoryManager<'a> {
             has_array_ops,
             arrangement_splits: Vec::new(),
             is_dl_family: logic
+                .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
+                .unwrap_or(false),
+            // QF_LIA measured 2026-11-13: correctness-clean (oracle 0/500
+            // invalid) but NET -4 solved on the 70-instance sample (45->41:
+            // pb2010 unsat losses and both convert instances slow to
+            // timeout) - the per-assignment+memo channel shape does not
+            // convert to conflicts on dense LIA.  Re-widen only with a
+            // row-driven schedule (z3 `theory_arith` propagate shape).
+            bound_prop_armed: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
             dl_pure: pure_dl,
@@ -4805,7 +4820,7 @@ impl TheoryCallback for TheoryManager<'_> {
         if matches!(result, TheoryCheckResult::Sat) && self.var_to_parsed_arith.contains_key(&var) {
             let mode = arith_bound_prop_mode();
             if mode != BoundPropMode::Off
-                && self.is_dl_family
+                && self.bound_prop_armed
                 && let Some(props) =
                     self.derive_arith_bound_propagations(mode == BoundPropMode::Tighten)
             {
