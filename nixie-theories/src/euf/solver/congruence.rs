@@ -496,10 +496,26 @@ impl EufSolver {
                 for i in 0..aw_len {
                     let w = self.atom_watch[list_root as usize][i];
                     let far = self.uf.find_no_compress(w.b);
+                    // The pair-count probe is gated on the ROOT carrying any
+                    // disequality watch at all (array probe): a
+                    // `diseq_pair_counts` hit implies a live diseq whose
+                    // endpoints are `(new_root, far)`-classes, and every live
+                    // diseq watches its endpoint classes (the migration above
+                    // keeps watches and cached pairs in lockstep) — so an
+                    // empty `diseq_watch[new_root]` makes the hash hit
+                    // impossible.  On bit-blasted workloads (BV gate
+                    // equalities) this gate removed the dominant EUF cost:
+                    // the probe was 62% of gryzzles-as-BV (scan: QF_BV
+                    // differential, 2026-11-14).
+                    let root_has_diseqs = self
+                        .diseq_watch
+                        .get(new_root as usize)
+                        .is_some_and(|l| !l.is_empty());
                     if far == new_root
-                        || self
-                            .diseq_pair_counts
-                            .contains_key(&ordered_pair(new_root, far))
+                        || (root_has_diseqs
+                            && self
+                                .diseq_pair_counts
+                                .contains_key(&ordered_pair(new_root, far)))
                         || (new_value.is_some()
                             && new_value != self.class_value.get(far as usize).copied().flatten())
                     {
