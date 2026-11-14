@@ -415,6 +415,14 @@ pub(crate) struct TheoryManager<'a> {
     /// case - 50 of 229 flagged clauses on convert-1552 are genuinely
     /// invalid after the overflow fix).
     is_dl_family: bool,
+    /// Whether the problem's logic is exactly `QF_BV`: no UF or array
+    /// symbols can appear, so BV-sorted equality atoms have no congruence
+    /// to maintain — their bit-blast comparators decide them completely,
+    /// and the EUF interning+merge on assignment is redundant (the QF_BV
+    /// scan measured the congruence walk at 62 % of the asp class's
+    /// runtime).  Sliced to the declared logic string only: mixed or
+    /// missing-logic inputs keep the full EUF treatment.
+    bv_pure: bool,
     /// Whether the LP bound-propagation CHANNEL is armed for this logic
     /// (`is_dl_family` historically gated BOTH this channel and the
     /// tentative arrangement round; they widen independently — the
@@ -780,6 +788,7 @@ impl<'a> TheoryManager<'a> {
             bound_prop_armed: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
+            bv_pure: logic.map(|l| l == "QF_BV").unwrap_or(false),
             dl_pure: pure_dl,
             sparse_dl: sparse_dl || pure_dl,
             interned_bv_constants: FxHashMap::default(),
@@ -3710,22 +3719,33 @@ impl<'a> TheoryManager<'a> {
                     // merge reason so that conflict clause generation can find it
                     // in term_to_var.
                     let constraint_term = self.term_for_var(var);
-                    // Use intern_term_for_congruence so that Apply/Select terms are
-                    // registered with intern_app, enabling EUF congruence closure
-                    // (e.g., a=b → f(a)=f(b)).  This variant does NOT add IntConst
-                    // pairwise disequality edges, keeping arithmetic reasoning in the
-                    // ArithSolver and avoiding spurious UNSAT in SAT cases.
-                    let lhs_node = self.intern_term_for_congruence(lhs, manager);
-                    let rhs_node = self.intern_term_for_congruence(rhs, manager);
-                    if let Err(_e) = self.euf.merge(lhs_node, rhs_node, constraint_term) {
-                        // Merge failed - should not happen in normal operation
-                        return TheoryCheckResult::Sat;
-                    }
+                    // Lean-BV path (see `bv_pure`): in exactly-QF_BV, a
+                    // BV-sorted equality needs no EUF treatment.
+                    let bv_no_euf = self.bv_pure
+                        && manager
+                            .get(lhs)
+                            .and_then(|t| manager.sorts.get(t.sort))
+                            .is_some_and(|s| s.is_bitvec());
+                    if bv_no_euf {
+                        self.intern_arith_shared_terms(var, manager);
+                    } else {
+                        // Use intern_term_for_congruence so that Apply/Select terms are
+                        // registered with intern_app, enabling EUF congruence closure
+                        // (e.g., a=b → f(a)=f(b)).  This variant does NOT add IntConst
+                        // pairwise disequality edges, keeping arithmetic reasoning in the
+                        // ArithSolver and avoiding spurious UNSAT in SAT cases.
+                        let lhs_node = self.intern_term_for_congruence(lhs, manager);
+                        let rhs_node = self.intern_term_for_congruence(rhs, manager);
+                        if let Err(_e) = self.euf.merge(lhs_node, rhs_node, constraint_term) {
+                            // Merge failed - should not happen in normal operation
+                            return TheoryCheckResult::Sat;
+                        }
 
-                    // Check for immediate conflicts
-                    if let Some(conflict_terms) = self.euf.check_conflicts() {
-                        // Convert term IDs to literals for conflict clause
-                        return self.conflict_from_terms(&conflict_terms);
+                        // Check for immediate conflicts
+                        if let Some(conflict_terms) = self.euf.check_conflicts() {
+                            // Convert term IDs to literals for conflict clause
+                            return self.conflict_from_terms(&conflict_terms);
+                        }
                     }
 
                     // For arithmetic equalities, also send to ArithSolver
