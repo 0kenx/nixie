@@ -71,22 +71,32 @@ verdicts** (the corrupted masks were costing solves).
 
 ## 3. The port itself: measured wash — NOT landed
 
-With the And-fix in both arms (stratified 170-sample, 10 s cap, seed
-20261115, z3 oracle):
+**Erratum (process, corrected same session):** the A/B initially recorded
+here ran with the port accidentally active in *both* arms — after the
+soundness commit I restored the rules file and rebuilt before re-running,
+then inverse-edited the source without rebuilding, so the "base" binary
+(and, worse, the `precompile/2382fdec` cache entry) carried the rules.
+The cache entry has been rebuilt from the true HEAD; the corrected A/B
+numbers below are from the verified arms (dump-probe confirms the base
+leaves `(bvult x #x00000041)` unsplit, the port splits it):
 
-| arm | solved | wrong | median time ratio | p90 |
-|---|---|---|---|---|
-| `2382fdec` (fix only) | 145/170 | 0 | 1.0 | — |
-| + isolate/le2x/ultcore | 145/170 | 0 | 1.0 | 1.2 |
+| arm | solved | wrong | flips vs base | median time ratio | p90 |
+|---|---|---|---|---|---|
+| `2382fdec` (And-fix only, verified) | 145/170 | 0 | — | 1.0 | — |
+| + isolate/le2x/ultcore | 145/170 | 0 | +2/−2 | 1.0 | 1.5 |
+| same port on a 150-instance miter screen (tacas07, BuchwaldFried, Goel, brummayerbiere×3, Wolf, bmc-bv) | 88/150 | 0 | **0** | 1.0 | 1.5 |
 
-Zero solve flips.  BBB-32 (single instance, trajectory-chaotic): plain
-~10 s both arms; IR mode 2.4 s without the rules vs **4.4 s with them**
-(the split atoms hurt the IR layer's sharing).  The rules are z3-parity
-correct (fuzzed clean) but our pipeline has no blast-level consumer that
-profits from the term shapes: z3's win comes from the *shared hash-consed
-blast + post-blast solve-eqs + AIG* consuming those shapes, which is the
-architectural piece we lack.  Reverted by inverse edit; the exact port is
-in git history inside this study's session (also preserved below).
+The 170-sample flips are two boundary-cap gains (Sage2) against two
+boundary-cap losses (uclid convert-jpg2gif, sage) — churn, not signal.
+The miter screen — the port's design target — shows **zero** effect:
+the term shapes our blaster receives are not the bottleneck there
+either.  BBB-32 (single instance, trajectory-chaotic): plain ~10 s both
+arms; IR mode 2.4 s without the rules vs 4.4 s with them.  The rules
+are z3-parity correct (fuzzed clean) but our pipeline has no
+blast-level consumer that profits from the term shapes: z3's win comes
+from the *shared hash-consed blast + post-blast solve-eqs + AIG*
+consuming those shapes, which is the architectural piece we lack.
+Reverted by inverse edit; the exact port is preserved below.
 
 ## 4. Redirected precondition for the class (item #1 update)
 
@@ -117,3 +127,23 @@ implies form; route `bvult` through `¬(b ≤u a)` first (z3 `mk_ult`).
 Sample: seed 20261115, 17/family × 10 families = 170 (list at
 `/tmp/qfbv165.txt`, not archived — regenerating with the same seed
 reproduces it).  z3 verdicts: 94 unsat / 53 sat / 14 unknown / 9 timeout.
+
+## Addendum (same day): the IR re-screen — decisively negative, default stays off
+
+The redirected precondition's first probe (re-screen `NIXIE_BV_IR=1`
+after lean-BV v2 + the And-fix, never done since the 2026-09 −16
+verdict): **120/170 vs 143/170 (net −23), zero wrong verdicts** (both
+arms of this comparison ran the erratum's rules binary — the IR
+on/off contrast is internally consistent; the rules cost ~2 cells
+net, so vs the true base the gap is ≥ 21 either way).
+`uclid` collapses 16 → 2 (the macro-heavy catchconv/convert-jpg2gif
+meganodes), `spear` 17 → 12, `Sydr` 13 → 10; wins are bruttomesso +1,
+lfsr, one Sage2 cell.  The 2026-09 verdict not only stands, it
+sharpens: the deferred Tseitin pays only on the structural-miter
+minority and costs the macro/megabyte majority far more.  BBB-32's
+IR 2.4 s vs 10 s plain is a single-instance trajectory, not class
+evidence.  Do not re-screen IR globally again without a *per-class*
+gate that excludes meganode-heavy inputs (the 2026-09 gate study found
+no blast-time separator; the family-level split here suggests the
+separator, if any, lives at parse/cascade time — e.g. meganode-skip
+counters, not IR activity stats).
