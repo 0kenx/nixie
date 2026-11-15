@@ -206,3 +206,31 @@ Measured: BBB-32 blast 185k → **114k vars (−38 %)**, solve ~10 s →
 bitrev1024 timeout→unsat), zero losses/wrong; 170-sample 148 → 147
 (one 5.5 s→cap boundary cell, median 1.0); GATE_SH wins intact;
 934-atom differential fuzz clean (widths 3/4/8/16); full bar green.
+
+
+## Fourth addendum: the completed encoding-budget class map (`51b9044d`)
+
+The atom-level attribution completes the instrument.  Where the
+remaining QF_BV encoding gap lives, per class, after the landed
+slices (And-fix, GATE_SH, miter/const reductions):
+
+* **BBB-32-class (tacas07 miters)**: blast 114k vars vs z3's 59k.
+  Comparisons (AtomUle+AtomUlt ≈ 54k) are var-vs-var and already
+  share through GATE_SH; the **add/sub pointer chains (≈49k)** —
+  `bvadd(x, bvsub(S, x))`-class algebra the cascade collapses to `S`
+  — are built verbatim because the unified route blasts originals at
+  assert time.  Precondition recorded: **blast the cascade output**
+  (the `NIXIE_BV_DEFER_BLAST` architecture, prototyped 2026-09) or
+  replicate the monomial cancellation at the blast walk.
+* **asp-class (gryzzles, DL-as-BV)**: 621 `(x − y) = c` 4-bit
+  difference atoms; z3's `simplify` eliminates every `bvsub`
+  (isolate-term class), leaving plain var-var comparisons, 46k
+  vars / 84k clauses vs our 61k/171k.  Our SAT core solves z3's CNF
+  for gryzzles.8 in 0.032 s — the class gap is encoding + the
+  CDCL(T) wrapper (2.4 M theory_props), not search.  Precondition:
+  the DL-recognition / theory_i_arith item (weeks-scale), or a fused
+  `(x−y)=c` increment-compare specialization (est. ~30 % circuit,
+  class-narrow — not pursued this session).
+* Const-side `c <u X` splits (z3 `le2extract` as a circuit) measured
+  as the wrong target on BBB-32: its remaining comparisons are
+  var-vs-var.
