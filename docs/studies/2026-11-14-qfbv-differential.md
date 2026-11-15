@@ -56,6 +56,22 @@ on the general CDCL(T) loop — a fully lean blast-and-solve path would
 require eager blasting + a solver-level bypass, which stays recorded as
 the larger architectural item.
 
+## Lean-BV v2 (`70782b57`)
+
+The residual CDCL(T) profile (post-v1) showed three more redundant-EUF
+spots, all now gated on the same `bv_pure` invariant: Bool-sorted Eq
+atoms (both polarities — the blast decides iff), the Distinct-negative
+equality merge, and `intern_arith_shared_terms` (its UF/select-congruence
+purpose cannot exist in QF_BV; its operand interning produced the
+`add_proof_edge` SmallVec-spill churn at 87 % of callback time).
+gryzzles-as-BV: 13.2 s → **5.3 s (2.5× cumulative)**; the 165-sample
+holds 142/165 with zero wrong verdicts.  The remaining ~10 s-cap misses
+are search-shaped (the unified layer's `entailed_equal` merges — its
+real word-level reasoning — are deliberately untouched), so further
+gains on this class need either the eager dispatch to take over
+no-elim goals (a routing decision with its own measured regressions)
+or the fully lean blast-and-solve path.
+
 ## Precondition for the class gap
 
 A lean blast-and-solve path for pure-BV inputs (blast eagerly, run the
