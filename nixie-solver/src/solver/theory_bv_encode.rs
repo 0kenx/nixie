@@ -150,16 +150,58 @@ fn bitvec_const_pow2_shift(mgr: &TermManager, tid: TermId) -> Option<u32> {
 ///
 /// Returns `true` when `root` was fully encoded, `false` when an unrecognised
 /// TermKind is encountered.
+/// Operator label for the blast-size attribution trace
+/// (`NIXIE_BV_BLAST_STATS=trace`); `None` for leaves (no circuit).
+fn blast_op_label(kind: &TermKind) -> Option<&'static str> {
+    match kind {
+        TermKind::BvAdd(_, _) => Some("BvAdd"),
+        TermKind::BvSub(_, _) => Some("BvSub"),
+        TermKind::BvMul(_, _) => Some("BvMul"),
+        TermKind::BvAnd(_, _) => Some("BvAnd"),
+        TermKind::BvOr(_, _) => Some("BvOr"),
+        TermKind::BvXor(_, _) => Some("BvXor"),
+        TermKind::BvNot(_) => Some("BvNot"),
+        TermKind::BvShl(_, _) => Some("BvShl"),
+        TermKind::BvLshr(_, _) => Some("BvLshr"),
+        TermKind::BvAshr(_, _) => Some("BvAshr"),
+        TermKind::BvConcat(_, _) => Some("BvConcat"),
+        TermKind::BvExtract { .. } => Some("BvExtract"),
+        TermKind::Ite(..) => Some("Ite"),
+        TermKind::BvUdiv(_, _) => Some("BvUdiv"),
+        TermKind::BvSdiv(_, _) => Some("BvSdiv"),
+        TermKind::BvUrem(_, _) => Some("BvUrem"),
+        TermKind::BvSrem(_, _) => Some("BvSrem"),
+        _ => None,
+    }
+}
+
 pub(super) fn encode_bv_term_recursive(
     bv: &mut BvSolver,
     root: TermId,
     mgr: &TermManager,
     encoded: &mut FxHashSet<TermId>,
 ) -> bool {
+    // Blast-size attribution (`NIXIE_BV_BLAST_STATS=trace`): one stderr
+    // line per encoded operator term — the SAT-var delta and the term's
+    // width — so the encoding budget can be attributed per operator
+    // class (the BBB-32 encoding-gap work item's instrument).
+    let trace_blast = std::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
     // Work-stack entry: (term_id, children_pushed)
     // We push a term twice: first time to push children, second time to
     // encode the term itself (post-order).
     let mut stack: Vec<(TermId, bool)> = vec![(root, false)];
+
+    // Blast-size attribution state (`NIXIE_BV_BLAST_STATS=trace`): the
+    // previous encoded term's (label, width, var snapshot); the delta is
+    // flushed when the next term starts or the walk ends.  Attributing at
+    // the loop level keeps every arm's early-return path untouched.
+    let mut pending: Option<(&'static str, u32, usize)> = None;
+    let mut flush = |pending: &mut Option<(&'static str, u32, usize)>, bv: &BvSolver| {
+        if let Some((label, width, v0)) = pending.take() {
+            let dv = bv.embedded_variable_count().saturating_sub(v0);
+            eprintln!("[blast] op={label} w={width} dv={dv}");
+        }
+    };
 
     while let Some((tid, children_done)) = stack.pop() {
         if encoded.contains(&tid) {
@@ -277,6 +319,10 @@ pub(super) fn encode_bv_term_recursive(
             // and continuing would leave `tid` as free bits that satisfy
             // anything – a false `sat`.  Reporting the term as unencodable is
             // the honest alternative.
+            if trace_blast && let Some(label) = blast_op_label(&term.kind) {
+                flush(&mut pending, bv);
+                pending = Some((label, width, bv.embedded_variable_count()));
+            }
             match &term.kind {
                 TermKind::BvAdd(a, b) => {
                     if !operands_have_width(mgr, &[*a, *b], width) {
@@ -523,6 +569,9 @@ pub(super) fn encode_bv_term_recursive(
         }
     }
 
+    if trace_blast {
+        flush(&mut pending, bv);
+    }
     true
 }
 

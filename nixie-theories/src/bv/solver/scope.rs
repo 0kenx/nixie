@@ -244,7 +244,32 @@ impl BvSolver {
         }
         let (va, vb) = self.binop_bits(a, b)?;
         let var = self.sat.new_var();
-        self.encode_ult_result(&va.bits, &vb.bits, var);
+        // Z3 `mk_leq_core`'s numeral rules, at the circuit layer: a
+        // constant operand collapses the comparator to a reduction (or a
+        // constant) — the carry chain of the generic encoder is never
+        // built for these shapes.
+        let width = va.width as usize;
+        let all_const = |bits: &[Var], want: Var| bits.iter().all(|v| *v == want);
+        if width > 0 && all_const(&vb.bits, self.const_false) {
+            // a <u 0 is false.
+            self.wire(var, Sig::False);
+        } else if width > 0 && all_const(&va.bits, self.const_false) {
+            // 0 <u b  ⟺  b ≠ 0: the negated all-zero reduction.
+            let az = self.sat.new_var();
+            self.encode_all_zero(az, &vb.bits);
+            let folded = self.gate_not(Sig::Var(az));
+            self.wire(var, folded);
+        } else if width > 0 && all_const(&vb.bits, self.const_true) {
+            // a <u MAX  ⟺  some bit of a is zero: negated AND-reduction.
+            let mut acc = self.sig(va.bits[0]);
+            for &bit in &va.bits[1..] {
+                acc = self.gate_and(acc, self.sig(bit));
+            }
+            let folded = self.gate_not(acc);
+            self.wire(var, folded);
+        } else {
+            self.encode_ult_result(&va.bits, &vb.bits, var);
+        }
         // Asymmetry, a theorem of the order: never both `a < b` and `b < a`.
         if let Some(&reverse) = self.ult_cache.get(&ComparisonKey { a: b, b: a }) {
             self.define([Lit::neg(var), Lit::neg(reverse)]);

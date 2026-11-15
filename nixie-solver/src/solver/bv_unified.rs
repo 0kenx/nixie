@@ -505,8 +505,18 @@ impl Solver {
                 | TermKind::BvSlt(lhs, rhs)
                 | TermKind::BvSle(lhs, rhs) => {
                     bv_atoms.push(BvAtomToLink { term });
-                    bv_sorted.push(*lhs);
-                    bv_sorted.push(*rhs);
+                    // Miter-shaped atoms blast their operands, not the
+                    // subtractor (see the census in
+                    // [`Self::collect_unified_bv_terms`]).
+                    if let Some((x, y)) =
+                        nixie_theories::bv::BvSolver::sub_zero_eq_operands(*lhs, *rhs, manager)
+                    {
+                        bv_sorted.push(x);
+                        bv_sorted.push(y);
+                    } else {
+                        bv_sorted.push(*lhs);
+                        bv_sorted.push(*rhs);
+                    }
                 }
                 _ => {}
             }
@@ -547,6 +557,48 @@ impl Solver {
         bool_leaves: &mut Vec<TermId>,
     ) -> bool {
         let bool_sort = manager.sorts.bool_sort;
+        // Pass 0 — `bvsub` reference census.  A subtractor whose *every*
+        // reference comes from a miter-specializable atom (`(x − y) = 0`,
+        // `0 <u (x − y)`, `≤u` duality — see [`BvSolver::sub_zero_eq_operands`]
+        // and the atom encoders' specializations) never needs its own
+        // circuit: each such atom encodes over the operands x, y directly,
+        // so pass 2 skips pushing the sub and its ~210-var subtractor
+        // never exists.  Any other consumer (a mask, an add, an extract,
+        // a non-zero comparison) keeps the historical blast — the census
+        // is per-reference and any non-specializable reference vetoes.
+        let mut sub_total: FxHashMap<TermId, u32> = FxHashMap::default();
+        let mut sub_miter: FxHashMap<TermId, u32> = FxHashMap::default();
+        {
+            let mut seen: FxHashSet<TermId> = FxHashSet::default();
+            let mut stack: Vec<TermId> = vec![root];
+            while let Some(tid) = stack.pop() {
+                if !seen.insert(tid) {
+                    continue;
+                }
+                let Some(term) = manager.get(tid) else {
+                    continue;
+                };
+                let miter_consumer = match &term.kind {
+                    TermKind::Eq(l, r) | TermKind::BvUlt(l, r) | TermKind::BvUle(l, r) => {
+                        nixie_theories::bv::BvSolver::sub_zero_eq_operands(*l, *r, manager)
+                            .is_some()
+                    }
+                    _ => false,
+                };
+                for child in get_children(&term.kind) {
+                    if matches!(
+                        manager.get(child).map(|d| &d.kind),
+                        Some(TermKind::BvSub(_, _))
+                    ) {
+                        *sub_total.entry(child).or_insert(0) += 1;
+                        if miter_consumer {
+                            *sub_miter.entry(child).or_insert(0) += 1;
+                        }
+                    }
+                    stack.push(child);
+                }
+            }
+        }
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = vec![root];
         while let Some(tid) = stack.pop() {
@@ -605,7 +657,16 @@ impl Solver {
                 _ => {}
             }
             if is_bv_sort {
-                bv_sorted.push(tid);
+                // Pass 0's verdict: a miter-owned subtractor (every
+                // reference specializable, at least one reference) is not
+                // pushed — its consumers encode over the operands, and any
+                // real consumer in a *later* assertion's walk re-adds it.
+                let miter_owned = matches!(&term.kind, TermKind::BvSub(_, _))
+                    && sub_total.get(&tid).is_some_and(|&t| t > 0)
+                    && sub_miter.get(&tid) == sub_total.get(&tid);
+                if !miter_owned {
+                    bv_sorted.push(tid);
+                }
             }
             // Bool-sorted free variables matter as `ite` selectors: the
             // circuit builder mints its own var for such a leaf, and the
@@ -675,8 +736,17 @@ impl Solver {
                 continue;
             }
             bv_atoms.push(atom);
-            bv_sorted.push(lhs);
-            bv_sorted.push(rhs);
+            // Miter-shaped atoms blast their operands, not the subtractor
+            // (see the census in [`Self::collect_unified_bv_terms`]).
+            if let Some((x, y)) =
+                nixie_theories::bv::BvSolver::sub_zero_eq_operands(lhs, rhs, manager)
+            {
+                bv_sorted.push(x);
+                bv_sorted.push(y);
+            } else {
+                bv_sorted.push(lhs);
+                bv_sorted.push(rhs);
+            }
         }
     }
 

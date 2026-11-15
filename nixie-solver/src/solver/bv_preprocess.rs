@@ -2986,4 +2986,59 @@ mod tests {
         // a·b ≥ 2^16 has solutions (e.g. a = b = 0x100): satisfiable.
         assert_eq!(solve_str(script), "sat");
     }
+
+    /// Miter-shape specializations (2026-11-15): `(x − y) = 0`, `0 <u (x − y)`
+    /// and their `≤u` duals encode over the operands — the subtractor circuit
+    /// never exists (a 32-bit subtractor costs ~210 SAT vars; the specialized
+    /// equality ~63).  Semantic regressions for each shape, both polarities.
+    #[test]
+    fn miter_sub_zero_shapes_decide_correctly() {
+        let cases: [(&str, &str); 6] = [
+            // (x − y) = 0 with (not (= x y)) is unsat.
+            ("(and (= (bvsub x y) (_ bv0 32)) (not (= x y)))", "unsat"),
+            // 0 <u (x − y) with (= x y) is unsat (0 <u 0 is false).
+            ("(and (bvult (_ bv0 32) (bvsub x y)) (= x y))", "unsat"),
+            // (x − y) ≤u 0 with (not (= x y)) is unsat ((x−y) ≤u 0 ⟺ x = y).
+            (
+                "(and (bvule (bvsub x y) (_ bv0 32)) (not (= x y)))",
+                "unsat",
+            ),
+            // 0 <u (x − y) is satisfiable together with (not (= x y)).
+            ("(and (bvult (_ bv0 32) (bvsub x y)) (not (= x y)))", "sat"),
+            // A subtraction consumed by a *mask* keeps its circuit.
+            (
+                "(and (= (bvand (_ bv255 32) (bvsub x (_ bv46 32))) (_ bv0 32)) (= x (_ bv46 32)))",
+                "sat",
+            ),
+            // The const-comparison specializations: 0 <u x ⟺ x ≠ 0.
+            ("(and (bvult (_ bv0 32) x) (= x (_ bv0 32)))", "unsat"),
+        ];
+        for (body, expect) in cases {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun x () (_ BitVec 32))
+             (declare-fun y () (_ BitVec 32))
+             (assert {body})
+             (check-sat)"
+            );
+            assert_eq!(solve_str(&script), expect, "{body}");
+        }
+    }
+
+    /// Brute-force property for the constant-side comparison reductions at
+    /// width 4: `0 <u a ⟺ a ≠ 0` and `a <u 15 ⟺ a ≠ 15` for every value.
+    #[test]
+    fn const_side_ult_reductions_match_semantics() {
+        for v in 0u16..16 {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun x () (_ BitVec 4))
+             (assert (= x (_ bv{v} 4)))
+             (assert (not (= (bvult (_ bv0 4) x) (not (= x (_ bv0 4))))))
+             (assert (not (= (bvult x (_ bv15 4)) (not (= x (_ bv15 4))))))
+             (check-sat)"
+            );
+            assert_eq!(solve_str(&script), "unsat", "v={v}");
+        }
+    }
 }

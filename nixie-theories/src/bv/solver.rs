@@ -4,7 +4,7 @@ use crate::config::BvConfig;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
-use nixie_core::ast::TermId;
+use nixie_core::ast::{TermId, TermKind};
 use nixie_core::error::Result;
 use nixie_sat::{LBool, Lit, Solver as SatSolver, SolverConfig as SatConfig, SolverResult, Var};
 use num_bigint::BigUint;
@@ -1594,15 +1594,72 @@ impl BvSolver {
         )
     }
 
+    /// The miter shape helper (Z3 `isolate_term`'s strength reduction,
+    /// applied at the layer that actually blasts): when `{a, b}` is
+    /// `{(x − y), 0}` in either orientation, the atom's truth is the plain
+    /// equality `x = y` — encodable as an XNOR+reduction without ever
+    /// building the subtractor circuit (a 32-bit subtractor costs ~210
+    /// SAT vars where the equality costs ~63).
+    #[must_use]
+    pub fn sub_zero_eq_operands(
+        a: TermId,
+        b: TermId,
+        manager: &nixie_core::ast::TermManager,
+    ) -> Option<(TermId, TermId)> {
+        let kind_of = |t: TermId| manager.get(t).map(|d| d.kind.clone());
+        let is_zero = |t: TermId| matches!(kind_of(t), Some(TermKind::BitVecConst { ref value, .. }) if *value == num_bigint::BigInt::default());
+        let as_sub = |t: TermId| match kind_of(t) {
+            Some(TermKind::BvSub(x, y)) => Some((x, y)),
+            _ => None,
+        };
+        if is_zero(a)
+            && let Some(xy) = as_sub(b)
+        {
+            return Some(xy);
+        }
+        if is_zero(b)
+            && let Some(xy) = as_sub(a)
+        {
+            return Some(xy);
+        }
+        None
+    }
+
     /// Encode a strict less-than (signed or unsigned) comparison result var.
     /// Operands are assumed already bit-blasted by the caller.
     fn bool_ult(
         &mut self,
         lhs: TermId,
         rhs: TermId,
-        _manager: &nixie_core::ast::TermManager,
+        manager: &nixie_core::ast::TermManager,
         signed: bool,
     ) -> Option<Var> {
+        // Miter specialization (unsigned only, Z3 `isolate_term`'s strength
+        // reduction at the blast layer): with one side the constant 0 and
+        // the other a subtraction, the comparison never needs the
+        // subtractor — `0 <u (x − y) ⟺ x ≠ y` and `(x − y) <u 0 ⟺ false`
+        // (ring identities: `x − y ≡ 0 ⟺ x = y`).
+        if !signed {
+            let kind_of = |t: TermId| manager.get(t).map(|d| d.kind.clone());
+            let is_zero = |t: TermId| matches!(kind_of(t), Some(TermKind::BitVecConst { ref value, .. }) if *value == num_bigint::BigInt::default());
+            if is_zero(rhs) {
+                if matches!(kind_of(lhs), Some(TermKind::BvSub(_, _))) {
+                    // (x − y) <u 0 is false — no circuit at all.
+                    let v = self.sat.new_var();
+                    self.wire(v, Sig::False);
+                    return Some(v);
+                }
+            } else if is_zero(lhs)
+                && let Some(TermKind::BvSub(x, y)) = kind_of(rhs)
+                && let Some(eq) = self.encode_eq_node(x, y)
+            {
+                // 0 <u (x − y) ⟺ x ≠ y.
+                let v = self.sat.new_var();
+                let folded = self.gate_not(self.sig(eq));
+                self.wire(v, folded);
+                return Some(v);
+            }
+        }
         if signed {
             self.slt_gate(lhs, rhs)
         } else {
