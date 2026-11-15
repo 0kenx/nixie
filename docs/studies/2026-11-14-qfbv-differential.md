@@ -72,6 +72,24 @@ gains on this class need either the eager dispatch to take over
 no-elim goals (a routing decision with its own measured regressions)
 or the fully lean blast-and-solve path.
 
+## Routing re-evaluation (post-v2): the unified decision CONFIRMED
+
+Lean-BV made the general path cheaper, so the stage-4 routing (no-elim
+pure-BV goals stay unified; only elim-uncnstr takeovers go eager) was
+re-measured with the full sample via the built-in A/B arm
+(`NIXIE_BV_DISPATCH_UNIFIED=0`): **unified 138/165 vs eager 123/165,
+zero verdict differences**.  The instance-level eager wins
+(gryzzles-as-BV 3.0 s vs 6.0 s, predicate_2856 9.5 s vs 17.7 s) are
+real but family-scale losses dominate (bruttomesso 18→12, spear 19→14,
+asp 3→1, Sage2 8→7, Sydr 11→10, MCMPC 15→14; uclid alone gains 14→15).
+The routing stands.
+
+The deeper finding: z3's ALWAYS-eager qfbv pipeline solves BBB-32 in
+0.03 s where nixie's eager path needs 27 s (unified: 5 s) — the eager
+pipeline's PREPROCESSING (solve-eqs / simplification before blasting,
+Z3's `tacas07` collapsing power) is the actual gap, not the routing.
+Recorded as the concrete work item for this class.
+
 ## Precondition for the class gap
 
 A lean blast-and-solve path for pure-BV inputs (blast eagerly, run the
