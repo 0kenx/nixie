@@ -1376,8 +1376,17 @@ fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseO
             for f in factors {
                 if let Some(v) = const_bits(&f, manager) {
                     let v = v % &modulus;
+                    // Bitwise conjunction — both operands are normalized
+                    // into [0, 2ʷ), so `&` is the plain non-negative
+                    // bit-and.  (This arm historically multiplied the
+                    // constants — `c₁·c₂ mod 2ʷ` — which only coincides
+                    // with `c₁∧c₂` when a factor is 0 or all-ones; any
+                    // non-trivial mask pair (`0x00ffffff` over
+                    // `0xff00ffff`) folded to a wrong mask and, on a
+                    // second rewrite of the chain, a false `unsat` —
+                    // regression: `and_chain_double_rewrite_is_sound`.)
                     folded = Some(match folded {
-                        Some(acc) => (acc * v) % &modulus,
+                        Some(acc) => acc & v,
                         None => v,
                     });
                 } else {
@@ -2621,6 +2630,62 @@ mod tests {
             }
         }
         "no-check-sat".into()
+    }
+
+    /// The bitwise-And constant fold historically *multiplied* the
+    /// constants (`c₁·c₂ mod 2ʷ`) instead of conjoining them.  A chain of
+    /// two non-trivial masks (`0x00ffffff` over `0xff00ffff`) folded to
+    /// `0x00ff0001` instead of `0x0000ffff`; the corrupted mask made any
+    /// equation over the chain falsely `unsat` once a second rewrite pass
+    /// saw the pass-1 output (found by the isolate-term A/B on
+    /// `stp_samples/run_03230…0x41821d_00`, z3-confirmed).
+    #[test]
+    fn and_chain_double_rewrite_is_sound() {
+        // Pass-1 output shape of a `bvor`-0-wrapped mask chain: adjacent
+        // `bvand` nesting, two non-trivial constants.
+        let script = "(set-logic QF_BV)
+            (declare-fun x () (_ BitVec 32))
+            (assert (= (bvand #x00ffffff (bvand #xff00ffff x)) #x00000021))
+            (check-sat)";
+        assert_eq!(solve_str(script), "sat");
+    }
+
+    /// Brute-force property: a rewritten mask chain equals its input at
+    /// every value (the fold must produce exactly `c₁ ∧ c₂ ∧ …`).
+    #[test]
+    fn and_chain_constant_fold_matches_conjunction() {
+        // 4-bit exhaustive over all non-trivial mask pairs: the chain
+        // `(bvand c1 (bvand c2 x)) = (bvand k x)` must be valid for
+        // `k = c1 ∧ c2` — including the cases where the old multiply
+        // diverges (e.g. c1=7, c2=11: 7∧11=3, 7·11=29≡13 mod 16).
+        for c1 in 0u16..16 {
+            for c2 in 0u16..16 {
+                let k = c1 & c2;
+                let script = format!(
+                    "(set-logic QF_BV)
+                     (declare-fun x () (_ BitVec 4))
+                     (assert (not (= (bvand #x{:x} (bvand #x{:x} x)) (bvand #x{:x} x))))
+                     (check-sat)",
+                    c1, c2, k
+                );
+                assert_eq!(solve_str(&script), "unsat", "c1={c1} c2={c2}");
+            }
+        }
+    }
+
+    /// The full instance that exposed the bug through the isolate-term
+    /// double rewrite (kept as the end-to-end reproducer).
+    #[test]
+    fn stp_samples_run_03230_remains_sat() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../smt-lib/non-incremental/QF_BV/stp_samples/",
+            "run_03230.trace.cond_025442_0x41821d_00.smt2"
+        );
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return; // corpus not present in every checkout
+        };
+        assert_eq!(solve_str(&source), "sat");
     }
 
     /// distributivity: `(a*b + c*b) ≠ b*(a+c)` is unsat at every width –
