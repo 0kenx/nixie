@@ -3570,6 +3570,15 @@ impl<'a> TheoryManager<'a> {
     /// those – is both necessary and sufficient: after it, the two solvers share
     /// the same atoms and every congruence the tableau could use is available.
     fn intern_arith_shared_terms(&mut self, var: Var, manager: &TermManager) {
+        // Lean-BV (see `bv_pure`): the shared terms exist to expose
+        // UF/select congruence hidden inside arithmetic — `(+ (f a) b)`.  In
+        // exactly-QF_BV no such applications exist, and interning the
+        // operands of every BV comparison floods congruence with
+        // blast-decided merges (the `add_proof_edge` churn the CDCL(T)
+        // residual profile showed at 87% of callback time).
+        if self.bv_pure {
+            return;
+        }
         let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
             return;
         };
@@ -3719,13 +3728,15 @@ impl<'a> TheoryManager<'a> {
                     // merge reason so that conflict clause generation can find it
                     // in term_to_var.
                     let constraint_term = self.term_for_var(var);
-                    // Lean-BV path (see `bv_pure`): in exactly-QF_BV, a
-                    // BV-sorted equality needs no EUF treatment.
+                    // Lean-BV path (see `bv_pure`): in exactly-QF_BV, BV-
+                    // and Bool-sorted equalities need no EUF treatment —
+                    // the blast decides bit-vector equality bit-wise and
+                    // Boolean equality as iff, and no congruence exists.
                     let bv_no_euf = self.bv_pure
                         && manager
                             .get(lhs)
                             .and_then(|t| manager.sorts.get(t.sort))
-                            .is_some_and(|s| s.is_bitvec());
+                            .is_some_and(|s| s.is_bitvec() || s.is_bool());
                     if bv_no_euf {
                         self.intern_arith_shared_terms(var, manager);
                     } else {
@@ -3876,13 +3887,24 @@ impl<'a> TheoryManager<'a> {
                     // believes the sides differ while the tableau is free to
                     // give them the same value.
                     let constraint_term = self.term_for_var(var);
-                    let lhs_node = self.intern_term_for_congruence(lhs, manager);
-                    let rhs_node = self.intern_term_for_congruence(rhs, manager);
-                    self.euf.assert_diseq(lhs_node, rhs_node, constraint_term);
+                    // Lean-BV (see `bv_pure`): a disequality over BV/Bool-
+                    // sorted terms in exactly-QF_BV needs no EUF watch —
+                    // the blast's bit-wise disequality constraint decides
+                    // it (this arm keeps the `bv_check_neq` blast below).
+                    let bv_no_euf = self.bv_pure
+                        && manager
+                            .get(lhs)
+                            .and_then(|t| manager.sorts.get(t.sort))
+                            .is_some_and(|s| s.is_bitvec() || s.is_bool());
+                    if !bv_no_euf {
+                        let lhs_node = self.intern_term_for_congruence(lhs, manager);
+                        let rhs_node = self.intern_term_for_congruence(rhs, manager);
+                        self.euf.assert_diseq(lhs_node, rhs_node, constraint_term);
 
-                    // Check for immediate conflicts (if a = b was already derived)
-                    if let Some(conflict_terms) = self.euf.check_conflicts() {
-                        return self.conflict_from_terms(&conflict_terms);
+                        // Check for immediate conflicts (if a = b was already derived)
+                        if let Some(conflict_terms) = self.euf.check_conflicts() {
+                            return self.conflict_from_terms(&conflict_terms);
+                        }
                     }
 
                     // For bit-vector operands also send the disequality to the BV
@@ -3917,15 +3939,25 @@ impl<'a> TheoryManager<'a> {
                 } else {
                     // Negative assignment: ~(a != b) means a = b.
                     // Use the constraint term as the merge reason.
+                    // Lean-BV (see `bv_pure`): BV/Bool-sorted equalities in
+                    // exactly-QF_BV skip the EUF merge — the blast decides
+                    // them (same shape as the Eq arm's gate).
                     let constraint_term = self.term_for_var(var);
-                    let lhs_node = self.intern_term_for_congruence(lhs, manager);
-                    let rhs_node = self.intern_term_for_congruence(rhs, manager);
-                    if let Err(_e) = self.euf.merge(lhs_node, rhs_node, constraint_term) {
-                        return TheoryCheckResult::Sat;
-                    }
+                    let bv_no_euf = self.bv_pure
+                        && manager
+                            .get(lhs)
+                            .and_then(|t| manager.sorts.get(t.sort))
+                            .is_some_and(|s| s.is_bitvec() || s.is_bool());
+                    if !bv_no_euf {
+                        let lhs_node = self.intern_term_for_congruence(lhs, manager);
+                        let rhs_node = self.intern_term_for_congruence(rhs, manager);
+                        if let Err(_e) = self.euf.merge(lhs_node, rhs_node, constraint_term) {
+                            return TheoryCheckResult::Sat;
+                        }
 
-                    if let Some(conflict_terms) = self.euf.check_conflicts() {
-                        return self.conflict_from_terms(&conflict_terms);
+                        if let Some(conflict_terms) = self.euf.check_conflicts() {
+                            return self.conflict_from_terms(&conflict_terms);
+                        }
                     }
 
                     // BV equality forced by `~(a != b)`: bit-blast and assert `a = b`.
