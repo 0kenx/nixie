@@ -90,6 +90,18 @@ pipeline's PREPROCESSING (solve-eqs / simplification before blasting,
 Z3's `tacas07` collapsing power) is the actual gap, not the routing.
 Recorded as the concrete work item for this class.
 
+## BBB-32 diagnosis (the eager pipeline's real gap)
+
+The 27 s eager run on `tacas07/BBB-32` (z3: 0.03 s) is NOT
+preprocessing — `NIXIE_PRE_TRACE` shows every stage under 1 ms with
+`solve_eqs plain=0` (the goal is ONE giant equivalence assertion, a
+circuit miter).  The time is the blast + SAT over a miter whose two
+sides z3 collapses structurally (rewriting / gate-level structural
+sharing reduces it to constant `true`).  Work item: blast-level
+structural hashing (shared Boolean gate nodes across the circuit, the
+AIG discipline) and/or a stronger simplify pass before blasting — the
+`bitblast_advanced` module's AIG machinery is the natural base.
+
 ## Precondition for the class gap
 
 A lean blast-and-solve path for pure-BV inputs (blast eagerly, run the
