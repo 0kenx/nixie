@@ -225,6 +225,10 @@ impl Solver {
         // ---- Pass 2: build, inside a window over the main core.
         let term_to_var = &self.term_to_var;
         let mut linked_atoms = 0usize;
+        // Atom-level blast attribution (`NIXIE_BV_BLAST_STATS=trace`):
+        // same flush pattern as the word-op instrument.
+        let atom_trace = std::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
+        let mut atom_pending: Option<(&'static str, usize)> = None;
         self.bv.build_with(&mut self.sat, |bv| {
             let mut encoded: FxHashSet<TermId> = FxHashSet::default();
             // Operands first: `encode_bool_node` on an atom requires its
@@ -235,6 +239,29 @@ impl Solver {
                 }
             }
             for atom in &bv_atoms {
+                let atom_label = if atom_trace {
+                    if let Some((l, v0)) = atom_pending.take() {
+                        eprintln!(
+                            "[blast] op={l} dv={}",
+                            bv.embedded_variable_count().saturating_sub(v0)
+                        );
+                    }
+                    manager.get(atom.term).map(|d| match d.kind {
+                        TermKind::Eq(..) => "AtomEq",
+                        TermKind::BvUlt(..) => "AtomUlt",
+                        TermKind::BvUle(..) => "AtomUle",
+                        TermKind::BvSlt(..) => "AtomSlt",
+                        TermKind::BvSle(..) => "AtomSle",
+                        _ => "AtomOther",
+                    })
+                } else {
+                    None
+                };
+                if atom_trace
+                    && let Some(label) = atom_label
+                {
+                    atom_pending = Some((label, bv.embedded_variable_count()));
+                }
                 let Some(circuit_var) = bv.encode_bool_node(atom.term, manager) else {
                     // Shape outside the boolean encoder (e.g. mismatched
                     // widths on an ill-sorted input): leave unlinked.  The
@@ -263,6 +290,14 @@ impl Solver {
                     }
                     bv.link_bool_vars(main_var, circuit_var);
                 }
+            }
+            if atom_trace
+                && let Some((l, v0)) = atom_pending.take()
+            {
+                eprintln!(
+                    "[blast] op={l} dv={}",
+                    bv.embedded_variable_count().saturating_sub(v0)
+                );
             }
         });
         self.build_order_specs_in_window(manager);
