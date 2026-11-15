@@ -147,3 +147,29 @@ gate that excludes meganode-heavy inputs (the 2026-09 gate study found
 no blast-time separator; the family-level split here suggests the
 separator, if any, lives at parse/cascade time — e.g. meganode-skip
 counters, not IR activity stats).
+
+
+## Second addendum (same day): `NIXIE_BV_GATE_SH` screened as a default — LANDED (`254d79bf`)
+
+The eager-sharing arm that differs from IR's deferred-Tseitin design:
+blast-time hash-consing of identical gate nodes (one shared SAT var per
+distinct and/or/xor over the same operand pair).  Screened on both
+corpora with the corrected base:
+
+| screen | base | GATE_SH=1 | wrong |
+|---|---|---|---|
+| 170-sample | 145 | **149** (+4, all Sage2) | 0 |
+| miter-150 (tacas07, BuchwaldFried, Goel, brummayerbiere×3, Wolf, bmc-bv) | 88 | **91** (+3: smulov2bw048/064, minand032) | 0 |
+
+Zero losses on both.  The four Sage2 crossings re-verified at a 25 s
+cap as deterministic 1.7–6× speedups (bench_2947 14.1→3.0 s,
+bench_7099 >25→4.0 s), not boundary wobble; the miter gains include
+the historically `GATE_SH`-closed cells (2026-09 round-6 notes), so
+the flip also subsumes those opt-ins.  Median +3.7 % on
+already-decided cells (the map probe), p90 1.5.  Landed default-on
+with `NIXIE_BV_GATE_SH=0` as the opt-out; scope-safety argument in the
+commit; full bar green (12 805 tests, parity 171/0/6, perf gate
+counter-identical).
+
+Net session effect on the two screens: **145→149 and 88→91 solved at
+the default**, plus the false-`unsat` And-fold fix.
