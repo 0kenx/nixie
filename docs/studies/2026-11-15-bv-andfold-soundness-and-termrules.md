@@ -173,3 +173,36 @@ counter-identical).
 
 Net session effect on the two screens: **145→149 and 88→91 solved at
 the default**, plus the false-`unsat` And-fold fix.
+
+
+## Third addendum (same day): the strength reductions moved to the blast layer — LANDED (`73e9c641`)
+
+A blast-size instrument (`NIXIE_BV_BLAST_STATS=trace`, one stderr line per
+encoded operator: op/width/var-delta) attributed BBB-32's blast: **366
+`BvSub` × ~210 vars = 92 %** of the word-op budget.  Every miter atom
+spelled `(bvsub X Y)` built a subtractor + comparator.
+
+Two attempts at the fix, with the architectural lesson between them:
+
+1. **Term-level `isolate_eq` re-armed (sub-aware monomial view, the §4
+   recipe verbatim): works on the eager route, REGRESSES the unified
+   route catastrophically** — `sage/app12/bench_4186` 0.21 s → 19–32 s.
+   Root cause: the unified path blasts at *assert* time on original
+   terms, and the check-time "preprocessing-parity pass" asserts the
+   cascade's rewrites **alongside** the originals — the isolated
+   equalities double the atom coverage instead of replacing it.
+   Bisected all four pieces (census, both atom specializations,
+   ult_gate consts) before isolating the term rule as the sole cause.
+   Removed; the recipe stays in §4 for the eager route only.
+2. **Blast-layer specializations (landed)**: `(x−y)=0` → `x=y` (XNOR+
+   reduction), `0 <u (x−y)` → `x≠y`, `(x−y) <u 0` → false, `≤u` duals;
+   a per-reference census in the unified collectors skips blasting a
+   subtractor whose every reference is specializable; `ult_gate` folds
+   constant-side comparators (`0 <u b` = negated all-zero reduction,
+   `a <u MAX` = negated AND-reduction, `a <u 0` = false).
+
+Measured: BBB-32 blast 185k → **114k vars (−38 %)**, solve ~10 s →
+**6.5 s**; miter-150 **89 → 91** (rfunit_flat-64 timeout→sat 5.9 s,
+bitrev1024 timeout→unsat), zero losses/wrong; 170-sample 148 → 147
+(one 5.5 s→cap boundary cell, median 1.0); GATE_SH wins intact;
+934-atom differential fuzz clean (widths 3/4/8/16); full bar green.
