@@ -234,3 +234,28 @@ slices (And-fix, GATE_SH, miter/const reductions):
 * Const-side `c <u X` splits (z3 `le2extract` as a circuit) measured
   as the wrong target on BBB-32: its remaining comparisons are
   var-vs-var.
+
+
+## Fifth addendum: the deferral re-screened on the current base — net negative, stays opt-in
+
+`NIXIE_BV_DEFER_BLAST=1` (landed machinery, default off) re-screened
+after the strength reductions, on the corrected arms:
+
+* BBB-32: **2.2 s → 0.44 s (5×)** — blasting the cascade output
+  collapses the pointer chains exactly as the class map predicted;
+  the old false-`sat` family (`s3_clnt_*`) is z3-consistent (the
+  `dfa1c754` budget fix cured it).
+* But the screens: 170-sample **148 → 146 with three `sat → unknown`
+  degradations** (spear nnrpd/innd — the 2026-09 "model-path holes":
+  the honesty gate catches weakened rewritten sets and degrades
+  honestly); miter-150 **92 → 88** (Wolf zipcpu ×2, minand032,
+  smulov4bw ×2 lost, nlzbe gained); p90 2.0 on both.
+
+Net −6 solves across 320 for one 5× class win: **not a default**.
+The precondition it leaves: capture the pointer-chain collapse
+*inside the assert-time blast* — a monomial-cancellation pass over
+the collected `bv_sorted` before `encode_bv_term_recursive` runs
+(same algebra as `cancel_monomials`, applied at the walk's
+operand set) — so the raw emission never happens and no
+deferral/equisatisfiability exposure exists.  That is the item's
+next concrete slice.
