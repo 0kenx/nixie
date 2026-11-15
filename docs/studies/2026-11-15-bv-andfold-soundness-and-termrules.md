@@ -259,3 +259,37 @@ the collected `bv_sorted` before `encode_bv_term_recursive` runs
 operand set) — so the raw emission never happens and no
 deferral/equisatisfiability exposure exists.  That is the item's
 next concrete slice.
+
+
+## Sixth addendum: blast-time monomial cancellation — built, measured, reverted
+
+The fifth addendum's precondition was implemented exactly as recorded:
+`cancel_sum_term` (sub-aware monomial view over the collected
+`bv_sorted`, strictly-shrinking guard, residual aliasing via
+`alias_bv_bits`) running before the unified pass's blast loop — the
+deferral's pointer-chain collapse with zero deferral exposure.
+
+Two findings, then a negative:
+
+1. **Guard subtlety**: `combine_like` folds duplicate monomials
+   (`x + x → 2x`), which passes a naive length-shrink guard without
+   any cross-side cancellation — the "residual" is then a full
+   reassociated rebuild that un-shares the DAG (bench_4186 exploded
+   to 5.8 M SAT vars via per-link-pass re-blasts before the
+   distinct-key guard fixed it).
+2. **The idiom misattribution**: BBB-32's add/sub pointer chains
+   exist only in the *cascade output* — the original file has no
+   `bvadd` at all (its subs feed extract/mask chains only the full
+   cascade folds).  The cancellation therefore left BBB-32's blast
+   untouched (114k vars both arms); it targeted the SAGE originals
+   (`bvadd(x, bvsub(S, x))` verbatim) — whose solves were already
+   fast and did not flip.
+
+Screens: 170-sample 148 → 147, miter 92 → 91 — net −2 (two
+7 s→cap boundary cells), zero gains, zero wrong verdicts, median
+1.009.  **Reverted** (tree byte-identical to `51b9044d`).  The
+BBB-32-class collapse requires the *whole* cascade rewrite before
+the blast — that is the deferral (net −6, fifth addendum) or a
+future routing change, not a local algebraic pass.  The class item's
+remaining recorded headroom stands as: defer-blast behind a
+per-class gate, or nothing on this route.
