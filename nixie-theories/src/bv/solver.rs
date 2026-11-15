@@ -323,11 +323,15 @@ pub struct BvSolver {
     /// carry-save tree (`NIXIE_BV_MUL_ARRAY=1`, read at construction; the
     /// `*_for_test` setter exists because the flag memo is process-wide).
     mul_array: bool,
-    /// PROBE (unjournaled — single-check files only): structural hash-consing
-    /// of the gate constructors on canonical input-var pairs.  Identical
-    /// gates share one output variable and one clause set, exactly z3's
-    /// expression-level sharing (`BuchwaldFried`'s two equal products over
-    /// the same operand bits share every partial product and adder).
+    /// Structural hash-consing of the gate constructors on canonical
+    /// input-var pairs (default on; `NIXIE_BV_GATE_SH=0` opts out).
+    /// Identical gates share one output variable and one clause set,
+    /// exactly z3's expression-level sharing (`BuchwaldFried`'s two equal
+    /// products over the same operand bits share every partial product
+    /// and adder).  Journaled by construction: entries are only inserted
+    /// at base scope ([`Self::at_base_scope`]) and gate clauses are root
+    /// clauses over never-reindexed variables, so no pop can invalidate
+    /// a hit.
     gate_sh_probe: bool,
     and_sh: FxHashMap<(u64, u64), Sig>,
     xor_sh: FxHashMap<(u64, u64), Sig>,
@@ -2340,14 +2344,31 @@ impl BvSolver {
         }
     }
 
+    /// Whether blast-time gate structural hashing is on (default **on**;
+    /// `NIXIE_BV_GATE_SH=0` opts out).
+    ///
+    /// Identical gate nodes (`and`/`or`/`xor` over the same operand vars,
+    /// order-insensitive) share one SAT variable instead of allocating a
+    /// fresh one and re-emitting the Tseitin clauses — the eager analog of
+    /// Z3 building its blast circuits over the hash-consed expression DAG.
+    /// Measured default-flip evidence (2026-11-15, see
+    /// `docs/studies/2026-11-15-bv-andfold-soundness-and-termrules.md`):
+    /// stratified QF_BV sample 145→149 (Sage2 timeouts crossing at
+    /// deterministic 1.7–6× speedups) and a 150-instance miter/hardware
+    /// screen 88→91 (the historically `GATE_SH`-closed `smulov2bw*` cells),
+    /// zero losses and zero wrong verdicts on both; median +3.7% on
+    /// already-decided cells (the hash-map probe).  Sharing is
+    /// scope-safe: gate clauses are root clauses and variables are never
+    /// re-indexed, so a hit from an earlier base scope stays valid, and
+    /// inserts are gated on [`Self::at_base_scope`].
     fn gate_sh_default() -> bool {
         #[cfg(feature = "std")]
         {
-            matches!(std::env::var("NIXIE_BV_GATE_SH"), Ok(v) if !v.is_empty() && v != "0")
+            !matches!(std::env::var("NIXIE_BV_GATE_SH"), Ok(v) if v == "0")
         }
         #[cfg(not(feature = "std"))]
         {
-            false
+            true
         }
     }
 

@@ -732,3 +732,47 @@ fn model_equalities_never_merge_different_bitvector_sorts() {
     let model = solver.get_model();
     assert!(model.contains(&(a, a)) && model.contains(&(b, b)));
 }
+
+/// Gate structural hashing (default on; `NIXIE_BV_GATE_SH=0` opts out):
+/// identical gates over the same operand variables — in either operand
+/// order — must share one signal, and distinct inputs must never alias.
+/// This is the mechanism behind the 2026-11-15 default flip (Sage2
+/// timeouts crossing at 1.7–6×, `smulov2bw*` closures; see
+/// `docs/studies/2026-11-15-bv-andfold-soundness-and-termrules.md`).
+#[test]
+fn gate_structural_hashing_shares_identical_gates() {
+    let mut s = BvSolver::new();
+    s.gate_sh_probe = true;
+    let a = s.sat.new_var();
+    let b = s.sat.new_var();
+    let g1 = s.gate_and(Sig::Var(a), Sig::Var(b));
+    let g2 = s.gate_and(Sig::Var(b), Sig::Var(a));
+    assert_eq!(g1, g2, "commuted operands must hash to the same gate");
+    let x1 = s.gate_xor(Sig::Var(a), Sig::Var(b));
+    let x2 = s.gate_xor(Sig::Var(b), Sig::Var(a));
+    assert_eq!(x1, x2);
+    let o1 = s.gate_or(Sig::Var(a), Sig::Var(b));
+    let o2 = s.gate_or(Sig::Var(b), Sig::Var(a));
+    assert_eq!(o1, o2);
+    // Distinct inputs never alias (also across operators: an and over
+    // (a, b) is never handed out for the or/xor over the same pair).
+    let c = s.sat.new_var();
+    assert_ne!(g1, s.gate_and(Sig::Var(a), Sig::Var(c)));
+    assert_ne!(g1, x1);
+    assert_ne!(x1, o1);
+    // Idempotent operands fold before the map is consulted.
+    assert_eq!(s.gate_and(Sig::Var(a), Sig::Var(a)), Sig::Var(a));
+}
+
+/// The opt-out arm: with the map disabled, commuted gates allocate
+/// distinct variables (the historical behavior the flag restores).
+#[test]
+fn gate_structural_hashing_opt_out_allocates() {
+    let mut s = BvSolver::new();
+    s.gate_sh_probe = false;
+    let a = s.sat.new_var();
+    let b = s.sat.new_var();
+    let g1 = s.gate_and(Sig::Var(a), Sig::Var(b));
+    let g2 = s.gate_and(Sig::Var(b), Sig::Var(a));
+    assert_ne!(g1, g2);
+}
