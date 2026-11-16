@@ -360,3 +360,23 @@ Candidate shape: an epoch-stamped shared visited marker (a per-manager
 shares one array — an architectural nixie-core traversal change, or
 alternatively memoize the few hottest walkers the way the fragment
 check now does.
+
+
+## Campaign scoreboard (2026-11-15 end-of-day, HEAD `d1b0632b`)
+
+Serial 10 s cap, stratified 170-sample (seed 20261115, 17/family × 10):
+
+**nixie 146 decided (94 unsat + 52 sat) = z3 146 decided (93 + 53;
+z3 additionally returns 15 `unknown` and 9 timeouts of its own).**
+Zero wrong verdicts.  The campaign opened at 138 vs 149 z3-decided
+(the 2026-11-14 differential): **parity reached, soundly.**
+
+Family residuals (nixie vs z3-solved, single digits each):
+Sydr 15/17, Sage2 14/17, asp 2/8 (the deep asp cells need the DL
+recognition architecture), bruttomesso 15/17, spear 15/17; six
+families at full parity (Noetzli, MCMPC, sage, stp_samples, uclid at
+17/17).
+
+Full-family serial reference points: Sydr 391/535 vs z3 419; asp
+ingestion+wrapper costs now lean (lean-BV v3), remaining gap = DL
+recognition + ordinary search.
