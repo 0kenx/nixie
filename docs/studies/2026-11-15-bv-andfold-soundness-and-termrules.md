@@ -345,11 +345,18 @@ Measured: minigzip predicate_492 ~15–20 % wall; **serial Sydr
 green (12 808 tests, parity 171/0/6, gate counters 1.000 / wall
 0.97).
 
-**Remaining wall (next session's entry point):** the per-assert
-cascade re-run — `bv_preprocess_assertions` is re-entered from the
-routing/deferral trial on every assertion with its cache keyed on
-`assertions.len()`, so per-assert cost is O(cumulative assertions):
-`solve_equations` 10.6 % + `mentions` 7.3 % + `var_def_operand`
-7.3 % + `collect_subterms` 8.8 % of the run, all during `assert`.
-Candidate shapes: a cheap structural deferral predictor (no cascade),
-or rate-limiting the trial, or incremental solve-eqs.
+**Remaining wall (next session's entry point), corrected:** the
+check-side cascade call is *one* expensive pass, not a re-run loop
+(stack: check → dispatch_pure_bv → bv_preprocess_assertions →
+solve_equations — 10.6 % in a single call over meganode assertions,
+the budgeted 2026-09 area).  The assert-side cost is instead **~8
+distinct per-assert DAG walkers** each allocating and re-inserting
+the same shared meganode terms into fresh visited-sets:
+`traverse`/`collect_subterms`, `mentions`, `bv_elim_*`,
+`contains_quantifier`, `term_has_trans`, `subtree_*`, the census,
+`encode_bv_term_recursive` — together the ~30 % hash-insert churn.
+Candidate shape: an epoch-stamped shared visited marker (a per-manager
+`Vec<epoch>` indexed by TermId, bumped per call) so every walker
+shares one array — an architectural nixie-core traversal change, or
+alternatively memoize the few hottest walkers the way the fragment
+check now does.
