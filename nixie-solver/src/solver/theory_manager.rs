@@ -4216,6 +4216,18 @@ impl<'a> TheoryManager<'a> {
                 // can fire.  Then merge its EUF node with the canonical
                 // true or false node depending on the SAT assignment.
                 //
+                // Lean-BV (see `bv_pure`): in exactly-QF_BV every Boolean
+                // application is a BV comparison or a Boolean connective —
+                // no UF/select can appear, so no congruence over these
+                // nodes can ever fire, and interning + truth-node merging
+                // only feeds the congruence walk work the bit-blast already
+                // decides (asp-class profile: 35 % of the solve in
+                // `congruence::propagate`, every comparison atom feeding a
+                // merge).  Same soundness envelope as the Eq/Diseq gates.
+                if self.bv_pure {
+                    return TheoryCheckResult::Sat;
+                }
+                //
                 // IEEE strict comparisons whose operand classes have merged
                 // are refutable on the spot: `fp.lt x x` and `fp.gt x x`
                 // are FALSE for every `x` (NaN included), so a POSITIVE

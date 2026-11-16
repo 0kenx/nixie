@@ -3041,4 +3041,35 @@ mod tests {
             assert_eq!(solve_str(&script), "unsat", "v={v}");
         }
     }
+
+    /// Lean-BV v3 (`Constraint::BoolApp` gate): exactly-QF_BV comparison atoms
+    /// and Boolean connectives skip the EUF intern+truth-node merge — no
+    /// congruence can exist there (no UF/select), and the per-assignment merge
+    /// walk was 35 % of the asp-class solve (gryzzles.8 profile).  These pin
+    /// the semantic envelope: nested comparisons under and/or/distinct still
+    /// decide correctly with EUF absent.
+    #[test]
+    fn bv_pure_bool_atoms_decide_without_euf() {
+        let cases: [(&str, &str); 5] = [
+            ("(and (bvult x y) (bvult y z) (bvult z x))", "unsat"),
+            ("(or (bvult x y) (bvult y x) (= x y))", "sat"),
+            ("(and (bvule x y) (bvule y x) (not (= x y)))", "unsat"),
+            ("(= (bvsub x y) (_ bv0 32))", "sat"),
+            (
+                "(and (bvult (_ bv0 32) (bvsub x y)) (bvult (_ bv0 32) (bvsub y x)) (= x y))",
+                "unsat",
+            ),
+        ];
+        for (body, expect) in cases {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun x () (_ BitVec 32))
+             (declare-fun y () (_ BitVec 32))
+             (declare-fun z () (_ BitVec 32))
+             (assert {body})
+             (check-sat)"
+            );
+            assert_eq!(solve_str(&script), expect, "{body}");
+        }
+    }
 }
