@@ -319,3 +319,37 @@ verdicts** (every z3-decided flip matches; the self-annotated
 147 → 148, miter 91 → 90 (one 9.9→10.04 boundary cell).  554-atom
 differential fuzz clean; full bar green (12 807 tests, parity
 171/0/6, perf gate counters 1.000 / wall 0.96).
+
+
+## Eighth addendum: the Sydr ingestion wall — first two fixes landed (`d1b0632b`)
+
+Serial ground truth for Sydr (535 files, 10 s): **nixie 383 vs z3 419**
+(the earlier parallel scans undercount both arms ~8× contention —
+matched-parallelism comparisons are internally consistent but absolute
+counts are not; serial scans are the record).  The gap clusters in
+`symbolic_memory/linear/minigzip` (39 timeouts, z3 decides 14) and
+`hdp`; the yices subfamily is hard for z3 too (92/96 mutual timeouts).
+
+The minigzip profile is a different wall from every prior scan:
+**57.6 % of the run inside `assert`** — ingestion, not search.  Two
+pure-perf fixes landed (counter-identical verified):
+
+1. `term_in_blastable_fragment` memoizes proven terms (thread-local
+   set; the verdict is structural over immutable interned terms).
+   Was 19.5 % + 15.2 % (`assertion_in_bv_fragment`) of the run.
+2. The constraint sweep's atom dedup is a hash set, not a linear
+   scan (was 7 %, quadratic).
+
+Measured: minigzip predicate_492 ~15–20 % wall; **serial Sydr
+383 → 391**; asp same-setup 76 → 83; zero wrong verdicts; full bar
+green (12 808 tests, parity 171/0/6, gate counters 1.000 / wall
+0.97).
+
+**Remaining wall (next session's entry point):** the per-assert
+cascade re-run — `bv_preprocess_assertions` is re-entered from the
+routing/deferral trial on every assertion with its cache keyed on
+`assertions.len()`, so per-assert cost is O(cumulative assertions):
+`solve_equations` 10.6 % + `mentions` 7.3 % + `var_def_operand`
+7.3 % + `collect_subterms` 8.8 % of the run, all during `assert`.
+Candidate shapes: a cheap structural deferral predictor (no cascade),
+or rate-limiting the trial, or incremental solve-eqs.
