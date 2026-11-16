@@ -293,3 +293,29 @@ the blast — that is the deferral (net −6, fifth addendum) or a
 future routing change, not a local algebraic pass.  The class item's
 remaining recorded headroom stands as: defer-blast behind a
 per-class gate, or nothing on this route.
+
+
+## Seventh addendum: lean-BV v3 — the BoolApp truth-node gate — LANDED (`0ef7d9c7`)
+
+The asp-class profile (gryzzles.8, pprof sync harness, FP build) put
+**35–42 % of the solve inside `EufSolver::merge → congruence::propagate`**
+hash probes.  Root cause: every assigned BV comparison atom is a
+`Constraint::BoolApp`, and that branch interned the whole comparison
+term into EUF and merged it into the canonical truth nodes — on every
+assignment, for every atom.  The lean-BV v1/v2 gates covered Eq/Diseq;
+this channel was untouched.
+
+In exactly-QF_BV no UF/select can appear, so no congruence over these
+nodes can ever fire — the walk re-decides what the bit-blast owns.
+The v3 gate returns early under the same declared-logic envelope as
+v1/v2.
+
+Measured: gryzzles.8 profile 1 107 → 605 samples (EUF frames vanish);
+**the full asp family (496 files, 10 s cap, 8-way): 74 → 94 decided
+(+20 net: 24 gains — rand/maze cells z3 cannot decide — against 3
+trajectory losses), median 0.879 on both-decided, zero wrong
+verdicts** (every z3-decided flip matches; the self-annotated
+`_sat`/`_unsat` filenames all consistent).  Screens: 170-sample
+147 → 148, miter 91 → 90 (one 9.9→10.04 boundary cell).  554-atom
+differential fuzz clean; full bar green (12 807 tests, parity
+171/0/6, perf gate counters 1.000 / wall 0.96).
