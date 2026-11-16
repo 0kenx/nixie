@@ -728,6 +728,25 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
     // depth limit. Hash-consed inputs are far below it in practice.
     const MAX_VISITED: usize = 2_000_000;
 
+    // Cross-call memo of terms *proven* blastable (their whole subtree
+    // checked).  The verdict is purely structural and terms are interned
+    // immutably, so a proven term stays proven across assertions; without
+    // this, every assertion re-walks its entire meganode DAG and the
+    // per-assert cost is quadratic across a file (minigzip-class profile:
+    // 19.5 % `term_in_blastable_fragment` + 15.2 %
+    // `assertion_in_bv_fragment` of the whole run, the linear-probe
+    // `slice_contains` dominating).  Only positives are cached: a failed
+    // walk returns early and proves nothing about the visited prefix.
+    // Thread-local: the CLI solves one script per process, and tests run
+    // each solver on its own thread; no sharing is needed.
+    thread_local! {
+        static BLASTABLE: std::cell::RefCell<rustc_hash::FxHashSet<TermId>> =
+            std::cell::RefCell::new(rustc_hash::FxHashSet::default());
+    }
+    if BLASTABLE.with(|c| c.borrow().contains(&term)) {
+        return true;
+    }
+
     // Visited tracking: a flat Vec with linear membership up to a small
     // threshold (assertion-sized DAGs are far below it, and a Vec probe
     // beats hashing + the set's allocation at that scale), spilling into
@@ -745,6 +764,11 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
             if hashed.contains(&tid) {
                 continue;
             }
+        }
+        if BLASTABLE.with(|c| c.borrow().contains(&tid)) {
+            // This subterm's subtree is already proven — skip it without
+            // visiting (and without counting it against MAX_VISITED).
+            continue;
         }
         if visited_linear.len() < LINEAR_MAX {
             visited_linear.push(tid);
@@ -816,5 +840,14 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
         }
         stack.extend(nixie_core::ast::traversal::get_children(&term_data.kind));
     }
+    // Walk completed: every visited term's subtree is proven blastable.
+    BLASTABLE.with(|c| {
+        let mut cache = c.borrow_mut();
+        cache.extend(visited_linear.iter().copied());
+        if let Some(hashed) = visited_hashed {
+            cache.extend(hashed.iter().copied());
+        }
+        cache.insert(term);
+    });
     true
 }

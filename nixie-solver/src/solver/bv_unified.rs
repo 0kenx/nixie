@@ -733,6 +733,7 @@ impl Solver {
         bv_sorted: &mut Vec<TermId>,
         bv_atoms: &mut Vec<BvAtomToLink>,
     ) {
+        let mut swept: FxHashSet<TermId> = FxHashSet::default();
         let is_bv = |t: TermId| {
             manager
                 .get(t)
@@ -767,7 +768,12 @@ impl Solver {
                 | TermKind::BvSle(..) => BvAtomToLink { term },
                 _ => continue,
             };
-            if self.bv.is_unified_atom(term) || bv_atoms.iter().any(|a| a.term == term) {
+            // Dedup against this sweep's own atoms through a hash set:
+            // the collected list reaches the tens of thousands on
+            // symbolic-memory inputs and the linear scan measured
+            // quadratic (minigzip-class profile: `Iterator::any` +
+            // `slice_contains` at 7 %).
+            if self.bv.is_unified_atom(term) || !swept.insert(term) {
                 continue;
             }
             bv_atoms.push(atom);
