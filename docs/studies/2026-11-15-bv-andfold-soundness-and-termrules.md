@@ -433,3 +433,45 @@ Post-ingestion-fix profile of minigzip predicate_492 (2 627 samples,
    check-side SAT core (`propagate` 18 %, scan/prefetch 6.8 %) is the
    next architectural tier.  `solve_equations` is 8.9 % in one
    budgeted check-side call; `substitute` 4.7 % beneath it.
+
+
+## Eleventh addendum: the thread-local memo hazard + the tripwire incident (2026-11-17, `915c5828`)
+
+**The hazard.** The ingestion-wall fix (`d1b0632b`) memoized
+proven-blastable TermIds in a `thread_local!` set, documented as safe
+because "the CLI solves one script per process".  Wrong for any
+embedding that runs two solvers on one thread — nixie-py holds two
+`Context`s in one Python thread, and TermIds are manager-relative, so
+solver A's positives read as positives in fresh-manager solver B,
+keeping `all_assertions_bv_fragment` up on unblastable assertions
+(partial-encode territory).  The memo is now `Solver::blastable_memo`
+(one solver owns one manager — no cross-manager reads by
+construction).  Reproduced at the unit level: the isolation test
+*fails* on the thread-local code and passes with the fix.  Layers
+examined beyond the fix: the two call sites (encode/bv_unified), the
+fragment consumers (dispatch gating at mod.rs / bv_unified 157/846),
+the routing consequences (unified vs dispatch), and the EUF channel
+that masks the wrong-answer shape for UF apps (atoms still reach EUF).
+
+**The tripwire.** Landing it flipped spacer's
+`assert_flattens_deeply_nested_conjunction` (128 KiB spawned stack ×
+6 250-deep And chain) to SIGABRT — only in workspace-feature-unified
+builds, only sometimes-at-HEAD.  The investigation (check-trace
+bracketing, lldb on the guard-page fault, a frame-pointer build, a
+debug-info build) bottomed out at: `certify_result`'s statically
+aggregated frame (~1.3 KB of inlined certification locals) sits at the
+bottom of the check call chain, and the unified build's layout left
+~1 KB of margin — any codegen perturbation (this change, or even
+eprintln instrumentation) tips the prologue into the guard.  Not
+recursion, not a logic bug: a margin razor.  DEEP_STACK is now 1 MiB
+(any plausible 6 250-deep native recursion needs ≥ 3 MiB, so the
+assert-path tripwire keeps its power); the incident is documented at
+the constant.
+
+**Process notes.** (1) The full-suite failures during the
+investigation were load flakes (load 30+): one wall-budget test plus
+SIGABRTs that passed in isolation — the 8-core cap (`taskset -c 0-7`,
+see AGENTS.md) eliminated them.  (2) A counter-identity "DIFFER"
+against `precompile/7a87764d` was a phantom — another agent's cleanup
+had deleted that baseline; against the surviving 2698d1f4 arm all four
+probe cells are bit-identical.
