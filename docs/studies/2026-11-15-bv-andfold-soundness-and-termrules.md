@@ -403,3 +403,33 @@ Remaining ingestion-wall items, in measured order: the HashMap-side
 bookkeeping (architectural: fewer/lazier registries or arena-backed
 maps), the single check-side `solve_equations` pass over meganodes
 (the 2026-09 budget area), and the blast itself.
+
+
+## Tenth addendum: the dense-slab memo + eviction gates (2026-11-16)
+
+Post-ingestion-fix profile of minigzip predicate_492 (2 627 samples,
+57 % check / 43 % assert) re-ranked the walls; three landed:
+
+1. **`BvSolver::get_bv` probes — 6.0 % of the whole run**
+   (`2698d1f4`).  `term_to_bv` was an `FxHashMap<TermId, BvVar>`
+   probed for every node of every assertion DAG; TermId is dense, so
+   the memo became `Vec<Option<BvVar>>` (`slb`/`slb_put`/`slb_clear`,
+   with `blasted_count` keeping `has_any_blasting` O(1)).  Iteration
+   order shifts to term-id order (model listing only — counters
+   bit-identical on minigzip, BBB-32, asp wire12, bruttomesso
+   ext_con).  ~10 % wall on the cell; stratified 170-sample serial
+   **146 → 148 (z3: 146 — nixie now ahead on the sample)**.
+
+2. **on_backtrack canonical eviction (`7a87764d`).**  The
+   `interned_bv_constants.retain` ran per backtrack though stale
+   canonicals require an EUF node removal, and `pop_theory_scope` is
+   the only remover — now gated on `popped_any`.  Counter-identical;
+   targets pop-heavy UF-mixed workloads (the pure-BV cell has few
+   pops and showed noise-level effect under load 19-25).
+
+3. The remaining assert-side block is genuine first-time gate
+   construction (`build_with` + `encode_bv_term_recursive` ≈ 29 % of
+   the run *before* the slab fix) — not memo overhead; and the
+   check-side SAT core (`propagate` 18 %, scan/prefetch 6.8 %) is the
+   next architectural tier.  `solve_equations` is 8.9 % in one
+   budgeted check-side call; `substitute` 4.7 % beneath it.
