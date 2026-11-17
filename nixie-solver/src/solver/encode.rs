@@ -1622,7 +1622,7 @@ impl Solver {
         // the order-distinct handoff and the unified window both read the
         // flag during `emit_assertion_clauses` (the per-assertion walk is
         // monotone in the flag, so an early check is exact).
-        if !super::dispatch_pure_bv::assertion_in_bv_fragment(term_to_encode, manager) {
+        if !super::dispatch_pure_bv::assertion_in_bv_fragment(self, term_to_encode, manager) {
             self.all_assertions_bv_fragment = false;
         }
         // Unified-path blast deferral (`NIXIE_BV_DEFER_BLAST=1`): pure-BV

@@ -691,7 +691,21 @@ mod tests {
     /// `acc = mk_and([acc, lit])` is quadratic, and 50_000 levels cost tens of
     /// GB of live terms. Never raise `DEEP_DEPTH` without raising
     /// `DEEP_STACK` by the same factor.
-    const DEEP_STACK: usize = 1 << 17;
+    ///
+    /// The budget is a *tripwire for native recursion in the assert
+    /// path*, not a calibrated minimum: any plausible recursive
+    /// flattening of a 6 250-deep chain needs ≥ 6 250 × ~500 B ≈ 3 MiB,
+    /// so 1 MiB still trips loudly while tolerating unrelated
+    /// codegen-layout drift.  At the historical 128 KiB the test instead
+    /// flaked on frame *aggregation* elsewhere: `Solver::check`'s tail
+    /// (`certify_result` + its inlined certification locals) statically
+    /// reserves ~1.3 KB of frame at the bottom of the check call chain,
+    /// and a workspace-feature-unified build (which inlines differently
+    /// than a crate-local build) could sit within ~1 KB of the guard —
+    /// observed 2026-11-16 when an unrelated solver change (the
+    /// blastable-memo hardening) flipped this test to SIGABRT while the
+    /// identical code passed at HEAD and at 1 MiB.
+    const DEEP_STACK: usize = 1 << 20;
     const DEEP_DEPTH: u32 = 6_250;
 
     #[test]

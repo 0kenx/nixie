@@ -173,6 +173,12 @@ pub struct Solver {
     pub(super) config: SolverConfig,
     /// SAT solver core
     pub(super) sat: SatSolver,
+    /// Cross-call memo of terms *proven* blastable for the pure-BV
+    /// dispatch fragment (see `dispatch_pure_bv::term_in_blastable_fragment`).
+    /// Solver-owned rather than thread-local so two solvers on one thread
+    /// (two `Context`s in one Python process, say) never read each other's
+    /// TermIds — see the memo's doc there.
+    pub(super) blastable_memo: std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
     /// Shared "decide these first" queue for opt-in domain-first branching
     /// (`SolverConfig::enable_domain_first_branching`). Populated by
     /// `push_branch_priority`; read by the SAT engine's external branching
@@ -1251,6 +1257,7 @@ impl Solver {
         // - Symmetry breaking (via SymmetryBreaker)
 
         Self {
+            blastable_memo: std::cell::RefCell::new(rustc_hash::FxHashSet::default()),
             user_state: user_propagation::UserState::default(),
             config,
             sat: {

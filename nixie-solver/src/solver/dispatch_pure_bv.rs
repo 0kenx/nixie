@@ -44,6 +44,7 @@
 //!   dispatch has no LRAT chain for the main solver's clause numbering).
 
 use crate::SolverResult;
+use crate::solver::Solver;
 use crate::solver::types::Model;
 use nixie_theories::Theory;
 use nixie_theories::TheoryCheckResult;
@@ -225,7 +226,7 @@ impl crate::solver::Solver {
             && outcome
                 .assertions
                 .iter()
-                .all(|&a| term_in_blastable_fragment(a, manager))
+                .all(|&a| term_in_blastable_fragment(&self.blastable_memo, a, manager))
         {
             // Definition replay order: the uncnstr defs (dependency
             // order, newest round first) then the solve-eqs definitions —
@@ -241,7 +242,7 @@ impl crate::solver::Solver {
         } else {
             let blastable = preprocessed
                 .iter()
-                .all(|&a| term_in_blastable_fragment(a, manager));
+                .all(|&a| term_in_blastable_fragment(&self.blastable_memo, a, manager));
             if blastable {
                 WorkSet {
                     assertions: preprocessed,
@@ -553,7 +554,7 @@ impl crate::solver::Solver {
         }
         self.assertions
             .iter()
-            .all(|&assertion| term_in_blastable_fragment(assertion, manager))
+            .all(|&assertion| term_in_blastable_fragment(&self.blastable_memo, assertion, manager))
     }
 
     /// Build a concrete [`Model`] from the embedded solver's satisfying
@@ -718,11 +719,19 @@ fn assertions_ring_dominated(assertions: &[TermId], manager: &TermManager) -> bo
 /// (`bv_unified::link_or_blast_bv_circuits`): while *every* assertion is in
 /// the fragment, the eager dispatch owns the goal and unified linking stays
 /// off.
-pub(super) fn assertion_in_bv_fragment(term: TermId, manager: &TermManager) -> bool {
-    term_in_blastable_fragment(term, manager)
+pub(super) fn assertion_in_bv_fragment(
+    solver: &Solver,
+    term: TermId,
+    manager: &TermManager,
+) -> bool {
+    term_in_blastable_fragment(&solver.blastable_memo, term, manager)
 }
 
-fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
+fn term_in_blastable_fragment(
+    memo: &std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
+    term: TermId,
+    manager: &TermManager,
+) -> bool {
     // Bound the total work: the walk visits each distinct sub-term once, so
     // this is a defence against pathologically large inputs rather than a
     // depth limit. Hash-consed inputs are far below it in practice.
@@ -737,13 +746,14 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
     // `assertion_in_bv_fragment` of the whole run, the linear-probe
     // `slice_contains` dominating).  Only positives are cached: a failed
     // walk returns early and proves nothing about the visited prefix.
-    // Thread-local: the CLI solves one script per process, and tests run
-    // each solver on its own thread; no sharing is needed.
-    thread_local! {
-        static BLASTABLE: std::cell::RefCell<rustc_hash::FxHashSet<TermId>> =
-            std::cell::RefCell::new(rustc_hash::FxHashSet::default());
-    }
-    if BLASTABLE.with(|c| c.borrow().contains(&term)) {
+    // Solver-owned, NOT thread-local: TermIds are manager-relative, and a
+    // thread can own two solvers (e.g. two `Context`s on one Python
+    // thread via nixie-py) whose id spaces collide — a thread-local memo
+    // would hand solver B a *false positive* proven by solver A, keeping
+    // the pure-BV dispatch flag up on unblastable terms (partial-encode
+    // territory).  One solver owns one manager, so a solver-owned memo
+    // cannot cross managers.
+    if memo.borrow().contains(&term) {
         return true;
     }
 
@@ -765,7 +775,7 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
                 continue;
             }
         }
-        if BLASTABLE.with(|c| c.borrow().contains(&tid)) {
+        if memo.borrow().contains(&tid) {
             // This subterm's subtree is already proven — skip it without
             // visiting (and without counting it against MAX_VISITED).
             continue;
@@ -841,13 +851,61 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
         stack.extend(nixie_core::ast::traversal::get_children(&term_data.kind));
     }
     // Walk completed: every visited term's subtree is proven blastable.
-    BLASTABLE.with(|c| {
-        let mut cache = c.borrow_mut();
+    {
+        let mut cache = memo.borrow_mut();
         cache.extend(visited_linear.iter().copied());
         if let Some(hashed) = visited_hashed {
             cache.extend(hashed.iter().copied());
         }
         cache.insert(term);
-    });
+    }
     true
+}
+
+#[cfg(test)]
+mod blastable_memo_isolation_tests {
+    //! The memo must be solver-owned, never thread-local: TermIds are
+    //! manager-relative, so two solvers on one thread reuse ids for
+    //! unrelated terms.  With a `thread_local!` memo, solver A's proven
+    //! positives read as positives in solver B — the exact id-collision
+    //! shape reproduced below (A's id-0 term is a BV constant, B's id-0
+    //! term is an uninterpreted application).  A leaked positive keeps
+    //! `all_assertions_bv_fragment` up on assertions the pure-BV dispatch
+    //! cannot encode.
+
+    use super::*;
+
+    #[test]
+    fn memo_is_per_solver_not_per_thread() {
+        // Solver A: a blastable term at the *first* interned ids.
+        let a = Solver::new();
+        let mut mgr_a = nixie_core::ast::TermManager::new();
+        let a_const = mgr_a.mk_bitvec(1u32, 8);
+        let a_term = mgr_a.mk_bv_add(a_const, a_const);
+        assert!(
+            term_in_blastable_fragment(&a.blastable_memo, a_term, &mgr_a),
+            "a BV addition is in the fragment"
+        );
+        // A's memo now holds the ids A interned (the const and the add).
+        assert!(!a.blastable_memo.borrow().is_empty());
+
+        // Solver B, same thread, fresh manager: ids restart at zero, so
+        // B's *first* interned terms land on the ids A just proved.  B's
+        // low ids are an uninterpreted application — unblastable.
+        let b = Solver::new();
+        let mut mgr_b = nixie_core::ast::TermManager::new();
+        let bv_sort_b = mgr_b.sorts.bitvec(8);
+        let b_arg = mgr_b.mk_bitvec(1u32, 8);
+        let b_app = mgr_b.mk_apply("f", [b_arg], bv_sort_b);
+
+        // With the solver-owned memo, B's verdict comes from B's own
+        // (empty) memo and the structural walk: the application is not
+        // in the fragment, even though A proved "its" id blastable.
+        assert!(
+            !term_in_blastable_fragment(&b.blastable_memo, b_app, &mgr_b),
+            "solver B read solver A's memo: an uninterpreted application \
+             was reported blastable (thread-local TermId collision)"
+        );
+        assert!(b.blastable_memo.borrow().is_empty());
+    }
 }

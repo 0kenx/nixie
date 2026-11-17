@@ -324,7 +324,7 @@ impl Solver {
         // the whole assertion set: while it is, unification stays off (the
         // dispatch's single-shot embedded solve is the better architecture
         // for that fragment; linking first would blast every file twice).
-        if !super::dispatch_pure_bv::assertion_in_bv_fragment(term, manager) {
+        if !super::dispatch_pure_bv::assertion_in_bv_fragment(self, term, manager) {
             self.all_assertions_bv_fragment = false;
         }
         // elim-uncnstr deferral: when the check-time unconstrained-variable
