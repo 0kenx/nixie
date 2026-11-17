@@ -4976,33 +4976,43 @@ impl TheoryCallback for TheoryManager<'_> {
         // surviving depth: those assertions are still in the tableau, and
         // forgetting their explanation leaves a later conflict citing one of
         // them unable to name the literals it rests on.
+        // Node indices only ever shrink through a scope pop (that is the
+        // only path that removes EUF nodes mid-search), so the eviction
+        // pass below is needed exactly when at least one pop happened —
+        // not on every backtrack.  Unconditional it scanned the whole
+        // constants map per backtrack (thousands of entries on
+        // symbolic-memory problems, tens of thousands of backtracks).
+        let mut popped_any = false;
         while self.level_stack.len() > (level as usize + 1) {
             self.pop_theory_scope();
+            popped_any = true;
         }
         self.processed_count = *self.level_stack.last().unwrap_or(&0);
 
-        // Evict stale bit-vector-constant canonicals whose EUF nodes were
-        // removed by the preceding pop(): after truncation any node index >=
-        // euf.node_count() is invalid, and keeping such an entry would hand a
-        // stale canonical to the next same-value merge.  Evicting forces
-        // re-registration; the constant's *distinctness mark* needs no
-        // eviction – it is keyed by term in the e-graph's symbol-level
-        // registry, which survives pops and rebuilds.
-        let live_nodes = self.euf.node_count();
+        if popped_any {
+            // Evict stale bit-vector-constant canonicals whose EUF nodes were
+            // removed by the preceding pop(): after truncation any node index >=
+            // euf.node_count() is invalid, and keeping such an entry would hand a
+            // stale canonical to the next same-value merge.  Evicting forces
+            // re-registration; the constant's *distinctness mark* needs no
+            // eviction – it is keyed by term in the e-graph's symbol-level
+            // registry, which survives pops and rebuilds.
+            let live_nodes = self.euf.node_count();
 
-        // Evict stale bit-vector-constant canonicals for the same reason.
-        self.interned_bv_constants
-            .retain(|_key, &mut canonical| (canonical as usize) < live_nodes);
+            // Evict stale bit-vector-constant canonicals for the same reason.
+            self.interned_bv_constants
+                .retain(|_key, &mut canonical| (canonical as usize) < live_nodes);
 
-        // Evict stale Boolean canonical nodes
-        if let Some(t) = self.bool_true_node {
-            if (t as usize) >= live_nodes {
-                self.bool_true_node = None;
+            // Evict stale Boolean canonical nodes
+            if let Some(t) = self.bool_true_node {
+                if (t as usize) >= live_nodes {
+                    self.bool_true_node = None;
+                }
             }
-        }
-        if let Some(f) = self.bool_false_node {
-            if (f as usize) >= live_nodes {
-                self.bool_false_node = None;
+            if let Some(f) = self.bool_false_node {
+                if (f as usize) >= live_nodes {
+                    self.bool_false_node = None;
+                }
             }
         }
 
