@@ -2466,13 +2466,13 @@ fn collect_def_candidates(
 
 /// Whether `term` mentions variable `x` (shared-DAG aware, iterative).
 fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
-    let mut seen = rustc_hash::FxHashSet::default();
+    let epoch = manager.fresh_visit_epoch();
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
         if t == x {
             return true;
         }
-        if !seen.insert(t) {
+        if !manager.visit_try_mark(epoch, t) {
             continue;
         }
         if let Some(data) = manager.get(t) {

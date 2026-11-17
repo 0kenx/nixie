@@ -604,10 +604,10 @@ impl Solver {
         let mut sub_total: FxHashMap<TermId, u32> = FxHashMap::default();
         let mut sub_miter: FxHashMap<TermId, u32> = FxHashMap::default();
         {
-            let mut seen: FxHashSet<TermId> = FxHashSet::default();
+            let seen_epoch = manager.fresh_visit_epoch();
             let mut stack: Vec<TermId> = vec![root];
             while let Some(tid) = stack.pop() {
-                if !seen.insert(tid) {
+                if !manager.visit_try_mark(seen_epoch, tid) {
                     continue;
                 }
                 let Some(term) = manager.get(tid) else {
@@ -634,13 +634,15 @@ impl Solver {
                 }
             }
         }
-        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let visit_epoch = manager.fresh_visit_epoch();
+        let mut visited_count = 0usize;
         let mut stack: Vec<TermId> = vec![root];
         while let Some(tid) = stack.pop() {
-            if !visited.insert(tid) {
+            if !manager.visit_try_mark(visit_epoch, tid) {
                 continue;
             }
-            if visited.len() > UNIFIED_LINK_BUDGET {
+            visited_count += 1;
+            if visited_count > UNIFIED_LINK_BUDGET {
                 return false;
             }
             let Some(term) = manager.get(tid) else {

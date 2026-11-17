@@ -40,7 +40,11 @@ pub fn traverse<V: TermVisitor>(
     manager: &TermManager,
     visitor: &mut V,
 ) -> Result<(), TraversalError> {
-    let mut visited = FxHashSet::default();
+    // Epoch-stamped dedup on the manager's shared marks array (see
+    // `TermManager::fresh_visit_epoch`): no per-walk set allocation or
+    // hashing, and concurrent/nested walks coexist (each holds a unique
+    // epoch).
+    let epoch = manager.fresh_visit_epoch();
     let mut stack = vec![(term_id, false)]; // (term_id, post_visit)
 
     while let Some((current_id, is_post)) = stack.pop() {
@@ -59,7 +63,7 @@ pub fn traverse<V: TermVisitor>(
         }
 
         // Avoid revisiting (DAG not tree)
-        if !visited.insert(current_id) {
+        if !manager.visit_try_mark(epoch, current_id) {
             continue;
         }
 
@@ -330,20 +334,20 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
 pub fn collect_subterms(term_id: TermId, manager: &TermManager) -> Vec<TermId> {
     struct Collector {
         subterms: Vec<TermId>,
-        visited: FxHashSet<TermId>,
     }
 
     impl TermVisitor for Collector {
         fn visit_post(&mut self, term_id: TermId, _manager: &TermManager) {
-            if self.visited.insert(term_id) {
-                self.subterms.push(term_id);
-            }
+            // `traverse`'s dedup already guarantees exactly one post-visit
+            // per distinct term (a shared child's re-pre-visit continues
+            // without pushing another post frame), so no second visited
+            // set is needed here — the historical one was dead weight.
+            self.subterms.push(term_id);
         }
     }
 
     let mut collector = Collector {
         subterms: Vec::new(),
-        visited: FxHashSet::default(),
     };
 
     let _ = traverse(term_id, manager, &mut collector);

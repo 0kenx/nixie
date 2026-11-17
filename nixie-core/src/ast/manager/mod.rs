@@ -123,6 +123,16 @@ pub struct TermManager {
     /// manager is not `Sync` — its interner is single-threaded — so plain
     /// interior mutability is sound here).
     pub(super) quantifier_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Epoch-stamped visited marks shared by every DAG walker that asks
+    /// for one ([`TermManager::fresh_visit_epoch`]): one `Vec<u32>`
+    /// indexed by the dense term id, a fresh epoch per walk.  This
+    /// replaces the per-call `FxHashSet` allocation + hashing of every
+    /// hot walker with one array probe (the minigzip-class profile had
+    /// ~30 % of the run in visited-set insert/rehash churn across ~8
+    /// distinct per-assert walkers).  Interior mutability as above (the
+    /// manager is single-threaded by construction).
+    visit_epoch: std::cell::Cell<u32>,
+    visit_marks: std::cell::RefCell<Vec<u32>>,
 }
 
 impl Default for TermManager {
@@ -132,6 +142,41 @@ impl Default for TermManager {
 }
 
 impl TermManager {
+    /// A fresh visited-epoch for a DAG walk (see the `visit_marks` field
+    /// doc).  Epochs are unique per call; the `u32` counter wrapping
+    /// clears the array (a walk that outlives 2³² calls re-marks).
+    #[must_use]
+    pub fn fresh_visit_epoch(&self) -> u32 {
+        let next = self.visit_epoch.get().wrapping_add(1);
+        if next == 0 {
+            // Wrapped: every mark in the array belongs to some old epoch,
+            // so clear them all and restart at 1.
+            self.visit_marks.borrow_mut().fill(0);
+            self.visit_epoch.set(1);
+            1
+        } else {
+            self.visit_epoch.set(next);
+            next
+        }
+    }
+
+    /// Mark `t` with `epoch` and report whether it was *unmarked* (the
+    /// check-and-set every walker's dedup reduces to; one borrow, one
+    /// array probe, no hashing).
+    pub fn visit_try_mark(&self, epoch: u32, t: TermId) -> bool {
+        let idx = t.0 as usize;
+        let mut marks = self.visit_marks.borrow_mut();
+        if idx >= marks.len() {
+            marks.resize(idx + 1, 0);
+        }
+        if marks[idx] == epoch {
+            false
+        } else {
+            marks[idx] = epoch;
+            true
+        }
+    }
+
     /// Create a new term manager
     #[must_use]
     pub fn new() -> Self {
@@ -168,6 +213,8 @@ impl TermManager {
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
             quantifier_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            visit_epoch: std::cell::Cell::new(0),
+            visit_marks: std::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
         };
 
