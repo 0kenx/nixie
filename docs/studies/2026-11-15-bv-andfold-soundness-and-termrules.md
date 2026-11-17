@@ -380,3 +380,26 @@ families at full parity (Noetzli, MCMPC, sage, stp_samples, uclid at
 Full-family serial reference points: Sydr 391/535 vs z3 419; asp
 ingestion+wrapper costs now lean (lean-BV v3), remaining gap = DL
 recognition + ordinary search.
+
+
+## Ninth addendum: epoch-stamped visited marks — LANDED (`e2bee28d`)
+
+The corrected eighth-addendum attribution led here: `TermManager` now
+carries a shared marks array + per-walk epochs; `traverse`, `mentions`
+and the unified census/walk converted; `collect_subterms`' redundant
+own visited set dropped (provably dead: `traverse` post-visits each
+distinct term exactly once).
+
+Measured: counter-identical on the minigzip cell; single-cell timing
+in the noise — the honest decomposition of the ~30 % churn is
+two-thirds *HashMap* bookkeeping inserts (term_to_var, census maps,
+clause registries — real work, not dedup) and one-third walker sets;
+the epoch conversion only addresses the latter.  Serial Sydr 391 →
+395 (+4 boundary crossings).  Full bar green (12 808 tests, one
+load-flaked timeout re-verified clean isolated; parity 171/0/6; gate
+counters 1.000 / wall 0.96).
+
+Remaining ingestion-wall items, in measured order: the HashMap-side
+bookkeeping (architectural: fewer/lazier registries or arena-backed
+maps), the single check-side `solve_equations` pass over meganodes
+(the 2026-09 budget area), and the blast itself.
