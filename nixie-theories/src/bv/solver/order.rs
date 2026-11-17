@@ -197,7 +197,7 @@ impl BvSolver {
         if Self::order_env_disabled() {
             return false;
         }
-        let Some(first) = self.term_to_bv.get(&args[0]) else {
+        let Some(first) = self.slb(args[0]) else {
             return false;
         };
         let width = first.width;
@@ -214,7 +214,7 @@ impl BvSolver {
             manager
                 .get(a)
                 .is_some_and(|t| !matches!(t.kind, TermKind::BitVecConst { .. }))
-                && self.term_to_bv.get(&a).is_some_and(|v| v.width == width)
+                && self.slb(a).is_some_and(|v| v.width == width)
         })
     }
 
@@ -240,7 +240,7 @@ impl BvSolver {
         args: &[TermId],
         manager: &TermManager,
     ) -> bool {
-        let width = self.term_to_bv.get(&args[0]).map_or(0, |v| v.width);
+        let width = self.slb(args[0]).map_or(0, |v| v.width);
         let arg_set: FxHashSet<TermId> = args.iter().copied().collect();
         // Assert-first guard: an equality already pinned between two
         // arguments refutes the pinned-true distinct outright.

@@ -372,8 +372,7 @@ impl BvSolver {
     #[must_use]
     pub fn snapshot_covers(&self, term: TermId) -> bool {
         let known = self.last_sat_model.len();
-        self.term_to_bv
-            .get(&term)
+        self.slb(term)
             .is_some_and(|bv| bv.bits.iter().all(|var| var.index() < known))
     }
 

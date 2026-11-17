@@ -216,8 +216,7 @@ fn get_value_returns_none_for_width_over_64_get_value_big_is_correct() {
     // Manually force bit 0 and bit 99 true, everything else false --
     // exercises the exact `i >= 64` shift that used to panic/wrap.
     let bv = solver
-        .term_to_bv
-        .get(&a)
+        .slb(a)
         .cloned()
         .expect("bv var must exist after new_bv");
     for (i, &var) in bv.bits.iter().enumerate() {
@@ -264,8 +263,7 @@ fn extract_model_equalities_handles_width_over_64() {
     // Force both `a` and `b` to the same 70-bit value (bit 69 set).
     for &term in &[a, b] {
         let bv = solver
-            .term_to_bv
-            .get(&term)
+            .slb(term)
             .cloned()
             .expect("bv var must exist after new_bv");
         for (i, &var) in bv.bits.iter().enumerate() {

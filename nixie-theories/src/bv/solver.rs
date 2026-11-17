@@ -178,8 +178,16 @@ pub struct BvSolver {
     budget_deadline: Option<nixie_time::Instant>,
     /// Total across embedded resets and repair rounds; re-armed explicitly.
     conflicts_spent: u64,
-    /// Term to BV variable mapping
-    term_to_bv: FxHashMap<TermId, BvVar>,
+    /// Term to BV variable mapping — a dense slab indexed by the term id
+    /// (`term_to_bv[term.raw()]`), not a hash map: the blast encoder
+    /// probes this memo for every node of every assertion DAG, and the
+    /// meganode profile showed ~6 % of the whole run inside
+    /// `HashMap::get` probes here.  Slots of never-blasted terms stay
+    /// `None`; generation resets drop entries via `slb_clear`.
+    term_to_bv: Vec<Option<BvVar>>,
+    /// Live entries in `term_to_bv` (kept exact by `slb_put`/`slb_clear`)
+    /// so `has_any_blasting` stays O(1) on the dense slab.
+    blasted_count: usize,
     /// Pending assertions
     assertions: Vec<(TermId, bool)>,
     /// Argument pairs the dispatch path has already asserted *equal* at the
@@ -392,7 +400,8 @@ impl BvSolver {
             budget_max_conflicts: None,
             budget_deadline: None,
             conflicts_spent: 0,
-            term_to_bv: FxHashMap::default(),
+            term_to_bv: Vec::new(),
+            blasted_count: 0,
             assertions: Vec::new(),
             asserted_eq_pairs: FxHashSet::default(),
             order_distinct_argsets: Vec::new(),
@@ -536,7 +545,7 @@ impl BvSolver {
     /// stay behind unreferenced – harmless.)
     pub fn enter_unified(&mut self) {
         self.unified = true;
-        self.term_to_bv.clear();
+        self.slb_clear();
         self.ult_cache.clear();
         self.eq_cache.clear();
         self.opaque_leaves.clear();
@@ -576,7 +585,7 @@ impl BvSolver {
     /// into the embedded instance if it is not itself unified.
     pub fn exit_unified(&mut self) {
         self.unified = false;
-        self.term_to_bv.clear();
+        self.slb_clear();
         self.ult_cache.clear();
         self.eq_cache.clear();
         self.opaque_leaves.clear();
@@ -685,15 +694,14 @@ impl BvSolver {
     /// terms under an external model.
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub fn debug_bv_terms(&self) -> impl Iterator<Item = (TermId, u32, &[nixie_sat::Var])> + '_ {
-        self.term_to_bv
-            .iter()
-            .map(|(t, v)| (*t, v.width, v.bits.as_slice()))
+        self.slb_iter()
+            .map(|(t, v)| (t, v.width, v.bits.as_slice()))
     }
 
     /// Every currently defined bit-vector circuit term, in unspecified order.
     /// Pair with `get_value_big` to inspect values chosen by the circuit.
     pub fn circuit_terms(&self) -> impl Iterator<Item = TermId> + '_ {
-        self.term_to_bv.keys().copied()
+        self.slb_iter().map(|(t, _)| t)
     }
 
     /// Debug-only (worktree instrumentation): Bool nodes with their vars.
@@ -705,7 +713,7 @@ impl BvSolver {
     /// Bits of an already-blasted term (audit tooling).
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub fn debug_bits(&self, term: TermId) -> Option<&[nixie_sat::Var]> {
-        self.term_to_bv.get(&term).map(|v| v.bits.as_slice())
+        self.slb(term).map(|v| v.bits.as_slice())
     }
 
     /// Structural probe for tests: whether `var` is one of the two reserved
@@ -890,10 +898,16 @@ impl BvSolver {
 
     /// Create a new bit vector variable
     pub fn new_bv(&mut self, term: TermId, width: u32) -> &BvVar {
-        self.term_to_bv.entry(term).or_insert_with(|| {
+        if self.slb(term).is_none() {
             let bits: SmallVec<[Var; 32]> = (0..width).map(|_| self.sat.new_var()).collect();
-            BvVar { bits, width }
-        })
+            self.slb_put(term, BvVar { bits, width });
+        }
+        match self.slb(term) {
+            Some(bv) => bv,
+            // The branch above either found the entry or inserted it;
+            // neither path can reach here.
+            None => unreachable!("new_bv entry must exist after insert above"),
+        }
     }
 
     /// Whether no theory scope is open on the embedded solver, i.e. clauses
@@ -909,7 +923,49 @@ impl BvSolver {
     /// Get the BV variable for a term
     #[must_use]
     pub fn get_bv(&self, term: TermId) -> Option<&BvVar> {
-        self.term_to_bv.get(&term)
+        self.slb(term)
+    }
+
+    /// Dense-slab probe: the term's bit-blast entry, if any.
+    fn slb(&self, term: TermId) -> Option<&BvVar> {
+        self.term_to_bv
+            .get(term.raw() as usize)
+            .and_then(|slot| slot.as_ref())
+    }
+
+    /// Dense-slab mutable probe.
+    fn slb_mut(&mut self, term: TermId) -> Option<&mut BvVar> {
+        self.term_to_bv
+            .get_mut(term.raw() as usize)
+            .and_then(|slot| slot.as_mut())
+    }
+
+    /// Dense-slab insert (grows the slab to cover the term id).  All
+    /// writes funnel through here so `blasted_count` stays exact.
+    fn slb_put(&mut self, term: TermId, value: BvVar) {
+        let idx = term.raw() as usize;
+        if idx >= self.term_to_bv.len() {
+            self.term_to_bv.resize(idx + 1, None);
+        }
+        if self.term_to_bv[idx].is_none() {
+            self.blasted_count += 1;
+        }
+        self.term_to_bv[idx] = Some(value);
+    }
+
+    /// Drop every bit-blast entry (generation boundary).  Same role the
+    /// hash map's `clear()` played.
+    fn slb_clear(&mut self) {
+        self.term_to_bv.fill(None);
+        self.blasted_count = 0;
+    }
+
+    /// Dense-slab iteration over live entries, in term-id order.
+    fn slb_iter(&self) -> impl Iterator<Item = (TermId, &BvVar)> {
+        self.term_to_bv
+            .iter()
+            .enumerate()
+            .filter_map(|(i, slot)| slot.as_ref().map(|v| (TermId::new(i as u32), v)))
     }
 
     /// Whether any bit-blasting exists in the current generation (any
@@ -918,7 +974,7 @@ impl BvSolver {
     /// (pure propositional) must not open build windows at all.
     #[must_use]
     pub fn has_circuits(&self) -> bool {
-        !self.term_to_bv.is_empty()
+        self.blasted_count > 0
     }
 
     /// The truth variable a previous circuit build minted for the
@@ -938,7 +994,7 @@ impl BvSolver {
     /// order-encoding network's input wires).
     #[must_use]
     pub fn bv_bits(&self, term: TermId) -> Option<smallvec::SmallVec<[Var; 32]>> {
-        self.term_to_bv.get(&term).map(|v| v.bits.clone())
+        self.slb(term).map(|v| v.bits.clone())
     }
 
     /// Get the current configuration
@@ -966,8 +1022,8 @@ impl BvSolver {
     }
 
     fn binop_bits(&self, a: TermId, b: TermId) -> Option<(BvVar, BvVar)> {
-        let va = self.term_to_bv.get(&a)?.clone();
-        let vb = self.term_to_bv.get(&b)?.clone();
+        let va = self.slb(a)?.clone();
+        let vb = self.slb(b)?.clone();
         (va.width == vb.width).then_some((va, vb))
     }
 
@@ -1093,7 +1149,7 @@ impl BvSolver {
         // folds on it (see [`Sig`]).  A term that already carries signal
         // variables (blasted as a free vector earlier in this scope) keeps
         // them and is pinned the classical way.
-        if let Some(existing) = self.term_to_bv.get(&term) {
+        if let Some(existing) = self.slb(term) {
             if existing.width != width {
                 return false;
             }
@@ -1119,7 +1175,7 @@ impl BvSolver {
                 }
             })
             .collect();
-        self.term_to_bv.insert(term, BvVar { bits, width });
+        self.slb_put(term, BvVar { bits, width });
         true
     }
 
@@ -1130,12 +1186,9 @@ impl BvSolver {
     /// bit-blasted, or when `result` already denotes a bit-vector whose width
     /// is not the sum of the operand widths.
     pub fn concat(&mut self, result: TermId, high: TermId, low: TermId) -> bool {
-        if let (Some(h), Some(l)) = (
-            self.term_to_bv.get(&high).cloned(),
-            self.term_to_bv.get(&low).cloned(),
-        ) {
+        if let (Some(h), Some(l)) = (self.slb(high).cloned(), self.slb(low).cloned()) {
             let result_width = h.width + l.width;
-            if let Some(existing) = self.term_to_bv.get(&result) {
+            if let Some(existing) = self.slb(result) {
                 return existing.width == result_width;
             }
 
@@ -1145,7 +1198,7 @@ impl BvSolver {
             let mut bits: SmallVec<[Var; 32]> = SmallVec::new();
             bits.extend_from_slice(&l.bits);
             bits.extend_from_slice(&h.bits);
-            self.term_to_bv.insert(
+            self.slb_put(
                 result,
                 BvVar {
                     bits,
@@ -1165,13 +1218,13 @@ impl BvSolver {
     /// or the range `[low, high]` does not lie inside it.  An out-of-range
     /// extraction is a malformed term, not a reason to abort the process.
     pub fn extract(&mut self, result: TermId, bv: TermId, high: u32, low: u32) -> bool {
-        if let Some(v) = self.term_to_bv.get(&bv).cloned() {
+        if let Some(v) = self.slb(bv).cloned() {
             if high < low || high >= v.width {
                 return false;
             }
 
             let result_width = high - low + 1;
-            if let Some(existing) = self.term_to_bv.get(&result) {
+            if let Some(existing) = self.slb(result) {
                 // Already blasted: keep the existing bits (the caller may have
                 // constrained them); only a width clash is unencodable.
                 return existing.width == result_width;
@@ -1185,7 +1238,7 @@ impl BvSolver {
             // 512-bit vector) pays a fresh variable plus two clauses per bit
             // for what is a rename.
             let bits: SmallVec<[Var; 32]> = v.bits[low as usize..=(high as usize)].to_vec().into();
-            self.term_to_bv.insert(
+            self.slb_put(
                 result,
                 BvVar {
                     bits,
@@ -1216,10 +1269,7 @@ impl BvSolver {
         let Some(sel) = self.encode_bool_node(cond, manager) else {
             return false;
         };
-        let (vt, ve) = match (
-            self.term_to_bv.get(&then_t).cloned(),
-            self.term_to_bv.get(&else_t).cloned(),
-        ) {
+        let (vt, ve) = match (self.slb(then_t).cloned(), self.slb(else_t).cloned()) {
             (Some(vt), Some(ve)) if vt.width == ve.width => (vt, ve),
             _ => return false,
         };
@@ -1283,9 +1333,8 @@ impl BvSolver {
     /// partially free has no honest concrete value and is omitted.
     pub fn model_bv_values(&self) -> Vec<(TermId, num_bigint::BigUint)> {
         let terms: Vec<TermId> = self
-            .term_to_bv
-            .keys()
-            .copied()
+            .slb_iter()
+            .map(|(t, _)| t)
             .filter(|&term| self.bits_all_determined(term))
             .collect();
         terms
@@ -1316,10 +1365,7 @@ impl BvSolver {
         if let Some(&var) = self.eq_cache.get(&key) {
             return Some(var);
         }
-        let (va, vb) = match (
-            self.term_to_bv.get(&lhs).cloned(),
-            self.term_to_bv.get(&rhs).cloned(),
-        ) {
+        let (va, vb) = match (self.slb(lhs).cloned(), self.slb(rhs).cloned()) {
             (Some(va), Some(vb)) if va.width == vb.width => (va, vb),
             _ => return None,
         };
@@ -1589,7 +1635,7 @@ impl BvSolver {
     /// Whether both terms are bit-blasted bit-vectors of equal width.
     fn both_bv_blasted(&self, l: TermId, r: TermId) -> bool {
         matches!(
-            (self.term_to_bv.get(&l), self.term_to_bv.get(&r)),
+            (self.slb(l), self.slb(r)),
             (Some(a), Some(b)) if a.width == b.width
         )
     }
@@ -1696,7 +1742,7 @@ impl BvSolver {
     /// Returns `false` – encoding nothing – when `a` has not been bit-blasted
     /// or `result` already has a different width.
     pub fn bv_not(&mut self, result: TermId, a: TermId) -> bool {
-        if let Some(va) = self.term_to_bv.get(&a).cloned() {
+        if let Some(va) = self.slb(a).cloned() {
             let Some(r) = self.result_bits(result, va.width) else {
                 return false;
             };
@@ -1783,7 +1829,7 @@ impl BvSolver {
     /// temp-variable construction re-opacified each folded bit into a
     /// pinned variable the next gate could not see through.
     pub fn bv_neg(&mut self, result: TermId, a: TermId) -> bool {
-        if let Some(va) = self.term_to_bv.get(&a).cloned() {
+        if let Some(va) = self.slb(a).cloned() {
             let Some(r) = self.result_bits(result, va.width) else {
                 return false;
             };
@@ -1886,7 +1932,7 @@ impl BvSolver {
             && let Some((va, vb)) = self.binop_bits(a, b)
             && va.width >= self.abstract_mul_width
             && va.width == vb.width
-            && !self.term_to_bv.contains_key(&result)
+            && self.slb(result).is_none()
         {
             return self.abstract_mul(result, a, b);
         }
@@ -2218,7 +2264,7 @@ impl BvSolver {
             && let Some((va, vb)) = self.binop_bits(a, b)
             && va.width >= self.abstract_div_width
             && va.width == vb.width
-            && !self.term_to_bv.contains_key(&result)
+            && self.slb(result).is_none()
         {
             return self.abstract_udiv_urem(result, a, b, false);
         }
@@ -2241,7 +2287,7 @@ impl BvSolver {
             && let Some((va, vb)) = self.binop_bits(a, b)
             && va.width >= self.abstract_div_width
             && va.width == vb.width
-            && !self.term_to_bv.contains_key(&result)
+            && self.slb(result).is_none()
         {
             return self.abstract_udiv_urem(result, a, b, true);
         }
@@ -2263,9 +2309,9 @@ impl BvSolver {
     ) -> bool {
         let width = abs.width;
         let (Some(ra), Some(rb), Some(rr)) = (
-            self.term_to_bv.get(&abs.a).cloned(),
-            self.term_to_bv.get(&abs.b).cloned(),
-            self.term_to_bv.get(&abs.result).cloned(),
+            self.slb(abs.a).cloned(),
+            self.slb(abs.b).cloned(),
+            self.slb(abs.result).cloned(),
         ) else {
             return false;
         };
@@ -2318,7 +2364,7 @@ impl BvSolver {
     /// Returns `false` – encoding nothing – when `a` has not been bit-blasted,
     /// `a` is not `width` bits wide, or `result` already has a different width.
     pub fn bv_shl_const(&mut self, result: TermId, a: TermId, shift: u32, width: u32) -> bool {
-        if let Some(va) = self.term_to_bv.get(&a).cloned() {
+        if let Some(va) = self.slb(a).cloned() {
             if va.width != width {
                 return false;
             }
@@ -2664,10 +2710,14 @@ impl BvSolver {
     /// operation's bits (variables are never re-indexed), so stale entries
     /// are inert.
     fn finish_result(&mut self, result: TermId) {
+        // Field-level slab indexing (not `slb_mut`, which borrows the
+        // whole solver) so the pinning map and constants stay borrowable.
+        let slab_idx = result.raw() as usize;
         if self.unified
             && self.const_flow_enabled
             && !self.const_pinned.is_empty()
-            && let Some(bv) = self.term_to_bv.get_mut(&result)
+            && slab_idx < self.term_to_bv.len()
+            && let Some(bv) = self.term_to_bv[slab_idx].as_mut()
         {
             for bit in bv.bits.iter_mut() {
                 if let Some(&value) = self.const_pinned.get(bit) {
@@ -3515,7 +3565,7 @@ impl BvSolver {
     /// arithmetic theory's value, then to a default of `0`).
     #[must_use]
     pub fn get_value(&self, term: TermId) -> Option<u64> {
-        let bv = self.term_to_bv.get(&term)?;
+        let bv = self.slb(term)?;
         if bv.bits.len() > u64::BITS as usize {
             return None;
         }
@@ -3534,7 +3584,7 @@ impl BvSolver {
     /// [`Self::get_value`]).
     #[must_use]
     pub fn get_value_big(&self, term: TermId) -> Option<BigUint> {
-        let bv = self.term_to_bv.get(&term)?;
+        let bv = self.slb(term)?;
         let mut value = BigUint::ZERO;
         for (i, &var) in bv.bits.iter().enumerate() {
             if self.read_model_bit(var) {
@@ -3596,7 +3646,7 @@ impl BvSolver {
     /// bit-blasted.
     #[must_use]
     pub fn bits_all_determined(&self, term: TermId) -> bool {
-        let Some(bv) = self.term_to_bv.get(&term) else {
+        let Some(bv) = self.slb(term) else {
             return false;
         };
         // In a unified generation the bits belong to the caller's core;
@@ -3729,7 +3779,7 @@ impl Theory for BvSolver {
         let (const_true, const_false) = Self::reserve_const_bits(&mut self.sat);
         self.const_true = const_true;
         self.const_false = const_false;
-        self.term_to_bv.clear();
+        self.slb_clear();
         self.assertions.clear();
         self.context_stack.clear();
         self.ult_cache.clear();
@@ -3773,7 +3823,7 @@ impl Theory for BvSolver {
             &self.last_sat_model
         };
         let mut value_to_terms: FxHashMap<(BigUint, u32), Vec<TermId>> = FxHashMap::default();
-        for (&term, bv_var) in &self.term_to_bv {
+        for (term, bv_var) in self.slb_iter() {
             if bv_var.bits.iter().any(|var| var.index() >= model.len()) {
                 continue;
             }
@@ -3818,8 +3868,8 @@ impl TheoryCombination for BvSolver {
             return true;
         }
         // Check if both terms are relevant to the BV theory
-        let lhs_known = self.term_to_bv.contains_key(&eq.lhs);
-        let rhs_known = self.term_to_bv.contains_key(&eq.rhs);
+        let lhs_known = self.slb(eq.lhs).is_some();
+        let rhs_known = self.slb(eq.rhs).is_some();
 
         if lhs_known && rhs_known {
             // Both terms are BV variables -- enforce bit-level equality
@@ -3862,7 +3912,7 @@ impl TheoryCombination for BvSolver {
     }
 
     fn is_relevant(&self, term: TermId) -> bool {
-        self.term_to_bv.contains_key(&term)
+        self.slb(term).is_some()
     }
 }
 
@@ -3909,7 +3959,7 @@ impl BvSolver {
         let model = &self.last_sat_model;
         let mut value_map: FxHashMap<(BigUint, u32), Vec<TermId>> = FxHashMap::default();
 
-        for (&term, bv_var) in &self.term_to_bv {
+        for (term, bv_var) in self.slb_iter() {
             let mut value = BigUint::ZERO;
             for (i, &var) in bv_var.bits.iter().enumerate() {
                 if model.get(var.index()).is_some_and(|v| v.is_true()) {
