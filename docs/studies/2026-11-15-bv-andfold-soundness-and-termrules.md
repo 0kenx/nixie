@@ -553,3 +553,21 @@ findings recorded.
 Also examined: `PropagationArena::live_clause` (6.2 %) — already a
 tight unsafe arena accessor; the cost is clause-header cache misses in
 the watch scan, an arena-layout architectural item.
+
+
+## Fifteenth addendum: Sydr family re-measurement at `eb704996`
+
+Serial 10 s cap, all 535 files: **decided 395 / timeout 140** (z3:
+419).  Timeout clusters: master/yices ≈ 90 (mutual timeouts — z3 also
+fails these), minigzip 31 (was 39 at campaign start), hdp 8, faad 3.
+The ingestion landings (epoch marks, slab memo, feature-walk gates,
+array/nonlinear memos) show up as boundary-cell stability and the
+profile, but the family count is unchanged from the epoch-marker
+landing — the remaining minigzip/hdp gap is **search-side**: a 10 s
+minigzip cell now spends ~2/3 of its time in SAT propagation/scan/
+live_clause over the blasted circuits, where the CSR flip was already
+measured corpus-negative.  Next honest levers for this family: SAT-core
+architectural items (watch layout, arena locality) or encoding-level
+wins upstream of the blast (the deferral prototype's 5× on BBB-32
+stayed net-negative at −6; a per-class gate remains the recorded
+follow-up).
