@@ -1837,6 +1837,10 @@ fn solve_equations(
     // *before* it (or none), so replaying the list in order under a model
     // reconstructs every eliminated variable's value.
     let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
+    // One memo for the whole call (see `mentions_memo`): the pair terms
+    // are stable across rounds, so every (body, var) walk happens once.
+    let mut mentions_memo_map: rustc_hash::FxHashMap<(TermId, TermId), bool> =
+        rustc_hash::FxHashMap::default();
     for round in 0..MAX_ROUNDS {
         let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
         let rt0 = std::time::Instant::now();
@@ -1860,13 +1864,27 @@ fn solve_equations(
         for (idx, &(a, _)) in pairs.iter().enumerate() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind).cloned() {
                 if idx < define_pair_end
-                    && let Some((v, _)) = var_def_operand(lhs, rhs, manager)
-                        .or_else(|| var_def_operand(rhs, lhs, manager))
+                    && let Some((v, _)) = var_def_operand(lhs, rhs, manager, &mut mentions_memo_map)
+                        .or_else(|| var_def_operand(rhs, lhs, manager, &mut mentions_memo_map))
                 {
                     define_vars.insert(v);
                 }
-                collect_def_candidates(lhs, rhs, &mut defs, &mut conflicted, manager);
-                collect_def_candidates(rhs, lhs, &mut defs, &mut conflicted, manager);
+                collect_def_candidates(
+                    lhs,
+                    rhs,
+                    &mut defs,
+                    &mut conflicted,
+                    manager,
+                    &mut mentions_memo_map,
+                );
+                collect_def_candidates(
+                    rhs,
+                    lhs,
+                    &mut defs,
+                    &mut conflicted,
+                    manager,
+                    &mut mentions_memo_map,
+                );
             }
         }
         for x in &conflicted {
@@ -2064,9 +2082,9 @@ fn solve_equations(
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind) {
                 let lhs = *lhs;
                 let rhs = *rhs;
-                let defines_resolved = var_def_operand(lhs, rhs, manager)
+                let defines_resolved = var_def_operand(lhs, rhs, manager, &mut mentions_memo_map)
                     .is_some_and(|(x, _)| resolved_vars.contains(&x))
-                    || var_def_operand(rhs, lhs, manager)
+                    || var_def_operand(rhs, lhs, manager, &mut mentions_memo_map)
                         .is_some_and(|(x, _)| resolved_vars.contains(&x));
                 if defines_resolved {
                     def_indices.insert(idx);
@@ -2439,17 +2457,18 @@ fn collect_def_candidates(
     defs: &mut rustc_hash::FxHashMap<TermId, TermId>,
     conflicted: &mut rustc_hash::FxHashSet<TermId>,
     manager: &TermManager,
+    mentions_memo_map: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
 ) {
     if let Some(TermKind::And(args)) = manager.get(lhs).map(|t| &t.kind).cloned() {
         for &arg in &args {
             if let Some(TermKind::Eq(l2, r2)) = manager.get(arg).map(|t| &t.kind).cloned() {
-                collect_def_candidates(l2, r2, defs, conflicted, manager);
-                collect_def_candidates(r2, l2, defs, conflicted, manager);
+                collect_def_candidates(l2, r2, defs, conflicted, manager, mentions_memo_map);
+                collect_def_candidates(r2, l2, defs, conflicted, manager, mentions_memo_map);
             }
         }
         return;
     }
-    if let Some((x, t)) = var_def_operand(lhs, rhs, manager)
+    if let Some((x, t)) = var_def_operand(lhs, rhs, manager, mentions_memo_map)
         && !conflicted.contains(&x)
     {
         if let Some(existing) = defs.get(&x) {
@@ -2466,6 +2485,12 @@ fn collect_def_candidates(
 
 /// Whether `term` mentions variable `x` (shared-DAG aware, iterative).
 fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
+    mentions_walk(term, x, manager)
+}
+
+/// The unmemoized walk behind [`mentions`] (and the miss path of
+/// [`mentions_memo`]).
+fn mentions_walk(term: TermId, x: TermId, manager: &TermManager) -> bool {
     let epoch = manager.fresh_visit_epoch();
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
@@ -2480,6 +2505,28 @@ fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
         }
     }
     false
+}
+
+/// Memoized "does `t` mention `x`".  Terms are interned and immutable, so
+/// a `(t, x)` verdict never changes; one `solve_equations` call asks the
+/// same (body, var) pairs up to four times (collect + apply phases, both
+/// orientations, and shared meganode bodies recur across pairs), and each
+/// miss is a full DAG walk of the body — on meganode-scale bodies that was
+/// a measurable slice of a minigzip-class run.  The memo lives for one
+/// `bv_preprocess_assertions` call, exactly the scope over which the
+/// queried terms are stable.
+fn mentions_memo(
+    t: TermId,
+    x: TermId,
+    manager: &TermManager,
+    memo: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
+) -> bool {
+    if let Some(&hit) = memo.get(&(t, x)) {
+        return hit;
+    }
+    let hit = mentions_walk(t, x, manager);
+    memo.insert((t, x), hit);
+    hit
 }
 
 /// Collect, in one DAG walk, which of the `tracked` variables `term`
@@ -2595,7 +2642,12 @@ fn collect_var_mentions(
 
 /// `(x, t)` when `lhs` is an eliminable free variable and `rhs` does not
 /// mention it.
-fn var_def_operand(lhs: TermId, rhs: TermId, manager: &TermManager) -> Option<(TermId, TermId)> {
+fn var_def_operand(
+    lhs: TermId,
+    rhs: TermId,
+    manager: &TermManager,
+    mentions_memo_map: &mut rustc_hash::FxHashMap<(TermId, TermId), bool>,
+) -> Option<(TermId, TermId)> {
     let data = manager.get(lhs)?;
     if !matches!(data.kind, TermKind::Var(_)) {
         return None;
@@ -2604,7 +2656,7 @@ fn var_def_operand(lhs: TermId, rhs: TermId, manager: &TermManager) -> Option<(T
     if !(sort.is_bool() || sort.is_bitvec()) {
         return None;
     }
-    if mentions(rhs, lhs, manager) {
+    if mentions_memo(rhs, lhs, manager, mentions_memo_map) {
         return None;
     }
     Some((lhs, rhs))
