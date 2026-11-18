@@ -730,7 +730,7 @@ impl Solver {
     /// pairwise atoms of a large `distinct` (minted by the `Distinct` encode
     /// arm, not present as sub-terms of the asserted formula) get linked.
     fn collect_unified_constraint_atoms(
-        &self,
+        &mut self,
         manager: &TermManager,
         bv_sorted: &mut Vec<TermId>,
         bv_atoms: &mut Vec<BvAtomToLink>,
@@ -742,13 +742,26 @@ impl Solver {
                 .and_then(|td| manager.sorts.get(td.sort))
                 .is_some_and(|s| s.is_bitvec())
         };
-        for (&var, constraint) in self.var_to_constraint.iter() {
-            let (lhs, rhs) = match constraint {
-                Constraint::Eq(a, b) | Constraint::Diseq(a, b) => (*a, *b),
+        // Incremental sweep: within a generation `var_to_constraint` is
+        // append-only (a user scope ends the generation), and every
+        // per-entry verdict (`is_bv`, `var_to_term`) is immutable, so
+        // entries already examined in this generation yield exactly the
+        // same atoms — and their linkage (via the builder's idempotent
+        // memos) already happened in the earlier sweep that examined them.
+        // Each entry is examined once per generation; the O(all encoded
+        // constraints) rescan per assertion and per check-side relink
+        // round was the quadratic that dominated ASP-class cells (12% of
+        // a duthen-50 run, two sort lookups per constraint per sweep).
+        let this = &*self;
+        let start = this.constraint_sweep_cursor;
+        let pending: &[(Var, Constraint)] = &this.constraint_sweep_pending[start..];
+        for &(var, ref constraint) in pending {
+            let (lhs, rhs) = match *constraint {
+                Constraint::Eq(a, b) | Constraint::Diseq(a, b) => (a, b),
                 Constraint::Lt(a, b)
                 | Constraint::Le(a, b)
                 | Constraint::Gt(a, b)
-                | Constraint::Ge(a, b) => (*a, *b),
+                | Constraint::Ge(a, b) => (a, b),
                 Constraint::BoolApp(_) => continue,
             };
             if !is_bv(lhs) || !is_bv(rhs) {
@@ -756,7 +769,7 @@ impl Solver {
             }
             // The atom term is whatever term the var was created for; only
             // Eq/comparison shapes are linkable through `encode_bool_node`.
-            let Some(&term) = self.var_to_term.get(var.index()) else {
+            let Some(&term) = this.var_to_term.get(var.index()) else {
                 continue;
             };
             let Some(term_data) = manager.get(term) else {
@@ -775,7 +788,7 @@ impl Solver {
             // symbolic-memory inputs and the linear scan measured
             // quadratic (minigzip-class profile: `Iterator::any` +
             // `slice_contains` at 7 %).
-            if self.bv.is_unified_atom(term) || !swept.insert(term) {
+            if this.bv.is_unified_atom(term) || !swept.insert(term) {
                 continue;
             }
             bv_atoms.push(atom);
@@ -791,6 +804,7 @@ impl Solver {
                 bv_sorted.push(rhs);
             }
         }
+        self.constraint_sweep_cursor = self.constraint_sweep_pending.len();
     }
 
     /// Allocate a free bit-vector for `term` in whichever instance the
@@ -1047,6 +1061,10 @@ impl Solver {
         if self.bv_unified {
             self.bv_unified = false;
             self.bv.exit_unified();
+            // The ended generation's sweeps are done; the next generation
+            // re-examines every still-registered constraint exactly as the
+            // pre-cursor rescan did.
+            self.constraint_sweep_cursor = 0;
         }
     }
 

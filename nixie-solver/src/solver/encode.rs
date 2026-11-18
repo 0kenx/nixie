@@ -295,8 +295,16 @@ impl Solver {
     /// being provably `unsat` after such a scope).  Recording only the first
     /// write keeps the trail entry paired with the scope that owns the fact.
     pub(super) fn record_constraint(&mut self, var: Var, constraint: Constraint) {
-        if self.var_to_constraint.insert(var, constraint).is_none() {
+        if self
+            .var_to_constraint
+            .insert(var, constraint.clone())
+            .is_none()
+        {
             self.trail.push(TrailOp::ConstraintAdded { var });
+            // Journal for the unified sweep cursor (see
+            // `collect_unified_constraint_atoms`): first registration only —
+            // a repeat write keeps the original entry and needs no re-sweep.
+            self.constraint_sweep_pending.push((var, constraint));
         }
     }
 

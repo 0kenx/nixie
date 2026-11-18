@@ -319,6 +319,19 @@ pub struct Solver {
     pub(super) var_to_term: Vec<TermId>,
     /// SAT variable to theory constraint mapping
     pub(super) var_to_constraint: FxHashMap<Var, Constraint>,
+    /// Append-only journal of first-time constraint registrations, in
+    /// registration order, driving the unified link pass's incremental
+    /// constraint sweep (see `collect_unified_constraint_atoms`): the sweep
+    /// keeps a cursor and only examines entries it has not seen in the
+    /// current generation, so per-assertion and per-check-round cost is
+    /// O(new constraints) instead of O(all encoded constraints).  Sound
+    /// because a generation admits no user scopes (`var_to_constraint` is
+    /// append-only within one), and `is_bv`/`var_to_term` verdicts never
+    /// change retroactively; the cursor resets when a generation ends.
+    pub(super) constraint_sweep_pending: Vec<(Var, Constraint)>,
+    /// How far into `constraint_sweep_pending` the current generation's
+    /// sweeps have progressed.
+    pub(super) constraint_sweep_cursor: usize,
     /// SAT variable to parsed arithmetic constraint mapping
     pub(super) var_to_parsed_arith: FxHashMap<Var, ParsedArithConstraint>,
     /// Current logic
@@ -1325,6 +1338,8 @@ impl Solver {
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
             var_to_constraint: FxHashMap::default(),
+            constraint_sweep_pending: Vec::new(),
+            constraint_sweep_cursor: 0,
             var_to_parsed_arith: FxHashMap::default(),
             logic: None,
             assertions: Vec::new(),
