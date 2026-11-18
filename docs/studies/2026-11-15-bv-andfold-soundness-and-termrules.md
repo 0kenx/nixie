@@ -502,3 +502,25 @@ Remaining assert-side blocks (mg6 profile): genuine gate construction
 `bv_preprocess` cascade 11 % (solve_equations 9.4 % within its budget),
 and the SAT kernel (propagate 15.7 %, watch-take 10.2 % — the CSR flip
 was measured corpus-negative 2026-09-20, not retried).
+
+
+## Thirteenth addendum: two more memoized detection walks (`cf0d3919`)
+
+mg7 profile: `register_ground_instance_root`'s array scan (1.7 %, every
+assert) and `term_is_nonlinear` (3.4 % — the check-side NIA detection
+rescans every assertion) joined the feature-walk family.  Both now
+delegate to new manager memos (`contains_array_sort`,
+`contains_nonlinear_mul` — same shape as `contains_quantifier`).  The
+NIA scan could NOT be flag-gated soundly (a `Mul` can hide inside an
+unencoded quantifier body, outside `arith_terms`), so the memo route
+was chosen over the cheaper-looking `arith_terms.is_empty()` gate.
+The MBQI `collect_ground_terms` walk (1.7 %) was examined and left
+alone: gating it on quantifier absence changes the candidate pool if a
+quantifier arrives later — a semantic delta needing a replay proof,
+not worth 1.7 %.
+
+Measured: counter-identical on minigzip/BBB-32/QF_NIA/QF_LIA cells;
+**stratified-sample matched back-to-back A/B 148 = 148, zero flips** —
+the walk cost left the profile but no boundary cell moved.  Process
+note recorded: single-arm 170-sample readings across one day spanned
+148–150 under varying load; only matched pairs are decision-grade.
