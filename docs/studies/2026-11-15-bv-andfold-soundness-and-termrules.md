@@ -475,3 +475,30 @@ see AGENTS.md) eliminated them.  (2) A counter-identity "DIFFER"
 against `precompile/7a87764d` was a phantom — another agent's cleanup
 had deleted that baseline; against the surviving 2698d1f4 arm all four
 probe cells are bit-identical.
+
+
+## Twelfth addendum: per-assert feature-walk gates — LANDED (`d9b5ae92`)
+
+The mg4 profile (post-slab) re-ranked the assert-side residual: four
+per-assert *feature-detection* walks — quantifier registration (2.8 %),
+quantifier guarding (1.6 %+1.6 %), set/bag survey gate (1.9 %), array
+marking (1.2 %), ite gate (1.3 %) — ran unconditionally per assertion
+with fresh visited sets on quantifier-free, array-free input.  All now
+share memoized negatives (per-node subtree skips on the existing
+`contains_quantifier`; two new manager memos for set/bag and ite; a
+solver-owned `array_free_memo`; the airtight `next_skolem_id == 0`
+no-skolems gate — every minting path seeds from that counter and the
+reserved `\nixie.` prefix is unwritable by users).
+
+Measured: counter-identical (minigzip, BBB-32); the four walk sites
+now share one linear pass (assert-side 684→663 samples); the residual
+is inherent per-new-node checking — minigzip assertions share leaves
+and define-fun bodies, and every NEW node must be seen once.
+Stratified 170-sample serial **148 → 150 (z3: 146)**.  Full bar green
+(12 810 / parity 171-0-6 / gate PASS).
+
+Remaining assert-side blocks (mg6 profile): genuine gate construction
+(`encode_bv_term_recursive` ≈ 11 %), `elim_uncnstr` 4 %, the check-side
+`bv_preprocess` cascade 11 % (solve_equations 9.4 % within its budget),
+and the SAT kernel (propagate 15.7 %, watch-take 10.2 % — the CSR flip
+was measured corpus-negative 2026-09-20, not retried).
