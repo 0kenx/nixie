@@ -524,3 +524,32 @@ Measured: counter-identical on minigzip/BBB-32/QF_NIA/QF_LIA cells;
 the walk cost left the profile but no boundary cell moved.  Process
 note recorded: single-arm 170-sample readings across one day spanned
 148–150 under varying load; only matched pairs are decision-grade.
+
+
+## Fourteenth addendum: on_backtrack's shadow trail — examined, left alone
+
+mg7 shows `TheoryCallback::on_backtrack` at 7.4 %.  Decomposition: the
+`.any(|a| a.level > level)` precheck plus the swap-removal loop are
+both O(trail) per pruning backtrack, and the trail carries a large
+level-0 prefix on symbolic-memory cells.  Two cheaper shapes were
+considered and rejected on semantics:
+
+- **Suffix truncation** (the >L entries as a contiguous tail): the
+  trail is NOT level-sorted — `on_assignment`'s in-place update path
+  (`assignment_trail[index] = atom` on re-assignment) refreshes an
+  existing entry's level without moving its position, so position ≠
+  level.
+- **Per-level buckets** (drop buckets > L wholesale): changes
+  iteration order — the arith replay (theory_manager 3080) and the
+  scope replay (1310) iterate the flat trail, and the replay sequence
+  is trajectory-defining.
+
+A max-level watermark would make only the no-op precheck O(1) (the
+removal loop still scans); measured shape of CDCL backtracks (to the
+assertion level, nearly always below) means the precheck fires true
+almost always, so the watermark buys little.  Left as-is with the
+findings recorded.
+
+Also examined: `PropagationArena::live_clause` (6.2 %) — already a
+tight unsafe arena accessor; the cost is clause-header cache misses in
+the watch scan, an arena-layout architectural item.
