@@ -615,6 +615,16 @@ pub(crate) struct TheoryManager<'a> {
     /// SAT core and rebuild theory state soundly rather than trust the stale
     /// incremental state.
     assignment_trail: Vec<TrailAtom>,
+    /// Per-entry levels of `assignment_trail` in lockstep (same indices) —
+    /// a parallel u32 array so `on_backtrack`'s "first entry above level"
+    /// scan reads contiguous u32s instead of striding through 12-byte
+    /// atoms.  Measured on the ASP class (duthen-50): 5.7G scan units per
+    /// run made on_backtrack the top theory-layer block (17.7 %).
+    assignment_trail_levels: Vec<u32>,
+    /// Upper bound on the highest level in `assignment_trail` (raised on
+    /// push/refresh, tightened to the prune target on backtrack) so the
+    /// 38 % of backtracks with nothing above the target are O(1).
+    assignment_trail_max_level: u32,
     /// Map from a theory variable to its index in `assignment_trail`, for O(1)
     /// flip detection.  Rebuilt whenever the trail is truncated on backtrack.
     ///
@@ -818,6 +828,8 @@ impl<'a> TheoryManager<'a> {
             assigned_pol_cur: 1,
             current_level: 0,
             assignment_trail: Vec::new(),
+            assignment_trail_levels: Vec::new(),
+            assignment_trail_max_level: 0,
             trail_index: Vec::new(),
             assigned_level: Vec::new(),
             tautological_reasons: FxHashSet::default(),
@@ -4715,10 +4727,18 @@ impl TheoryCallback for TheoryManager<'_> {
                     level: self.current_level,
                 };
                 match self.trail_idx_of(var) {
-                    Some(index) => self.assignment_trail[index] = atom,
+                    Some(index) => {
+                        self.assignment_trail[index] = atom;
+                        self.assignment_trail_levels[index] = atom.level;
+                        self.assignment_trail_max_level =
+                            self.assignment_trail_max_level.max(atom.level);
+                    }
                     None => {
                         let index = self.assignment_trail.len();
                         self.assignment_trail.push(atom);
+                        self.assignment_trail_levels.push(atom.level);
+                        self.assignment_trail_max_level =
+                            self.assignment_trail_max_level.max(atom.level);
                         self.trail_idx_set(var, index);
                     }
                 }
@@ -4745,6 +4765,9 @@ impl TheoryCallback for TheoryManager<'_> {
                         is_positive,
                         level: self.current_level,
                     };
+                    self.assignment_trail_levels[idx] = self.current_level;
+                    self.assignment_trail_max_level =
+                        self.assignment_trail_max_level.max(self.current_level);
                 }
                 None => {
                     let idx = self.assignment_trail.len();
@@ -4753,6 +4776,9 @@ impl TheoryCallback for TheoryManager<'_> {
                         is_positive,
                         level: self.current_level,
                     });
+                    self.assignment_trail_levels.push(self.current_level);
+                    self.assignment_trail_max_level =
+                        self.assignment_trail_max_level.max(self.current_level);
                     self.trail_idx_set(var, idx);
                 }
             }
@@ -4801,6 +4827,9 @@ impl TheoryCallback for TheoryManager<'_> {
                     is_positive,
                     level: self.current_level,
                 };
+                self.assignment_trail_levels[idx] = self.current_level;
+                self.assignment_trail_max_level =
+                    self.assignment_trail_max_level.max(self.current_level);
                 self.processed_count += 1;
                 self.statistics.theory_propagations += 1;
 
@@ -4853,6 +4882,9 @@ impl TheoryCallback for TheoryManager<'_> {
                     is_positive,
                     level: self.current_level,
                 });
+                self.assignment_trail_levels.push(self.current_level);
+                self.assignment_trail_max_level =
+                    self.assignment_trail_max_level.max(self.current_level);
                 self.trail_idx_set(var, idx);
             }
         }
@@ -4942,32 +4974,57 @@ impl TheoryCallback for TheoryManager<'_> {
         // clear the corresponding `assigned_level` slots in the same pass
         // (their key set is exactly the set of shadow-trail vars).
         self.current_level = level;
-        if self.assignment_trail.iter().any(|a| a.level > level) {
-            let mut i = 0;
-            while i < self.assignment_trail.len() {
-                if self.assignment_trail[i].level > level {
-                    let removed_var = self.assignment_trail[i].var;
-                    let last = self.assignment_trail.pop();
-                    if let Some(t) = last
-                        && i < self.assignment_trail.len()
-                    {
-                        // The popped tail entry moved into slot `i`; fix its index.
-                        self.assignment_trail[i] = t;
-                        self.trail_idx_set(t.var, i);
+        // O(1) no-op skip: the watermark is an exact upper bound (raised on
+        // push/refresh, tightened to the prune target here), so the scan +
+        // prune run only when something actually sits above `level`.
+        // Measured on the ASP class (duthen-50): 38 % of backtracks are
+        // no-ops that previously scanned the whole trail, and the scan
+        // itself (5.7G units/run over 12-byte atoms) was 99 % of
+        // on_backtrack's cost — removals were 39M units.
+        if self.assignment_trail_max_level > level {
+            // First entry above `level` via the contiguous parallel levels
+            // array (a bare u32 scan).  The removal loop starts there:
+            // [0, start) is provably all <= level, so skipping it is
+            // behavior-identical to the historical scan from index 0 —
+            // same entries visited beyond `start`, same swap-removals,
+            // same resulting arrangement.
+            if let Some(mut i) = self.assignment_trail_levels.iter().position(|&l| l > level) {
+                while i < self.assignment_trail.len() {
+                    debug_assert_eq!(
+                        self.assignment_trail_levels[i], self.assignment_trail[i].level,
+                        "levels array out of lockstep"
+                    );
+                    if self.assignment_trail[i].level > level {
+                        let removed_var = self.assignment_trail[i].var;
+                        let last = self.assignment_trail.pop();
+                        let last_level = self.assignment_trail_levels.pop();
+                        if let (Some(t), Some(tl)) = (last, last_level)
+                            && i < self.assignment_trail.len()
+                        {
+                            // The popped tail entry moved into slot `i`; fix its
+                            // index and its parallel-levels slot.
+                            self.assignment_trail[i] = t;
+                            self.assignment_trail_levels[i] = tl;
+                            self.trail_idx_set(t.var, i);
+                        }
+                        // Invalidate the removed var's own index unconditionally –
+                        // it is stale whether the removed entry was the tail (slot
+                        // gone) or was backfilled (slot now belongs to `t`).
+                        if let Some(slot) = self.trail_index.get_mut(removed_var.index()) {
+                            *slot = u32::MAX;
+                        }
+                        if let Some(slot) = self.assigned_level.get_mut(removed_var.index()) {
+                            *slot = 0;
+                        }
+                    } else {
+                        i += 1;
                     }
-                    // Invalidate the removed var's own index unconditionally –
-                    // it is stale whether the removed entry was the tail (slot
-                    // gone) or was backfilled (slot now belongs to `t`).
-                    if let Some(slot) = self.trail_index.get_mut(removed_var.index()) {
-                        *slot = u32::MAX;
-                    }
-                    if let Some(slot) = self.assigned_level.get_mut(removed_var.index()) {
-                        *slot = 0;
-                    }
-                } else {
-                    i += 1;
                 }
             }
+            // Everything remaining is <= level by the loop's contract (or
+            // the scan found nothing and the watermark was merely
+            // conservative), so the watermark tightens exactly.
+            self.assignment_trail_max_level = level;
         }
 
         // Pop EUF, Arith, and BV states if needed.  Each pop also drops the

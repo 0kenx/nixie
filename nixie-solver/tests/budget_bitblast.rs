@@ -382,8 +382,17 @@ fn two_checks_under_one_timeout_are_both_bounded() {
     // then say nothing about it. The extra assertion changes the goal
     // fingerprint; the propagation growth below is what proves the second check
     // really searched.
-    let prelude = "(set-logic QF_BV)\n(set-option :timeout 100)\n";
-    let one = run_script_measured(&mul_vc("(set-option :timeout 100)\n"));
+    // A *conflicts* budget, not a wall timeout, keeps this test load-robust:
+    // under a wall budget the propagation counts are machine-load-dependent
+    // and the growth assertion below flaked on shared machines (observed
+    // 2026-11-16 and 2026-11-17 at load 19-30; the counter-based budget
+    // makes both runs deterministic — the propagations comparison then
+    // measures the solver, not the load).  The budget value is calibrated:
+    // large enough that a bounded check stays well inside it in wall time
+    // (the ceiling assertion below still guards runaway runs) and small
+    // enough that neither check decides (both must answer `unknown`).
+    let prelude = "(set-logic QF_BV)\n(set-option :max-conflicts 400)\n";
+    let one = run_script_measured(&mul_vc("(set-option :max-conflicts 400)\n"));
     assert_eq!(
         verdicts(&one.output),
         vec![SolverResult::Unknown],
@@ -395,6 +404,7 @@ fn two_checks_under_one_timeout_are_both_bounded() {
         "{prelude}{MUL_VC}\n(assert (bvult a #x00000000ffffffff))\n(check-sat)\n(get-info \
          :reason-unknown)"
     );
+
     let two = run_script_measured(&two_script);
     assert_eq!(
         verdicts(&two.output),
