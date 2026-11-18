@@ -130,6 +130,11 @@ pub struct TermManager {
     pub(super) setbag_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape, for `Ite` nodes (see `contains_ite`).
     pub(super) ite_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Same shape, for array-sorted subterms (see `contains_array_sort`).
+    pub(super) array_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Same shape, for nonlinear arith products (see
+    /// `contains_nonlinear_mul`).
+    pub(super) nonlinear_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
     /// Epoch-stamped visited marks shared by every DAG walker that asks
     /// for one ([`TermManager::fresh_visit_epoch`]): one `Vec<u32>`
     /// indexed by the dense term id, a fresh epoch per walk.  This
@@ -222,6 +227,8 @@ impl TermManager {
             quantifier_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             setbag_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             ite_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            array_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            nonlinear_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             visit_epoch: std::cell::Cell::new(0),
             visit_marks: std::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
@@ -367,6 +374,93 @@ impl TermManager {
         }
         drop(cache_now);
         self.ite_free_cache
+            .borrow_mut()
+            .extend(visited.iter().copied());
+        false
+    }
+
+    /// Does `term`'s DAG contain an array-sorted subterm?  Memoized like
+    /// [`Self::contains_quantifier`] (see `array_free_cache`); turns the
+    /// per-assert ground-instance registration's array scan into a lookup
+    /// on shared meganode prefixes.
+    #[must_use]
+    pub fn contains_array_sort(&self, term: TermId) -> bool {
+        if self.array_free_cache.borrow().contains(&term) {
+            return false;
+        }
+        let cache_now = self.array_free_cache.borrow();
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            if cache_now.contains(&id) {
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(data) = self.get(id) else {
+                continue;
+            };
+            if self
+                .sorts
+                .get(data.sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Array { .. }))
+            {
+                return true;
+            }
+            for child in get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        drop(cache_now);
+        self.array_free_cache
+            .borrow_mut()
+            .extend(visited.iter().copied());
+        false
+    }
+
+    /// Does `term`'s DAG contain a nonlinear arith product — a `Mul`
+    /// with at least two non-constant operands?  Memoized like
+    /// [`Self::contains_quantifier`] (see `nonlinear_free_cache`).  The
+    /// check-side NIA detection rescans every assertion otherwise.
+    #[must_use]
+    pub fn contains_nonlinear_mul(&self, term: TermId) -> bool {
+        if self.nonlinear_free_cache.borrow().contains(&term) {
+            return false;
+        }
+        let cache_now = self.nonlinear_free_cache.borrow();
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            if cache_now.contains(&id) {
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(data) = self.get(id) else {
+                continue;
+            };
+            if let TermKind::Mul(args) = &data.kind {
+                let nonconst = args
+                    .iter()
+                    .filter(|a| {
+                        !matches!(
+                            self.get(**a).map(|d| &d.kind),
+                            Some(TermKind::IntConst(_)) | Some(TermKind::RealConst(_))
+                        )
+                    })
+                    .count();
+                if nonconst >= 2 {
+                    return true;
+                }
+            }
+            for child in get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        drop(cache_now);
+        self.nonlinear_free_cache
             .borrow_mut()
             .extend(visited.iter().copied());
         false

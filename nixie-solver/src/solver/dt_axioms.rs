@@ -354,24 +354,13 @@ impl Solver {
         if self.ground_instance_roots.contains(&term) {
             return;
         }
-        let mut stack = vec![term];
-        let mut visited = FxHashSet::default();
-        let mut has_arrays = false;
-        while let Some(current) = stack.pop() {
-            if !visited.insert(current) {
-                continue;
-            }
-            if let Some(node) = manager.get(current) {
-                if matches!(
-                    manager.sorts.get(node.sort).map(|s| &s.kind),
-                    Some(SortKind::Array { .. })
-                ) {
-                    has_arrays = true;
-                    break;
-                }
-                stack.extend(nixie_core::ast::traversal::get_children(&node.kind));
-            }
-        }
+        // Array-sortedness via the manager's memoized walk (same
+        // reachability semantics as the previous early-break scan;
+        // completed negative traversals cache every visited subterm, so
+        // sibling assertions sharing a meganode prefix stop re-walking
+        // it — the unmemoized scan was a per-assert cost on every
+        // array-free workload).
+        let has_arrays = manager.contains_array_sort(term);
         if has_arrays
             || (manager.sorts.has_datatypes() && scan_datatype_terms(&[term], manager).is_some())
         {

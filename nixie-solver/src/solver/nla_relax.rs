@@ -145,28 +145,10 @@ pub(super) fn term_is_integer_sorted_pub(term: TermId, manager: &TermManager) ->
 /// module owns the original; this copy keeps the ungated dispatch site free
 /// of the feature).
 fn term_is_nonlinear(term: TermId, manager: &TermManager) -> bool {
-    let mut stack = vec![term];
-    let mut seen = rustc_hash::FxHashSet::default();
-    while let Some(t) = stack.pop() {
-        if !seen.insert(t) {
-            continue;
-        }
-        let Some(td) = manager.get(t) else { continue };
-        if let TermKind::Mul(args) = &td.kind {
-            let nonconst = args
-                .iter()
-                .filter(|a| {
-                    !matches!(
-                        manager.get(**a).map(|d| &d.kind),
-                        Some(TermKind::IntConst(_)) | Some(TermKind::RealConst(_))
-                    )
-                })
-                .count();
-            if nonconst >= 2 {
-                return true;
-            }
-        }
-        stack.extend(nixie_core::ast::traversal::get_children(&td.kind));
-    }
-    false
+    // Delegates to the manager's memoized `contains_nonlinear_mul`
+    // (identical predicate: a `Mul` with ≥ 2 non-constant operands
+    // anywhere in the DAG).  The check-side NIA detection rescans every
+    // assertion with this predicate; memoized negative traversals (with
+    // per-node subtree skips) turn repeat scans into lookups.
+    manager.contains_nonlinear_mul(term)
 }
