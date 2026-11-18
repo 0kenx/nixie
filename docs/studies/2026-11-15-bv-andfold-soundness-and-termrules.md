@@ -618,3 +618,31 @@ duthen-57 8.8 → 7.2 s stable; counter-identical on four probe cells;
 full bar green.  duthen-50 still exceeds the 10 s cap — next tiers for
 it: on_backtrack 17.7 % (fourteenth addendum's constraints stand) and
 the SAT kernel.
+
+
+## Eighteenth addendum: on_backtrack's scan wall — instrumented, then fixed (`d5f9c998`)
+
+The fourteenth addendum left on_backtrack alone on sortedness grounds;
+new instrumentation on duthen-50 changed the picture: 74k backtracks ×
+76k-entry trail, **5.7G scan units vs 39M removal units** — the scan
+was 99 % of the cost, and 38 % of backtracks were no-ops.  The landing
+needs no sortedness assumption: a max-level watermark (O(1) no-ops), a
+parallel per-entry u32 levels array (contiguous boundary scan,
+lockstep-guarded at all six mutation sites), and starting the removal
+loop at the `position()` boundary ([0, start) is provably ≤ level).
+Measured: duthen-50 19.3–29.1 s → 13.1–13.6 s under matched load;
+counter-identical on four probe cells.
+
+Also: budget_bitblast's two-checks test was hardened from a wall
+budget (`:timeout 100`) to a counter budget (`:max-conflicts 400`) —
+its growth assertion flaked twice on this shared machine; the counter
+form proves the same property deterministically and 5× faster.
+
+**Process note (gate):** one gate run FAILed on a verdict mismatch
+that reproduced as `base=none` — a load-storm timeout of the *baseline
+arm* at a near-cap cell (WS_500 takes 86–101 s against the 150 s cap
+at load 40+).  Direct 3×3 reruns: both arms `sat`, candidate faster;
+clean gate rerun green (counters 1.000, wall 1.04).  Near-cap gate
+cells are load-sensitive in BOTH arms; a `base=none` mismatch with
+matching counters elsewhere is an environmental signature, but it
+still stops the landing until directly reproduced — as it did here.
