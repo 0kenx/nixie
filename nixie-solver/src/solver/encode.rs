@@ -2465,7 +2465,29 @@ impl Solver {
         // refuting instance for a sibling quantifier (the jain/Ultimate
         // `not (exists v. 2v+1 = y)` class).  Collecting here covers every
         // rewrite, not just the nested shape.
-        self.collect_skolem_candidates(term, manager);
+        //
+        // Quantifier-free assertion: the walk below can only register or
+        // notice quantifiers, of which there are none — at most the
+        // Skolem-candidate collection above still matters (candidates can
+        // sit in a quantifier-free term that references an earlier
+        // rewrite's witnesses).  Both halves are skipped when they are
+        // provably empty: no quantifier in the term (the memoized
+        // `contains_quantifier` — completed negative traversals cache
+        // every visited subterm, with per-node subtree skips — makes this
+        // a lookup after the first assertion over a shared meganode
+        // prefix), and no Skolem symbol has ever been minted (every
+        // minting path seeds from `next_skolem_id`; 0 ⇒ no sk!-named term
+        // exists anywhere, and users cannot write the reserved
+        // `\nixie.` prefix).  Without these gates a quantifier-free
+        // workload paid two full DAG walks per assertion (the minigzip
+        // profile showed ~3% of the run here finding nothing).
+        let may_have_skolems = self.next_skolem_id > 0;
+        if !manager.contains_quantifier(term) {
+            if may_have_skolems {
+                self.collect_skolem_candidates(term, manager);
+            }
+            return;
+        }
         // Three-valued visit purpose: quantifiers reachable down the
         // unconditionally-asserted spine get *registered* (or rewritten away
         // before this walk ever sees them); quantifiers anywhere else are
@@ -3662,47 +3684,22 @@ impl Solver {
     /// its composition on assertions that carry the structure it feeds
     /// on; every other goal skips it outright.
     fn subtree_has_ite(&self, term: TermId, manager: &TermManager) -> bool {
-        let mut stack = vec![term];
-        let mut seen: FxHashSet<TermId> = FxHashSet::default();
-        while let Some(t) = stack.pop() {
-            if !seen.insert(t) {
-                continue;
-            }
-            let Some(data) = manager.get(t) else { continue };
-            if matches!(data.kind, TermKind::Ite(..)) {
-                return true;
-            }
-            for child in nixie_core::ast::traversal::get_children(&data.kind) {
-                stack.push(child);
-            }
-        }
-        false
+        // Delegates to the manager's memoized `contains_ite` (completed
+        // negative traversals cache every visited subterm, so sibling
+        // assertions sharing a meganode prefix stop re-walking it — the
+        // local walk below was the per-assert cost on QF_BV-class input).
+        manager.contains_ite(term)
     }
 
     /// Whether any subterm of `term` has a set- or bag-sorted type.
     /// Explicit-stack walk with a `seen` memo (linear in the term's unique
     /// DAG nodes); used to gate the per-assertion set/bag survey.
     fn subtree_has_set_or_bag_sort(&self, term: TermId, manager: &TermManager) -> bool {
-        let mut stack = vec![term];
-        let mut seen: FxHashSet<TermId> = FxHashSet::default();
-        while let Some(t) = stack.pop() {
-            if !seen.insert(t) {
-                continue;
-            }
-            let Some(data) = manager.get(t) else { continue };
-            if manager.sorts.get(data.sort).is_some_and(|s| {
-                matches!(
-                    s.kind,
-                    nixie_core::SortKind::Set(_) | nixie_core::SortKind::Bag(_)
-                )
-            }) {
-                return true;
-            }
-            for child in nixie_core::ast::traversal::get_children(&data.kind) {
-                stack.push(child);
-            }
-        }
-        false
+        // Delegates to the manager's memoized `contains_set_or_bag_sort`
+        // (same shape as `contains_quantifier`: negative traversals cache
+        // every visited subterm — the per-assert survey gate becomes a
+        // set lookup after the first assertion over a shared prefix).
+        manager.contains_set_or_bag_sort(term)
     }
 
     /// The bag-sorted equality atoms the *user* wrote: in this term and in

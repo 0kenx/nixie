@@ -245,22 +245,12 @@ fn binder_names(term: TermId, manager: &TermManager) -> FxHashSet<Spur> {
 
 /// Whether `term` has a `Forall` / `Exists` sub-term (itself included).
 pub(crate) fn contains_quantifier(term: TermId, manager: &TermManager) -> bool {
-    let mut stack: Vec<TermId> = vec![term];
-    let mut visited: FxHashSet<TermId> = FxHashSet::default();
-
-    while let Some(current) = stack.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
-            continue;
-        };
-        if matches!(kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
-            return true;
-        }
-        stack.extend(get_children(&kind));
-    }
-    false
+    // Delegates to the manager's memoized query (identical semantics:
+    // finds Forall/Exists anywhere in the DAG; negative traversals cache
+    // every visited subterm with per-node subtree skips).  The local
+    // unmemoized walk re-walked shared meganode prefixes once per
+    // assertion per call site.
+    manager.contains_quantifier(term)
 }
 
 /// One quantifier's ground expansion, or `None` when it is outside the

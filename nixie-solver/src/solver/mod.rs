@@ -748,6 +748,12 @@ pub struct Solver {
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
     pub(super) has_array_ops: bool,
+    /// Per-solver memo of terms *proven* free of array operations
+    /// (`Select`/`Store`/`array_sorted`), so `mark_array_ops`'s per-assert
+    /// walk skips proven subtrees instead of re-walking every shared
+    /// meganode prefix (same shape as `blastable_memo`; solver-owned
+    /// because TermIds are manager-relative).
+    pub(super) array_free_memo: std::cell::RefCell<rustc_hash::FxHashSet<TermId>>,
     /// Shared budget for independent model certificates.
     pub(super) certified_array_model: Option<FxHashMap<TermId, TermId>>,
     completion_work: std::sync::Arc<array_completion_certify::CompletionWork>,
@@ -1406,6 +1412,7 @@ impl Solver {
             ff_terms_unconstrained: false,
             ff_dispatch_answered: false,
             has_array_ops: false,
+            array_free_memo: std::cell::RefCell::new(rustc_hash::FxHashSet::default()),
             certified_array_model: None,
             completion_work: std::sync::Arc::default(),
             replaced_candidate: None,

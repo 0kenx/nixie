@@ -178,6 +178,13 @@ pub(crate) fn guard_conditional_quantifiers(
     manager: &mut TermManager,
     next_skolem_id: &mut u64,
 ) -> Option<Guarded> {
+    // Quantifier-free term: there is nothing to guard (the walk's only
+    // product is guards *around* quantifiers).  Memoized negative — see
+    // `TermManager::contains_quantifier`; without the gate every
+    // assertion of a quantifier-free workload paid a full DAG walk here.
+    if !manager.contains_quantifier(term) {
+        return None;
+    }
     guard_quantifiers(term, manager, next_skolem_id, false)
 }
 

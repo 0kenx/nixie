@@ -115,9 +115,17 @@ impl Solver {
         if self.has_array_ops {
             return;
         }
+        // Proven-free subtree skipping (see `array_free_memo`): a node
+        // whose completed walk found no array op makes its whole subtree
+        // skippable, so the first assertion over a shared meganode prefix
+        // pays the walk and its siblings look it up.
+        let proven = self.array_free_memo.borrow();
         let mut stack = vec![root];
         let mut seen = FxHashSet::default();
         while let Some(term) = stack.pop() {
+            if proven.contains(&term) {
+                continue;
+            }
             if !seen.insert(term) {
                 continue;
             }
@@ -135,6 +143,14 @@ impl Solver {
                 stack.extend(get_children(&data.kind));
             }
         }
+        // Completed without finding: every visited node is proven free by
+        // this walk's exact semantics (quantifier-blocked children never
+        // descend, so a cached node certifies only what the walk checked —
+        // skipping it later is identical to re-walking it).
+        drop(proven);
+        self.array_free_memo
+            .borrow_mut()
+            .extend(seen.iter().copied());
     }
 
     /// One round of lazy array-axiom instantiation against the current candidate

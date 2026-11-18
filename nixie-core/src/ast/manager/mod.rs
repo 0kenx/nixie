@@ -5,7 +5,7 @@ use super::traversal::get_children;
 use crate::interner::{Rodeo, Spur};
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::sort::{SortId, SortManager};
+use crate::sort::{SortId, SortKind, SortManager};
 use hashbrown::HashTable;
 use portable_atomic::{AtomicU32, Ordering};
 
@@ -123,6 +123,13 @@ pub struct TermManager {
     /// manager is not `Sync` — its interner is single-threaded — so plain
     /// interior mutability is sound here).
     pub(super) quantifier_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Same shape as `quantifier_free_cache`, for set/bag-sortedness (see
+    /// `contains_set_or_bag_sort`): per-assert feature-detection walks on
+    /// shared meganode prefixes were re-walking the whole prefix per
+    /// assertion.
+    pub(super) setbag_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Same shape, for `Ite` nodes (see `contains_ite`).
+    pub(super) ite_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
     /// Epoch-stamped visited marks shared by every DAG walker that asks
     /// for one ([`TermManager::fresh_visit_epoch`]): one `Vec<u32>`
     /// indexed by the dense term id, a fresh epoch per walk.  This
@@ -213,6 +220,8 @@ impl TermManager {
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
             quantifier_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            setbag_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            ite_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             visit_epoch: std::cell::Cell::new(0),
             visit_marks: std::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
@@ -253,10 +262,17 @@ impl TermManager {
         if self.quantifier_free_cache.borrow().contains(&term) {
             return false;
         }
-        // Iterative DAG walk (no native recursion over user terms).
+        // Iterative DAG walk (no native recursion over user terms).  A
+        // popped node already in the cache is proven free — its whole
+        // subtree is skipped, so sibling assertions sharing a meganode
+        // prefix stop re-walking it.
+        let cache_now = self.quantifier_free_cache.borrow();
         let mut visited = FxHashSet::default();
         let mut stack = vec![term];
         while let Some(id) = stack.pop() {
+            if cache_now.contains(&id) {
+                continue;
+            }
             if !visited.insert(id) {
                 continue;
             }
@@ -274,7 +290,83 @@ impl TermManager {
         }
         // Completed without finding: every visited subterm is quantifier-
         // free (a quantifier anywhere reachable would have aborted).
+        drop(cache_now);
         self.quantifier_free_cache
+            .borrow_mut()
+            .extend(visited.iter().copied());
+        false
+    }
+
+    /// Does `term`'s DAG contain a set- or bag-sorted subterm?  Same
+    /// memoization shape as [`Self::contains_quantifier`]: completed
+    /// negative traversals populate `setbag_free_cache` (per-node subtree
+    /// skips included), turning the per-assertion set/bag survey gate
+    /// into a lookup after the first assertion over a shared prefix.
+    #[must_use]
+    pub fn contains_set_or_bag_sort(&self, term: TermId) -> bool {
+        if self.setbag_free_cache.borrow().contains(&term) {
+            return false;
+        }
+        let cache_now = self.setbag_free_cache.borrow();
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            if cache_now.contains(&id) {
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(data) = self.get(id) else {
+                continue;
+            };
+            if self
+                .sorts
+                .get(data.sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Set(_) | SortKind::Bag(_)))
+            {
+                return true;
+            }
+            for child in get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        drop(cache_now);
+        self.setbag_free_cache
+            .borrow_mut()
+            .extend(visited.iter().copied());
+        false
+    }
+
+    /// Does `term`'s DAG contain an `Ite` node?  Memoized like
+    /// [`Self::contains_quantifier`] (see `ite_free_cache`).
+    #[must_use]
+    pub fn contains_ite(&self, term: TermId) -> bool {
+        if self.ite_free_cache.borrow().contains(&term) {
+            return false;
+        }
+        let cache_now = self.ite_free_cache.borrow();
+        let mut visited = FxHashSet::default();
+        let mut stack = vec![term];
+        while let Some(id) = stack.pop() {
+            if cache_now.contains(&id) {
+                continue;
+            }
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(data) = self.get(id) else {
+                continue;
+            };
+            if matches!(data.kind, TermKind::Ite(..)) {
+                return true;
+            }
+            for child in get_children(&data.kind) {
+                stack.push(child);
+            }
+        }
+        drop(cache_now);
+        self.ite_free_cache
             .borrow_mut()
             .extend(visited.iter().copied());
         false
