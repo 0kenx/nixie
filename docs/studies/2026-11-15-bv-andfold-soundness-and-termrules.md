@@ -590,3 +590,31 @@ Measured: counter-identical on minigzip/BBB-32/uclid-define-chain;
 147 = 147, zero flips** — profile-level win, no boundary movement
 today (the day's arms read 147 under sigid-agent load vs yesterday's
 148 idle; matched pairs remain the only decision-grade comparison).
+
+
+## Seventeenth addendum: the ASP family re-truthed + incremental constraint sweep (`0160249d`)
+
+**The artifact.**  The historical "z3 decides 8/17 asp" was wrong: z3
+treats a filename containing `=` as a parameter assignment and errors
+instantly, and several asp filenames carry `=`.  With clean temp names,
+matched serial arms: **z3 decides 4/17, nixie 3/17** — the family's
+true gap is ONE cell (duthen-990602.50: z3 unsat 3.1 s, nixie
+timeout) plus a 2–4× constant factor on the three cells both solve.
+The "DL-recognition architecture, weeks-scale" framing collapses to a
+constant-factor hunt on this family.
+
+**The landing.**  duthen-50's profile differs from minigzip's:
+on_backtrack 17.7 %, collect_unified_constraint_atoms 12.2 % (with
+SortManager::get 11 % beneath), deletion/restart 17.1 %.  The
+constraint sweep rescanned var_to_constraint per assert (quadratic
+across the file) AND per check-side relink round; now cursor-driven
+over an append-only registration journal (append in record_constraint,
+advance per sweep, reset at generation end).  Sound: generations admit
+no user scopes, per-entry verdicts are immutable, linkage is
+idempotent.
+
+Measured (matched interleaved, settled load): duthen-50 14.5 → 12.4 s,
+duthen-57 8.8 → 7.2 s stable; counter-identical on four probe cells;
+full bar green.  duthen-50 still exceeds the 10 s cap — next tiers for
+it: on_backtrack 17.7 % (fourteenth addendum's constraints stand) and
+the SAT kernel.
