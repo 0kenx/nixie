@@ -571,3 +571,22 @@ architectural items (watch layout, arena locality) or encoding-level
 wins upstream of the blast (the deferral prototype's 5× on BBB-32
 stayed net-negative at −6; a per-class gate remains the recorded
 follow-up).
+
+
+## Sixteenth addendum: solve_equations' mentions memo (`c1815406`)
+
+The mg7 profile's `mentions` 4.6 % + `var_def_operand` 4.6 % + `or_else`
+4.6 % decomposed to one cause: `var_def_operand`'s `mentions(rhs, var)`
+walk, asked up to four times per (body, var) pair per
+`bv_preprocess_assertions` call (collect + apply phases, both
+orientations) — with the pair terms *stable across rounds* while only
+the pending bodies change.  A per-call `(t, x)` memo (sound by term
+immutability) collapses each distinct pair to one walk; the worklist's
+direct `mentions` on freshly substituted bodies stays unmemoized
+(those terms are new each time).
+
+Measured: counter-identical on minigzip/BBB-32/uclid-define-chain;
+~5-8 % wall on the minigzip cell; **stratified-sample matched A/B
+147 = 147, zero flips** — profile-level win, no boundary movement
+today (the day's arms read 147 under sigid-agent load vs yesterday's
+148 idle; matched pairs remain the only decision-grade comparison).
