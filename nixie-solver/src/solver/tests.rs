@@ -617,9 +617,10 @@ fn test_config_balanced_characteristics() {
     // Should use Glucose restarts (adaptive)
     assert_eq!(config.restart_strategy, RestartStrategy::Glucose);
 
-    // Conservative limits
+    // Conservative limits (the interval is 2000 since the 2026-11-19 SMT-
+    // path re-measure — see the field's doc in `types.rs`)
     assert_eq!(config.variable_elimination_limit, 1000);
-    assert_eq!(config.inprocessing_interval, 10000);
+    assert_eq!(config.inprocessing_interval, 2000);
 }
 
 #[test]

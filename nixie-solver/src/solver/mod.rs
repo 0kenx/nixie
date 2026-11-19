@@ -1245,8 +1245,12 @@ impl Solver {
             restart_strategy: config.restart_strategy,
             enable_bve: freeze_collapse,
             enable_equiv_substitution: freeze_collapse,
-            enable_inprocessing: config.enable_inprocessing,
-            inprocessing_interval: config.inprocessing_interval,
+            enable_inprocessing: config.enable_inprocessing
+                && std::env::var_os("NIXIE_SMT_NO_INPROC").is_none(),
+            inprocessing_interval: std::env::var("NIXIE_SMT_INPROC_INT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(config.inprocessing_interval),
             // CDCL(T) branching: VSIDS in both stable and focused modes (z3's
             // `smt_context` runs EVSIDS throughout).  cadical's
             // focused-mode VMTF bursts lose focus on theory-propagated

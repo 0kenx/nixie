@@ -434,7 +434,22 @@ impl SolverConfig {
             enable_blocked_clause_elimination: true,
             enable_symmetry_breaking: false, // Still expensive
             enable_inprocessing: true,
-            inprocessing_interval: 10000,
+            // 2000 since 2026-11-19: measured on the SMT path (the DIMACS
+            // presets keep their own values — this field reaches the
+            // embedded core through `Solver::with_config` only).  The
+            // response is monotone-deterministic on the long-conflict
+            // classes (duthen-50: 70575 -> 53399 -> 34305 conflicts at
+            // 10000/5000/2000) and the win survives the matched null
+            // (treatment 34305 vs lag-2-budget null 44229 at the same
+            // density); 141/170 stratified-sample cells are bit-identical
+            // (under 2000 conflicts, no round ever fires), the 29 affected
+            // cells go 27 -> 28 solved at the 10 s cap (+duthen-50 and
+            // lfsr_008_079_032 gained, -Sage2/bench_3142 boundary churn,
+            // 0 verdict disagreements).  `NIXIE_SMT_INPROC_INT` overrides;
+            // `NIXIE_SMT_NO_INPROC=1` disables mid-search inprocessing
+            // outright (the screening arm that refuted the off-default:
+            // duthen-50 12.2 s vs 16.9 s without).
+            inprocessing_interval: 2000,
             finite_expansion_budget:
                 crate::solver::encode::finite_expand::DEFAULT_FINITE_EXPANSION_BUDGET,
             nonlinear_model_search: true,
