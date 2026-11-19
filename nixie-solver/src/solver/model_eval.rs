@@ -1105,9 +1105,10 @@ impl Solver {
         let Some(model) = self.model.as_ref() else {
             return false;
         };
+        let mut pass_memo: FxHashMap<(TermId, u32), EvalOutcome> = FxHashMap::default();
         self.assertions.iter().any(|&assertion| {
             matches!(
-                self.eval_assertion_settled(assertion, model, manager),
+                self.eval_assertion_settled(assertion, model, manager, &mut pass_memo),
                 EvalOutcome::Value(EvalVal::Bool(false)) | EvalOutcome::Unrepresentable
             )
         })
@@ -1136,6 +1137,11 @@ impl Solver {
         let Some(model) = self.model.as_ref() else {
             return ModelRefutation::No;
         };
+        // One memo for the whole pass (the model is fixed within it):
+        // assertions share meganode subterms, and per-assertion memos
+        // re-evaluated the shared prefixes once per assertion (the hdp
+        // class spent 25 % of a run in exactly that).
+        let mut pass_memo: FxHashMap<(TermId, u32), EvalOutcome> = FxHashMap::default();
         for &assertion in &self.assertions {
             // An assertion that is (or unfolds at its top level to) a
             // conjunction is checked conjunct by conjunct, and a conjunct
@@ -1155,7 +1161,7 @@ impl Solver {
             // still a refutation (a core/trail inconsistency the gate
             // exists to catch), and every other conjunct shape keeps its
             // value-based evaluation.
-            match self.eval_assertion_settled(assertion, model, manager) {
+            match self.eval_assertion_settled(assertion, model, manager, &mut pass_memo) {
                 EvalOutcome::Value(EvalVal::Bool(false)) => {
                     return ModelRefutation::Genuine;
                 }
@@ -1236,6 +1242,11 @@ impl Solver {
         // certificate (it is exactly how a holed model still passed in
         // the general path's variant of this gate).
         let mut conjuncts: Vec<TermId> = Vec::new();
+        // One memo for the whole pass (the model is fixed within it):
+        // assertions share meganode subterms, and per-assertion memos
+        // re-evaluated the shared prefixes once per assertion (the hdp
+        // class spent 25 % of a run in exactly that).
+        let mut pass_memo: FxHashMap<(TermId, u32), EvalOutcome> = FxHashMap::default();
         for &assertion in &self.assertions {
             conjuncts.clear();
             match manager.get(assertion).map(|t| &t.kind) {
@@ -1411,6 +1422,7 @@ impl Solver {
         assertion: TermId,
         model: &Model,
         manager: &TermManager,
+        pass_memo: &mut FxHashMap<(TermId, u32), EvalOutcome>,
     ) -> EvalOutcome {
         let conjuncts: Vec<TermId> = match manager.get(assertion).map(|t| &t.kind) {
             Some(TermKind::And(args)) => args.to_vec(),
@@ -1434,7 +1446,7 @@ impl Solver {
                 }
                 _ => {
                     any_evaluated = true;
-                    match self.eval_in_model_outcome(conj, model, manager, 0) {
+                    match self.eval_in_model_outcome_memo(conj, model, manager, 0, pass_memo) {
                         EvalOutcome::Value(EvalVal::Bool(false)) => saw_false = true,
                         EvalOutcome::Unrepresentable => saw_unrepresentable = true,
                         _ => {}
@@ -1459,7 +1471,7 @@ impl Solver {
                 // committed either way; the artifacts are all we have).
                 None => {
                     any_evaluated = true;
-                    match self.eval_in_model_outcome(conj, model, manager, 0) {
+                    match self.eval_in_model_outcome_memo(conj, model, manager, 0, pass_memo) {
                         EvalOutcome::Value(EvalVal::Bool(false)) => saw_false = true,
                         EvalOutcome::Unrepresentable => saw_unrepresentable = true,
                         _ => {}
@@ -1669,16 +1681,52 @@ impl Solver {
         })
     }
 
+    /// The pass-threaded form of [`Self::eval_in_model_outcome`]: one memo
+    /// shared across every term of a whole evaluation pass (the model is
+    /// fixed within a pass), so assertions sharing meganode subterms stop
+    /// re-evaluating the shared prefixes per assertion (hdp-class
+    /// profiles: the refutation pass alone was 25 % of the run, its
+    /// per-assertion memos re-walking shared prefixes thousands of times).
+    pub(super) fn eval_in_model_outcome_memo(
+        &self,
+        term: TermId,
+        model: &Model,
+        manager: &TermManager,
+        depth: u32,
+        memo: &mut FxHashMap<(TermId, u32), EvalOutcome>,
+    ) -> EvalOutcome {
+        Self::eval_walk(
+            term,
+            depth,
+            |term, depth| self.open_in_model(term, model, manager, depth),
+            memo,
+        )
+    }
+
     fn eval_with_reader(
         term: TermId,
         depth: u32,
-        mut open: impl FnMut(TermId, u32) -> Opened,
+        open: impl FnMut(TermId, u32) -> Opened,
     ) -> EvalOutcome {
-        let mut frames: Vec<Frame> = Vec::new();
-        let mut frame_terms = Vec::new();
         // Include depth because a declined budgeted read may be decidable
         // along a shallower path through the same shared node.
         let mut memo: FxHashMap<(TermId, u32), EvalOutcome> = FxHashMap::default();
+        Self::eval_walk(term, depth, open, &mut memo)
+    }
+
+    /// The explicit-stack walk behind [`Self::eval_with_reader`] and the
+    /// pass-threaded [`Self::eval_in_model_outcome_memo`]: the memo is
+    /// caller-owned, so a whole evaluation pass over many assertions can
+    /// share one (assertions sharing meganode subterms evaluate each
+    /// distinct `(term, depth)` once per pass, not once per assertion).
+    fn eval_walk(
+        term: TermId,
+        depth: u32,
+        mut open: impl FnMut(TermId, u32) -> Opened,
+        memo: &mut FxHashMap<(TermId, u32), EvalOutcome>,
+    ) -> EvalOutcome {
+        let mut frames: Vec<Frame> = Vec::new();
+        let mut frame_terms = Vec::new();
         // Operand values of every frame on the stack, concatenated; a frame
         // owns `values[frame.base..]` while it is the innermost one.
         let mut values: Vec<EvalVal> = Vec::new();
@@ -1686,8 +1734,14 @@ impl Solver {
         // for it.
         let mut carry: Option<EvalOutcome> = None;
 
+        if let Some(hit) = memo.get(&(term, depth)) {
+            return hit.clone();
+        }
         match open(term, depth) {
-            Opened::Done(outcome) => return outcome,
+            Opened::Done(outcome) => {
+                memo.insert((term, depth), outcome.clone());
+                return outcome;
+            }
             Opened::Frame(frame) => {
                 frames.push(frame);
                 frame_terms.push(term);
