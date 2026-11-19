@@ -682,3 +682,19 @@ compare throughput.  Reverted.  The remaining lever for this block is
 per-level index bookkeeping replicating the swap-removal order exactly
 (~60 intricate lines for ≤ 6 % of one cell class) — recorded, not
 taken.
+
+
+## Twenty-first addendum: the on_backtrack residual — three models, all wrong
+
+After the watermark+levels landing the block still profiles at ~12 % of
+duthen-50.  Three cost models were tested and refuted in sequence:
+(1) the `position` boundary scan (chunked SIMD version: ~3 % SLOWER —
+twentieth addendum); (2) the removal loop's atom-strided level test
+(levels-array test: counter-identical, wall wash at load 7); (3) the
+removal bookkeeping's scattered writes (arithmetic caps it far below
+the profiled share).  The attribution is unresolved — most plausibly
+the frame aggregates inlined replay/refresh effects the sampler
+attributes to on_backtrack.  Block parked with the finding recorded;
+the per-level index bookkeeping lever remains unexplored but its
+ceiling (≤ 6 % of one cell class) does not justify the intricacy while
+the cost model is unverified.
