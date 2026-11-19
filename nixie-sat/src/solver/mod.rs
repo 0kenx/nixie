@@ -141,6 +141,14 @@ pub(super) struct BinaryImplicationGraph {
     /// id-ascending — the chronological order the old single per-literal
     /// `Vec` held.
     extra: Vec<Vec<(Lit, ClauseId)>>,
+    /// 1 bit per code: whether `extra[code]` is nonempty (a short `extra`
+    /// or a short bitset reads as all-empty, matching the lazy-`extra`
+    /// contract).  The propagate hot path checks this bitset FIRST — one
+    /// load of an L2-resident word — so the overwhelmingly-empty overflow
+    /// lookups stop missing DRAM on the Vec-of-Vec headers (measured on
+    /// the ASP class: extra_list was 23.8 % of a duthen-50 run and 95 % of
+    /// 100M calls returned empty).
+    extra_nonempty: Vec<u64>,
 }
 
 /// Combined read view of one literal's BIG edges: the primary span then
@@ -207,6 +215,7 @@ impl BinaryImplicationGraph {
             live: vec![0; n],
             edges: Vec::new(),
             extra: vec![Vec::new(); n],
+            extra_nonempty: vec![0; n.div_ceil(64)],
         }
     }
 
@@ -238,6 +247,7 @@ impl BinaryImplicationGraph {
         let fill = self.span_end.last().copied().unwrap_or(0);
         self.span_end.resize(n, fill);
         self.live.resize(n, 0);
+        self.extra_nonempty.resize(n.div_ceil(64), 0);
         // `extra` (the per-literal overflow lists) grows LAZILY on first
         // append: materializing one empty `Vec` header per code zeroed
         // 24 bytes x 2*num_vars — 380 MB of page-faulted writes on the
@@ -254,7 +264,23 @@ impl BinaryImplicationGraph {
     /// beyond `extra`'s length have no overflow entries.
     #[inline]
     pub(crate) fn extra_list(&self, code: usize) -> &[(Lit, ClauseId)] {
+        // Bitset guard first: the empty case (95 % of calls on
+        // binary-dense cells) resolves with one load of a bitset word
+        // instead of a Vec-of-Vec header line.
+        if !self.extra_has(code) {
+            return &[];
+        }
         self.extra.get(code).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether `code`'s overflow list is nonempty, from the presence
+    /// bitset (kept exact at every `extra` mutation; a short bitset is
+    /// all-zero by the same lazy contract as a short `extra`).
+    #[inline]
+    fn extra_has(&self, code: usize) -> bool {
+        self.extra_nonempty
+            .get(code >> 6)
+            .is_some_and(|word| word & (1 << (code & 63)) != 0)
     }
 
     fn add(&mut self, lit: Lit, implied: Lit, clause_id: ClauseId) {
@@ -270,6 +296,12 @@ impl BinaryImplicationGraph {
             self.extra.resize(idx + 1, Vec::new());
         }
         self.extra[idx].push(edge);
+        if idx >= self.extra_nonempty.len() * 64 {
+            // `add` ran `ensure_codes(idx + 1)` first, which sizes the
+            // bitset; this branch is unreachable defense, not a path.
+            self.extra_nonempty.resize(idx / 64 + 1, 0);
+        }
+        self.extra_nonempty[idx / 64] |= 1 << (idx % 64);
     }
 
     /// Read view of `lit`'s edges (primary span then overflow).
@@ -334,6 +366,7 @@ impl BinaryImplicationGraph {
         self.live.iter_mut().for_each(|l| *l = 0);
         self.edges.clear();
         self.extra.iter_mut().for_each(Vec::clear);
+        self.extra_nonempty.iter_mut().for_each(|w| *w = 0);
     }
 
     /// Release allocation slack (`shrink_to_fit`) after a full rebuild.
@@ -374,6 +407,9 @@ impl BinaryImplicationGraph {
         }
         if idx < self.extra.len() {
             self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+            if self.extra[idx].is_empty() {
+                self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
+            }
         }
     }
 
@@ -414,8 +450,11 @@ impl BinaryImplicationGraph {
             self.span_end[code] = new_prefix;
         }
         self.edges.truncate(write);
-        for extra in &mut self.extra {
+        for (idx, extra) in self.extra.iter_mut().enumerate() {
             extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
+            if extra.is_empty() {
+                self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
+            }
         }
     }
 
