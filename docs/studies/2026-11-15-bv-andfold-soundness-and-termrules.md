@@ -730,3 +730,31 @@ round; primary++extra is id-ascending = the rebuild's order).  An
 Measured: extra_list 20.5 % → below threshold (fold cost 1.0 %), net
 −2.2 % CPU samples, counter-identical on four cells; fast wall runs
 8.0–8.4 s vs base 9.3–11.3 s at load 10.  Full bar green.
+
+
+## Twenty-fourth addendum: the hdp class — model-eval pass memo (`55560115`)
+
+The never-profiled hdp cluster (7-8 of the Sydr gap's 9 cells) is a
+*third* profile shape: model_refutation_kind 25.6 % (one certification
+pass over 4202 assertions — the per-assertion eval memos re-walked
+shared meganode prefixes), inprocessing ~42 % (equiv substitution 18.1,
+gate congruence 10.5+6.2, eliminate 7.2), deletion/restart 27.8.
+
+Landing: eval_with_reader's walk split into a caller-owned-memo
+`eval_walk`; `eval_in_model_outcome_memo` threads one pass-level memo
+through `eval_assertion_settled` (per-call form kept for certify/audit
+paths).  Sound: the model is fixed within a pass; the (term, depth)
+key already encodes budgeted-read depth sensitivity.
+
+Measured: hdp/3128 **41.7-43.9 s → 30.4-34.2 s (−25 %)** matched
+interleaved; counter-identical on four cells; full bar green
+(12 810 / parity 171-0-6 / gate PASS counters 1.000 wall 1.03).
+Family verdict honest: matched A/B on the 14 hdp cells **6 = 6, zero
+flips** — the −25 % lifts decide-times (30 s class) but no 10 s-cap
+cell was in the crossing band; single-arm readings of 4-6 decided at
+load 12 are wall-cap noise.
+
+**The recorded next target**: hdp's ~42 % inprocessing share
+(substitution + congruence + elimination) is the clearest
+matched-null apparatus target left — a schedule/experiment session
+per BENCHMARKING.md.
