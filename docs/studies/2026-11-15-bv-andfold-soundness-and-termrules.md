@@ -792,3 +792,35 @@ cap; removing BOTH theory callbacks entirely (16.6 %) would not
 suffice.  The crossing path runs through the kernel's deletion/restart
 schedule (24.9 %, the matched-null session) and propagation itself —
 no remaining micro-lever reaches.  Recorded; micro-vein closed.
+
+
+## Twenty-seventh addendum: the inprocessing interval — LANDED (`ad7e845b`)
+
+The matched-null session, run per protocol.  **Context correction**:
+the 2026-08 studies' "inprocessing net-negative" verdicts were
+DIMACS-preset findings; the SMT path inherits inprocessing=on from
+`balanced()` whose interval (10000) was never measured on SMT
+workloads.  Screening refuted the off-default (duthen-50 12.2 s on vs
+16.9 s off), then the interval response: duthen-50 conflicts
+70575 → 53399 → 34305 at 10000/5000/2000 — monotone, deterministic
+(the SMT path is seed-invariant: identical counters across
+NIXIE_SAT_SEED, so the §4 determinism trap does not apply and single
+runs ARE valid trajectory comparisons here).
+
+**Null discipline**: the existing lag-2-budget null at the same
+density reads 44229 (duthen-50) / 24631 (duthen-57) — treatment/null
+0.78×/0.93×, content beyond mechanics.  **Corpus**: 141/170 sample
+cells bit-identical (no round fires below 2000 conflicts); the 29
+affected: 27 → 28 at the cap, +duthen-50 and lfsr_008_079_032,
+−Sage2/bench_3142 churn, 0 disagreements.  Landed at 2000 with
+NIXIE_SMT_INPROC_INT / NIXIE_SMT_NO_INPROC overrides.
+
+**Result**: duthen-50 decides unsat at the default in 7.1 s; the asp
+17-cell sample reads **4 = z3's 4** — the family gap closed.
+
+Process notes: (1) a whole scan was invalidated by `--stats` writing
+to stderr under a `2>/dev/null` — every cell read as timeout; the
+re-run with 2>&1 produced the real 29-cell set.  (2) wall-only
+readings of the interval screen swung 11.6–16.3 s on identical
+deterministic trajectories — pure load; the deterministic-counter
+re-screen is the record.
