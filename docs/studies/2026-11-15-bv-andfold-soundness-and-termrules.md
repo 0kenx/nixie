@@ -698,3 +698,17 @@ attributes to on_backtrack.  Block parked with the finding recorded;
 the per-level index bookkeeping lever remains unexplored but its
 ceiling (≤ 6 % of one cell class) does not justify the intricacy while
 the cost model is unverified.
+
+
+## Twenty-second addendum: Sydr family, session-cumulative — 410/535
+
+Serial 10 s cap, HEAD `87530d5a`: **decided 410** (z3: 419; gap now
+9 cells).  The session's cumulative landings — sweep cursor, on_backtrack
+watermark+levels, BIG overflow bitset, the feature-walk gates and
+memos before them — moved the family **395 → 410 (+15)** since the
+fifteenth addendum's re-measurement.  Timeout clusters: master/yices
+90 (mutual), **minigzip 21 (was 31 at campaign start — the kernel
+landings crossed ten more cells)**, hdp 7 (was 8), misc 7.
+
+The remaining 9-cell gap is minigzip (~5-6 net of z3's own failures)
++ hdp — search-side, per the fifteenth addendum's lever list.
