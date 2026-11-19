@@ -646,3 +646,26 @@ clean gate rerun green (counters 1.000, wall 1.04).  Near-cap gate
 cells are load-sensitive in BOTH arms; a `base=none` mismatch with
 matching counters elsewhere is an environmental signature, but it
 still stops the landing until directly reproduced — as it did here.
+
+
+## Nineteenth addendum: SAT kernel, item 1 — the BIG overflow bitset (`71fc681d`)
+
+Post-on_backtrack profile of duthen-50: propagate 43 % with
+`BinaryImplicationGraph::extra_list` alone at 23.8 % — one call per
+propagated literal, a `Vec<Vec<T>>` header chase; instrumented 100M
+calls, 95 % empty.  A 1-bit-per-code presence bitset (exact at all four
+`extra` mutation sites) guards the lookup: extra_list 23.8 % → 0.0 %,
+total samples −9.7 %, counter-identical everywhere incl. a DIMACS gate
+cell; duthen-57 wall −10 % under load.
+
+**Measurement lesson (hardened into the protocol):** the first
+'verification' of this change was vacuous — a concurrent cargo
+operation had deleted `target/release/nixie`; the shell's exec-127
+produced empty output and the stats-grep compared empty-to-empty.
+Identity checks now assert a non-empty verdict before comparing.
+
+Remaining kernel tiers on this cell: `handle_deletion_restart` 22.8 %
+(eliminate 7.2, inprocess 6.0, restart 5.8), `scan_list` 18.8 % +
+`live_clause` 14.1 % (the long-clause watch scan and its arena-header
+misses — distinct from the corpus-negative CSR flip: blocker/arena
+layout is orthogonal to watch-list representation).
