@@ -669,3 +669,16 @@ Remaining kernel tiers on this cell: `handle_deletion_restart` 22.8 %
 `live_clause` 14.1 % (the long-clause watch scan and its arena-header
 misses — distinct from the corpus-negative CSR flip: blocker/arena
 layout is orthogonal to watch-list representation).
+
+
+## Twentieth addendum: negative — chunked boundary scan (`on_backtrack`)
+
+Tried vectorizing the levels-array boundary scan (64-entry chunks with
+`any` + refine): counter-identical but **~3 % slower** clean-interleaved
+at load 7 (base median 11.4 s vs 12.7/11.7/11.7/11.8 s) — the chunk
+loop's overhead exceeds what the scan saves; the profile's on_backtrack
+cost is evidently the prune mechanics + index maintenance, not raw
+compare throughput.  Reverted.  The remaining lever for this block is
+per-level index bookkeeping replicating the swap-removal order exactly
+(~60 intricate lines for ≤ 6 % of one cell class) — recorded, not
+taken.
