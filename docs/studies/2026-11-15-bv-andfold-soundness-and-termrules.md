@@ -830,3 +830,11 @@ re-screen is the record.
 previous binary vs landed): **10 → 14 decided, +4/0, 0 disagreements**
 (predicate_3210, 462, 553, 573 all crossing) — the interval landing
 moves the Sydr gap families too, not just asp.
+
+
+**Caveat to the §27 addendum**: a fresh full-Sydr serial scan under
+load 21 read 396 (vs the 410 reading taken at load ~7) — single-arm
+wall-capped counts are not comparable across loads; the +4/+1 figures
+stand on the matched interleaved A/Bs (55-cell and 29-cell), and the
+duthen-50 crossing on deterministic counters.  Re-measure the family
+serial count only on a quiet machine.
