@@ -769,3 +769,26 @@ Counter-identical (hdp 3128/2973); hdp/3128 median 34.1 → 31.9 s
 (−6 %) matched under load 13.  Full bar green.  The remaining hdp
 inprocessing share is schedule territory — the recorded matched-null
 session.
+
+
+## Twenty-sixth addendum: the on_assignment/on_backtrack bookkeeping — examined, load-bearing
+
+Fresh duthen-50 profile post-all-landings: propagate 41.1 % (scan_list
+18.5, prefetch 13.6), deletion/restart 24.9 %, on_assignment 8.6 %,
+on_backtrack 8.0 % with `slice::get_mut` 7.7 % ≈ the same samples (the
+per-removal `trail_index`/`assigned_level` scattered writes — the
+third cost model's reality).  `live_clause` fell 14.1 %→2.5 % (a side
+benefit of the BIG fold).
+
+`assigned_level`'s per-removal clear was examined for elision and is
+LOAD-BEARING: it is the pruned liveness authority for
+`drain_forced_eq_atoms` (propagation skip) and
+`reason_literal_is_live` (conflict-clause soundness — citing a
+retracted literal in a lemma).  No shortcut without re-plumbing the
+authority onto the SAT core's trail.
+
+Arithmetic verdict on duthen-50: 12.9 s needs −23 % to cross the 10 s
+cap; removing BOTH theory callbacks entirely (16.6 %) would not
+suffice.  The crossing path runs through the kernel's deletion/restart
+schedule (24.9 %, the matched-null session) and propagation itself —
+no remaining micro-lever reaches.  Recorded; micro-vein closed.
