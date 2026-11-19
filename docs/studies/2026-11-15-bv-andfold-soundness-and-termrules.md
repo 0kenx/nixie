@@ -758,3 +758,14 @@ load 12 are wall-cap noise.
 (substitution + congruence + elimination) is the clearest
 matched-null apparatus target left — a schedule/experiment session
 per BENCHMARKING.md.
+
+
+## Twenty-fifth addendum: SCC single-borrow micro-fix (`cba90f2e`)
+
+The equivalence round's Tarjan worklist took `work.last()` and
+`work.last_mut()` per successor visit; restructured to one `last_mut`
+per iteration (cursor advanced through the same borrow).
+Counter-identical (hdp 3128/2973); hdp/3128 median 34.1 → 31.9 s
+(−6 %) matched under load 13.  Full bar green.  The remaining hdp
+inprocessing share is schedule territory — the recorded matched-null
+session.
