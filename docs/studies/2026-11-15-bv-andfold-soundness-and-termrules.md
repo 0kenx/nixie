@@ -712,3 +712,21 @@ landings crossed ten more cells)**, hdp 7 (was 8), misc 7.
 
 The remaining 9-cell gap is minigzip (~5-6 net of z3's own failures)
 + hdp — search-side, per the fifteenth addendum's lever list.
+
+
+## Twenty-third addendum: SAT kernel, item 2 — the mid-search BIG fold (`f0d90b3e`)
+
+predicate_561 (minigzip, the 21-timeout cluster) showed the *inverse*
+emptiness profile of duthen-50: **81 % of 20M extra_list calls
+nonempty** — learned binaries flood the overflow between inprocessing
+rebuilds, so the bitset guard passes through and the Vec-of-Vec chase
+stayed at 20.5 % of the run.  Landing: a doubling-triggered mid-search
+fold (`extra_entries >= 1M && >= primary`) running
+`refresh_binary_graph` — exact by construction (overflow edges are all
+clause-backed mid-search; sentinels live only inside their minting
+round; primary++extra is id-ascending = the rebuild's order).  An
+`extra_entries` counter is maintained at every overflow mutation.
+
+Measured: extra_list 20.5 % → below threshold (fold cost 1.0 %), net
+−2.2 % CPU samples, counter-identical on four cells; fast wall runs
+8.0–8.4 s vs base 9.3–11.3 s at load 10.  Full bar green.
