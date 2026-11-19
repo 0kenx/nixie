@@ -149,6 +149,14 @@ pub(super) struct BinaryImplicationGraph {
     /// the ASP class: extra_list was 23.8 % of a duthen-50 run and 95 % of
     /// 100M calls returned empty).
     extra_nonempty: Vec<u64>,
+    /// Total live entries across all overflow lists (raised on push,
+    /// lowered by the retain sites, zeroed by `clear`/rebuild).  Drives
+    /// the mid-search CSR fold: when the post-build overflow grows to
+    /// dominate the primary, the graph is rebuilt from the clause
+    /// database so propagation stops chasing `Vec<Vec>` headers (the
+    /// 81 %-nonempty case measured on minigzip predicate_561, where
+    /// extra_list was 20.5 % of the run).
+    extra_entries: usize,
 }
 
 /// Combined read view of one literal's BIG edges: the primary span then
@@ -216,6 +224,7 @@ impl BinaryImplicationGraph {
             edges: Vec::new(),
             extra: vec![Vec::new(); n],
             extra_nonempty: vec![0; n.div_ceil(64)],
+            extra_entries: 0,
         }
     }
 
@@ -267,6 +276,22 @@ impl BinaryImplicationGraph {
         // Bitset guard first: the empty case (95 % of calls on
         // binary-dense cells) resolves with one load of a bitset word
         // instead of a Vec-of-Vec header line.
+        #[cfg(feature = "std")]
+        {
+            use std::cell::Cell;
+            thread_local! {
+                static CALLS: Cell<u64> = const { Cell::new(0) };
+                static NONEMPTY: Cell<u64> = const { Cell::new(0) };
+            }
+            CALLS.with(|c| c.set(c.get() + 1));
+            if self.extra.get(code).is_some_and(|v| !v.is_empty()) {
+                NONEMPTY.with(|c| c.set(c.get() + 1));
+            }
+            let n = CALLS.with(|c| c.get());
+            if n % 5_000_000 == 0 && n > 0 {
+                eprintln!("[big] calls={n} nonempty={}", NONEMPTY.with(|c| c.get()));
+            }
+        }
         if !self.extra_has(code) {
             return &[];
         }
@@ -296,6 +321,7 @@ impl BinaryImplicationGraph {
             self.extra.resize(idx + 1, Vec::new());
         }
         self.extra[idx].push(edge);
+        self.extra_entries += 1;
         if idx >= self.extra_nonempty.len() * 64 {
             // `add` ran `ensure_codes(idx + 1)` first, which sizes the
             // bitset; this branch is unreachable defense, not a path.
@@ -367,6 +393,7 @@ impl BinaryImplicationGraph {
         self.edges.clear();
         self.extra.iter_mut().for_each(Vec::clear);
         self.extra_nonempty.iter_mut().for_each(|w| *w = 0);
+        self.extra_entries = 0;
     }
 
     /// Release allocation slack (`shrink_to_fit`) after a full rebuild.
@@ -406,7 +433,9 @@ impl BinaryImplicationGraph {
             return;
         }
         if idx < self.extra.len() {
+            let before = self.extra[idx].len();
             self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+            self.extra_entries -= before - self.extra[idx].len();
             if self.extra[idx].is_empty() {
                 self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
             }
@@ -451,11 +480,23 @@ impl BinaryImplicationGraph {
         }
         self.edges.truncate(write);
         for (idx, extra) in self.extra.iter_mut().enumerate() {
+            let before = extra.len();
             extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
+            self.extra_entries -= before - extra.len();
             if extra.is_empty() {
                 self.extra_nonempty[idx / 64] &= !(1 << (idx % 64));
             }
         }
+    }
+
+    /// Whether the post-build overflow has grown to dominate the CSR
+    /// primary enough that folding it back (a `refresh_binary_graph`
+    /// rebuild) pays for itself: each fold costs O(primary + overflow)
+    /// and the trigger requires `overflow >= primary`, so the amortized
+    /// cost per appended overflow edge is O(1) (doubling argument).  The
+    /// floor avoids rebuilding tiny graphs.
+    pub(crate) fn should_fold_overflow(&self) -> bool {
+        self.extra_entries >= 1_000_000 && self.extra_entries >= self.edges.len()
     }
 
     // ---- two-phase CSR build (count, layout, fill) --------------------

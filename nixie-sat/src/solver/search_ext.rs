@@ -118,6 +118,17 @@ impl Solver {
                 return SolverResult::Unsat;
             }
 
+            // Mid-search BIG fold: when the post-build overflow (learned
+            // binaries, factoring products) has grown to dominate the CSR
+            // primary, rebuild the graph from the clause database so the
+            // propagation hot path stops chasing per-literal `Vec` headers.
+            // Exact by the rebuild's construction (every overflow edge is
+            // clause-backed mid-search; gate-congruence sentinels live only
+            // inside the inprocessing round that mints them).  Amortized
+            // O(1) per appended edge by the doubling trigger.
+            if self.binary_graph.should_fold_overflow() {
+                self.refresh_binary_graph();
+            }
             // Boolean propagation, then (when installed) in-search XOR
             // propagation of the newly assigned literals — a falsified
             // row surfaces exactly like a CNF conflict.

@@ -646,8 +646,11 @@ impl Solver {
             }
         }
         // The CSR layout is exact by construction; this only drops the
-        // flat buffer's `Vec` margin (trajectory-neutral).
+        // flat buffer's `Vec` margin (trajectory-neutral).  The overflow
+        // is empty after a from-clauses rebuild — reset the fold
+        // trigger's counter.
         self.binary_graph.shrink();
+        self.binary_graph.extra_entries = 0;
     }
 
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
