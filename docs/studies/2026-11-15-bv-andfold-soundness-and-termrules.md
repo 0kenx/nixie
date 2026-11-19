@@ -824,3 +824,9 @@ re-run with 2>&1 produced the real 29-cell set.  (2) wall-only
 readings of the interval screen swung 11.6–16.3 s on identical
 deterministic trajectories — pure load; the deterministic-counter
 re-screen is the record.
+
+
+**Addendum to §27**: the hdp+minigzip cluster matched A/B (55 cells,
+previous binary vs landed): **10 → 14 decided, +4/0, 0 disagreements**
+(predicate_3210, 462, 553, 573 all crossing) — the interval landing
+moves the Sydr gap families too, not just asp.
