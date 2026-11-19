@@ -166,12 +166,15 @@ impl Solver {
             on_stack[root] = true;
             work.push((root, 0));
 
-            while let Some(&(node, succ_i)) = work.last() {
+            // One stack-top borrow per iteration (`last_mut` only): the
+            // previous shape took `last()` AND `last_mut()` per successor
+            // visit, two bounds-checked Option dances where one suffices.
+            while let Some(frame) = work.last_mut() {
+                let node = frame.0;
+                let succ_i = frame.1;
                 let succs = self.binary_graph.get(Lit::from_code(node as u32));
                 if succ_i < succs.len() {
-                    if let Some(entry) = work.last_mut() {
-                        entry.1 = succ_i + 1;
-                    }
+                    frame.1 = succ_i + 1;
                     let w = succs[succ_i].0.code() as usize;
                     if epoch[w] != stamp {
                         epoch[w] = stamp;
