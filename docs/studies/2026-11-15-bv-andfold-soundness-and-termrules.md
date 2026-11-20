@@ -1141,3 +1141,40 @@ counted.
 The census (absolute count + crossings on 608/620/674) remains the
 open item; every deferred wall A/B (shape-2 cache, prefetch, bv-wrap)
 shares the same quiet-window dependency.
+
+## Thirty-fifth addendum: the restart-stall trigger screened on the SMT path — negative; the deletion/restart session closed
+
+The other half of the §26 "deletion/restart matched-null session": the
+T1 stall trigger (`NIXIE_RESTART_STALL=<k>`, default-inert, null arm
+`NIXIE_RESTART_STALL_NULL=1` implies k=8 — both already in-tree from
+the 2026-09-07 DIMACS tier-1 study).  Deterministic-counter screen, 7
+SMT cells (the SMT path is seed-invariant, so these single runs ARE the
+populations; the corpus is the resample axis):
+
+| cell | default | k=4 | k=8 | null(k=8) |
+|---|---|---|---|---|
+| duthen-50 | 58 686 | **53 783** | 62 640 | 81 588 |
+| duthen-40 | 83 785 | **68 905** | 95 517 | 80 102 |
+| duthen-49 | 43 081 | **39 112** | 44 526 | **17 675** |
+| duthen-52 | 19 348 | 25 493 | 22 369 | **17 809** |
+| BBB-32 | 2 103 | 2 094 | **1 000** | 2 058 |
+| readelf/7707 | 2 957 | 2 928 | 2 928 | **2 487** |
+| cjpeg/1199 | 0 | 0 | 0 | 0 (encode-bound, inert) |
+
+**The trigger's signal is real but worthless in aggregate.**  At
+matched k=8 on duthen-50, T/N = 62 640/81 588 = 0.77 — the content does
+what it claims — yet k=8 is net WORSE than default on every asp cell,
+and the NULL wins outright on duthen-49 (−59 % vs default!) and on 52
+and 7707.  Aggregates (geomean, 7 cells): k=4 ≈ 0.98 (per-cell spread
+0.82–1.32), k=8 ≈ 1.04 (spread 0.48–1.16).  The per-cell swings sit
+inside the null's own reshuffle envelope — exactly the BENCHMARKING.md
+chaos signature; no k is a lever.  No landing; the switch stays
+diagnostic.  (The k=4 result on duthen-50/40/49 is real per-cell but
+loses on 52 — a portfolio-tier thought, not a default.)
+
+**The §26 crossing path is hereby closed on both halves**: reduce arms
+(addendum 34) and restart-stall (here) are measured negatives on the
+SMT path.  duthen-50's −23 % crossing must come from propagation itself
+or the encode side — addendum 32's `new_var` cluster (21.7 % of
+encode-bound cells) is the remaining sized lever, plus the still-open
+quiet-machine census.
