@@ -445,6 +445,21 @@ fn fold_set_takes_a_lambda() {
     );
 }
 
+/// The evaluator's fold order over a set is **ascending** (the members come
+/// out of a `BTreeSet`), and this test pins it out loud. The order is not a
+/// property of the specification — TLA+ specifies none — which is exactly why
+/// the *encoder* refuses a non-order-independent operator (see the
+/// `ApaFoldSet` audit in `nixie-tla-check`). For `(a + 1) * (b + 1)` the two
+/// orders genuinely differ (`{2, 3}` folds to `16`, `{3, 2}` to `15`), so the
+/// only value this fold has is the one the evaluator pins.
+#[test]
+fn fold_set_over_a_set_is_in_ascending_order() {
+    assert_eq!(
+        eval("F(a, b) == (a + 1) * (b + 1)\nA == ApaFoldSet(F, 0, {3, 2})"),
+        "16"
+    );
+}
+
 /// A `LET`-bound operator, which is how Apalache's own regression specs write
 /// it (`Sum(S) == LET Add(i, j) == i + j IN ApaFoldSet(Add, 0, S)`).
 #[test]

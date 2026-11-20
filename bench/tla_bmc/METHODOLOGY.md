@@ -151,3 +151,48 @@ Corpus reality check: bag usage in `tlaplus-examples` + Apalache is thin —
 blocked on PlusCal lowering, not on bags). TLA+-lowered specs are therefore
 not yet a bag-theory workload at any useful scale; the bag-theory corpus
 question stays open on the solver side (see the bags handovers).
+
+## `ApaFoldSet` order-independence audit (2026-11-24)
+
+TLA+ specifies no order for folding a set, so an `ApaFoldSet` only has a
+value when the operator's n-fold composition commutes (associative and
+commutative in the usual case). Apalache documents the same requirement and
+does not enforce it; Nixie enforces it, because the encoder folds in
+candidate order while the evaluator folds in ascending order, and the two
+answered differently on `F(a, b) == (a + 1) * (b + 1)` over `{3, 2}` — `15`
+versus `16` — with the disagreement surfaced as "possibly spurious" rather
+than refused.
+
+**Decision.** The encoder classifies the lowered operator before folding
+(`nixie-tla-check/src/encode.rs`, `set_fold_order_independent`), into shapes
+whose composition provably commutes:
+
+* the element parameter unused (the operator is `g(acc)`; iterating one
+  function is order-free);
+* homogeneous `+` / `*` chains with the accumulator as a bare leaf at most
+  once — `a + b + c`, the `Sum`/counting idiom;
+* `\cup` / `\cap` / `/\` / `\/` chains over bare accumulator leaves
+  (idempotent, so repeats are harmless) — `FoldSetSet`'s `p \cup q`;
+* `Max`/`Min`-shaped conditionals;
+* the function-update idiom `[f EXCEPT ![x] = e]` where the index is the
+  element itself and the accumulator is read only as `f[x]` — every element
+  writes its own index once, so every read sees the original value
+  (`Antipatterns`' `addOneInCdm`, `FoldSetFun`).
+
+Anything else over a set with more than one member **declines** (exit 75):
+an answer that depends on the order the members happen to be written in is
+not a property of the specification. A set expression with at most one
+member as written (`{}` or `{e}`) folds any operator, every order being the
+same order; `ApaFoldSeqLeft` is exempt — a sequence's order *is* specified.
+
+**Corpus effect.** None. Every corpus specification whose fold the audit
+classifies keeps its verdict (`FoldSetFun`, `FoldSetFunBad`, `FoldSetSet`,
+`FoldSetSetBad`, `ERC20`); every one it declines was already declined for an
+unrelated reason: `FoldSetSeq`/`FoldSetSeqBad` (which fold with `Append`,
+genuinely order-dependent) were already blocked by "a set and a non-set were
+compared" — the fold-base sort defect — and `Antipatterns`/`FoldSetInInit`
+by a non-literal range and by `SUBSET`. `FoldSetSeq.tla` — "the result is one of the six permutations" —
+would decline even with the base sort fixed, which is the honest reading of
+that invariant: no tool should answer an order-exposing claim from an
+arbitrary order, and the *bad* twin (which Apalache answers 12, from its own
+one fixed order) is a known divergence, not a hidden one.

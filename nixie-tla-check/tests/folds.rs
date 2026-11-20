@@ -17,7 +17,7 @@
 //! because either one missing is a wrong answer rather than a missing feature.
 
 use nixie_core::TermManager;
-use nixie_tla_check::bmc::{Bmc, Outcome};
+use nixie_tla_check::bmc::{Bmc, Outcome, SetupError};
 
 fn spec(vars: &str, defs: &str, init: &str, body: &str) -> String {
     format!(
@@ -247,4 +247,145 @@ fn the_accumulator_may_be_a_function_over_a_sequence() {
 #[test]
 fn a_fold_reads_the_state() {
     holds("x", ADD, "x \\in {1, 2}", "ApaFoldSet(Add, 0, {x, 3}) > 3");
+}
+
+// ---- the order-independence audit ----
+//
+// TLA+ specifies no fold order for a set, so `ApaFoldSet` only has a value
+// when the operator's n-fold composition commutes. Before the audit, the
+// encoder folded in candidate order while the evaluator folded in sorted
+// order, and `F(a, b) == (a + 1) * (b + 1)` over `{3, 2}` answered `15` on
+// one side and `16` on the other — a replay disagreement that was surfaced as
+// "possibly spurious" rather than refused. The audit declines the fold
+// outright; these tests pin both sides of that.
+
+/// The reproducer: an operator whose composition is order-dependent —
+/// `F(a, b) == (a + 1) * (b + 1)` folds `{2, 3}` to `16` in ascending order
+/// and `{3, 2}` to `15` in written order. Before the audit the encoder
+/// answered with the written order and the replay expected the sorted one.
+/// It must be **declined**, never answered.
+#[test]
+fn a_non_ac_operator_over_a_set_declines() {
+    let src = spec(
+        "x",
+        "F(a, b) == (a + 1) * (b + 1)",
+        "x = 0",
+        "ApaFoldSet(F, 0, {3, 2}) = 16",
+    );
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    let err = bmc.check(0, &mut tm).expect_err("declines");
+    let SetupError::Encode { why, .. } = &err else {
+        panic!("expected an encode refusal, got {err}");
+    };
+    assert!(
+        why.contains("associative and commutative"),
+        "the refusal should name the audit: {why}"
+    );
+}
+
+/// Subtraction is not commutative, so a two-element set declines too — every
+/// order-sensitivity argument starts at two members.
+#[test]
+fn a_non_commutative_operator_declines_over_two_elements() {
+    let src = spec("x", SUB, "x = 0", "ApaFoldSet(Sub, 0, {1, 2}) = -3");
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert!(bmc.check(0, &mut tm).is_err());
+}
+
+/// A singleton has one order, so the audit does not refuse it: any operator
+/// folds a one-member set to exactly one value.
+#[test]
+fn a_singleton_set_folds_any_operator() {
+    holds("x", SUB, "x = 0", "ApaFoldSet(Sub, 5, {2}) = 3");
+}
+
+/// An accumulator mentioned twice does not commute even under `+`:
+/// `A(a, b) == a + a + b` composes to `2·(…)+b`, and the orders disagree.
+#[test]
+fn an_accumulator_twice_in_an_add_chain_declines() {
+    let src = spec(
+        "x",
+        "A(a, b) == a + a + b",
+        "x = 0",
+        "ApaFoldSet(A, 0, {1, 2}) = 6",
+    );
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert!(bmc.check(0, &mut tm).is_err());
+}
+
+/// `Max`- and `Min`-shaped conditionals are associative, commutative and
+/// idempotent — more than order-independence needs.
+#[test]
+fn a_max_shaped_operator_folds() {
+    holds(
+        "x",
+        "Max(a, b) == IF a > b THEN a ELSE b",
+        "x = 0",
+        "ApaFoldSet(Max, 0, {3, 1, 2}) = 3",
+    );
+    holds(
+        "x",
+        "Min(a, b) == IF a > b THEN b ELSE a",
+        "x = 0",
+        "ApaFoldSet(Min, 9, {3, 1, 2}) = 1",
+    );
+}
+
+/// The function-update idiom: `[f EXCEPT ![x] = f[x] + 1]`. Each element is
+/// folded once and writes only its own index, so every read of `f[x]` sees
+/// the original value — order-independent. This is `Antipatterns.tla`'s
+/// `addOneInCdm`.
+#[test]
+fn the_function_update_idiom_folds() {
+    holds(
+        "x",
+        "A(p, q) == [p EXCEPT ![q] = p[q] + 1]\nf == [v \\in {\"a\", \"b\"} |-> 0]",
+        "x = 0",
+        "ApaFoldSet(A, f, DOMAIN f) = [v \\in DOMAIN f |-> 1]",
+    );
+}
+
+/// An update whose value reads the whole accumulator does not commute.
+#[test]
+fn a_function_update_reading_the_whole_accumulator_declines() {
+    let src = spec(
+        "x",
+        "A(p, q) == [p EXCEPT ![q] = Cardinality(DOMAIN p)]\nf == [v \\in {\"a\", \"b\"} |-> 0]",
+        "x = 0",
+        "ApaFoldSet(A, f, DOMAIN f) = f",
+    );
+    let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert!(bmc.check(0, &mut tm).is_err());
+}
+
+/// A fold that rebuilds a set — `FoldSetSet.tla`'s shape, and `RemakeSet`
+/// from `Antipatterns.tla`.
+#[test]
+fn a_union_with_singletons_folds() {
+    holds(
+        "x",
+        "A(p, q) == p \\cup {q}",
+        "x = 0",
+        "ApaFoldSet(A, {4}, {1, 1, 2, 3}) = {1, 2, 3, 4}",
+    );
 }
