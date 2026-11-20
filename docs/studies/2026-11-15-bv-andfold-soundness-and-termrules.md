@@ -1283,3 +1283,12 @@ are cached for `fb545619`, `d444269d`, `aa89eb68`, `9953e791`,
 3. The 2026-11-19 handoff's targets #1 (closed: two landings + census)
    and #2 (entry spent: prefetch) are done; #3's nine singles are
    decomposed (addendum 31) with bzip2recover's slice landed.
+
+Post-close addendum: the flag-combo identity was verified empirically
+(pre-slack `9953e791` vs `350bbe32` on BBB-32 under `NIXIE_CSR_B=1`,
+`NIXIE_CSR_SCAN=1`, and default — counters identical in all three; the
+lrat-gated tables ran under the bar's lrat unit tests).  A late
+minigzip census attempt (si=718 KB/s residual swap-in) failed its own
+controls — 492 read 7–9 s vs its clean 5.6–6.0 s, 562 TO'd vs 10.0 —
+and was aborted before the block ran; the ABBA control discipline
+works.  The census remains item 1 behind the quiet gate.
