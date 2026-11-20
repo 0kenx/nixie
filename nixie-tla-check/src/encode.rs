@@ -1620,6 +1620,9 @@ impl Encoder {
                     Some((k, v, _)) => (self.sort_of(*k, tm)?, self.sort_of(*v, tm)?),
                     None => {
                         let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                            if std::env::var_os("NIXIE_TLA_DEBUG_SORT").is_some() {
+                                eprintln!("[fundef-sort-miss2] ptr={:?}", Rc::as_ptr(term));
+                            }
                             return Err(EncodeError::Unsupported(
                                 "a function over an empty domain, with no sort to give it".into(),
                             ));
@@ -2367,6 +2370,37 @@ impl Encoder {
             // Cardinality follows the set's representation too: the theory
             // decides it for a native set, the de-duplicating sum for an
             // arena one.
+            // `IsABag(B) == \\A x \\in DOMAIN B : B[x] > 0` over the
+            // function value, whose domain is carried. Kept as an operator
+            // rather than desugared in the lowerer because the evaluator
+            // answers it totally (`IsABag(42)` is FALSE, not an error).
+            Kera::Opaque(name, args) if matches!((name.as_str(), args.len()), ("IsABag", 1)) => {
+                let f = self.value(&args[0], tm)?;
+                let Value::Fun { domain, array } = &*f else {
+                    return Err(EncodeError::Unsupported(
+                        "`IsABag` of something that is not a function".into(),
+                    ));
+                };
+                let (domain, array) = (*domain, *array);
+                let cell = self.candidates_of(domain, 0, tm).ok_or_else(|| {
+                    EncodeError::NotEnumerable(
+                        "`IsABag` over a domain with no candidate list".into(),
+                    )
+                })?;
+                let zero = tm.mk_int(0);
+                let mut conj = Vec::with_capacity(cell.len());
+                for m in cell.iter() {
+                    let Value::Scalar(k) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "a function domain whose members have no SMT sort".into(),
+                        ));
+                    };
+                    let read = tm.mk_select(array, *k);
+                    let positive = tm.mk_gt(read, zero);
+                    conj.push(tm.mk_implies(m.present, positive));
+                }
+                scalar(tm.mk_and(conj))
+            }
             Kera::Opaque(name, args)
                 if matches!(
                     (name.as_str(), args.len()),
@@ -2526,6 +2560,14 @@ fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
     if is_min_max(body, acc, elem) {
         return true;
     }
+    // Bag addition, as the `Bags` desugaring writes it:
+    // `[x \\in DOMAIN a \\cup DOMAIN b |-> CopiesIn(a,x) + CopiesIn(b,x)]`.
+    // Pointwise addition of naturals is commutative and associative, so a
+    // fold whose every step adds one contribution is order-independent —
+    // this is `BagUnion`, and `BagOfAll`'s step reduces to it.
+    if is_bag_addition(body, acc, elem) {
+        return true;
+    }
     // An AC chain: `a + b + …`, `a * b * …`, `a \cup b`, `a \cap b`,
     // `a /\ b`, `a \/ b`. Flattened to its leaves, the composition commutes
     // when each step contributes its non-accumulator leaves once and the
@@ -2652,6 +2694,72 @@ fn is_min_max(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
         return false;
     };
     t != u && matches!((t, u), (0, 1) | (1, 0))
+}
+
+/// Whether `body` is a **bag-addition** step over `acc`: the `\\oplus`
+/// desugaring
+/// `[x \\in DOMAIN P \\cup DOMAIN Q |-> CopiesIn(P,x) + CopiesIn(Q,x)]`
+/// where `acc` occurs in exactly one of the two bag operands (`P`), and the
+/// other (`Q`) is accumulator-free.
+///
+/// The commutation argument is the shape's, not the operands': each step adds
+/// one accumulator-free contribution pointwise, so composing the steps in any
+/// order sums the same contributions at every point. `BagUnion` is the
+/// special case `Q = elem`; `BagOfAll`'s step is `Q = [y \\in {F(elem)} |->
+/// B[elem]]`. An `acc` on *both* sides (`Add(acc[x], g(acc)[x])`) is refused:
+/// there the step depends on the accumulator twice and order can matter.
+fn is_bag_addition(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
+    let Kera::FunDef { var, set, body } = e.as_ref() else {
+        return false;
+    };
+    let _ = elem;
+    let Kera::SetBin(SetOp::Union, a, b) = set.as_ref() else {
+        return false;
+    };
+    // `CopiesIn(P, x) == IF x \\in DOMAIN P THEN P[x] ELSE 0`, with the same
+    // `P` in the guard and the read (pointer-identical: the desugaring
+    // builds it once and shares it).
+    let copies_in = |t: &KeraRef| -> Option<KeraRef> {
+        let Kera::Ite(c, tb, eb) = t.as_ref() else {
+            return None;
+        };
+        let Kera::In(i, s) = c.as_ref() else {
+            return None;
+        };
+        if !matches!(i.as_ref(), Kera::Var(v) if v == var) {
+            return None;
+        }
+        let Kera::Domain(p1) = s.as_ref() else {
+            return None;
+        };
+        let Kera::FunApp(p2, i2) = tb.as_ref() else {
+            return None;
+        };
+        if !matches!(i2.as_ref(), Kera::Var(v) if v == var) || p1 != p2 {
+            return None;
+        }
+        if !matches!(eb.as_ref(), Kera::Int(_)) {
+            return None;
+        }
+        Some(Rc::clone(p1))
+    };
+    // The domain union must be exactly the two operands' domains.
+    let Kera::Arith(ArithOp::Add, x, y) = body.as_ref() else {
+        return false;
+    };
+    let (Some(p), Some(q)) = (copies_in(x), copies_in(y)) else {
+        return false;
+    };
+    let dom_ok =
+        |d: &KeraRef, op: &KeraRef| -> bool { matches!(d.as_ref(), Kera::Domain(o) if o == op) };
+    if !((dom_ok(a, &p) && dom_ok(b, &q)) || (dom_ok(a, &q) && dom_ok(b, &p))) {
+        return false;
+    }
+    // Exactly one side mentions the accumulator: the other is the
+    // order-independent contribution.
+    let mp = mentions(&p, acc);
+    let mq = mentions(&q, acc);
+    mp != mq
 }
 
 /// Whether `acc` is read in `e` only as `acc[elem]`.
