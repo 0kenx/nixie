@@ -1072,3 +1072,32 @@ gate_* (and/or/xor/mux/emit) creates its single output var inline
 The var-count scale of the class (BBB-32 blast: 185–220 k vars) is what
 turns a ~100 ns constant into 20 % of a cell.  Post-census, this vein
 is the encode-side counterpart of the deletion/restart session.
+
+## Thirty-third addendum: the bv constant-wrap fast paths — LANDED (`9953e791`)
+
+The 9-singles survey's rewrite-loop outlier (bzip2recover/2763) closed
+its diagnosis: the substitution fixpoint's constant re-folds each paid
+`modulus(width)` — a fresh `1 << width` **BigInt allocation** — plus a
+BigInt **division** in `bv_wrap_unsigned`, per fold (8.2 % + 6.6 % of
+the cell).  Fast paths keyed on the magnitude bit-length (`bits()` is
+allocation-free): in-range positives return with no modulus (the owned
+variant without even a clone), in-range negatives take one add,
+`to_signed`'s already-signed case skips its `1 << (width-1)`.  Pure
+functions, identical results — counters bit-identical on five probes
+incl. 2763; post-fix profile: wrap 8.2 %→0.3 %, modulus →0.
+
+Wall A/B deferred (load 20–40 all session; the identity + profile
+evidence carries the landing per the pure-perf discipline).  The
+residual of that cell is the substitution walk itself
+(`run_substitute_step` 8.0 % + `run_free_var_step` 10.0 % +
+`substitute_cached_keep` 4.7 %) — the same walker family the
+epoch-mark/feature-walk landings have been shaving; low ceiling per
+node now.
+
+**Also**: `memory_alias_shape_converges` flaked at the default
+3×60 s nextest budget under gate load 30+ (110–135 s solo, passed solo
+at 110.9 s immediately after) — widened to 6×60 s per the pete_cxs_bp
+precedent, with the rationale in `.config/nextest.toml`.  This is the
+third documented load-flake of the class (budget_bitblast, the scope-
+state matrix, now this); the config file's override section is the
+standing pattern.
