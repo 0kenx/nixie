@@ -481,12 +481,20 @@ impl Trail {
 
     /// Resize to support more variables
     pub fn resize(&mut self, num_vars: usize) {
-        let lit_cap = num_vars * 2 + 4; // +4: the AVX2 gather pad (see new())
+        // Slack-grown (the WatchLists::resize rationale): the propagation
+        // session indexes `values`/var info by live literal/var directly,
+        // so `len` must cover `num_vars` — but per-call single-element
+        // extension into cold arrays was the per-var cache-miss storm.
+        // Overshoot so the usual call is a bounds check; slack rows read
+        // as unassigned.
+        const TRAIL_GROW_SLACK: usize = 64;
+        let lit_cap = num_vars * 2 + 4 + TRAIL_GROW_SLACK; // +4: the AVX2 gather pad (see new())
         if lit_cap > self.values.len() {
             self.values.resize(lit_cap, 0);
         }
-        if num_vars > self.var_info.len() {
-            self.var_info.resize(num_vars, VarInfo::default());
+        if num_vars + TRAIL_GROW_SLACK > self.var_info.len() {
+            self.var_info
+                .resize(num_vars + TRAIL_GROW_SLACK, VarInfo::default());
         }
     }
 

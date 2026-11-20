@@ -1607,16 +1607,31 @@ impl WatchLists {
     }
 
     /// Resize to support more variables
+    /// Resize to support more variables.
+    ///
+    /// The propagation session's exclusive views index
+    /// `destinations[code]` DIRECTLY, so `watches.len()` must cover every
+    /// live literal (`>= num_vars * 2`) — lazy per-slot growth is not an
+    /// option at this boundary (the views are `&mut [...]` and cannot
+    /// grow).  But growing by exactly two rows per created var wrote two
+    /// elements per call into cold arrays — the per-var cache-miss storm
+    /// behind `WatchLists::resize`'s 8.5 % share of encode-bound cells
+    /// (addendum 32).  Growth therefore OVERSHOOTS by
+    /// [`WATCH_GROW_SLACK`] rows, so the per-var call is usually a single
+    /// bounds check; the invariant holds at every point
+    /// (`len >= num_vars * 2`), and the slack rows are ordinary empty
+    /// lists reading as zero watchers.
     pub fn resize(&mut self, num_vars: usize) {
+        const WATCH_GROW_SLACK: usize = 64;
         let new_size = num_vars * 2;
         if !csr_b_enabled() && new_size > self.watches.len() {
-            self.watches.resize(new_size, Vec::new());
+            self.watches.resize(new_size + WATCH_GROW_SLACK, Vec::new());
         }
         if new_size > self.bin_phantom.len() {
-            self.bin_phantom.resize(new_size, 0);
+            self.bin_phantom.resize(new_size + WATCH_GROW_SLACK, 0);
         }
         if new_size > self.ghost_debt.len() {
-            self.ghost_debt.resize(new_size, 0);
+            self.ghost_debt.resize(new_size + WATCH_GROW_SLACK, 0);
         }
     }
 
@@ -1763,6 +1778,13 @@ impl WatchLists {
             }
             list.truncate(write);
             if dropped != 0 {
+                // Lazy-growth guard: the watch lists can out-grow the debt
+                // table when vars are created without an eager resize
+                // (new_var no longer pre-grows these arrays; the use sites
+                // grow on demand).  Absent slot = zero debt.
+                if idx >= self.ghost_debt.len() {
+                    self.ghost_debt.resize(idx + 1, 0);
+                }
                 self.ghost_debt[idx] = self.ghost_debt[idx].saturating_add(dropped);
             }
         }

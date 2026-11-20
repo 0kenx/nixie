@@ -101,10 +101,19 @@ impl LRB {
         let old_size = self.num_vars;
         self.num_vars = num_vars;
 
-        self.participation.resize(num_vars, 0.0);
-        self.assigned.resize(num_vars, 0);
-        self.reasoned.resize(num_vars, 0);
-        self.in_heap.resize(num_vars, false);
+        // Slack-grown pure storage (the WatchLists::resize rationale):
+        // batch the zero-writes instead of two elements per created var
+        // into cold arrays; `len >= num_vars` always holds.  The heap
+        // push and `in_heap[v]` write below are SEMANTIC (membership
+        // authority) and stay per-var.
+        const LRB_GROW_SLACK: usize = 64;
+        let target = num_vars + LRB_GROW_SLACK;
+        if target > self.participation.len() {
+            self.participation.resize(target, 0.0);
+            self.assigned.resize(target, 0);
+            self.reasoned.resize(target, 0);
+            self.in_heap.resize(target, false);
+        }
 
         // Add new variables to heap
         for v in old_size..num_vars {
