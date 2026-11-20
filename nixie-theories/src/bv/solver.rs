@@ -933,13 +933,6 @@ impl BvSolver {
             .and_then(|slot| slot.as_ref())
     }
 
-    /// Dense-slab mutable probe.
-    fn slb_mut(&mut self, term: TermId) -> Option<&mut BvVar> {
-        self.term_to_bv
-            .get_mut(term.raw() as usize)
-            .and_then(|slot| slot.as_mut())
-    }
-
     /// Dense-slab insert (grows the slab to cover the term id).  All
     /// writes funnel through here so `blasted_count` stays exact.
     fn slb_put(&mut self, term: TermId, value: BvVar) {

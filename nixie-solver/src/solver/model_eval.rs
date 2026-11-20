@@ -1242,11 +1242,13 @@ impl Solver {
         // certificate (it is exactly how a holed model still passed in
         // the general path's variant of this gate).
         let mut conjuncts: Vec<TermId> = Vec::new();
-        // One memo for the whole pass (the model is fixed within it):
-        // assertions share meganode subterms, and per-assertion memos
-        // re-evaluated the shared prefixes once per assertion (the hdp
-        // class spent 25 % of a run in exactly that).
-        let mut pass_memo: FxHashMap<(TermId, u32), EvalOutcome> = FxHashMap::default();
+        // NOTE: unlike the refutation pass (`model_refutation_kind`), this
+        // certificate path does NOT thread a pass-level eval memo: its
+        // conjuncts reset `CERTIFY_LIVE_READ` per conjunct, and a memo
+        // shared across that reset could let one conjunct's live-read
+        // provenance leak into (or be hidden from) another's shared
+        // subterm — see the 2026-11-19 study addendum.  Each conjunct
+        // evaluates with its own per-walk memo.
         for &assertion in &self.assertions {
             conjuncts.clear();
             match manager.get(assertion).map(|t| &t.kind) {

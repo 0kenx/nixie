@@ -59,6 +59,13 @@ fn is_value_kind(kind: &TermKind) -> bool {
 /// degradation, like the fuel budget).
 const CTX_WALK_RECURSION_LIMIT: u32 = 1024;
 
+/// A subtree's Boolean-atom set ([`TermManager::subtree_bool_atoms`]):
+/// sorted ascending by `TermId.0`.  Membership is a binary search and
+/// unions are two-pointer merges — no hashing anywhere in the per-assert
+/// construction (the hashed version spent 35 % of the hdp class inside
+/// `HashSet::insert`).
+type AtomSet = SmallVec<[TermId; 4]>;
+
 /// The comparison family of [`TermManager::cmp_ite_rule`]: which
 /// operator a distributed residual keeps.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -959,18 +966,54 @@ impl TermManager {
         out
     }
 
+    /// A subtree's Boolean-atom set: sorted ascending by `TermId.0`
+    /// (see [`AtomSet`]).
     /// Boolean-sorted atom sets per subtree, bottom-up over the DAG
     /// (children's sets unioned; a node's own id included when it is
     /// Boolean-sorted — any Boolean node can serve as a context atom
     /// key).  `None` for a node whose set exceeds
     /// [`MAX_MEMO_ATOM_SET`]: such subtrees simply do not memoize (the
     /// walk stays correct, only slower).
-    fn subtree_bool_atoms(&self, root: TermId) -> FxHashMap<TermId, Option<FxHashSet<TermId>>> {
+    fn subtree_bool_atoms(&self, root: TermId) -> FxHashMap<TermId, Option<AtomSet>> {
         /// Beyond this many distinct atoms a subtree's set is stored as
         /// `None` (no memoization for it) — the set itself would cost
         /// more than the re-walk it saves on typical inputs.
         const MAX_MEMO_ATOM_SET: usize = 1024;
-        let mut out: FxHashMap<TermId, Option<FxHashSet<TermId>>> = FxHashMap::default();
+        /// Two-pointer union of two ascending-sorted id slices into
+        /// `dst` (duplicates dropped — the ids are a set).
+        fn merge_sorted_union(dst: &mut AtomSet, src: &[TermId]) {
+            use std::cmp::Ordering;
+            if src.is_empty() {
+                return;
+            }
+            if dst.is_empty() {
+                dst.extend_from_slice(src);
+                return;
+            }
+            let mut merged: AtomSet = SmallVec::with_capacity(dst.len() + src.len());
+            let (mut i, mut j) = (0usize, 0usize);
+            while i < dst.len() && j < src.len() {
+                match dst[i].0.cmp(&src[j].0) {
+                    Ordering::Less => {
+                        merged.push(dst[i]);
+                        i += 1;
+                    }
+                    Ordering::Greater => {
+                        merged.push(src[j]);
+                        j += 1;
+                    }
+                    Ordering::Equal => {
+                        merged.push(dst[i]);
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            merged.extend_from_slice(&dst[i..]);
+            merged.extend_from_slice(&src[j..]);
+            *dst = merged;
+        }
+        let mut out: FxHashMap<TermId, Option<AtomSet>> = FxHashMap::default();
         // Two-phase Expand/Combine (children's sets exist before the
         // parent unions them — the post-order trap the share-for-printing
         // pass already recorded once).
@@ -998,24 +1041,26 @@ impl TermManager {
                 Frame::Combine(t) => {
                     let Some(data) = self.get(t) else { continue };
                     let children = crate::ast::traversal::get_children(&data.kind);
-                    let mut set: Option<FxHashSet<TermId>> = if data.sort == self.sorts.bool_sort {
-                        let mut s = FxHashSet::default();
-                        s.insert(t);
-                        Some(s)
+                    let mut set: Option<AtomSet> = if data.sort == self.sorts.bool_sort {
+                        Some(AtomSet::from_elem(t, 1))
                     } else {
-                        Some(FxHashSet::default())
+                        Some(AtomSet::new())
                     };
                     for c in children {
-                        match (out.get(&c), &mut set) {
-                            (Some(Some(cs)), Some(s)) => {
-                                for x in cs {
-                                    s.insert(*x);
+                        match out.get(&c) {
+                            // Both present: merge the child's sorted set in.
+                            Some(Some(cs)) => {
+                                if let Some(s) = set.as_mut() {
+                                    merge_sorted_union(s, cs);
                                 }
                             }
-                            (Some(None), _) | (None, _) => {
+                            // Oversized or absent child set: this subtree
+                            // does not memoize (stays `None` whatever the
+                            // remaining children say — break early).
+                            _ => {
                                 set = None;
+                                break;
                             }
-                            _ => {}
                         }
                     }
                     if let Some(s) = &set
@@ -1038,18 +1083,19 @@ impl TermManager {
         &self,
         t: TermId,
         ctx: &FxHashMap<TermId, bool>,
-        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
     ) -> Option<u64> {
         let relevant = sub_atoms.get(&t)?;
         let set = relevant.as_ref()?;
         // Iterate the CONTEXT (small: it grows only along the walk's
         // case-split/conjunct path) and test subtree membership — the
-        // intersection is what the walk can consult.
+        // intersection is what the walk can consult.  Membership in the
+        // sorted set is a binary search.
         let mut h = std::collections::hash_map::DefaultHasher::new();
         use std::hash::Hash;
         let mut entries: SmallVec<[(TermId, bool); 8]> = SmallVec::new();
         for (&atom, &pol) in ctx.iter() {
-            if set.contains(&atom) {
+            if set.binary_search(&atom).is_ok() {
                 entries.push((atom, pol));
             }
         }
@@ -1110,7 +1156,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1135,7 +1181,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1269,7 +1315,7 @@ impl TermManager {
         args: SmallVec<[TermId; 4]>,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<FxHashSet<TermId>>>,
+        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {

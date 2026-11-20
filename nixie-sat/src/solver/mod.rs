@@ -288,7 +288,7 @@ impl BinaryImplicationGraph {
                 NONEMPTY.with(|c| c.set(c.get() + 1));
             }
             let n = CALLS.with(|c| c.get());
-            if n % 5_000_000 == 0 && n > 0 {
+            if n > 0 && n.is_multiple_of(5_000_000) {
                 eprintln!("[big] calls={n} nonempty={}", NONEMPTY.with(|c| c.get()));
             }
         }

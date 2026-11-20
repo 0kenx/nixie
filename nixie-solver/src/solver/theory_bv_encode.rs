@@ -196,7 +196,7 @@ pub(super) fn encode_bv_term_recursive(
     // flushed when the next term starts or the walk ends.  Attributing at
     // the loop level keeps every arm's early-return path untouched.
     let mut pending: Option<(&'static str, u32, usize)> = None;
-    let mut flush = |pending: &mut Option<(&'static str, u32, usize)>, bv: &BvSolver| {
+    let flush = |pending: &mut Option<(&'static str, u32, usize)>, bv: &BvSolver| {
         if let Some((label, width, v0)) = pending.take() {
             let dv = bv.embedded_variable_count().saturating_sub(v0);
             eprintln!("[blast] op={label} w={width} dv={dv}");

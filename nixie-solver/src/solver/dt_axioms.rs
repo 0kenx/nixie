@@ -81,7 +81,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager};
-use nixie_core::sort::{SortId, SortKind};
+use nixie_core::sort::SortId;
 
 use super::Solver;
 use super::term_walk::collect_structural_children;
