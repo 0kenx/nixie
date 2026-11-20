@@ -43,8 +43,10 @@ specification.
 `Bmc` asserts every `ASSUME`. One it cannot lower, type or encode is **dropped
 and counted**, never approximated: dropping weakens the search, so it can
 manufacture a counterexample but never hide one. `dropped_assumptions()`
-surfaces the count, and the harness marks any violation found under a dropped
-assumption as possibly spurious.
+surfaces the count — and since the honesty gates (below) a violation found
+under a dropped assumption is `Unknown`, never exit 12. Fully ground
+assumptions are evaluated rather than asserted, and a false one aborts the
+check by name.
 
 ### 2. Apalache's `ConstInit`
 
@@ -196,3 +198,28 @@ would decline even with the base sort fixed, which is the honest reading of
 that invariant: no tool should answer an order-exposing claim from an
 arbitrary order, and the *bad* twin (which Apalache answers 12, from its own
 one fixed order) is a known divergence, not a hidden one.
+
+## The honesty gates around exit 12 (2026-11-24)
+
+`Outcome::Violation` is now reported **only** for a counterexample that was
+read back as TLA+ values and replayed end to end by `nixie-tla`'s evaluator.
+Three provisional outcomes become `Outcome::Unknown` (exit 255) instead:
+
+* a search that ran with dropped assumptions — the count is in the reason;
+* a model that could not be decoded;
+* a trace that decodes but does not replay (the encoding and the evaluator
+  disagree, which is a defect report, not a verdict).
+
+A contradictory assumption set is its own outcome, `AssumptionsUnsatisfiable`
+(also exit 255): `NoViolationWithin` over an empty behaviour set would read as
+"the invariant holds" when in fact there was nothing to check. Fully ground
+assumptions are *evaluated* at prepare time on the substituted constants — a
+false one aborts with `assumption violated`, a true one asserts nothing — and
+membership over a standard infinite set (`N \in Nat \ {0}`, the `EWD840`
+shape) now encodes structurally instead of dropping.
+
+**Corpus effect** (depth 4, `NIXIE_BMC_CONFLICTS=20000`): the violation count
+drops to exactly the replayed-confirmed subset; every formerly
+violation-with-caveat spec moves to `undecided` with its reason named, and
+`EWD840.tla` moves from an unreplayable violation to `no violation within 2`
+after the string-`ite` model fix below.
