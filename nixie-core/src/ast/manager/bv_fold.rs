@@ -42,7 +42,7 @@
 //! `bvneg` has no entry of its own: `TermManager::mk_bv_neg` lowers it to
 //! `0 - t`, so [`bv_sub`] folds it.
 
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -63,6 +63,46 @@ use crate::prelude::*;
 pub fn bv_wrap_unsigned(value: &BigInt, width: u32) -> BigInt {
     if width == 0 {
         return BigInt::ZERO;
+    }
+    // In-range fast paths (the overwhelmingly common case for fold
+    // results): |value| < 2^width needs no `modulus` allocation and no
+    // BigInt division — the substitution fixpoints re-wrap thousands of
+    // small constants per round (bzip2recover-class cells spent 15 % of
+    // the run in exactly the modulus alloc + `%` this skips).
+    let bits = value.bits();
+    if !matches!(value.sign(), Sign::Minus) {
+        if bits <= width as u64 {
+            return value.clone();
+        }
+    } else if bits <= width as u64 {
+        // -2^width < value < 0: one add instead of a division.
+        return value + modulus(width);
+    }
+    let modulus = modulus(width);
+    let mut wrapped = value % &modulus;
+    if wrapped < BigInt::ZERO {
+        wrapped += &modulus;
+    }
+    wrapped
+}
+
+/// The owned form of [`bv_wrap_unsigned`] for callers that just built the
+/// value in a temporary (`bv_wrap_unsigned_owned(lhs + rhs, width)` instead
+/// of `bv_wrap_unsigned(&(lhs + rhs), width)`): the in-range fast path
+/// returns the value unchanged — no allocation at all, where the borrowed
+/// form must clone it.  Identical results by construction.
+#[must_use]
+pub fn bv_wrap_unsigned_owned(value: BigInt, width: u32) -> BigInt {
+    if width == 0 {
+        return BigInt::ZERO;
+    }
+    let bits = value.bits();
+    if !matches!(value.sign(), Sign::Minus) {
+        if bits <= width as u64 {
+            return value;
+        }
+    } else if bits <= width as u64 {
+        return value + modulus(width);
     }
     let modulus = modulus(width);
     let mut wrapped = value % &modulus;
@@ -88,6 +128,13 @@ pub(crate) fn all_ones(width: u32) -> BigInt {
 pub fn to_signed(value: &BigInt, width: u32) -> BigInt {
     if width == 0 {
         return BigInt::ZERO;
+    }
+    // Fast path: `value < 2^(width-1)` (and non-negative — callers pass
+    // wrapped unsigned values) is already its own signed value; `bits()`
+    // is the magnitude's bit length, so `bits() < width` skips both the
+    // `1 << (width-1)` allocation and the comparison's bignum path.
+    if !matches!(value.sign(), Sign::Minus) && (value.bits()) < width as u64 {
+        return value.clone();
     }
     if *value >= (BigInt::from(1u8) << (width - 1) as usize) {
         value - modulus(width)
@@ -116,19 +163,19 @@ fn shift_distance(amount: &BigInt, width: u32) -> Option<usize> {
 /// `bvadd` – addition modulo `2^width`.
 #[must_use]
 pub fn bv_add(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
-    bv_wrap_unsigned(&(lhs + rhs), width)
+    bv_wrap_unsigned_owned(lhs + rhs, width)
 }
 
 /// `bvsub` – subtraction modulo `2^width`.
 #[must_use]
 pub fn bv_sub(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
-    bv_wrap_unsigned(&(lhs - rhs), width)
+    bv_wrap_unsigned_owned(lhs - rhs, width)
 }
 
 /// `bvmul` – multiplication modulo `2^width`.
 #[must_use]
 pub fn bv_mul(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
-    bv_wrap_unsigned(&(lhs * rhs), width)
+    bv_wrap_unsigned_owned(lhs * rhs, width)
 }
 
 /// `bvand` – bitwise conjunction.
@@ -168,7 +215,7 @@ pub fn bv_not(value: &BigInt, width: u32) -> BigInt {
 pub fn bv_shl(value: &BigInt, amount: &BigInt, width: u32) -> BigInt {
     match shift_distance(amount, width) {
         None => BigInt::ZERO,
-        Some(shift) => bv_wrap_unsigned(&(value << shift), width),
+        Some(shift) => bv_wrap_unsigned_owned(value << shift, width),
     }
 }
 
@@ -258,7 +305,7 @@ pub fn bv_sdiv(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
     }
     // `BigInt`'s division truncates towards zero, which is the rounding
     // SMT-LIB's `bvsdiv` prescribes.
-    bv_wrap_unsigned(&(signed_lhs / signed_rhs), width)
+    bv_wrap_unsigned_owned(signed_lhs / signed_rhs, width)
 }
 
 /// `bvsrem` – signed remainder, taking the sign of the *dividend*.
@@ -274,7 +321,7 @@ pub fn bv_srem(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
         return lhs.clone();
     }
     // `BigInt`'s remainder follows the dividend's sign, matching `bvsrem`.
-    bv_wrap_unsigned(&(signed_lhs % signed_rhs), width)
+    bv_wrap_unsigned_owned(signed_lhs % signed_rhs, width)
 }
 
 /// `bvsmod` – signed modulus, taking the sign of the *divisor*.
@@ -310,7 +357,7 @@ pub fn bv_smod(lhs: &BigInt, rhs: &BigInt, width: u32) -> BigInt {
         (false, true) => unsigned_rem + &signed_rhs,
         (true, true) => -unsigned_rem,
     };
-    bv_wrap_unsigned(&result, width)
+    bv_wrap_unsigned_owned(result, width)
 }
 
 /// `concat` – `lhs` occupies the high bits, `rhs` the low `rhs_width` bits.
