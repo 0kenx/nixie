@@ -306,6 +306,16 @@ fn run(args: &Args) -> u8 {
                 }
                 break;
             }
+            // The specification has no behaviours. Not "no error": an
+            // invariant vacuously holds over an empty behaviour set, and a
+            // caller that greps for the zero exit would congratulate itself
+            // on a specification whose assumptions cannot all be true.
+            Outcome::AssumptionsUnsatisfiable => {
+                eprintln!(
+                    "error: the assumptions are contradictory; the specification has no behaviours"
+                );
+                return EXIT_SYSTEM;
+            }
             Outcome::Unknown(why) => {
                 undecided = Some(why);
                 break;
@@ -392,6 +402,11 @@ fn write_itf(bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> 
 fn exit_for(e: &SetupError) -> u8 {
     match e {
         SetupError::Types(_) | SetupError::NoSort { .. } => EXIT_TYPES,
+        // A violated assumption is not a counterexample and not a defect in
+        // the specification's *other* parts: TLC and Apalache report it and
+        // abort, which is the 255 bucket here. It must never read as 12 —
+        // there is no behaviour to show.
+        SetupError::AssumptionViolated { .. } => EXIT_SYSTEM,
         SetupError::NoSuchDefinition(_)
         | SetupError::Lower { .. }
         | SetupError::Encode { .. }

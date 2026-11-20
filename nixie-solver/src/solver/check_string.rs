@@ -793,6 +793,19 @@ impl Solver {
     /// declines to certify anything whose assertions also mention a free
     /// Boolean / arithmetic variable.  In that case fall back to the values that
     /// the unconditional equalities *force* – still sound, just narrower.
+    /// What neither path covers is a string variable the rest of the problem
+    /// constrained only through *another* theory – the TLA+ front end's
+    /// `tcolor \in {"white", "black"}` is `(set.member tcolor …)` decided false,
+    /// which forces `tcolor` ≠ both literals without ever equating it to one.
+    /// A variable left unassigned by both passes gets a **globally fresh**
+    /// string literal, distinct from every string literal in the problem.
+    /// Freshness is the whole argument: such a variable can only be constrained
+    /// by equalities (already covered above), by disequalities, or by finite-set
+    /// membership over literals, and a value equal to no literal in the problem
+    /// satisfies all three simultaneously.  A `Sat` verdict's model may assign
+    /// any consistent value to a variable the search left open, and this is
+    /// that value – recorded as a *default*, like the integer completion's `0`,
+    /// so consumers can tell a solved value from a chosen one.
     pub(super) fn extract_string_model(&self, model: &mut Model, manager: &mut TermManager) {
         if !self.has_string_sorted_var(manager) {
             return;
@@ -818,6 +831,116 @@ impl Solver {
                 let value_term = manager.mk_string_lit(&value);
                 model.set(term, value_term);
             }
+        }
+        self.complete_string_model(model, manager);
+    }
+
+    /// Assign a value to every still-unassigned string-sorted variable in the
+    /// assertion set: the EUF class's value where the class has one, and
+    /// otherwise a **globally fresh** string literal.  See
+    /// [`Self::extract_string_model`] for the soundness argument.
+    ///
+    /// Classes matter because a decided equality merges the two terms in EUF
+    /// *before* the model is built — including the conditional equalities a
+    /// lifted `ite` contributes (`v = t` once `c` is decided).  A completion
+    /// that ignored them would publish two different values for one EUF
+    /// class, contradicting an equality the search itself decided: the
+    /// `EWD840.tla` shape, where `tcolor'` merges with `tcolor` through the
+    /// `IF` branch the SAT core picked.
+    fn complete_string_model(&self, model: &mut Model, manager: &mut TermManager) {
+        // Every string literal in the problem, so "fresh" can be checked
+        // against it, and every unassigned string variable, in `TermId` order
+        // so the completion is reproducible.
+        let mut literals: FxHashSet<String> = FxHashSet::default();
+        let mut open_vars: Vec<TermId> = Vec::new();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.assertions.clone();
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(term_data) = manager.get(term) else {
+                continue;
+            };
+            match &term_data.kind {
+                TermKind::StringLit(s) => {
+                    literals.insert(s.clone());
+                }
+                TermKind::Var(_)
+                    if self.is_string_sorted(term, manager) && model.get(term).is_none() =>
+                {
+                    open_vars.push(term);
+                }
+                _ => {}
+            }
+            super::term_walk::collect_structural_children(&term_data.kind, &mut stack);
+        }
+        if open_vars.is_empty() {
+            return;
+        }
+        open_vars.sort_unstable_by_key(|t| t.0);
+        open_vars.dedup();
+        // Group the string-sorted terms that matter by EUF class: a class
+        // with a literal (or an already-published value) hands that value to
+        // every open member; a class with none takes one fresh literal for
+        // all of its members.
+        let mut class_of: FxHashMap<TermId, u32> = FxHashMap::default();
+        let mut class_value: FxHashMap<u32, String> = FxHashMap::default();
+        let mut root_of = |term: TermId| -> Option<u32> {
+            match class_of.get(&term) {
+                Some(c) => Some(*c),
+                None => {
+                    let node = self.euf.term_to_node(term)?;
+                    let root = self.euf.find_immutable(node);
+                    class_of.insert(term, root);
+                    Some(root)
+                }
+            }
+        };
+        // Published values first, so a class inherits one over a bare literal.
+        for (&term, &value) in model.assignments().iter() {
+            if !self.is_string_sorted(term, manager) {
+                continue;
+            }
+            if let Some(TermKind::StringLit(s)) = manager.get(value).map(|t| &t.kind) {
+                if let Some(root) = root_of(term) {
+                    class_value.entry(root).or_insert_with(|| s.clone());
+                }
+            }
+        }
+        // Literals in the assertions, next.
+        for term in visited.iter().copied() {
+            if let Some(TermKind::StringLit(s)) = manager.get(term).map(|t| &t.kind).cloned() {
+                if let Some(root) = root_of(term) {
+                    class_value.entry(root).or_insert_with(|| s);
+                }
+            }
+        }
+        let mut counter = 0usize;
+        for var in open_vars {
+            let value = match root_of(var).and_then(|r| class_value.get(&r).cloned()) {
+                Some(v) => v,
+                None => {
+                    let mut candidate = format!("@unconstrained_str_{counter}");
+                    while literals.contains(&candidate) {
+                        counter += 1;
+                        candidate = format!("@unconstrained_str_{counter}");
+                    }
+                    // Reserved for the whole class: two members of one EUF
+                    // class must not be completed to different values, and
+                    // two *different* classes get distinct values so any
+                    // undecided comparison between them stays free rather
+                    // than being accidentally settled.
+                    literals.insert(candidate.clone());
+                    counter += 1;
+                    if let Some(root) = root_of(var) {
+                        class_value.insert(root, candidate.clone());
+                    }
+                    candidate
+                }
+            };
+            let value_term = manager.mk_string_lit(&value);
+            model.set_default(var, value_term);
         }
     }
 
@@ -874,6 +997,52 @@ mod tests {
     use crate::prelude::*;
     use nixie_core::ast::{TermId, TermKind, TermManager};
     use smallvec::smallvec;
+
+    /// A `String`-sorted `ite` in a **mixed** problem (a free Bool/array
+    /// beside it) used to reach the search as an EUF-opaque leaf: the ground
+    /// string path declines mixed problems, the honesty gate fires only on
+    /// `Str*` atoms, and the published model then invented a value for what
+    /// the `ite` defined — the TLA+ front end's `EWD840.tla` token colour.
+    /// The fix is two layers, both pinned here: the ite is lifted to a fresh
+    /// constant with conditional equalities (so EUF merges the selected
+    /// branch), and string model completion publishes the **EUF class**
+    /// value rather than a fresh literal.
+    #[test]
+    fn string_ite_model_publishes_the_euf_class_value() {
+        let mut tm = nixie_core::TermManager::new();
+        let mut s = Solver::new();
+        let str_sort = tm.sorts.string_sort();
+        let int = tm.sorts.int_sort;
+        let bool_arr = tm.sorts.array(int, tm.sorts.bool_sort);
+        let f = tm.mk_var("f", bool_arr);
+        let three = tm.mk_int(3);
+        let f3 = tm.mk_select(f, three);
+        let active = tm.mk_not(f3);
+        let y = tm.mk_var("y", str_sort);
+        let x = tm.mk_var("x", str_sort);
+        let lit_c = tm.mk_string_lit("c");
+        let lit_black = tm.mk_string_lit("black");
+        let eq_yc = tm.mk_eq(y, lit_c);
+        let eq_x_black = tm.mk_eq(x, lit_black);
+        // A literally-true condition, so the taken branch is known.
+        let w = tm.mk_string_lit("white");
+        let cond = tm.mk_eq(w, w);
+        let ite = tm.mk_ite(cond, lit_black, y);
+        let eq_x = tm.mk_eq(x, ite);
+        let left = tm.mk_and([active, eq_x]);
+        let next = tm.mk_or([left, eq_x_black]);
+        for t in [eq_yc, next] {
+            s.assert(t, &mut tm);
+        }
+        assert_eq!(s.check(&mut tm), crate::SolverResult::Sat);
+        let m = s.model().expect("model");
+        let ex = m.eval(x, &mut tm);
+        assert_eq!(
+            tm.get(ex).map(|d| d.kind.clone()),
+            Some(nixie_core::TermKind::StringLit("black".to_string())),
+            "x must take the ite's selected branch, not an invented value"
+        );
+    }
 
     /// The two fact sets these tests inspect.
     type StringFacts = (FxHashMap<TermId, String>, FxHashMap<TermId, i64>);

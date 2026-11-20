@@ -31,6 +31,8 @@
 //! discard behaviours and could turn a real counterexample into a false
 //! "no violation".
 
+use std::rc::Rc;
+
 use nixie_core::{TermId, TermManager};
 use nixie_solver::{Solver, SolverResult};
 use nixie_tla::types::Inference;
@@ -58,6 +60,17 @@ pub enum Outcome {
     /// Carries what stopped it. Never reported as either of the above: an
     /// undecided query is not a proof and not a bug.
     Unknown(String),
+    /// The specification's own assumptions are contradictory: it has **no
+    /// behaviours at all**.
+    ///
+    /// TLC and Apalache report a violated assumption and stop, and so does
+    /// this — reporting `NoViolationWithin` instead would be technically true
+    /// (no counterexample exists) and practically a lie (it reads as "the
+    /// invariant holds", when in fact there is nothing to check). Distinguished
+    /// from [`Outcome::Unknown`], which is about what the search could not
+    /// decide; this is decided, and what it decided is that the question is
+    /// empty.
+    AssumptionsUnsatisfiable,
 }
 
 /// Why a specification could not be checked at all.
@@ -103,6 +116,19 @@ pub enum SetupError {
         found: String,
         /// The level the role allows.
         wanted: String,
+    },
+    /// A constant-level assumption **evaluates to FALSE**.
+    ///
+    /// A specification whose assumptions are contradictory has no behaviours,
+    /// and checking one anyway reports counterexamples for a specification
+    /// that does not exist. TLC and Apalache report the violated assumption
+    /// and stop; so does this. The evaluation runs on the *substituted*
+    /// constants — after `.cfg` and `--cinit` pinning — because those are the
+    /// constants the check is actually about.
+    #[error("assumption violated: `{name}` is FALSE")]
+    AssumptionViolated {
+        /// Which assumption, by its definition or `ASSUME` position.
+        name: String,
     },
     /// A `.cfg` replacement could not be applied.
     ///
@@ -161,7 +187,13 @@ pub struct Bmc {
     next: KeraRef,
     inv: KeraRef,
     encoder: Encoder,
-    /// Assumptions that could not be lowered, typed or encoded.
+    /// Assumptions that could not be lowered or typed, counted at prepare
+    /// time. Encode-time drops are added per check, into
+    /// [`Bmc::dropped_assumptions`], which is why the split exists: a check
+    /// that re-encodes must not double-count.
+    dropped_setup: usize,
+    /// Assumptions that could not be lowered, typed or encoded — the split's
+    /// published half.
     dropped_assumptions: usize,
     /// `CONSTRAINT`: a state predicate asserted in every state.
     state_constraints: Vec<KeraRef>,
@@ -398,9 +430,10 @@ impl Bmc {
         // of N" — a strictly harder claim that fails on specifications that
         // are perfectly correct. The resulting `Violation` would be a real
         // model of the encoded formula and a false alarm about the spec.
-        let mut assumptions = Vec::new();
+        let mut assumptions: Vec<(String, KeraRef)> = Vec::new();
         for name in constraints {
-            assumptions.push(lower_one(&mut low, module, name)?);
+            let body = lower_one(&mut low, module, name)?;
+            assumptions.push((name.to_string(), body));
         }
         // `CONSTRAINT C` bounds the state space TLC explores. Asserting it in
         // every state is the bounded-model-checking reading, and it is the
@@ -415,15 +448,41 @@ impl Bmc {
         for name in &config.action_constraints {
             action_constraints.push(lower_one(&mut low, module, name)?);
         }
-        for unit in &module.units {
+        for (i, unit) in module.units.iter().enumerate() {
             if let UnitKind::Assume { body, .. } = &unit.kind {
                 // An assumption that will not lower is skipped rather than
                 // fatal — but it is skipped *loudly*, by weakening nothing:
                 // see `dropped_assumptions`.
                 match low.lower(body) {
-                    Ok(k) => assumptions.push(k),
+                    Ok(k) => assumptions.push((format!("ASSUME #{i}"), k)),
                     Err(_) => dropped += 1,
                 }
+            }
+        }
+
+        // A fully ground assumption is **evaluated**, not asserted: it has
+        // only one value, and asking the solver what that value is would be
+        // asking a question already answered. One that is FALSE means the
+        // specification has no behaviours at all — TLC and Apalache report
+        // that and stop, and so does this, by name. One that is TRUE needs
+        // no constraint at all. An assumption the evaluator cannot decide
+        // (usually because it still mentions a symbolic `CONSTANT`) falls
+        // through to be asserted for the solver to reason about.
+        //
+        // The evaluation is on the lowered term, which is to say the
+        // **substituted** constants: a `.cfg` pinning `N = 3` has already
+        // replaced `N` by the time it reaches here, so `ASSUME N \in
+        // Nat \ {0}` is checked as `3 \in Nat \ {0}`, not with `N` free.
+        let mut assertable: Vec<KeraRef> = Vec::new();
+        for (label, a) in &assumptions {
+            match nixie_tla::Evaluator::new().eval(a) {
+                Ok(nixie_tla::Value::Bool(true)) => {}
+                Ok(nixie_tla::Value::Bool(false)) => {
+                    return Err(SetupError::AssumptionViolated {
+                        name: label.clone(),
+                    });
+                }
+                Ok(_) | Err(_) => assertable.push(Rc::clone(a)),
             }
         }
 
@@ -477,7 +536,7 @@ impl Bmc {
         // it is extra information, and losing it can only make the search
         // report more, never less.
         let mut typed_assumptions = Vec::new();
-        for a in assumptions {
+        for a in assertable {
             if inf.infer(&a).is_ok() {
                 typed_assumptions.push(a);
             } else {
@@ -552,6 +611,7 @@ impl Bmc {
 
         Ok(Self {
             assumptions: typed_assumptions,
+            dropped_setup: dropped,
             dropped_assumptions: dropped,
             init: init_k,
             next: next_k,
@@ -590,14 +650,47 @@ impl Bmc {
         // Assumptions are constant-level, so one encoding at step 0 serves
         // every step of the unrolling.
         let mut assumed = Vec::new();
+        let mut dropped_now = self.dropped_setup;
         for a in &self.assumptions {
             match self.encoder.encode_at(a, 0, tm) {
                 Ok(t) => assumed.push(t),
                 // An assumption with no encoding is dropped, not approximated.
                 // Dropping one only *weakens* what is assumed, so the search
                 // explores a superset of the intended states: it can produce a
-                // spurious counterexample, never hide a real one.
-                Err(_) => self.dropped_assumptions += 1,
+                // spurious counterexample, never hide a real one — which is
+                // why a later `Sat` under drops is reported `Unknown`.
+                Err(e) => {
+                    if std::env::var_os("NIXIE_TLA_DEBUG_DROPS").is_some() {
+                        eprintln!("[dropped assumption] {e}");
+                    }
+                    dropped_now += 1;
+                }
+            }
+        }
+        // Recomputed from `dropped_setup` every call, so a caller that checks
+        // repeatedly (the `--max-error` loop) does not count one dropped
+        // assumption per query.
+        self.dropped_assumptions = dropped_now;
+
+        // The assumptions on their own decide whether the specification has
+        // any behaviours. A contradictory assumption set makes every deeper
+        // query `Unsat` — indistinguishable from a passing specification —
+        // so it is answered here, once, by name. `Sat` and `Unknown` both
+        // fall through: an assumption set the solver cannot decide is not
+        // evidence of emptiness.
+        if !assumed.is_empty() {
+            let mut probe = Solver::new();
+            if let Some(limit) = self.conflict_limit {
+                probe.set_conflict_limit(limit);
+            }
+            for a in &assumed {
+                probe.assert(*a, tm);
+            }
+            for c in self.encoder.side_constraints().to_vec() {
+                probe.assert(c, tm);
+            }
+            if probe.check(tm) == SolverResult::Unsat {
+                return Ok(Outcome::AssumptionsUnsatisfiable);
             }
         }
 
@@ -682,20 +775,19 @@ impl Bmc {
             solver.assert(violated, tm);
             match solver.check(tm) {
                 SolverResult::Sat => {
-                    // A `Sat` answer is a counterexample. Read it back and
-                    // replay it: every hop from the specification to here —
-                    // lowering, typing, encoding — is cross-checked against
-                    // `nixie-tla`'s evaluator already, and this is the hop
-                    // that was not.
-                    //
-                    // The result is *surfaced*, not enforced. Making the
-                    // verdict conditional on replaying is the goal and is
-                    // deliberately not done yet: the two things that stop a
-                    // trace replaying today are gaps in reading a model, not
-                    // evidence against the verdict, and turning them into
-                    // `Unknown` would trade a measured weakness for an
-                    // unmeasured one. `Bmc::verification` says which happened,
-                    // so the number is visible rather than assumed.
+                    // A `Sat` answer is a counterexample **candidate**. It is
+                    // only a counterexample once it has been read back as
+                    // TLA+ values and replayed by `nixie-tla`'s evaluator —
+                    // the independent implementation of TLA+ that
+                    // `bench/tla_eval` checks against TLC. Until both succeed
+                    // the honest verdict is [`Outcome::Unknown`], never
+                    // [`Outcome::Violation`]: exit 12 is what users and tools
+                    // act on, and an undecodable or non-replaying trace is
+                    // not evidence of a violation. It is evidence that the
+                    // pipeline disagrees with itself somewhere — lowering,
+                    // encoding or the solver — and every such disagreement
+                    // stays visible in [`Bmc::verification`] so it gets
+                    // chased rather than explained away.
                     let (trace, verdict) = match solver.model() {
                         None => (
                             None,
@@ -710,8 +802,32 @@ impl Bmc {
                         },
                     };
                     self.counterexample = trace;
-                    self.verification = Some(verdict);
-                    return Ok(Outcome::Violation { step: j });
+                    self.verification = Some(verdict.clone());
+                    // A search that ran with dropped assumptions is a search
+                    // over a **superset** of the intended states. A `Sat`
+                    // there may be an artefact of exactly the widening, so it
+                    // is `Unknown` and says why — the count is what a caller
+                    // needs in order to decide whether to trust it.
+                    if self.dropped_assumptions > 0 {
+                        return Ok(Outcome::Unknown(format!(
+                            "a counterexample was found, but {} assumption(s) \
+                             could not be encoded, so the search ran over more \
+                             states than the specification allows and the trace \
+                             may be an artefact",
+                            self.dropped_assumptions
+                        )));
+                    }
+                    return match &verdict {
+                        Verification::Replayed => Ok(Outcome::Violation { step: j }),
+                        Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
+                            "a counterexample was found but could not be read \
+                             back as TLA+ values: {why}"
+                        ))),
+                        Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
+                            "a counterexample was read back but does not replay \
+                             — the encoding and the evaluator disagree: {why}"
+                        ))),
+                    };
                 }
                 SolverResult::Unsat => {}
                 SolverResult::Unknown => {
