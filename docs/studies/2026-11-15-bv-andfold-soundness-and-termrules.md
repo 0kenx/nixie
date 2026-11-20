@@ -982,3 +982,57 @@ deletion/restart scheduling remains the recorded matched-null session
 target (24.9 % of duthen-50 pre-interval-landing).
 
 Gate PASS (counters 1.000, wall 1.04); parity 171-0-6; 12 810 tests.
+
+## Thirty-first addendum: the census attempt (invalid), two new traps, and the 9-singles shape survey
+
+**The quiet-machine census was attempted and abandoned as invalid.**  The
+box looked quiet (load 5.2) but another agent had 38 GB parked in swap;
+mid-scan the load ramped 5→9 (later 60 on a compile storm).  Every
+bst/hdp cell read TO in that window for BOTH arms — including cells that
+decide in 6–8 s at load 12 on a clean box.  Three traps recorded:
+
+1. **Trend-biased pairing**: an A-then-B pair sequence under a monotone
+   load ramp biases systematically against B — matched pairs protect
+   against stationary noise, not ramps.  Fix: alternate order per round
+   (ABBA); if the two A-readings bracket the two B-readings differently
+   across rounds, the window is unusable.
+2. **Stale verdict on timeout**: a TO'd run leaves the previous cell's
+   verdict greppable in a reused output file — reset V on rc≠0 or the
+   row pairs a real time with the NEIGHBOR's verdict (hit twice today).
+3. **Swap pressure invalidates the load gate**: check `free`/`vmstat`,
+   not just `uptime`, before calling a window quiet.
+
+**ABBA re-check of the moved cells** (through the noise, load 6→60):
+bst/3047 A 7.1–7.4 vs B 5.5–5.6 (−23 %), bst/3086 A 8.5–8.9 vs B 7.1–7.4
+(−17 %), bst/3215 A TO/TO vs B decided TWICE (7.3/8.7 unsat — the
+crossing is real).  bst/3365, 3422 and minigzip 608/620/674 were
+unmeasurable (load 60); 608/620 sat at 9.7–9.9 s in the invalid scan's
+earlier arm — cap-boundary cells whose direction needs the quiet read.
+The census (absolute count + z3 arm) stays OPEN.
+
+**Target #3 (9 misc singles) — the one-pass shape survey done**
+(load-caveated, load ~19; 25 s harness profiles):
+
+* **6–7 of 9 share the encode/ingest cluster**: top-4 blocks are
+  `gate_and`/`gate_xor` + `ClauseArena::alloc` +
+  `BinaryImplicationGraph::extra_push` + `WatchLists::resize` (+
+  `install_root_long`/`add_lits`) — bst/cjpeg/744, bst/yices/2921,
+  cjpeg/1199, yodl/4996, nested/readelf/2966, and libxml/14352's
+  variant (`collect_unified_bv_terms`/`encode_bv_term_recursive`).
+  These cells COMPLETE under 25 s uncapped — they are 10–25 s
+  encode-bound cells, not search-hard ones.
+* **Two search-side outliers**: yices/1420 (propagate 20.7 %, scan,
+  subsume, congruence — unfinished at 25 s) and readelf/7707
+  (propagate 19.7 % + `ClauseDatabase::view` 17.2 % +
+  `augment_big_with_gate_congruence` 15.8 % — unfinished).
+* **One rewrite-loop outlier**: bzip2recover/2763 — `bv_wrap_unsigned`
+  + `run_substitute_step` + `modulus` ≈ 23 % (core-side bv_fold
+  fixpoint churn).
+
+**The actionable new fact**: the encode-time cluster is the SAME flat
+top that hdp/3365 and minigzip/492 show post-landings — a cross-family
+residual, not a single-family quirk.  Concrete entry: `WatchLists::resize`
+grows the Vec-of-Vecs by exactly `num_vars*2` per call (outer realloc +
+per-element `Vec::new` construction, 4–7 % of encode-bound cells) — a
+reserve-ahead/geometric growth policy is the first candidate, measured
+on a quiet window.  The singles otherwise stay low-ROI as surveyed.
