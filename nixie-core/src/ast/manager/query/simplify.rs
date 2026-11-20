@@ -59,12 +59,7 @@ fn is_value_kind(kind: &TermKind) -> bool {
 /// degradation, like the fuel budget).
 const CTX_WALK_RECURSION_LIMIT: u32 = 1024;
 
-/// A subtree's Boolean-atom set ([`TermManager::subtree_bool_atoms`]):
-/// sorted ascending by `TermId.0`.  Membership is a binary search and
-/// unions are two-pointer merges — no hashing anywhere in the per-assert
-/// construction (the hashed version spent 35 % of the hdp class inside
-/// `HashSet::insert`).
-type AtomSet = SmallVec<[TermId; 4]>;
+use super::super::AtomSet;
 
 /// The comparison family of [`TermManager::cmp_ite_rule`]: which
 /// operator a distributed residual keeps.
@@ -966,15 +961,24 @@ impl TermManager {
         out
     }
 
-    /// A subtree's Boolean-atom set: sorted ascending by `TermId.0`
-    /// (see [`AtomSet`]).
     /// Boolean-sorted atom sets per subtree, bottom-up over the DAG
     /// (children's sets unioned; a node's own id included when it is
     /// Boolean-sorted — any Boolean node can serve as a context atom
     /// key).  `None` for a node whose set exceeds
     /// [`MAX_MEMO_ATOM_SET`]: such subtrees simply do not memoize (the
     /// walk stays correct, only slower).
-    fn subtree_bool_atoms(&self, root: TermId) -> FxHashMap<TermId, Option<AtomSet>> {
+    ///
+    /// The sets are `Arc`-shared through the manager-level
+    /// `subtree_atom_cache`: an atom set is a pure function of the
+    /// term's immutable node and children, so an assertion whose DAG
+    /// prefixes an earlier assertion's clones the shared `Arc`s instead
+    /// of rebuilding them (hdp-class files assert ~4 200 heavily sharing
+    /// formulas; the rebuild was 7.9 % of the class even after the
+    /// sorted-set landing).
+    fn subtree_bool_atoms(
+        &self,
+        root: TermId,
+    ) -> FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> {
         /// Beyond this many distinct atoms a subtree's set is stored as
         /// `None` (no memoization for it) — the set itself would cost
         /// more than the re-walk it saves on typical inputs.
@@ -1013,7 +1017,7 @@ impl TermManager {
             merged.extend_from_slice(&src[j..]);
             *dst = merged;
         }
-        let mut out: FxHashMap<TermId, Option<AtomSet>> = FxHashMap::default();
+        let mut out: FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>> = FxHashMap::default();
         // Two-phase Expand/Combine (children's sets exist before the
         // parent unions them — the post-order trap the share-for-printing
         // pass already recorded once).
@@ -1022,11 +1026,11 @@ impl TermManager {
             Combine(TermId),
         }
         let mut stack = vec![Frame::Expand(root)];
-        let mut seen: FxHashSet<TermId> = FxHashSet::default();
+        let epoch = self.fresh_visit_epoch();
         while let Some(f) = stack.pop() {
             match f {
                 Frame::Expand(t) => {
-                    if !seen.insert(t) {
+                    if !self.visit_try_mark(epoch, t) {
                         continue;
                     }
                     let Some(data) = self.get(t).cloned() else {
@@ -1039,6 +1043,14 @@ impl TermManager {
                     }
                 }
                 Frame::Combine(t) => {
+                    // Cache first: a shared prefix computed by an earlier
+                    // assertion is reused as-is (the Arc clone — no
+                    // merge, no allocation).  Per-access borrows: a miss
+                    // inserts into the same RefCell below.
+                    if let Some(hit) = self.subtree_atom_cache.borrow().get(&t) {
+                        out.insert(t, hit.clone());
+                        continue;
+                    }
                     let Some(data) = self.get(t) else { continue };
                     let children = crate::ast::traversal::get_children(&data.kind);
                     let mut set: Option<AtomSet> = if data.sort == self.sorts.bool_sort {
@@ -1068,7 +1080,11 @@ impl TermManager {
                     {
                         set = None;
                     }
-                    out.insert(t, set);
+                    let shared = set.map(std::sync::Arc::new);
+                    self.subtree_atom_cache
+                        .borrow_mut()
+                        .insert(t, shared.clone());
+                    out.insert(t, shared);
                 }
             }
         }
@@ -1083,7 +1099,7 @@ impl TermManager {
         &self,
         t: TermId,
         ctx: &FxHashMap<TermId, bool>,
-        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
+        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
     ) -> Option<u64> {
         let relevant = sub_atoms.get(&t)?;
         let set = relevant.as_ref()?;
@@ -1156,7 +1172,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
+        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1181,7 +1197,7 @@ impl TermManager {
         t: TermId,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
+        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {
@@ -1315,7 +1331,7 @@ impl TermManager {
         args: SmallVec<[TermId; 4]>,
         ctx: &mut FxHashMap<TermId, bool>,
         fuel: &mut u32,
-        sub_atoms: &FxHashMap<TermId, Option<AtomSet>>,
+        sub_atoms: &FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>,
         memo: &mut FxHashMap<(TermId, u64), TermId>,
         depth: u32,
     ) -> TermId {

@@ -8,6 +8,15 @@ use crate::prelude::*;
 use crate::sort::{SortId, SortKind, SortManager};
 use hashbrown::HashTable;
 use portable_atomic::{AtomicU32, Ordering};
+use smallvec::SmallVec;
+
+/// A subtree's Boolean-atom set (see
+/// [`crate::ast::manager::query::simplify`]'s `subtree_bool_atoms`):
+/// sorted ascending by `TermId.0`.  Membership is a binary search and
+/// unions are two-pointer merges — no hashing anywhere in the
+/// construction.  Shared through `Arc` in the manager-level
+/// `subtree_atom_cache` (cross-assertion reuse; see its field doc).
+pub(crate) type AtomSet = SmallVec<[TermId; 4]>;
 
 mod builder;
 mod dt_eq;
@@ -135,6 +144,18 @@ pub struct TermManager {
     /// Same shape, for nonlinear arith products (see
     /// `contains_nonlinear_mul`).
     pub(super) nonlinear_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
+    /// Cross-assertion memo for [`crate::ast::manager::query::simplify`]'s
+    /// `subtree_bool_atoms`: each term's Boolean-atom set (sorted dense
+    /// ids; `None` = oversized, see `MAX_MEMO_ATOM_SET`).  A set is a pure
+    /// function of the term's (immutable) node and children, and ids are
+    /// never reused (append-only arena; `gc` only prunes the intern
+    /// table), so an entry is valid for the manager's whole lifetime.
+    /// `Arc`-shared because a solve's assertions overlap heavily on
+    /// meganode prefixes: without the memo every assertion rebuilt the
+    /// shared prefixes' sets from scratch (the hdp class spent 35 % of a
+    /// run in exactly that, pre-sorting-landing).  `RefCell` as above.
+    pub(super) subtree_atom_cache:
+        std::cell::RefCell<FxHashMap<TermId, Option<std::sync::Arc<AtomSet>>>>,
     /// Epoch-stamped visited marks shared by every DAG walker that asks
     /// for one ([`TermManager::fresh_visit_epoch`]): one `Vec<u32>`
     /// indexed by the dense term id, a fresh epoch per walk.  This
@@ -229,6 +250,7 @@ impl TermManager {
             ite_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             array_free_cache: std::cell::RefCell::new(FxHashSet::default()),
             nonlinear_free_cache: std::cell::RefCell::new(FxHashSet::default()),
+            subtree_atom_cache: std::cell::RefCell::new(FxHashMap::default()),
             visit_epoch: std::cell::Cell::new(0),
             visit_marks: std::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
