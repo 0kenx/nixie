@@ -1178,3 +1178,34 @@ SMT path.  duthen-50's −23 % crossing must come from propagation itself
 or the encode side — addendum 32's `new_var` cluster (21.7 % of
 encode-bound cells) is the remaining sized lever, plus the still-open
 quiet-machine census.
+
+## Thirty-sixth addendum: slack-grown per-var arrays — LANDED (`0b0cd392`)
+
+Addendum 32's candidate 2 (lazy array growth) was tried and REFUTED at
+the architecture level: the propagation session's exclusive views
+(`propagation_parts()`) hand the kernels `&mut [Vec<Watcher>]` slices
+indexed DIRECTLY by literal code — unresizable borrows, so per-slot
+laziness cannot exist at that boundary (an attempted lazy build panicked
+at `destinations[code]` on the first never-touched literal — caught by
+the empty-verdict guard before any comparison ran; the guard pays for
+itself).
+
+The landed policy keeps the invariant and kills the storm: growth
+overshoots by 64 rows (watch structures `>= num_vars*2`, var arrays
+`>= num_vars`, at every point), so the per-var resize is one bounds
+check and the zero-writes arrive as rare sequential bursts.  LRB's
+per-var heap push and `in_heap[v]` write stay (membership semantics);
+its four pure-storage arrays batch.  Trail carries its AVX2 `+4` pad
+into the slack.  Counters bit-identical (4 probes); profile arc on
+bst/cjpeg/744_0: `new_var` 21.7→17.3 %, WatchLists::resize 8.5→5.0 %,
+Trail 4.3→1.7 %, LRB 4.3→3.7 % — the three resize blocks together
+17.1→10.4 % of the cell.  Remaining `new_var` share: the CHB/VSIDS/LRB
+heap inserts and ~10 further per-var arrays (vsids/chb/vmtf/seen/
+model/phase family) — same patch shape, each needing its own
+accessor audit; candidate 3 (deferred heap seeding) remains
+counter-SENSITIVE (tie-breaking) and untouched.
+
+Also this session: the restart-stall screen (addendum 35) closed the
+deletion/restart question; this landing opens the encode-cluster vein
+for the same treatment (next: vmtf/seen/model/phase resizes; the gate_*
+var creation is single-var by construction).
