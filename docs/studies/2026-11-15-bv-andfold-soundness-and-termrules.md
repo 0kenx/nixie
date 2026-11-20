@@ -1237,3 +1237,29 @@ authoritative record; count from them.)
 **The hdp arc, closed**: 37.1 % assert-side block → two landings → 1.5 %;
 prefetch over-issue → kissat shape; per-var resize storm → slack
 policy; family 4→6 at the cap with zero verdict changes anywhere.
+
+## Thirty-eighth addendum: the new_var tail joins the slack policy — LANDED (`b90f3807`)
+
+The remaining ~15 Solver-owned per-var tables (seen/model/phase×5/
+level_marks/seen_level_*/lrat_flags/unit_clauses_idx/elim_*/
+probe_propfixed) now grow through one `grow_var_tables()` with +64
+slack, shared by new_var and new_vars_bulk.  Enabling audit: every
+reader of these arrays is bounds-guarded or semantically-indexed, and
+NOTHING iterates them by len() as a var count (the allsat
+`model.len()` hit is a local).  The one real hazard class was
+length-EQUALITY copies into/from `phase` — `copy_from_slice` panicked
+on BBB-32 the moment `phase` carried slack (the empty-verdict guard
+caught it pre-comparison); fixed as guarded grows + min-length copies,
+plus two silent-slack-chopping resizes made guarded.
+
+Counters bit-identical on five probes (duthen-50's 58 k conflicts
+exercise the rephase paths).  `new_var` inclusive on the encode-bound
+profile cell: **21.7 → 17.3 → 14.7 %** across `0b0cd392` + this.  The
+residue is the CHB/VSIDS/LRB heap inserts (candidate 3 — deferred
+same-order seeding would be counter-identical but saves nothing;
+reordering is counter-sensitive) and vmtf/binary_graph internals (~2 %).
+
+Gate wall read 0.83 this run (load-favorable; counters 1.000 the
+record).  Encode-cluster candidates 1+2 are now fully landed; the
+cluster's remaining shares are gate_/emit_ clause construction —
+algorithmic, not allocation-policy.
