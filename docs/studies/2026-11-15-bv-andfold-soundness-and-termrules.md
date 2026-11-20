@@ -1036,3 +1036,39 @@ grows the Vec-of-Vecs by exactly `num_vars*2` per call (outer realloc +
 per-element `Vec::new` construction, 4–7 % of encode-bound cells) — a
 reserve-ahead/geometric growth policy is the first candidate, measured
 on a quiet window.  The singles otherwise stay low-ROI as surveyed.
+
+## Thirty-second addendum: the encode-cluster deep-dive — `new_var` is 21.7 % of an encode-bound cell
+
+Following addendum 31's shape survey, the encode cluster's largest
+single frame on bst/cjpeg/744_0 (1 960 samples, load-caveated) is not a
+blast rule but **`Solver::new_var` inclusive 21.7 %**: WatchLists::resize
+8.5 + Trail::resize 4.3 + LRB::resize 4.3 + CHB::insert + VSIDS::insert
++ BinaryImplicationGraph/VMTF/… (~4 more resizes).  The leaf frames are
+scattered single-element `core::ptr::write`s + mimalloc block churn —
+each call touches ~14 cold arrays to write ONE element each (the
+cache-miss pattern), plus THREE priority-queue inserts.  The volume
+source: bit-blasting creates vars ONE AT A TIME — `new_bv` loops
+`(0..width).map(|_| self.sat.new_var())` for leaves, and every
+gate_* (and/or/xor/mux/emit) creates its single output var inline
+(`gate_and` inclusive 24 %, `emit_and` 12.8 %, `ClauseArena::alloc`
+8.7 % — overlapping subtrees).
+
+**Ranked candidate fixes (NONE landed — all need a quiet window):**
+1. **Bulk leaf creation** (`new_bv` → `new_vars_bulk(width)`):
+   trivially counter-identical, but captures only leaf vars — the gate
+   paths (the volume) create vars interleaved with clause emission and
+   do not fit a batch API.
+2. **Lazy array growth**: `new_var` bumps `num_vars` only; the 14
+   arrays grow on first touch (the `get_mut` pattern watches already
+   has).  Relocates the misses to use sites rather than removing them —
+   needs a clean profile to size.
+3. **Deferred heap seeding** (kissat-shaped: heaps built at search
+   start, not per var): removes CHB+VSIDS inserts from the encode path
+   and replaces n·O(log n) inserts with a bulk build.  **COUNTER-
+   SENSITIVE**: heap insertion order affects decision tie-breaking —
+   heuristic-class, matched-null apparatus required, not a pure-perf
+   landing.
+
+The var-count scale of the class (BBB-32 blast: 185–220 k vars) is what
+turns a ~100 ns constant into 20 % of a cell.  Post-census, this vein
+is the encode-side counterpart of the deletion/restart session.
