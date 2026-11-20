@@ -1491,6 +1491,21 @@ impl Inference {
                 let int = self.int_ty()?;
                 self.mk(Ty::Fun(e, int))?
             }
+            // `BagOfAll : ((a) => b, a -> Int) => b -> Int` — the rewire's
+            // annotation. This covers the fallback path where the operator is
+            // not rewired to a fold (a shadowing definition or an
+            // unresolvable operator argument); the fold itself types
+            // structurally.
+            ("BagOfAll", 2) => {
+                let a = self.fresh()?;
+                let b = self.fresh()?;
+                let int = self.int_ty()?;
+                let op = self.mk(Ty::Fun(a, b))?;
+                self.unify(args[0], op)?;
+                let bag_in = self.mk(Ty::Fun(a, int))?;
+                self.unify(args[1], bag_in)?;
+                self.mk(Ty::Fun(b, int))?
+            }
             ("Len", 1) => {
                 let e = a(self)?;
                 let seq = self.mk(Ty::Seq(e))?;
