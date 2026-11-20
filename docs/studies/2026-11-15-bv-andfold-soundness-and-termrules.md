@@ -913,3 +913,33 @@ solver-owned shape (blastable-memo precedent; NOT thread-local) is the
 next entry if the class still matters after re-census.  hdp's cap
 crossings so far: bst/3215 at load 14; 3365/3422 cross at quiet load
 (7.9–9.8 s vs the 10 s cap).
+
+## Twenty-ninth addendum: the atom sets go manager-level — LANDED (`d444269d`)
+
+Shape 2 of target #1.  `TermManager` gains `subtree_atom_cache:
+RefCell<FxHashMap<TermId, Option<Arc<AtomSet>>>>` — the sets are pure
+functions of immutable nodes with never-recycled ids, so entries are
+valid for the manager's lifetime and assertions sharing meganode
+prefixes clone `Arc`s instead of rebuilding (hdp: ~4 200 assertions).
+The walk's dedup moved to the shared epoch visit-marks (the last hashed
+set in the construction is gone).
+
+**Identity**: same argument as shape 1 plus purity/lifetime (the
+manager's own `eq_solve_cache` doc already states both).  Five probe
+cells counter-identical (incl. uclid tcas verdicts).
+
+**Measured**: profile of hdp/3365 — `subtree_bool_atoms` 7.9 %→1.5 %,
+`ctx_simplify` 10 %→4 %, merges →0.1 %.  Wall: wash under load 12–17
+(hdp decided cells ×3 rounds, deep 30 s cells ×2, uclid 20 MB mplayer
+cell ×3 — no arm separates, no regression signal).  The assert-side
+block is now closed end-to-end: 37.1 % → 1.5 % of the class across the
+two landings.  Gate PASS (counters 1.000, wall 0.98); parity
+171-0-6 (a first parity run died in its build step under load 38 —
+transient, clean on retry; recorded as the shared-target-dir hazard).
+
+**hdp family status**: 10 s-cap matched pairs at load 12–16 post-both
+landings: bst/3215 crosses (TO→8.5 s), bst/3365 reads 7.9–8.4 s and
+bst/3422 9.3–9.8 s (crossing at quiet load), bst/3128 decides ~32 s
+(30 s class, needs −70 % — search-side now).  A quiet-machine family
+re-census is the open bookkeeping item for the next session, alongside
+targets #2 (minigzip watch-scan block) and #3.
