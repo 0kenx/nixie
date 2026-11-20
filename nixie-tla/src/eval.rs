@@ -301,6 +301,38 @@ impl Evaluator {
                     _ => false,
                 }))
             }
+            // `f \in [S -> T]` is answered structurally — the domain is `S`
+            // and every value on it is in `T` — because the function set
+            // itself is not a value this evaluator can build, and enumerating
+            // one would be both impossible and unnecessary. This mirrors the
+            // encoder's `FunSet` membership arm exactly, which is the point:
+            // the encoder and the replay must agree on what the predicate
+            // *says*, or every trace through one reads as a counterexample to
+            // the other.
+            Kera::In(f, s) if matches!(s.as_ref(), Kera::FunSet { .. }) => {
+                let Kera::FunSet { set, cod } = s.as_ref() else {
+                    return Err(EvalErrorKind::Unsupported("a function set".into()));
+                };
+                let fv = self.go(f, env)?;
+                let Value::Fun(graph) = &fv else {
+                    return Err(EvalErrorKind::Type {
+                        expected: "a function".into(),
+                        found: fv.kind().into(),
+                    });
+                };
+                let want: std::collections::BTreeSet<Value> =
+                    self.set_of(set, env)?.into_iter().collect();
+                let have: std::collections::BTreeSet<Value> = graph.keys().cloned().collect();
+                if want != have {
+                    return Ok(Value::Bool(false));
+                }
+                for v in graph.values() {
+                    if !value_in_set(self, v.clone(), cod, env)? {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
             Kera::In(a, b) => {
                 let x = self.go(a, env)?;
                 let s = self.set_of(b, env)?;
@@ -1208,6 +1240,31 @@ fn update(base: Value, at: Value, to: Value) -> Result<Value> {
 ///
 /// `BOOLEAN` is not here: lowering expands it to `{FALSE, TRUE}`, which is a
 /// finite set and needs no special case.
+/// Whether a **value** is in a set term, without building the set as a
+/// `Value::Set`.
+///
+/// The standard infinite sets are answered by the value's kind (exactly as
+/// the `\in` arm above does); everything else by the ordinary set-of walk.
+/// This exists so a structural rewrite — `f \in [S -> T]`'s pointwise half —
+/// can test a *value* it already holds rather than re-wrapping it in a term.
+fn value_in_set(
+    this: &mut Evaluator,
+    v: Value,
+    set: &KeraRef,
+    env: &mut HashMap<String, Value>,
+) -> Result<bool> {
+    if let Some(which) = standard_infinite_set(set) {
+        return Ok(match (which, &v) {
+            ("Nat", Value::Int(i)) => *i >= 0,
+            ("Int", Value::Int(_)) => true,
+            ("Real", Value::Int(_)) => true,
+            ("STRING", Value::Str(_)) => true,
+            _ => false,
+        });
+    }
+    Ok(this.set_of(set, env)?.contains(&v))
+}
+
 fn standard_infinite_set(term: &KeraRef) -> Option<&'static str> {
     let name = match term.as_ref() {
         Kera::Var(n) => n.as_str(),

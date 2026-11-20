@@ -178,6 +178,18 @@ pub struct Encoder {
     /// Recursive functions already defined, so a second use reuses the array
     /// rather than defining a second one.
     recfuns: HashMap<(*const Kera, u32), (TermId, TermId)>,
+    /// Domains whose member lists this encoder learned while encoding another
+    /// constraint, keyed by the domain term.
+    ///
+    /// `f \in [S -> T]` pins `DOMAIN f = S` as an equation, which the solver
+    /// reasons about but `candidates_of` cannot read back — a domain *variable*
+    /// has no member list. Remembering the members the equation was built from
+    /// is exact — the equation says precisely that the domain is the set of
+    /// those members — and it is what lets a later `\A a \in DOMAIN f : …`
+    /// over the same function enumerate instead of decline. This is the
+    /// `TestHash2.tla` shape (`ConstInit` pins `hash` with `[S -> T]`, and
+    /// `IsInjective` quantifies over `DOMAIN hash`).
+    known_domains: HashMap<TermId, Vec<Member>>,
 }
 
 impl Encoder {
@@ -197,6 +209,7 @@ impl Encoder {
             fresh: 0,
             side: Vec::new(),
             recfuns: HashMap::new(),
+            known_domains: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -549,6 +562,11 @@ impl Encoder {
             // genuinely opaque one — a set variable — has none.
             Value::Scalar(t) => {
                 let t = *t;
+                if let Some(members) = self.known_domains.get(&t) {
+                    return Ok(SetCell {
+                        members: members.clone(),
+                    });
+                }
                 match self.candidates_of(t, 0, tm) {
                     Some(members) => Ok(SetCell { members }),
                     None => Err(EncodeError::NotEnumerable(
@@ -1145,6 +1163,12 @@ impl Encoder {
                 let elem = self.element_sort_of(domain, tm)?;
                 let base = self.set_as_arena(set, tm)?;
                 let want = self.native_set_of(&base.members, elem, tm)?;
+                // Remember that this domain's members are exactly `set`'s, so
+                // a later `DOMAIN f` (a quantifier, a fold) enumerates instead
+                // of declining. See `known_domains`.
+                self.known_domains
+                    .entry(domain)
+                    .or_insert_with(|| base.members.clone());
                 let mut conj = vec![tm.mk_eq(domain, want)];
                 for m in &base.members {
                     let Value::Scalar(key) = &*m.value else {
@@ -1165,17 +1189,61 @@ impl Encoder {
                     return Err(EncodeError::Unsupported("a standard set".into()));
                 };
                 let x = self.go(a, tm)?;
-                match name {
-                    // `x \in Nat` is `x >= 0` for an integer `x`.
-                    "Nat" => {
-                        let zero = tm.mk_int(0);
-                        scalar(tm.mk_ge(x, zero))
+                in_standard(x, name, tm)
+                    .map(|t| Rc::new(Value::Scalar(t)))
+                    .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
+            }
+            // Membership in a binary set operation whose one side is a
+            // standard **infinite** set is encoded structurally on that side,
+            // because the standard side has no finite representation to
+            // enumerate: `N \in Nat \ {0}` is `N >= 0 /\ N /= 0`, not a
+            // candidate list. Without this, an `ASSUME` pinning a constant
+            // with exactly this shape cannot be encoded, is dropped, and the
+            // search runs with an arbitrary `N` — the `EWD840.tla` shape.
+            //
+            // The finite side goes back through the ordinary `\in` dispatch
+            // (by re-encoding a synthesized `In` node), so every other
+            // membership encoding — native, arena, structural — applies to it
+            // unchanged. A recursion here is always on the *non-standard*
+            // side, so it cannot loop.
+            Kera::In(a, s) if bin_standard(s).is_some() => {
+                let (op, std_first, x, y) = bin_standard(s).expect("checked above");
+                // `elem` as an SMT term, needed for the structural side; a
+                // structural membership only exists for scalar elements.
+                let mut side = |t: &KeraRef, structural: bool| -> Result<TermId> {
+                    if structural {
+                        let name = standard_set(t).expect("caller checked");
+                        let e = self.go(a, tm)?;
+                        in_standard(e, name, tm)
+                            .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
+                    } else {
+                        let node: KeraRef = Rc::new(Kera::In(Rc::clone(a), Rc::clone(t)));
+                        match &*self.value(&node, tm)? {
+                            Value::Scalar(v) => Ok(*v),
+                            _ => Err(EncodeError::Unsupported(
+                                "a membership test that did not produce a Boolean".into(),
+                            )),
+                        }
                     }
-                    // Every value of the matching sort is in these, and the
-                    // type checker has already established the sort.
-                    "Int" | "Real" | "STRING" | "BOOLEAN" => scalar(tm.mk_bool(true)),
-                    other => Err(EncodeError::Unsupported(format!("`{other}` as a set"))),
-                }
+                };
+                let lhs = side(x, std_first);
+                let rhs = side(y, !std_first);
+                let (l, r) = (lhs?, rhs?);
+                let combined = match op {
+                    SetOp::Union => tm.mk_or([l, r]),
+                    SetOp::Intersect => tm.mk_and([l, r]),
+                    // `a \ b`: in `a` and not in `b`.
+                    SetOp::Difference => {
+                        if std_first {
+                            let not_r = tm.mk_not(r);
+                            tm.mk_and([l, not_r])
+                        } else {
+                            let not_l = tm.mk_not(l);
+                            tm.mk_and([not_l, r])
+                        }
+                    }
+                };
+                scalar(combined)
             }
             // Membership follows the *set's* representation, not the mode.
             // `x \in 1..3` in native mode reaches an arena candidate list,
@@ -2347,6 +2415,42 @@ fn standard_set(term: &KeraRef) -> Option<&'static str> {
         "Real" => Some("Real"),
         "STRING" => Some("STRING"),
         "BOOLEAN" => Some("BOOLEAN"),
+        _ => None,
+    }
+}
+
+/// A binary set operation with a standard *infinite* set on one side, as
+/// `(op, the-standard-side-is-first, x, y)`.
+///
+/// `Nat \ {0}` and `Nat \cap S` are the shapes an `ASSUME` uses to pin a
+/// constant, and neither has a finite member list on the standard side.
+fn bin_standard(s: &KeraRef) -> Option<(SetOp, bool, &KeraRef, &KeraRef)> {
+    let Kera::SetBin(op, x, y) = s.as_ref() else {
+        return None;
+    };
+    match (standard_set(x).is_some(), standard_set(y).is_some()) {
+        (true, _) => Some((*op, true, x, y)),
+        (false, true) => Some((*op, false, x, y)),
+        (false, false) => None,
+    }
+}
+
+/// `e \in <a standard infinite set>`, structurally: `Nat` is `e >= 0`, and
+/// the others contain every value of the sort the type checker already
+/// assigned, so membership in them is `TRUE`.
+///
+/// `None` for a name with no structural reading, which is a refusal rather
+/// than a guess.
+fn in_standard(e: TermId, name: &str, tm: &mut TermManager) -> Option<TermId> {
+    match name {
+        // `x \in Nat` is `x >= 0` for an integer `x`.
+        "Nat" => {
+            let zero = tm.mk_int(0);
+            Some(tm.mk_ge(e, zero))
+        }
+        // Every value of the matching sort is in these, and the type checker
+        // has already established the sort.
+        "Int" | "Real" | "STRING" | "BOOLEAN" => Some(tm.mk_bool(true)),
         _ => None,
     }
 }

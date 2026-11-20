@@ -268,10 +268,19 @@ Inv  == Len(q) < 7
     let mut bmc =
         Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
     // 0, 3, 6, 9 — the ninth breaks it, which needs the queue to have grown
-    // three times rather than been pinned to three elements.
-    assert_eq!(
-        bmc.check(4, &mut tm).expect("checks"),
-        Outcome::Violation { step: 3 }
+    // three times rather than been pinned to three elements. The
+    // counterexample is found at step 3; the model leaves the unconstrained
+    // *string elements* past the stored window undecided, so the trace
+    // cannot be read back and the honesty gates report `Unknown` — a
+    // violation needs a confirmed trace, and this one has none until the
+    // model completes array-resident strings.
+    let out = bmc.check(4, &mut tm).expect("checks");
+    let Outcome::Unknown(why) = &out else {
+        panic!("expected Unknown, got {out:?}");
+    };
+    assert!(
+        why.contains("read back"),
+        "expected a decode refusal, got: {why}"
     );
 }
 

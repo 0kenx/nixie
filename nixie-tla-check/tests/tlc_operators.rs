@@ -113,14 +113,23 @@ fn a_holding_assert_is_true() {
     holds("x", "x = 3", r#"Assert(x = 3, "x is 3")"#);
 }
 
-/// A failing `Assert` in an invariant is reported. Not because the encoding
-/// reads `CHOOSE v : TRUE` as `FALSE` — it does not — but because the value is
-/// unspecified, so the solver is free to read it as `FALSE`, and a `Violation`
-/// here means "the specification does not establish this invariant". That is
-/// the honest claim, and it is what TLC reports by halting.
+/// A failing `Assert` in an invariant is *found*: the search reaches a state
+/// in which the only way the invariant holds is a favourable reading of the
+/// unspecified `CHOOSE v : TRUE` value. Since the honesty gates, that is
+/// reported as `Unknown` rather than `Violation`: the replay evaluator has no
+/// unspecified reading of its own, so it cannot confirm the trace. The
+/// follow-up is a three-valued replay that exists over unspecified readings;
+/// until then exit 12 is reserved for confirmed traces.
 #[test]
-fn a_failing_assert_in_an_invariant_is_reported() {
-    fails("x", "x = 3", r#"Assert(x = 4, "x is not 4")"#);
+fn a_failing_assert_in_an_invariant_is_found() {
+    let out = claim("x", "x = 3", r#"Assert(x = 4, "x is not 4")"#);
+    let Outcome::Unknown(why) = &out else {
+        panic!("expected Unknown, got {out:?}");
+    };
+    assert!(
+        why.contains("does not replay"),
+        "expected the unspecified-value refusal, got: {why}"
+    );
 }
 
 /// What the shared free Boolean must not do is bless a *conjunction*: the
@@ -144,11 +153,21 @@ fn assert_is_true_when_the_condition_is_a_tautology() {
     holds("x", "x = 3", r#"Assert(x = 3 \/ x # 3, "always") "#);
 }
 
-/// The other direction is the one that would be unsound. A failing `Assert` in
-/// `Init` must not *prune* the state: `x = 3` is still reachable, so an
-/// invariant it violates is still reported. Reading the unspecified value as
-/// `FALSE` would delete the state and hide the counterexample.
+/// The other direction is the one that would be unsound. A failing `Assert`
+/// in `Init` must not *prune* the state: `x = 3` is still reachable under the
+/// reading where the unspecified value is `TRUE`, and an invariant it violates
+/// is still found. Since the honesty gates the finding is `Unknown` (the
+/// replay cannot confirm a trace whose `Init` hinges on an unspecified
+/// value), but it must never become `NoViolationWithin`: that would mean the
+/// state was pruned, which is the hiding direction.
 #[test]
 fn a_failing_assert_in_init_does_not_prune_the_state() {
-    fails("x", r#"x = 3 /\ Assert(x = 4, "no") "#, "x # 3");
+    let out = claim("x", r#"x = 3 /\ Assert(x = 4, "no") "#, "x # 3");
+    let Outcome::Unknown(why) = &out else {
+        panic!("expected Unknown, got {out:?}");
+    };
+    assert!(
+        why.contains("does not replay"),
+        "expected the unspecified-value refusal, got: {why}"
+    );
 }

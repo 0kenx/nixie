@@ -57,6 +57,7 @@ fn main() {
     let mut no_violation = 0usize;
     let mut violations: Vec<String> = Vec::new();
     let mut unknown = 0usize;
+    let mut assumptions_unsat = 0usize;
     let mut weakened = 0usize;
     let mut cfg_unaware = 0usize;
     // The end-to-end check on a reported counterexample: decoded out of the
@@ -285,6 +286,16 @@ fn main() {
                 checked += 1;
                 unknown += 1;
             }
+            // Not a search failure: a decision that the specification has no
+            // behaviours. Counted separately so it cannot hide among either
+            // the clean runs or the undecided ones.
+            Ok(Outcome::AssumptionsUnsatisfiable) => {
+                if list {
+                    println!("{path}\tassumptions-unsatisfiable");
+                }
+                checked += 1;
+                assumptions_unsat += 1;
+            }
             // A specification that prepared and then failed to *encode* is
             // as blocked as one that never prepared, and must appear in the
             // per-spec list too — it went missing there at first, which is
@@ -319,6 +330,7 @@ fn main() {
     println!("      of which decoded but not replayed: {not_replayed}");
     println!("      of which with unapplied .cfg   : {cfg_unaware}");
     println!("    solver undecided              : {unknown}");
+    println!("    contradictory assumptions      : {assumptions_unsat}");
     for v in violations.iter().take(64) {
         println!("      {v}");
     }
@@ -345,6 +357,7 @@ fn main() {
 /// Group by cause, not by the names each instance mentions.
 fn reason(e: &SetupError) -> String {
     match e {
+        SetupError::AssumptionViolated { .. } => "assumption violated".to_string(),
         SetupError::NoSuchDefinition(_) => "no such definition".into(),
         SetupError::Lower { .. } => "does not lower to the kernel".into(),
         SetupError::Types(_) => "does not type check".into(),
