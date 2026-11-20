@@ -100,13 +100,21 @@ impl Solver {
                             assign_undefined(values, &mut queue, implied, reason)
                         };
                         let implied_code = implied.index();
+                        // Kissat's shape (inlineassign.h): ONE prefetch per
+                        // assignment — the first watch-list line of the
+                        // implied literal, which the scan touches when the
+                        // queue reaches it.  The former edges-span +
+                        // overflow prefetches here (3 issues per binary
+                        // assignment) were pure over-issue: 19 % of
+                        // duthen-50's samples sat in `prefetch_watch_payload`
+                        // issuing them, and dropping the two BIG lines is a
+                        // consistent −3…−6 % median on the binary-heavy
+                        // cells (duthen-50, hdp/3365, minigzip 492/562,
+                        // 2026-11-20) with counters bit-identical — the
+                        // prefetch is state-free, so the trajectory is
+                        // untouched.
                         if let Some(list) = destinations.get(implied_code) {
                             prefetch_watch_payload(list);
-                        }
-                        let (istart, ilen) = graph.span_of(implied_code);
-                        prefetch_watch_payload(&graph.edges[istart..istart + ilen]);
-                        if let Some(overflow) = graph.extra.get(implied_code) {
-                            prefetch_watch_payload(overflow);
                         }
                         #[cfg(feature = "bcp-work")]
                         {
