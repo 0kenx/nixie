@@ -1209,3 +1209,31 @@ Also this session: the restart-stall screen (addendum 35) closed the
 deletion/restart question; this landing opens the encode-cluster vein
 for the same treatment (next: vmtf/seen/model/phase resizes; the gate_*
 var creation is single-var by construction).
+
+## Thirty-seventh addendum: the hdp family census — banked (+2 cells, 0 disagreements)
+
+The first valid window of the day (load 8–11, swap si 4–20 KB/s), ABBA
+per cell, 10 s cap, entry `ad7e845b` vs HEAD `0b0cd392`:
+
+| cell | entry | HEAD | verdicts |
+|---|---|---|---|
+| bst/3086 | TO/TO | TO/9.29 | **TO→unsat** |
+| bst/3215 | TO/TO | 8.58/8.88 | **TO→unsat** |
+| linear/2871 | 4.02/3.53 | 3.41/3.34 | unsat=unsat |
+| linear/3051 | 5.63/4.52 | 4.05/4.02 | unsat=unsat |
+| linear/3210 | 8.32/7.52 | 6.07/8.21 | unsat=unsat |
+| linear/3250 | 8.96/8.76 | 6.41/6.80 | unsat=unsat |
+| all 8 others | TO/TO | TO/TO | — |
+
+**4 → 6 decided, +2/−0, 0 disagreements, every held cell faster.**
+Conservative at the edges: bst/3047 (first cell, caught a burst) read
+5.5–5.6 s for HEAD in the earlier ABBA, and 3365/3422 have banked
+7.9–9.8 s readings — a truly quiet full-census would plausibly land
+7–9.  z3's side (banked): 2.4–7.9 s on every one of the 10 gap cells —
+the family gap vs z3 remains real.  (Census-script bug #5 recorded: the
+crossing counter checked only round-1 verdicts — the raw rows are the
+authoritative record; count from them.)
+
+**The hdp arc, closed**: 37.1 % assert-side block → two landings → 1.5 %;
+prefetch over-issue → kissat shape; per-var resize storm → slack
+policy; family 4→6 at the cap with zero verdict changes anywhere.
