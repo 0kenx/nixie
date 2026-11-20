@@ -653,6 +653,55 @@ impl<'a> Lowerer<'a> {
                 .rc(),
             ),
             ("BagToSet", 1) => Some(Kera::Domain(Rc::clone(&args[0])).rc()),
+
+            // `BagUnion(S) == ApaFoldSet((+)-as-prefix, EmptyBag, S)`: a
+            // fold adding each bag to the accumulator. Bag addition is
+            // pointwise `+`, so the fold's value does not depend on the
+            // order — the `ApaFoldSet` order-independence audit recognizes
+            // exactly this body.
+            ("BagUnion", 1) => {
+                let acc = self.fresh_name("bag_acc");
+                let elem = self.fresh_name("bag_e");
+                let body = self.bag_desugar(
+                    "\\oplus",
+                    &[Kera::Var(acc.clone()).rc(), Kera::Var(elem.clone()).rc()],
+                )?;
+                Some(
+                    Kera::Fold {
+                        over: FoldOver::Set,
+                        acc,
+                        elem,
+                        base: self.builtin_constant("EmptyBag")?,
+                        collection: Rc::clone(&args[0]),
+                        body,
+                    }
+                    .rc(),
+                )
+            }
+            // `BagCardinality(B) == \\Sigma_{e \\in DOMAIN B} B[e]` —
+            // Apalache's rewire folds `i + B[e]` from 0, and so does this.
+            // A `+`-chain fold whose accumulator leaf is bare is provably
+            // order-independent, which the `ApaFoldSet` audit checks.
+            ("BagCardinality", 1) => {
+                let acc = self.fresh_name("bag_i");
+                let elem = self.fresh_name("bag_e");
+                Some(
+                    Kera::Fold {
+                        over: FoldOver::Set,
+                        acc: acc.clone(),
+                        elem: elem.clone(),
+                        base: Kera::Int("0".into()).rc(),
+                        collection: Kera::Domain(Rc::clone(&args[0])).rc(),
+                        body: Kera::Arith(
+                            ArithOp::Add,
+                            Kera::Var(acc).rc(),
+                            Kera::FunApp(Rc::clone(&args[0]), Kera::Var(elem).rc()).rc(),
+                        )
+                        .rc(),
+                    }
+                    .rc(),
+                )
+            }
             ("BagIn", 2) => {
                 Some(Kera::In(Rc::clone(&args[0]), Kera::Domain(Rc::clone(&args[1])).rc()).rc())
             }
@@ -747,11 +796,21 @@ impl<'a> Lowerer<'a> {
         self
     }
 
+    /// `TRUE`, `FALSE` and `BOOLEAN` are part of the language, not names a
+    /// module declares. Falling through to `Var("TRUE")` made them *free
+    /// names*: the evaluator refused them, and an encoder would have seen an
+    /// undeclared symbol where a boolean was meant.
+    ///
+    /// Checked only after scopes and definitions, so a binding of the same
+    /// name still wins — the language reserves them, but nothing here
+    /// depends on that.
     fn builtin_constant(&mut self, name: &str) -> Option<KeraRef> {
         match name {
             "TRUE" => Some(Kera::Bool(true).rc()),
             "FALSE" => Some(Kera::Bool(false).rc()),
-            "BOOLEAN" => Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc()),
+            "BOOLEAN" => {
+                Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc())
+            }
             // The nullary `Bags` operator lowers to its definition —
             // `SetToBag({})` is `[e \in {} |-> 1]` — so every consumer sees
             // the same function it would see for the spelled-out form. The
@@ -1083,10 +1142,22 @@ impl<'a> Lowerer<'a> {
                             expr.span,
                         ));
                     };
+                    // The recursive name is a binder like any other, so it
+                    // gets a fresh one and the body sees the fresh name
+                    // through its scope: two recursive functions called
+                    // `f` in sibling `LET`s would otherwise lower with the
+                    // *same* binder, and inference — which keys free names
+                    // by name — would fuse two unrelated functions into
+                    // one variable. The binder-uniqueness check exists to
+                    // make that impossible to reintroduce.
+                    let rec_name = recursive.then(|| self.fresh_name(&name));
+                    if let Some(rn) = &rec_name {
+                        scope.insert(name.clone(), Binding::Value(Kera::Var(rn.clone()).rc()));
+                    }
                     stack.push(Frame::BuildFun {
                         var,
                         domains: total,
-                        recursive: recursive.then(|| Name(name.clone())),
+                        recursive: rec_name,
                     });
                     stack.push(Frame::PopScope);
                     stack.push(Frame::Expand(body));
@@ -1171,15 +1242,13 @@ impl<'a> Lowerer<'a> {
                             over: FoldOver::Set,
                             acc,
                             elem,
-                            base: self
-                                .builtin_constant("EmptyBag")
-                                .ok_or_else(|| {
-                                    LowerError::unsupported(
-                                        "`BagOfAll`",
-                                        "internal: EmptyBag has no lowering",
-                                        expr.span,
-                                    )
-                                })?,
+                            base: self.builtin_constant("EmptyBag").ok_or_else(|| {
+                                LowerError::unsupported(
+                                    "`BagOfAll`",
+                                    "internal: EmptyBag has no lowering",
+                                    expr.span,
+                                )
+                            })?,
                             collection: Kera::Domain(bag).rc(),
                             body: step,
                         }
@@ -1231,16 +1300,6 @@ impl Default for Lowerer<'_> {
         Self::new()
     }
 }
-
-/// The TLA+ built-in constants.
-///
-/// `TRUE`, `FALSE` and `BOOLEAN` are part of the language, not names a module
-/// declares. Falling through to `Var("TRUE")` made them *free names*: the
-/// evaluator refused them, and an encoder would have seen an undeclared
-/// symbol where a boolean was meant.
-///
-/// Checked only after scopes and definitions, so a binding of the same name
-/// still wins — the language reserves them, but nothing here depends on that.
 
 /// Sort record fields so two records written in different orders compare equal.
 fn sort_fields(mut fs: Vec<(String, KeraRef)>) -> Vec<(String, KeraRef)> {
