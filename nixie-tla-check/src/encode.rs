@@ -1944,6 +1944,36 @@ impl Encoder {
                 let mut a = self.value(base, tm)?;
                 match over {
                     FoldOver::Set => {
+                        // A set has no fold order: TLA+ leaves it unspecified,
+                        // so the value of the fold is only well defined when
+                        // the operator's n-fold composition is order-
+                        // independent — associativity and commutativity in the
+                        // usual case. Folding in candidate order regardless
+                        // (which is what this used to do) makes the answer a
+                        // function of the order the candidates were written
+                        // in, which is not a property of the specification:
+                        // the *evaluator* folds in sorted order, so the two
+                        // disagree on `ApaFoldSet(F, 0, {3, 2})` for
+                        // `F(a, b) == a * b + a` — the encoder answered `8`
+                        // and the replay expected `9`.
+                        //
+                        // The operator is therefore classified before the
+                        // set is folded, and one whose composition is not
+                        // provably order-independent **declines** unless the
+                        // set has at most one member (where every order is the
+                        // same order). Declining is exit 75, not a guess.
+                        if !set_fold_order_independent(body, acc, elem)
+                            && !at_most_one_element(collection)
+                        {
+                            return Err(EncodeError::Unsupported(
+                                "an `ApaFoldSet` whose operator is not \
+                                 associative and commutative; TLA+ specifies no \
+                                 fold order for a set, so folding it in \
+                                 candidate order would not be a property of \
+                                 the specification"
+                                    .into(),
+                            ));
+                        }
                         // A fold needs a candidate list, exactly as a bounded
                         // quantifier does, so it goes through the same
                         // coercion: a set-sorted term this encoder built is a
@@ -2324,6 +2354,259 @@ fn standard_set(term: &KeraRef) -> Option<&'static str> {
 /// Wrap an SMT term as a value.
 fn scalar(t: TermId) -> Result<Rc<Value>> {
     Ok(Rc::new(Value::Scalar(t)))
+}
+
+// ---- the `ApaFoldSet` order-independence audit ----
+//
+// TLA+ specifies no order for folding a set, so a fold whose result depends
+// on the order is a fold with no value. `ApaFoldSet` is Apalache's operator
+// and Apalache documents the same assumption ("the operator should be AC")
+// without enforcing it; Nixie enforces it, because a silent order-dependent
+// answer is exactly the class of wrong answer `AGENTS.md` opens with.
+//
+// The classes below are **syntactic and conservative**: every one carries a
+// one-line argument for why the n-fold composition of that shape commutes,
+// and everything not in a class declines. The classes were chosen against
+// the corpus — `+` (`Sum`), `\cup` (`FoldSetSet`, `RemakeSet`), counting
+// (`p + IF P(q) THEN 1 ELSE 0`, which is an `Add` chain whose non-`acc`
+// leaf is an `IF` on `q` only), `Max`/`Min`, and the function-update idiom
+// `[f EXCEPT ![x] = f[x] + 1]` (`Antipatterns`, `FoldSetFun`).
+
+/// Whether the n-fold composition of `body(acc, elem)` commutes, so that
+/// folding a set in any order — candidate order here, sorted order in the
+/// evaluator — gives the same value.
+///
+/// Called on a lowered operator body, which is user input, so every helper
+/// walks with an explicit stack and a budget.
+fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
+    // The element parameter unused: the operator is `g(acc)`, and iterating
+    // one function is order-independent by inspection.
+    if !mentions(body, elem) {
+        return true;
+    }
+    // The accumulator unused and the element used: the value is whichever
+    // element is folded last. Order-dependent, always.
+    if !mentions(body, acc) {
+        return false;
+    }
+    // An `EXCEPT` update of the accumulator: `[f EXCEPT ![x] = e]`.
+    if let Kera::Except { fun, index, value } = body.as_ref()
+        && matches!(fun.as_ref(), Kera::Var(n) if n == acc)
+    {
+        // The index is the element itself, and the accumulator is read only
+        // as `f[x]`. Every element is folded once (the duplicate guard), and
+        // a step writes only its own index, so each `f[x]` read sees the
+        // *original* value whatever order the steps run in. This is
+        // `Antipatterns`' `addOneInCdm` and the `FoldSetFun` shape.
+        if matches!(index.as_ref(), Kera::Var(n) if n == elem) && acc_read_only_at(value, acc, elem)
+        {
+            return true;
+        }
+        // A fixed index and a fixed value rewrite the same entry to the same
+        // value however many times it runs: idempotent, so order-free. The
+        // value must not mention the element either, or "last write wins"
+        // would decide it.
+        if !mentions(index, acc)
+            && !mentions(index, elem)
+            && !mentions(value, acc)
+            && !mentions(value, elem)
+        {
+            return true;
+        }
+        return false;
+    }
+    // A `Max`/`Min`-shaped conditional: `IF a-side > b-side THEN a-side ELSE
+    // b-side` (either comparison direction, either branch order). `Max` and
+    // `Min` are associative, commutative and idempotent, which is more than
+    // order-independence needs.
+    if is_min_max(body, acc, elem) {
+        return true;
+    }
+    // An AC chain: `a + b + …`, `a * b * …`, `a \cup b`, `a \cap b`,
+    // `a /\ b`, `a \/ b`. Flattened to its leaves, the composition commutes
+    // when each step contributes its non-accumulator leaves once and the
+    // accumulator at most once — for `+` and `*` an accumulator leaf twice
+    // squares it (`a * a * b` over `{2, 3}` really does depend on the order),
+    // while the idempotent set/Boolean operators tolerate any count.
+    ac_chain_shape(body, acc).is_some()
+}
+
+/// The AC operators a fold body may be built from, with whether repeats of
+/// the accumulator leaf are harmless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AcKind {
+    /// `+`: `c₀ + k·acc + Σ mᵢ·xᵢ` commutes iff `k ≤ 1`.
+    Add,
+    /// `*`: same shape multiplicatively, `k ≤ 1`.
+    Mul,
+    /// `\cup`, `\cap`, `/\`, `\/{}`: idempotent, any count.
+    Idem,
+}
+
+/// Whether `body` is a chain of one AC operator whose leaves are the
+/// accumulator (bare) or accumulator-free, returning the class it is.
+///
+/// `None` when the top operator is not one of the four, a leaf mentions the
+/// accumulator without *being* it, or (for `+`/`*`) the accumulator leaf
+/// occurs more than once. Mixed chains (`a + b * c`) are leaves of the outer
+/// operator, and a leaf mentioning `acc` declines the whole chain.
+fn ac_chain_shape(body: &KeraRef, acc: &Name) -> Option<AcKind> {
+    let kind = match body.as_ref() {
+        Kera::Arith(ArithOp::Add, _, _) => AcKind::Add,
+        Kera::Arith(ArithOp::Mul, _, _) => AcKind::Mul,
+        Kera::SetBin(SetOp::Union, _, _) | Kera::SetBin(SetOp::Intersect, _, _) => AcKind::Idem,
+        Kera::And(_) | Kera::Or(_) => AcKind::Idem,
+        _ => return None,
+    };
+    // Flatten the homogeneous chain with an explicit stack and a budget: the
+    // body is user input.
+    let mut stack = vec![body.clone()];
+    let mut budget = 100_000usize;
+    let mut acc_leaves = 0usize;
+    while let Some(t) = stack.pop() {
+        budget = budget.checked_sub(1)?;
+        // Only the *same* operator continues the chain: an `And` under an
+        // `Or` is a leaf, and mixing `+` with `*` makes every mixed subterm a
+        // leaf that mentions the accumulator and declines the whole chain.
+        let body_op = match body.as_ref() {
+            Kera::SetBin(o, _, _) => Some(*o),
+            _ => None,
+        };
+        let same_chain = match t.as_ref() {
+            Kera::Arith(ArithOp::Add, a, b) if kind == AcKind::Add => {
+                stack.push(a.clone());
+                stack.push(b.clone());
+                true
+            }
+            Kera::Arith(ArithOp::Mul, a, b) if kind == AcKind::Mul => {
+                stack.push(a.clone());
+                stack.push(b.clone());
+                true
+            }
+            Kera::SetBin(op, a, b) if kind == AcKind::Idem && Some(*op) == body_op => {
+                stack.push(a.clone());
+                stack.push(b.clone());
+                true
+            }
+            Kera::And(xs) if kind == AcKind::Idem && matches!(body.as_ref(), Kera::And(_)) => {
+                stack.extend(xs.iter().cloned());
+                true
+            }
+            Kera::Or(xs) if kind == AcKind::Idem && matches!(body.as_ref(), Kera::Or(_)) => {
+                stack.extend(xs.iter().cloned());
+                true
+            }
+            _ => false,
+        };
+        if same_chain {
+            continue;
+        }
+        // A leaf. The bare accumulator counts once; anything else must not
+        // mention it. A leaf that mentions the accumulator without being it
+        // — `(a + 1) + x`, `a * a + x` — makes the composition order-
+        // dependent, and is not guessed at.
+        if matches!(t.as_ref(), Kera::Var(n) if n == acc) {
+            acc_leaves += 1;
+            if kind != AcKind::Idem && acc_leaves > 1 {
+                return None;
+            }
+        } else if mentions(&t, acc) {
+            return None;
+        }
+    }
+    Some(kind)
+}
+
+/// Whether `e` is `IF x > y THEN x ELSE y` in some arrangement — the `Max`
+/// shape — or the `Min` one, over one `acc`-only and one `elem`-only side.
+fn is_min_max(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
+    let Kera::Ite(cond, then, other) = e.as_ref() else {
+        return false;
+    };
+    let Kera::Cmp(_, x, y) = cond.as_ref() else {
+        return false;
+    };
+    // Each side of the comparison and each branch is either `acc`-only or
+    // `elem`-only, and the two branches are the two sides in either order
+    // (`Max`: the greater is returned; `Min`: the lesser — both are AC).
+    let side = |t: &KeraRef| {
+        if !mentions(t, elem) {
+            Some(0u8)
+        } else if !mentions(t, acc) {
+            Some(1u8)
+        } else {
+            None
+        }
+    };
+    let (Some(a), Some(b)) = (side(x), side(y)) else {
+        return false;
+    };
+    if a == b {
+        return false; // both sides of one polarity: not a max/min of the two
+    }
+    let (Some(t), Some(u)) = (side(then), side(other)) else {
+        return false;
+    };
+    t != u && matches!((t, u), (0, 1) | (1, 0))
+}
+
+/// Whether `acc` is read in `e` only as `acc[elem]`.
+///
+/// Under an `EXCEPT` at index `elem`, such a read always sees the original
+/// value (no other step writes that index), which is what makes the function
+/// update idiom order-independent. Any other mention — a read at a different
+/// index, the function as a whole — is a real dependency on the accumulated
+/// state and refuses the classification.
+fn acc_read_only_at(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
+    let mut seen: HashSet<*const Kera> = HashSet::new();
+    let mut stack = vec![e.clone()];
+    let mut budget = 100_000usize;
+    while let Some(t) = stack.pop() {
+        // Fails closed: a term too large to inspect is a term not proven
+        // order-independent.
+        if budget == 0 {
+            return false;
+        }
+        budget -= 1;
+        if !seen.insert(Rc::as_ptr(&t)) {
+            continue;
+        }
+        match t.as_ref() {
+            // The one allowed read: the point this same step writes.
+            Kera::FunApp(f, i)
+                if matches!(f.as_ref(), Kera::Var(n) if n == acc)
+                    && matches!(i.as_ref(), Kera::Var(n) if n == elem) => {}
+            // The accumulator as a whole — a dependency on the entire
+            // accumulated state, not one original point.
+            Kera::Var(n) if n == acc => return false,
+            _ => stack.extend(t.as_ref().children().into_iter().cloned()),
+        }
+    }
+    true
+}
+
+/// Whether a name occurs in a term, walked with an explicit stack.
+fn mentions(term: &KeraRef, name: &Name) -> bool {
+    let mut seen: HashSet<*const Kera> = HashSet::new();
+    let mut stack = vec![term];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(Rc::as_ptr(t)) {
+            continue;
+        }
+        if matches!(t.as_ref(), Kera::Var(n) if n == name) {
+            return true;
+        }
+        stack.extend(t.as_ref().children());
+    }
+    false
+}
+
+/// Whether a set expression has at most one member *as written*: a literal
+/// `{}` or `{e}`. Every other shape — a longer literal, a range, anything
+/// symbolic — has either more members or members not known at encode time,
+/// both of which need the operator audit above.
+fn at_most_one_element(t: &KeraRef) -> bool {
+    matches!(t.as_ref(), Kera::SetEnum(xs) if xs.len() <= 1)
 }
 
 /// The integer a term denotes, if it is a literal (possibly negated).
