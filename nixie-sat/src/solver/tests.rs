@@ -2896,6 +2896,46 @@ fn big_count_overflow_does_not_mutate_layout() {
     assert!(graph.edges.is_empty());
 }
 
+/// `extra_list` sits on the BCP hot path (one call per propagated literal).
+/// Commit f0d90b3e left profiling instrumentation in it: thread-local
+/// counters plus an unconditional `eprintln!("[big] …")` every 5M calls,
+/// which spammed stderr on every long solve (and through every embedding
+/// front end, e.g. `nixie-tla`). `libtest` captures `eprintln!` in-process,
+/// so the probe re-runs this test binary as a child with `--nocapture` and
+/// inspects the child's real stderr.
+#[cfg(feature = "std")]
+#[test]
+fn big_extra_list_hot_path_writes_nothing_to_stderr() {
+    const CHILD: &str = "NIXIE_SAT_EXTRA_LIST_STDERR_PROBE";
+    const TEST: &str = "solver::tests::big_extra_list_hot_path_writes_nothing_to_stderr";
+    if std::env::var_os(CHILD).is_some() {
+        let mut graph = BinaryImplicationGraph::new(2);
+        graph.add(Lit::from_code(0), Lit::from_code(3), ClauseId::new(1));
+        let mut seen = 0usize;
+        // Past the 5M reporting stride the instrumentation used, with both
+        // the empty and the nonempty lookup exercised.
+        for i in 0..5_000_001usize {
+            seen += std::hint::black_box(&graph)
+                .extra_list(std::hint::black_box(i & 3))
+                .len();
+        }
+        assert_eq!(seen, 1_250_001);
+        return;
+    }
+    let exe = std::env::current_exe().expect("test binary path");
+    let out = std::process::Command::new(exe)
+        .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .expect("spawn child test process");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "child probe failed: {stderr}");
+    assert!(
+        stderr.trim().is_empty(),
+        "extra_list must not write to stderr; got: {stderr}"
+    );
+}
+
 #[test]
 fn big_overfilling_a_span_cannot_overwrite_its_neighbor() {
     let mut graph = BinaryImplicationGraph::new(2);

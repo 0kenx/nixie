@@ -276,22 +276,6 @@ impl BinaryImplicationGraph {
         // Bitset guard first: the empty case (95 % of calls on
         // binary-dense cells) resolves with one load of a bitset word
         // instead of a Vec-of-Vec header line.
-        #[cfg(feature = "std")]
-        {
-            use std::cell::Cell;
-            thread_local! {
-                static CALLS: Cell<u64> = const { Cell::new(0) };
-                static NONEMPTY: Cell<u64> = const { Cell::new(0) };
-            }
-            CALLS.with(|c| c.set(c.get() + 1));
-            if self.extra.get(code).is_some_and(|v| !v.is_empty()) {
-                NONEMPTY.with(|c| c.set(c.get() + 1));
-            }
-            let n = CALLS.with(|c| c.get());
-            if n > 0 && n.is_multiple_of(5_000_000) {
-                eprintln!("[big] calls={n} nonempty={}", NONEMPTY.with(|c| c.get()));
-            }
-        }
         if !self.extra_has(code) {
             return &[];
         }
