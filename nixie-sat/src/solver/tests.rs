@@ -180,7 +180,6 @@ fn test_luby_sequence() {
     assert_eq!(Solver::luby(7), 1);
 }
 
-#[test]
 /// Regression (`b90f3807`): the phase-array copies are length-EQUALITY
 /// (`copy_from_slice`), and the slack growth policy legitimately leaves
 /// `phase` LONGER than `num_vars` — the pre-fix code resized only one
@@ -213,6 +212,7 @@ fn phase_copies_survive_slack_grown_arrays() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
+#[test]
 fn test_phase_saving() {
     let mut solver = Solver::new();
     for _ in 0..5 {
