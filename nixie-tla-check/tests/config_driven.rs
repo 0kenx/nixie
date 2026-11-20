@@ -8,13 +8,19 @@
 use nixie_core::TermManager;
 use nixie_tla_check::bmc::{Bmc, Outcome, Roles, SetupError};
 
-fn roles<'r>(init: &'r str, next: &'r str, inv: &'r str) -> Roles<'r> {
-    Roles {
-        init,
-        next,
-        inv,
-        constraints: &[],
-    }
+/// One invariant, the common case. Built inline at each call site's option,
+/// because the slice has to borrow from the caller's `&'r str` and a helper
+/// returning `Roles<'r>` would have to conjure that borrow out of its own
+/// parameter slot.
+macro_rules! roles {
+    ($init:expr, $next:expr, $inv:expr) => {
+        Roles {
+            init: $init,
+            next: $next,
+            inv: &[$inv],
+            constraints: &[],
+        }
+    };
 }
 use nixie_tla_syntax::parse_config;
 
@@ -24,8 +30,9 @@ fn run(src: &str, cfg: &str, init: &str, next: &str, inv: &str, depth: u32) -> O
     let module = spec.root_module().expect("has a root module");
     let config = parse_config(cfg).expect("config parses");
     let mut tm = TermManager::new();
-    let mut bmc = Bmc::prepare_with_config(&spec, module, roles(init, next, inv), &config, &mut tm)
-        .expect("prepares");
+    let mut bmc =
+        Bmc::prepare_with_config(&spec, module, roles!(init, next, inv), &config, &mut tm)
+            .expect("prepares");
     bmc.check(depth, &mut tm).expect("checks")
 }
 
@@ -35,7 +42,7 @@ fn setup_err(src: &str, cfg: &str, init: &str, next: &str, inv: &str) -> SetupEr
     let module = spec.root_module().expect("has a root module");
     let config = parse_config(cfg).expect("config parses");
     let mut tm = TermManager::new();
-    Bmc::prepare_with_config(&spec, module, roles(init, next, inv), &config, &mut tm)
+    Bmc::prepare_with_config(&spec, module, roles!(init, next, inv), &config, &mut tm)
         .err()
         .expect("should not prepare")
 }
@@ -260,7 +267,7 @@ Inv  == x = 0
     let bmc = Bmc::prepare_with_config(
         &spec,
         module,
-        roles("Init", "Next", "Inv"),
+        roles!("Init", "Next", "Inv"),
         &config,
         &mut tm,
     )
@@ -347,7 +354,7 @@ Perm == {}
     let bmc = Bmc::prepare_with_config(
         &spec,
         module,
-        roles("Init", "Next", "Inv"),
+        roles!("Init", "Next", "Inv"),
         &config,
         &mut tm,
     )
