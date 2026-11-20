@@ -3535,39 +3535,75 @@ impl Solver {
         self.chb.insert(var);
         self.vmtf.resize(self.num_vars);
         self.lrb.resize(self.num_vars);
-        self.seen.resize(self.num_vars, false);
-        self.model.resize(self.num_vars, LBool::Undef);
-        self.phase.resize(self.num_vars, false); // Default phase: negative
-        self.deterministic_phase.resize(self.num_vars, None);
-        self.best_phase.resize(self.num_vars, false);
-        self.target_phase.resize(self.num_vars, false);
-        self.sat_caching_phase.resize(self.num_vars, false);
-        // Resize level_marks to at least num_vars (enough for decision levels)
-        if self.level_marks.len() < self.num_vars {
-            self.level_marks.resize(self.num_vars, 0);
-        }
-        // Per-decision-level `seen` statistics for clause minimization
-        // (cadical `Level::seen`): decision levels are bounded by num_vars.
-        if self.seen_level_count.len() < self.num_vars {
-            self.seen_level_count.resize(self.num_vars, 0);
-            self.seen_level_trail.resize(self.num_vars, u32::MAX);
-        }
-        // Grow the per-literal tables.  `lrat_flags` holds the
-        // KEEP/POISON/REMOVABLE minimization flags (see `conflict.rs`) and is
-        // used by BOTH the plain and the LRAT minimizers – with the table
-        // empty the plain minimizer degenerates to keeping every literal,
-        // since the flags can never persist between candidates.
-        // `unit_clauses_idx` is only needed while an LRAT tracer is connected.
-        if self.lrat {
-            self.unit_clauses_idx.resize(2 * self.num_vars, 0);
-        }
-        self.lrat_flags.resize(2 * self.num_vars, 0);
-        // Elimination state tables (candidates are marked lazily when one of
-        // their clauses is touched; the pre-search phase marks everything).
-        self.elim_mark.resize(self.num_vars, false);
-        self.elim_var_flag.resize(self.num_vars, false);
-        self.probe_propfixed.resize(2 * self.num_vars, -1);
+        self.grow_var_tables();
         var
+    }
+
+    /// Slack-grow the Solver-owned per-var/per-literal state tables to
+    /// cover `num_vars` (the [`WatchLists::resize`] rationale, applied to
+    /// the rest of `new_var`'s tables): every reader of these arrays is
+    /// either bounds-guarded (absent slot reads as the default) or
+    /// indexes a semantically-existing var, and `len >= num_vars` holds
+    /// at every point, so views taken anywhere stay in bounds.  The
+    /// per-var call is then usually one bounds check per table; the
+    /// zero-writes arrive as rare sequential bursts instead of ~15
+    /// scattered single elements per created var (addendum 32's
+    /// `new_var` cache-miss storm).
+    fn grow_var_tables(&mut self) {
+        const VAR_TABLE_SLACK: usize = 64;
+        let n = self.num_vars + VAR_TABLE_SLACK;
+        if self.seen.len() < n {
+            self.seen.resize(n, false);
+        }
+        if self.model.len() < n {
+            self.model.resize(n, LBool::Undef);
+        }
+        if self.phase.len() < n {
+            self.phase.resize(n, false); // Default phase: negative
+        }
+        if self.deterministic_phase.len() < n {
+            self.deterministic_phase.resize(n, None);
+        }
+        if self.best_phase.len() < n {
+            self.best_phase.resize(n, false);
+        }
+        if self.target_phase.len() < n {
+            self.target_phase.resize(n, false);
+        }
+        if self.sat_caching_phase.len() < n {
+            self.sat_caching_phase.resize(n, false);
+        }
+        // Enough for decision levels (bounded by num_vars).
+        if self.level_marks.len() < n {
+            self.level_marks.resize(n, 0);
+        }
+        // Per-decision-level `seen` statistics (cadical `Level::seen`).
+        if self.seen_level_count.len() < n {
+            self.seen_level_count.resize(n, 0);
+            self.seen_level_trail.resize(n, u32::MAX);
+        }
+        // `lrat_flags`: KEEP/POISON/REMOVABLE minimization flags (see
+        // `conflict.rs`), used by BOTH minimizers – with the table empty
+        // the plain minimizer degenerates to keeping every literal.
+        // `unit_clauses_idx` only while an LRAT tracer is connected.
+        // Both per-LITERAL (x2).
+        if self.lrat && self.unit_clauses_idx.len() < 2 * n {
+            self.unit_clauses_idx.resize(2 * n, 0);
+        }
+        if self.lrat_flags.len() < 2 * n {
+            self.lrat_flags.resize(2 * n, 0);
+        }
+        // Elimination state (candidates marked lazily; pre-search marks
+        // everything).
+        if self.elim_mark.len() < n {
+            self.elim_mark.resize(n, false);
+        }
+        if self.elim_var_flag.len() < n {
+            self.elim_var_flag.resize(n, false);
+        }
+        if self.probe_propfixed.len() < 2 * n {
+            self.probe_propfixed.resize(2 * n, -1);
+        }
     }
 
     /// Export the current SAT problem (every live clause plus every level-0
@@ -3626,27 +3662,9 @@ impl Solver {
         self.binary_graph.resize(target);
         self.vmtf.resize(target);
         self.lrb.resize(target);
-        self.seen.resize(target, false);
-        self.model.resize(target, LBool::Undef);
-        self.phase.resize(target, false); // Default phase: negative
-        self.deterministic_phase.resize(target, None);
-        self.best_phase.resize(target, false);
-        self.target_phase.resize(target, false);
-        self.sat_caching_phase.resize(target, false);
-        if self.level_marks.len() < target {
-            self.level_marks.resize(target, 0);
-        }
-        if self.seen_level_count.len() < target {
-            self.seen_level_count.resize(target, 0);
-            self.seen_level_trail.resize(target, u32::MAX);
-        }
-        if self.lrat {
-            self.unit_clauses_idx.resize(2 * target, 0);
-        }
-        self.lrat_flags.resize(2 * target, 0);
-        self.elim_mark.resize(target, false);
-        self.elim_var_flag.resize(target, false);
-        self.probe_propfixed.resize(2 * target, -1);
+        // num_vars was already set to `target` above, so this covers the
+        // whole batch in one slack step.
+        self.grow_var_tables();
         for i in old..target {
             let var = Var::new(i as u32);
             self.vsids.insert(var);

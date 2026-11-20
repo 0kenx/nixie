@@ -906,8 +906,15 @@ impl Solver {
             PhaseArray::Target => &mut self.target_phase,
             PhaseArray::Best => &mut self.best_phase,
         };
-        dst.resize(self.num_vars, false);
-        dst.copy_from_slice(&self.phase);
+        // Guarded grow (slack arrays are never truncated back — the
+        // per-var slack policy keeps `len >= num_vars`), then a
+        // min-length copy: `copy_from_slice` demands equal lengths, and
+        // `self.phase` may legally carry slack rows.
+        if dst.len() < self.num_vars {
+            dst.resize(self.num_vars, false);
+        }
+        let n = dst.len().min(self.phase.len());
+        dst[..n].copy_from_slice(&self.phase[..n]);
     }
 
     /// cadical `Internal::rephasing()`: whether the rephase limit was reached.
@@ -1165,7 +1172,8 @@ impl Solver {
         // (phases.target); target_assigned = 0;` – the walk reads the saved
         // phases first, hence the ordering).
         self.target_phase.resize(self.num_vars, false);
-        self.target_phase.copy_from_slice(&self.phase);
+        let n = self.target_phase.len().min(self.phase.len());
+        self.target_phase[..n].copy_from_slice(&self.phase[..n]);
         self.target_assigned = 0;
 
         // Arithmetic growth of the next interval, in the schedule's own
@@ -1248,9 +1256,17 @@ impl Solver {
     /// [`Self::update_target_and_best`].
     fn rephase_best(&mut self) -> RephaseKind {
         self.stats.rephased.best += 1;
-        self.phase.resize(self.num_vars, false);
-        self.best_phase.resize(self.num_vars, false);
-        self.phase.copy_from_slice(&self.best_phase);
+        // Guarded grows: `resize` truncates when shorter than the request
+        // is absent, but a slack-carrying array would be chopped and
+        // regrown every rephase — grow only when short.
+        if self.phase.len() < self.num_vars {
+            self.phase.resize(self.num_vars, false);
+        }
+        if self.best_phase.len() < self.num_vars {
+            self.best_phase.resize(self.num_vars, false);
+        }
+        let n = self.phase.len().min(self.best_phase.len());
+        self.phase[..n].copy_from_slice(&self.best_phase[..n]);
         RephaseKind::Best
     }
 
@@ -1303,9 +1319,15 @@ impl Solver {
         if hint.is_empty() {
             return;
         }
-        self.phase.resize(self.num_vars, false);
-        self.target_phase.resize(self.num_vars, false);
-        self.best_phase.resize(self.num_vars, false);
+        if self.phase.len() < self.num_vars {
+            self.phase.resize(self.num_vars, false);
+        }
+        if self.target_phase.len() < self.num_vars {
+            self.target_phase.resize(self.num_vars, false);
+        }
+        if self.best_phase.len() < self.num_vars {
+            self.best_phase.resize(self.num_vars, false);
+        }
         let n = hint.len().min(self.num_vars);
         self.phase[..n].copy_from_slice(&hint[..n]);
         self.target_phase[..n].copy_from_slice(&hint[..n]);
