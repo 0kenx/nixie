@@ -943,3 +943,42 @@ bst/3422 9.3–9.8 s (crossing at quiet load), bst/3128 decides ~32 s
 (30 s class, needs −70 % — search-side now).  A quiet-machine family
 re-census is the open bookkeeping item for the next session, alongside
 targets #2 (minigzip watch-scan block) and #3.
+
+## Thirtieth addendum: the prefetch over-issue audit — LANDED (`aa89eb68`)
+
+Target #2's counter-safe entry, executed as a 3-arm audit.  The session
+kernel's binary-assignment path issued 3 prefetches per assignment
+(watch list + BIG edges span + BIG overflow); kissat's `inlineassign.h`
+issues exactly one (the first watch line, locality 1).  A fresh duthen-50
+profile put `prefetch_watch_payload` at **19.1 %** of all samples
+(self-time of the issuing) — the single biggest propagate-path block
+after the earlier landings.  (minigzip/492 today reads 0 % — its shape
+moved with the BIG-fold landing; the block is binary-density-driven.)
+
+**Arms** (all counter-identical by construction — prefetches are
+state-free; verified on duthen-50 across all three): arm0 = 3 issues
+(status quo), arm1 = watch-list only (kissat shape), arm2 = none on the
+binary path.  Matched interleaved ×3–7 rounds, load 5–12:
+
+| cell | arm0 med | arm1 med | arm2 med |
+|---|---|---|---|
+| duthen-50 | 15.43 | **14.89** | 14.92 |
+| hdp/3365 | 8.37 | **7.92** | 7.97 |
+| minigzip/492 | 7.93 | **7.49** | 5.95* |
+| minigzip/562 | 10.39 | **10.11** | — |
+| BBB-32 | tie | tie | tie |
+
+(*single round.)  arm1 wins or ties everywhere; arm2's loss of the
+watch-list prefetch gives the gain back — the watch-list line does real
+latency hiding, the BIG span+overflow lines were the over-issue (issued
+3-per-assignment, scanned only if/when the queue reaches the literal).
+Landed arm1 with the rationale in a code comment at the site.
+
+**The 33-cell minigzip block after this**: the audit's entry is now
+spent; the remaining shape per the fresh 492 profile is propagate 17.5 %
+(session_kernel 17.4) + the encode-side blocks — the watch-list
+representation (CSR) stays corpus-negative per the 2026-09-20 finding;
+deletion/restart scheduling remains the recorded matched-null session
+target (24.9 % of duthen-50 pre-interval-landing).
+
+Gate PASS (counters 1.000, wall 1.04); parity 171-0-6; 12 810 tests.
