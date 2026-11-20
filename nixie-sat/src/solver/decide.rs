@@ -893,7 +893,7 @@ impl Solver {
     /// the zero-equivalent here because the arrays start all-`false` and the
     /// cadical initial phase is negative (`false`) too – writing `false` over
     /// an unset entry produces the same decision polarity.
-    fn copy_phases(&mut self, dst: PhaseArray) {
+    pub(super) fn copy_phases(&mut self, dst: PhaseArray) {
         // Refresh the saved phases for every variable currently on the
         // trail first (see the doc comment on `PhaseArray`); then snapshot.
         for &lit in self.trail.assignments() {
@@ -1254,7 +1254,7 @@ impl Solver {
     /// Overwrite saved phases with the best-phase array – cadical
     /// `rephase_best`. Only ever replays material recorded by
     /// [`Self::update_target_and_best`].
-    fn rephase_best(&mut self) -> RephaseKind {
+    pub(super) fn rephase_best(&mut self) -> RephaseKind {
         self.stats.rephased.best += 1;
         // Guarded grows: `resize` truncates when shorter than the request
         // is absent, but a slack-carrying array would be chopped and

@@ -181,6 +181,38 @@ fn test_luby_sequence() {
 }
 
 #[test]
+/// Regression (`b90f3807`): the phase-array copies are length-EQUALITY
+/// (`copy_from_slice`), and the slack growth policy legitimately leaves
+/// `phase` LONGER than `num_vars` — the pre-fix code resized only one
+/// side of the copy and panicked on the mismatch (observed on BBB-32
+/// the moment the slack landed).  Every copy site must take the min
+/// length and keep the slack intact.
+#[test]
+fn phase_copies_survive_slack_grown_arrays() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    solver.new_var();
+    // The slack precondition: every grown table now exceeds num_vars.
+    assert!(solver.phase.len() > solver.num_vars);
+    assert!(solver.best_phase.len() > solver.num_vars);
+    assert!(solver.target_phase.len() > solver.num_vars);
+    // The panic sites, in order of discovery: copy_phases (both
+    // destinations), update_target_and_best's inline copy, rephase_best,
+    // and the hint seeder.
+    solver.copy_phases(decide::PhaseArray::Target);
+    solver.copy_phases(decide::PhaseArray::Best);
+    let _ = solver.rephase_best();
+    solver.set_phase_hint(&[true, false]);
+    // A solve on top: the copies must also behave (not just not-panic)
+    // with slack present.
+    let a = solver.new_var();
+    solver.add_clause([Lit::pos(a)]);
+    solver.add_clause([Lit::neg(a)]);
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+}
+
 fn test_phase_saving() {
     let mut solver = Solver::new();
     for _ in 0..5 {

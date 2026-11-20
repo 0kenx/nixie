@@ -403,6 +403,76 @@ mod tests {
         }
     }
 
+    /// Regression (9953e791): the in-range fast paths (keyed on the
+    /// magnitude's `bits() <= width`) must agree with the modulus slow
+    /// path on every boundary — the identity that made the fast paths
+    /// landable as pure-perf.  Straddles `bits() == width-1 / width /
+    /// width+1` (via 2^(w-1) and 2^w offsets), zero, and the negative
+    /// mirrors (whose fast path is the one-add form).
+    #[test]
+    fn test_bv_wrap_fast_paths_match_slow_path_on_boundaries() {
+        let reference = |value: &BigInt, width: u32| -> BigInt {
+            if width == 0 {
+                return BigInt::ZERO;
+            }
+            let modulus = BigInt::from(1u8) << width as usize;
+            let mut wrapped = value % &modulus;
+            if wrapped < BigInt::ZERO {
+                wrapped += &modulus;
+            }
+            wrapped
+        };
+        for &width in &WIDTHS {
+            let base = BigInt::from(1u8) << (width - 1) as usize;
+            for delta in [-2i64, -1, 0, 1, 2] {
+                let d = BigInt::from(delta);
+                for v in [
+                    &base + &d,
+                    &base * 2 + &d,
+                    -&base + &d,
+                    -(&base * &BigInt::from(2u8)) + &d,
+                    BigInt::ZERO,
+                ] {
+                    assert_eq!(
+                        bv_wrap_unsigned(&v, width),
+                        reference(&v, width),
+                        "width {width} value {v}"
+                    );
+                    assert_eq!(
+                        bv_wrap_unsigned_owned(v.clone(), width),
+                        reference(&v, width),
+                        "owned width {width} value {v}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The `to_signed` fast path (`bits() < width` is already-signed)
+    /// against the shift-compare slow path on the same boundaries.
+    #[test]
+    fn test_to_signed_fast_path_matches_slow_path_on_boundaries() {
+        let reference = |value: &BigInt, width: u32| -> BigInt {
+            if width == 0 {
+                return BigInt::ZERO;
+            }
+            if *value >= (BigInt::from(1u8) << (width - 1) as usize) {
+                value - (BigInt::from(1u8) << width as usize)
+            } else {
+                value.clone()
+            }
+        };
+        for &width in &WIDTHS {
+            let base = BigInt::from(1u8) << (width - 1) as usize;
+            for delta in [-2i64, -1, 0, 1, 2] {
+                let d = BigInt::from(delta);
+                for v in [&base + &d, &base * 2 + &d, BigInt::ZERO] {
+                    assert_eq!(to_signed(&v, width), reference(&v, width));
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_to_signed_reinterprets_two_complement() {
         assert_eq!(to_signed(&big(255), 8), big(-1));
