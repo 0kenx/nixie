@@ -1263,3 +1263,23 @@ Gate wall read 0.83 this run (load-favorable; counters 1.000 the
 record).  Encode-cluster candidates 1+2 are now fully landed; the
 cluster's remaining shares are gate_/emit_ clause construction —
 algorithmic, not allocation-policy.
+
+## Session end state (2026-11-20/21, HEAD `350bbe32`)
+
+Eight landings + tests this campaign day; every bar green at every
+commit; zero verdict changes anywhere.  The tree is clean and binaries
+are cached for `fb545619`, `d444269d`, `aa89eb68`, `9953e791`,
+`0b0cd392`, `b90f3807`, `350bbe32`.
+
+**Resume protocol for the next session, one list:**
+1. *Quiet-machine gate first* (`uptime` AND `vmstat` si/so ≈ 0): the
+   minigzip-block census (33 cells, ABBA, verdict-reset-on-TO, counted
+   printf slots — traps 1–5 in addenda 31/34/37), then the deferred
+   wall A/Bs (shape-2 cache, prefetch, bv-wrap, slack — all
+   counter-verified already, wall is the only open read).
+2. *Then*, on any machine: the gate_/emit_ residue (addendum 38's
+   tail) — algorithmic, needs a fresh profile taken when si ≈ 0
+   (allocation paths read hot under swap-in).
+3. The 2026-11-19 handoff's targets #1 (closed: two landings + census)
+   and #2 (entry spent: prefetch) are done; #3's nine singles are
+   decomposed (addendum 31) with bzip2recover's slice landed.
