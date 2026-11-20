@@ -838,3 +838,78 @@ wall-capped counts are not comparable across loads; the +4/+1 figures
 stand on the matched interleaved A/Bs (55-cell and 29-cell), and the
 duthen-50 crossing on deterministic counters.  Re-measure the family
 serial count only on a quiet machine.
+
+## Twenty-eighth addendum: subtree_bool_atoms on sorted sets — LANDED (`fb545619`)
+
+The campaign's target #1 (the handoff's fresh hdp/3365 profile:
+`subtree_bool_atoms` 37.1 % with 35.1 % of the run inside
+`HashSet::insert`), fixed by representation, not by memo scope:
+
+**The change.**  `ctx_simplify`'s per-assert Boolean-atom sets are now
+sorted `SmallVec<[TermId; 4]>` (module-level `AtomSet` alias): the
+bottom-up construction unions children's sets by two-pointer merge
+(`merge_sorted_union`), self-inclusion seeds the vec, and the sole
+consumer — `ctx_signature`'s relevance test — does `binary_search`.
+No hashing anywhere; `None`/`MAX_MEMO_ATOM_SET` semantics unchanged
+(the early `break` on an oversized/absent child is equivalent to the
+old set-to-None-and-continue, which matched no further arm once `None`).
+
+**Identity argument + check.**  The set CONTENTS are unchanged, so
+`ctx_signature` computes identical DefaultHasher signatures, the
+`(term, sig)` memo hits identically, and the walk output is
+term-identical — counters identical by construction.  Verified on the
+five probe cells (bst/hdp 3365 + nested/hdp 3128, minigzip 492,
+BBB-32, duthen-50 .steps.10): all five counter-identical, verdicts
+non-empty and matching.
+
+**Matched interleaved A/B, 14-cell hdp family (load 12–16):**
+
+| cell | base | new | verdicts |
+|---|---|---|---|
+| bst/3047 | 6.1 | 4.3 | unsat=unsat |
+| bst/3086 | 9.5 | 6.7 | unsat=unsat |
+| bst/3215 | **TO** | **8.5 unsat** | **crossing** |
+| bst/3365 | 11.9 | 7.9 / 8.4 | unsat=unsat (−33 %) |
+| bst/3422 | 13.1 | 9.3 / 9.8 | unsat=unsat (−29 %) |
+| bst/3128 | TO(>35) | 32.9 / 32.2 sat | approaching |
+| linear/2871,3051,3210,3250 | 2.2–7.5 | 2.2–7.1 | all =, −5…−23 % |
+| nested/3128 | 29.0 | 22.8–32.5 | sat=sat (load-58 noise band) |
+
+bst/3365 `sys` time nearly halved (7.5 s → ~3.9 s of a 14.4 s run) —
+the allocation storm was real.  Post-fix profile of hdp/3365
+(1 897 samples): `subtree_bool_atoms` 37.1 %→7.9 %, `HashSet::insert`
+→0 %, `merge_sorted_union` 0.9 %, `ctx_simplify` 39 %→10 %; the run's
+inclusive top is flat (nothing above 7 % — WatchLists::resize 4.4 %,
+BIG extra_push/span 4.0/3.6 %).  Full bar green: 12 810 tests, parity
+171-0-6 (tracked results byte-identical), perf gate PASS (counters
+1.000, wall 1.03).  Binary cached at `precompile/fb545619`.
+
+**Findings recorded along the way:**
+1. **An unwired memo (model_certificate_status)**: `55560115` added a
+   `pass_memo` local + "one memo for the whole pass" comment to the
+   CERTIFICATE path but never switched the inner call — it still calls
+   per-call `eval_in_model_outcome` (dead local since).  NOT wired in
+   this landing: that path resets `CERTIFY_LIVE_READ` per conjunct, and
+   a memo shared across the reset could leak/hide live-read provenance
+   between conjuncts sharing meganode subterms (conservative direction
+   is Undecided, but the Refuted direction feeds the J5 block-retry
+   gate).  Removed the dead local with a pointer comment; wiring it
+   needs its own soundness note + A/B (likely cold — the 24th
+   addendum's 25 % hot spot was the REFUTATION pass, which is memoized).
+2. **Lint drift**: the tree at `caf25750` was no longer clippy-clean
+   (`manual_is_multiple_of` is a new-toolchain lint; plus a genuinely
+   dead `slb_mut` probe and two unused warnings from `55560115`'s
+   aftermath).  Mechanical sweep included in the landing.
+3. **Two measurement traps re-hit, both recorded shape**: the CLI's
+   verdict line goes to **stderr even without `--stats`** (a stdout-only
+   A/B read every cell as TO), and **`/usr/bin/time` does not exist on
+   this NixOS host** (exec-127 silently; the old empty-vs-empty trap in
+   a new costume — `date +%s.%N` brackets instead).
+
+**Shape 2 (manager/solver-level per-term memo) remains untried** — the
+residual 7.9 % `subtree_bool_atoms` is per-assert recomputation over
+shared meganode prefixes (hdp files assert ~4 200 formulas).  The
+solver-owned shape (blastable-memo precedent; NOT thread-local) is the
+next entry if the class still matters after re-census.  hdp's cap
+crossings so far: bst/3215 at load 14; 3365/3422 cross at quiet load
+(7.9–9.8 s vs the 10 s cap).
