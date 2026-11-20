@@ -54,6 +54,10 @@ pub struct Meta {
     pub description: String,
     /// The specification it came from.
     pub source: String,
+    /// Which named invariants the trace breaks. With `--inv=A,B` a
+    /// counterexample answers "which one?", and a consumer reading `#meta`
+    /// gets the answer in the file rather than only on the checker's stdout.
+    pub violated: Vec<String>,
 }
 
 /// Render a counterexample as an ITF trace object.
@@ -90,7 +94,11 @@ pub fn to_itf(trace: &Trace, vars: &[String], params: &[String], meta: &Meta) ->
     let mut root = Map::new();
     root.insert(
         "#meta".to_string(),
-        json!({ "description": meta.description, "source": meta.source }),
+        json!({
+            "description": meta.description,
+            "source": meta.source,
+            "violated": meta.violated,
+        }),
     );
     if !params.is_empty() {
         root.insert("params".to_string(), json!(params));

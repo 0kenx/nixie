@@ -31,6 +31,15 @@ fn main() {
     let mut with_triple = 0usize;
     let mut with_cfg = 0usize;
     let no_cfg = std::env::var("NIXIE_BMC_NO_CFG").is_ok_and(|v| v == "1");
+    // Which configuration mode this run is in, said once, out loud: the
+    // `.cfg`-by-convention reading is this harness's own choice (the CLI
+    // reads a config only with `--config`, Apalache's default), and a number
+    // compared across modes is a number about the wrong thing.
+    if no_cfg {
+        println!("config mode: .cfg ignored (NIXIE_BMC_NO_CFG=1)");
+    } else {
+        println!("config mode: .cfg read by convention when present");
+    }
     // `NIXIE_BMC_LIST=1` prints one `file<TAB>outcome` line per specification
     // instead of the summary, so two runs can be diffed spec by spec. A
     // summary that moves by one is not a finding until you can name the one.
@@ -142,7 +151,13 @@ fn main() {
             }
             _ => None,
         };
-        let cfg_inv = cfg.as_ref().and_then(|c| c.invariants.first().cloned());
+        let cfg_invs: Vec<String> = cfg
+            .as_ref()
+            .map(|c| c.invariants.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| defined.contains(&i.as_str()))
+            .collect();
 
         let (init, next) = match cfg_init_next {
             Some(p) => p,
@@ -151,16 +166,19 @@ fn main() {
                 _ => continue,
             },
         };
-        let Some(inv) = cfg_inv
-            .filter(|i| defined.contains(&i.as_str()))
-            .or_else(|| pick(INVS))
-        else {
-            continue;
+        let invs: Vec<String> = if cfg_invs.is_empty() {
+            match pick(INVS) {
+                Some(i) => vec![i],
+                None => continue,
+            }
+        } else {
+            cfg_invs
         };
         with_triple += 1;
 
         let cinit = pick(CINITS);
         let constraints: Vec<&str> = cinit.iter().map(String::as_str).collect();
+        let inv_refs: Vec<&str> = invs.iter().map(String::as_str).collect();
 
         let file = path.rsplit('/').next().unwrap_or(&path).to_string();
         let mut tm = TermManager::new();
@@ -169,7 +187,7 @@ fn main() {
         let roles = nixie_tla_check::bmc::Roles {
             init: &init,
             next: &next,
-            inv: &inv,
+            inv: &inv_refs,
             constraints: &constraints,
         };
         let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
@@ -270,8 +288,9 @@ fn main() {
                 if list {
                     println!("{path}\tviolation\t{step}");
                 }
+                let which = bmc.violated_invariants().join(",");
                 violations.push(format!(
-                    "{file}!{inv} violated after {step} step(s){}",
+                    "{file}!{which} violated after {step} step(s){}",
                     if notes.is_empty() {
                         String::new()
                     } else {

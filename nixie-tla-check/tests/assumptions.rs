@@ -32,7 +32,7 @@ fn prepare(src: &str, inv: &str, config: &TlcConfig) -> Bmc {
         Roles {
             init: "Init",
             next: "Next",
-            inv,
+            inv: std::slice::from_ref(&inv),
             constraints: &[],
         },
         config,
@@ -147,7 +147,7 @@ Inv  == x < N
         Roles {
             init: "Init",
             next: "Next",
-            inv: "Inv",
+            inv: &["Inv"],
             constraints: &[],
         },
         &config,
@@ -251,7 +251,7 @@ Inv  == x > 9999
         Roles {
             init: "Init",
             next: "Next",
-            inv: "Inv",
+            inv: &["Inv"],
             constraints: &[],
         },
         &config,
