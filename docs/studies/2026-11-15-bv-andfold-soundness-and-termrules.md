@@ -1101,3 +1101,43 @@ precedent, with the rationale in `.config/nextest.toml`.  This is the
 third documented load-flake of the class (budget_bitblast, the scope-
 state matrix, now this); the config file's override section is the
 standing pattern.
+
+## Thirty-fourth addendum: the reduce re-screen on the SMT path — decisively negative; census attempt 3 invalid
+
+**The §27 pattern applied to the reduce arms.**  The 2026-08/09 reduce
+studies (cadical `reduce.cpp` port, kissat reduce, by-used/adapt
+retention — all with built matched nulls) were DIMACS-instance findings;
+the SMT path's default (fixed-12000-conflict tier-percentage reduce) was
+never measured against them.  The switches exist (`NIXIE_CADICAL_REDUCE`,
+`NIXIE_KISSAT_REDUCE`, `NIXIE_REDUCE_BY_USED`, `NIXIE_REDUCE_ADAPT`),
+and counters are load-immune, so the screen ran under load 10:
+
+| cell | default | cadical | kissat | by-used | adapt |
+|---|---|---|---|---|---|
+| duthen-50 conflicts | 58 686 | 74 618 | 65 001 | 122 396 | 122 396 |
+| BBB-32 conflicts | 2 103 | 2 126 | 2 234 | 2 126 | 2 126 |
+| readelf/7707 conflicts | 2 957 | 2 908 | 2 966 | 2 904 | 2 904 |
+
+**No arm wins anywhere; the default wins duthen-50 by 11–73 %.**  The
+REDUCE_ADAPT ≡ REDUCE_BY_USED counter identity on duthen-50 says the
+adapt gate's uninformative-glue condition fires throughout there.  The
+"deletion/restart matched-null session" is hereby ANSWERED for the
+reduce side: no session, the switches stay opt-in.  (hdp/minigzip cells
+have 15–459 total conflicts — encode-bound; no reduce schedule can
+matter.  The restart side keeps its stall-null arm unbuilt-on.)
+
+**Census attempt 3 also invalid**: a load-4 window reopened but with
+0.6–10 MB/s residual swap-in (38 GB of other agents' pages faulting
+around); the entry binary read TO on bst/3086 (8.5–8.9 s at load 12
+yesterday) — memory-bandwidth theft, not CPU load, is the disqualifier.
+ABBA-ordered 3-way rows that DID complete directionally confirm the
+earlier clean readings (HEAD decides 3047@8.6 s and 3086@9.5–9.9 s in
+single rounds where entry TOs).  z3's hdp gap-cell times banked for the
+quiet census: **2.4–7.9 s for every one of the 10 gap cells** — the gap
+is fully ours to close.  Script trap #4 recorded: 12 printf args into
+11 slots garbles the row — parse groups from the line END, or format
+counted.
+
+The census (absolute count + crossings on 608/620/674) remains the
+open item; every deferred wall A/B (shape-2 cache, prefetch, bv-wrap)
+shares the same quiet-window dependency.
