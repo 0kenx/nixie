@@ -57,22 +57,32 @@ const EXIT_SYNTAX: u8 = 150;
 const EXIT_SYSTEM: u8 = 255;
 
 /// What the command line asked for.
+///
+/// `init`, `next` and `inv` are [`Option`]/`Vec` because a `--config=` file
+/// can supply them — that is Apalache's precedence: the command line wins,
+/// with a warning, and what it does not say comes from the file.
 struct Args {
     /// `check` or `simulate`; see `main`'s note on the difference.
     simulate: bool,
     spec: PathBuf,
-    init: String,
-    next: String,
-    inv: Option<String>,
+    /// `--init=`; the `.cfg`'s `INIT` when absent; `Init` when neither says.
+    init: Option<String>,
+    /// `--next=`; the `.cfg`'s `NEXT` when absent; `Next` when neither says.
+    next: Option<String>,
+    /// `--inv=NAME` or `--inv=A,B` — a comma-separated list, as in Apalache.
+    inv: Option<Vec<String>>,
     /// Extra definitions to assume, from `--cinit`.
     cinit: Option<String>,
     /// Accepted and not used; reported.
     view: Option<String>,
     length: u32,
     max_errors: usize,
+    /// `--max-run=`: the number of **simulation** runs. Apalache's meaning,
+    /// which is *not* `--max-error`; accepted under `simulate` only.
+    max_runs: Option<usize>,
     out_dir: Option<PathBuf>,
-    /// Read `<spec>.cfg` for constants. On by default; `--no-cfg` turns it off.
-    read_cfg: bool,
+    /// `--config=FILE`: a TLC configuration to read roles and constants from.
+    config: Option<PathBuf>,
 }
 
 const USAGE: &str = "\
@@ -82,17 +92,23 @@ USAGE:
     nixie-tla <check|simulate> [OPTIONS] --out-dir=DIR SPEC.tla
 
 OPTIONS:
-    --inv=NAME          the invariant to check (required)
+    --inv=NAMES         the invariant(s) to check, comma-separated
     --init=NAME         the initial-state predicate        [default: Init]
     --next=NAME         the next-state action              [default: Next]
     --length=K          how many steps to unroll           [default: 10]
     --max-error=N       stop after N counterexamples       [default: 1]
-    --max-run=N         alias of --max-error, for `simulate`
+    --max-run=N         number of simulation runs (simulate only)
     --cinit=NAME        a definition constraining the CONSTANTs
+    --config=FILE       a TLC .cfg supplying roles and constants
     --view=NAME         accepted, not used (reported on stderr)
     --out-dir=DIR       where to write violation<N>.itf.json
-    --no-cfg            do not read SPEC.cfg for CONSTANT values
+    --no-cfg            accepted, no effect (a .cfg is not read by default)
     -h, --help          this text
+
+A TLC configuration is read only when --config names it, which is Apalache's
+default since 0.25.0; a SPEC.cfg next to the spec produces a hint, nothing
+more. In the file, INIT/NEXT/INVARIANT and CONSTANTS are honoured, and a
+command-line option overrides the file's value with a warning.
 
 EXIT CODES
     0 no counterexample within the bound   12 counterexample found
@@ -116,15 +132,16 @@ fn parse_args() -> Result<Args, String> {
     let mut a = Args {
         simulate,
         spec: PathBuf::new(),
-        init: "Init".to_string(),
-        next: "Next".to_string(),
+        init: None,
+        next: None,
         inv: None,
         cinit: None,
         view: None,
         length: 10,
         max_errors: 1,
+        max_runs: None,
         out_dir: None,
-        read_cfg: true,
+        config: None,
     };
     let mut spec: Option<PathBuf> = None;
     for arg in it {
@@ -142,22 +159,57 @@ fn parse_args() -> Result<Args, String> {
             };
             match name {
                 "help" => return Err(USAGE.to_string()),
-                "inv" => a.inv = Some(need(value)?),
-                "init" => a.init = need(value)?,
-                "next" => a.next = need(value)?,
+                // A comma-separated list, as in Apalache: `--inv=A,B` checks
+                // both. An empty entry is a typing slip, not "no invariant".
+                "inv" => {
+                    let raw = need(value)?;
+                    let parts: Vec<String> = raw
+                        .split(',')
+                        .map(str::trim)
+                        .map(std::string::ToString::to_string)
+                        .filter(|p| !p.is_empty())
+                        .collect();
+                    if parts.is_empty() {
+                        return Err("`--inv` needs at least one name".to_string());
+                    }
+                    a.inv = Some(parts);
+                }
+                "init" => a.init = Some(need(value)?),
+                "next" => a.next = Some(need(value)?),
                 "cinit" => a.cinit = Some(need(value)?),
                 "view" => a.view = Some(need(value)?),
                 "out-dir" => a.out_dir = Some(PathBuf::from(need(value)?)),
-                "no-cfg" => a.read_cfg = false,
+                "config" => a.config = Some(PathBuf::from(need(value)?)),
+                // Accepted, no effect: a `.cfg` is not read by default any
+                // more (see `run`), so there is nothing left to turn off.
+                // Kept rather than rejected so a caller scripted against
+                // older Nixie, or against TLC, does not break.
+                "no-cfg" => {
+                    eprintln!(
+                        "note: `--no-cfg` has no effect: a `.cfg` is read only with --config"
+                    );
+                }
                 "length" => {
                     a.length = need(value)?
                         .parse()
                         .map_err(|_| "`--length` needs a whole number".to_string())?;
                 }
-                "max-error" | "max-run" => {
+                "max-error" => {
                     a.max_errors = need(value)?
                         .parse()
-                        .map_err(|_| format!("`--{name}` needs a whole number"))?;
+                        .map_err(|_| "`--max-error` needs a whole number".to_string())?;
+                }
+                // Apalache's `--max-run` is the number of random simulation
+                // runs — emphatically not `--max-error`. Accepting it as an
+                // alias silently changed how many counterexamples a caller
+                // asked for, which changes the verdict surface, not the
+                // plumbing.
+                "max-run" => {
+                    a.max_runs = Some(
+                        need(value)?
+                            .parse()
+                            .map_err(|_| "`--max-run` needs a whole number".to_string())?,
+                    );
                 }
                 other => return Err(format!("unknown option `--{other}`\n\n{USAGE}")),
             }
@@ -168,9 +220,6 @@ fn parse_args() -> Result<Args, String> {
         }
     }
     a.spec = spec.ok_or_else(|| format!("no specification given\n\n{USAGE}"))?;
-    if a.inv.is_none() {
-        return Err(format!("`--inv=NAME` is required\n\n{USAGE}"));
-    }
     Ok(a)
 }
 
@@ -200,9 +249,42 @@ fn run(args: &Args) -> u8 {
             "note: `simulate` runs a bounded exhaustive check here, not random \
              simulation; it is stronger within --length and slower"
         );
+        // `--max-run` counts simulation runs, and only makes sense where
+        // there are runs to count. Under `check` it is refused rather than
+        // reinterpreted — the old alias made `--max-run=5` mean `--max-error=5`,
+        // which is a different number of *answers*, not a different pace.
+        if let Some(runs) = args.max_runs
+            && runs != 100
+        {
+            eprintln!(
+                "note: `--max-run={runs}` counts sampled runs in Apalache's \
+                 simulation; this checker is exhaustive within --length, so \
+                 the run count does not bound anything here"
+            );
+        }
+    } else if let Some(runs) = args.max_runs {
+        eprintln!(
+            "error: `--max-run={runs}` is a `simulate` option (the number of \
+             random runs); `check` has no use for it. For several \
+             counterexamples, that is `--max-error`."
+        );
+        return EXIT_SYSTEM;
     }
     if let Some(v) = &args.view {
         eprintln!("note: `--view={v}` is not used: this checker has no trace-diversity view");
+    }
+
+    // A missing file or a foreign extension is an invocation error (255), not
+    // a parse error (150): Apalache's split, and the one a wrapper can act on
+    // — 150 says "your specification is malformed", 255 says "you pointed me
+    // at the wrong thing".
+    if !args.spec.exists() {
+        eprintln!("error: no such file: {}", args.spec.display());
+        return EXIT_SYSTEM;
+    }
+    if args.spec.extension().and_then(|e| e.to_str()) != Some("tla") {
+        eprintln!("error: {}: expected a .tla file", args.spec.display());
+        return EXIT_SYSTEM;
     }
 
     let mut loader = nixie_tla_syntax::Loader::new();
@@ -228,55 +310,164 @@ fn run(args: &Args) -> u8 {
         return EXIT_SYNTAX;
     };
 
-    // The `.cfg` supplies `CONSTANT` values and replacements; the command line
-    // keeps the roles. That split is deliberate: Apalache does not read a
-    // `.cfg` at all, so a caller porting from it must not find its invariant
-    // silently replaced — but a constant the file pins is what makes `1..N`
-    // finite, and refusing to read it would decline specifications for no
-    // reason.
-    let cfg_path = args.spec.with_extension("cfg");
-    let config = if args.read_cfg {
-        match std::fs::read_to_string(&cfg_path) {
-            Ok(text) => match nixie_tla_syntax::parse_config(&text) {
-                Ok(c) => {
-                    eprintln!(
-                        "note: read {} for CONSTANT values (--no-cfg to ignore)",
-                        cfg_path.display()
-                    );
-                    Some(c)
-                }
+    // A TLC configuration is read **only** when `--config` names it. That is
+    // Apalache's own default (flipped in 0.25.0), and the divergence was
+    // dangerous in both directions: reading `<Spec>.cfg` unasked applied its
+    // `CONSTRAINT` — pruning exactly the behaviour a violation lived in —
+    // while a caller porting from TLC expected `CONSTANTS` to pin what made
+    // the spec finite. With `--config` the file supplies `INIT`, `NEXT`,
+    // `INVARIANT` and `CONSTANTS`, and a command-line value overrides the
+    // file's with a warning, which is `ApalacheConfigResolver`'s precedence.
+    let cfg_default_path = args.spec.with_extension("cfg");
+    let mut config = nixie_tla_syntax::TlcConfig::default();
+    let mut cfg_init: Option<String> = None;
+    let mut cfg_next: Option<String> = None;
+    let mut cfg_invariants: Vec<String> = Vec::new();
+    match &args.config {
+        Some(path) => {
+            if !path.exists() {
+                eprintln!(
+                    "error: specified TLC config file not found: {}",
+                    path.display()
+                );
+                return EXIT_SYSTEM;
+            }
+            let text = match std::fs::read_to_string(path) {
+                Ok(t) => t,
                 Err(e) => {
-                    eprintln!("could not parse {}: {e}", cfg_path.display());
-                    return EXIT_SYNTAX;
+                    eprintln!("error: {}: {e}", path.display());
+                    return EXIT_SYSTEM;
                 }
-            },
-            Err(_) => None,
+            };
+            config = match nixie_tla_syntax::parse_config(&text) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("could not parse {}: {e}", path.display());
+                    return EXIT_SYSTEM;
+                }
+            };
+            match config.behavior.clone() {
+                nixie_tla_syntax::BehaviorSpec::InitNext { init, next } => {
+                    cfg_init = Some(init);
+                    cfg_next = Some(next);
+                }
+                // No INIT/NEXT in the file: the defaults or the command line
+                // decide, exactly as when there is no file at all.
+                nixie_tla_syntax::BehaviorSpec::Unspecified => {}
+                // `SPECIFICATION` names a temporal behaviour spec — `Spec ==
+                // Init /\ [][Next]_vars /\ WF…` — which a bounded
+                // unrolling of `Init`/`Next` does not answer. Refused by
+                // name rather than approximated: checking `Init /\ Next`
+                // against such a spec would silently drop the temporal half.
+                nixie_tla_syntax::BehaviorSpec::Temporal(name) => {
+                    eprintln!(
+                        "error: {} names SPECIFICATION {name}, a temporal \
+                         behaviour spec; this checker needs INIT/NEXT (or a \
+                         temporal-properties pass, not yet built)",
+                        path.display()
+                    );
+                    return EXIT_SYSTEM;
+                }
+            }
+            cfg_invariants = config.invariants.clone();
+            if let Some(deadlock) = config.check_deadlock {
+                // Honoured in full by the deadlock-checking pass, which is
+                // its own piece of work; said out loud here so a caller
+                // knows the verdict currently says nothing about deadlocks.
+                eprintln!(
+                    "note: {} says CHECK_DEADLOCK {deadlock}; deadlock checking \
+                     is not implemented yet, so the verdict covers the named \
+                     invariants only",
+                    path.display()
+                );
+            }
         }
-    } else {
-        None
-    };
+        None => {
+            // Apalache's own hint, in its own words — including naming the
+            // file by its *name*, not the caller's whole path, which is what
+            // `warnIfTLCConfigIsPresent` prints.
+            if cfg_default_path.exists() {
+                let name = args
+                    .spec
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("spec");
+                eprintln!(
+                    "  > TLC config file found in specification directory. To \
+                     enable it, pass --config={name}.cfg."
+                );
+            }
+        }
+    }
 
-    let Some(inv) = args.inv.as_deref() else {
-        eprintln!("`--inv=NAME` is required");
-        return EXIT_SYSTEM;
+    // Precedence: the command line wins, with a warning naming both sides —
+    // `ApalacheConfigResolver.overrideString`'s contract, which a caller
+    // scripts against.
+    let resolve = |cli: &Option<String>, cfg: Option<String>, what: &str| -> String {
+        match (cli, cfg) {
+            (Some(c), Some(f)) => {
+                eprintln!("warning: --{what}={c} overrides `{what}` from the config ({f})");
+                c.clone()
+            }
+            (Some(c), None) => c.clone(),
+            (None, Some(f)) => f,
+            (None, None) => String::new(),
+        }
     };
+    let init = resolve(&args.init, cfg_init, "init");
+    let init = if init.is_empty() {
+        "Init".to_string()
+    } else {
+        init
+    };
+    let next = resolve(&args.next, cfg_next, "next");
+    let next = if next.is_empty() {
+        "Next".to_string()
+    } else {
+        next
+    };
+    let inv: Vec<String> = match (&args.inv, cfg_invariants.is_empty()) {
+        (Some(cli), false) => {
+            eprintln!(
+                "warning: --inv={} overrides INVARIANT from the config ({})",
+                cli.join(","),
+                cfg_invariants.join(",")
+            );
+            cli.clone()
+        }
+        (Some(cli), true) => cli.clone(),
+        (None, false) => cfg_invariants,
+        (None, true) => {
+            eprintln!(
+                "error: no invariant to check: name one with `--inv`, or put INVARIANT in the --config file"
+            );
+            return EXIT_SYSTEM;
+        }
+    };
+    // Every name in the list must resolve, or none of them is checked: a
+    // subset would answer a narrower question than the caller asked, which is
+    // the same silent narrowing a dropped assumption is.
+    for name in &inv {
+        if !module.units.iter().any(|u| {
+            matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
+                if params.is_empty() && n.name == *name)
+        }) {
+            eprintln!("error: the module has no zero-argument definition named `{name}`");
+            return EXIT_EVAL;
+        }
+    }
+    let inv_names: Vec<&str> = inv.iter().map(String::as_str).collect();
+
     let cinit: Vec<&str> = args.cinit.as_deref().into_iter().collect();
     let roles = Roles {
-        init: &args.init,
-        next: &args.next,
-        inv,
+        init: &init,
+        next: &next,
+        inv: &inv_names,
         constraints: &cinit,
     };
 
     let mut tm = TermManager::new();
-    let empty = nixie_tla_syntax::TlcConfig::default();
-    let mut bmc = match Bmc::prepare_with_config(
-        &spec,
-        module,
-        roles,
-        config.as_ref().unwrap_or(&empty),
-        &mut tm,
-    ) {
+    let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, &config, &mut tm) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("{e}");
@@ -322,7 +513,13 @@ fn run(args: &Args) -> u8 {
             }
             Outcome::Violation { step } => {
                 found += 1;
-                println!("counterexample {found}: {step} step(s)");
+                let broken = bmc.violated_invariants();
+                let which = if broken.len() == 1 {
+                    broken[0].clone()
+                } else {
+                    format!("[{}]", broken.join(", "))
+                };
+                println!("counterexample {found}: {step} step(s), invariant {which}");
                 if let Some(v) = bmc.verification() {
                     println!("  independently replayed: {}", describe(v));
                 }

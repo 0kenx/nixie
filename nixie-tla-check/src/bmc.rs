@@ -166,8 +166,11 @@ pub struct Roles<'r> {
     pub init: &'r str,
     /// The next-state action.
     pub next: &'r str,
-    /// The invariant to check.
-    pub inv: &'r str,
+    /// The invariants to check, conjunctively: the counterexample condition is
+    /// the disjunction of their negations, which is `--inv=A,B`'s meaning in
+    /// Apalache. A slice, because a single name is the common case and a list
+    /// is the contract.
+    pub inv: &'r [&'r str],
     /// Extra zero-argument definitions to assume, on top of the module's
     /// `ASSUME`s.
     ///
@@ -185,7 +188,8 @@ pub struct Bmc {
     assumptions: Vec<KeraRef>,
     init: KeraRef,
     next: KeraRef,
-    inv: KeraRef,
+    /// The invariants, in the order named, with the names they were named by.
+    invs: Vec<(String, KeraRef)>,
     encoder: Encoder,
     /// Assumptions that could not be lowered or typed, counted at prepare
     /// time. Encode-time drops are added per check, into
@@ -216,6 +220,13 @@ pub struct Bmc {
     /// counterexample is found. They only ever narrow the search, so they can
     /// hide a behaviour and never invent one.
     blocked: Vec<TermId>,
+    /// Which of the named invariants the last counterexample broke, by name.
+    ///
+    /// A list, because `--inv=A,B` asks about several at once and a caller
+    /// acts on the one that broke. Decided by the *evaluator* over the decoded
+    /// last state, not by the solver: which disjunct the search happened to
+    /// satisfy first is not an answer, it is an accident of encoding order.
+    violated_invariants: Vec<String>,
 }
 
 /// What became of the attempt to confirm a counterexample independently.
@@ -274,7 +285,7 @@ impl Bmc {
             Roles {
                 init,
                 next,
-                inv,
+                inv: std::slice::from_ref(&inv),
                 constraints,
             },
             &TlcConfig::default(),
@@ -316,7 +327,7 @@ impl Bmc {
         let Roles {
             init,
             next,
-            inv,
+            inv: _,
             constraints,
         } = roles;
         // ONE lowerer for all three formulas. Binder renaming uses a counter
@@ -415,12 +426,17 @@ impl Bmc {
             _ => Ok(()),
         };
         require(init, "an initial predicate", nixie_tla_syntax::Level::State)?;
-        require(inv, "an invariant", nixie_tla_syntax::Level::State)?;
         require(next, "a next-state action", nixie_tla_syntax::Level::Action)?;
+        for inv in roles.inv {
+            require(inv, "an invariant", nixie_tla_syntax::Level::State)?;
+        }
 
         let init_k = lower_one(&mut low, module, init)?;
         let next_k = lower_one(&mut low, module, next)?;
-        let inv_k = lower_one(&mut low, module, inv)?;
+        let mut invs = Vec::with_capacity(roles.inv.len());
+        for inv in roles.inv {
+            invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
+        }
 
         // `ASSUME` is not decoration: a TLA+ specification is only claimed to
         // hold under its assumptions, and they are usually the only thing
@@ -489,8 +505,9 @@ impl Bmc {
         // One inference over all three, so a state variable has one type
         // across the whole specification rather than three unrelated ones.
         let mut inf = Inference::new();
-        for t in [&init_k, &next_k, &inv_k]
+        for t in [&init_k, &next_k]
             .into_iter()
+            .chain(invs.iter().map(|(_, t)| t))
             .chain(state_constraints.iter())
             .chain(action_constraints.iter())
         {
@@ -508,7 +525,10 @@ impl Bmc {
         // gives an invariant an arithmetic body, which is how the check came
         // to be written: the trace replay caught the invariant evaluating to
         // `95`, and refusing it up front is where that belongs.
-        for (name, term) in [(init, &init_k), (next, &next_k), (inv, &inv_k)] {
+        for (name, term) in std::iter::once((init, &init_k))
+            .chain(std::iter::once((next, &next_k)))
+            .chain(invs.iter().map(|(n, t)| (n.as_str(), t)))
+        {
             let Some(id) = inf.node_ty(term) else {
                 continue;
             };
@@ -592,8 +612,9 @@ impl Bmc {
         // element to take an element sort from, and an empty set at the wrong
         // element sort is a different value — so it is supplied, not guessed.
         let mut nodes: Vec<KeraRef> = Vec::new();
-        for root in [&init_k, &next_k, &inv_k]
+        for root in [&init_k, &next_k]
             .into_iter()
+            .chain(invs.iter().map(|(_, t)| t))
             .chain(typed_assumptions.iter())
             .chain(state_constraints.iter())
             .chain(action_constraints.iter())
@@ -615,7 +636,7 @@ impl Bmc {
             dropped_assumptions: dropped,
             init: init_k,
             next: next_k,
-            inv: inv_k,
+            invs,
             encoder,
             state_constraints,
             action_constraints,
@@ -624,6 +645,7 @@ impl Bmc {
             counterexample: None,
             verification: None,
             blocked: Vec::new(),
+            violated_invariants: Vec::new(),
         })
     }
 
@@ -708,11 +730,24 @@ impl Bmc {
         }
 
         for j in 0..=depth {
-            let inv = self
-                .encoder
-                .encode_at(&self.inv, j, tm)
-                .map_err(|e| named("Inv", &e))?;
-            let violated = tm.mk_not(inv);
+            // `--inv=A,B` is conjunctive over the invariants, so the
+            // counterexample condition is the disjunction of their negations.
+            // One query, not one per invariant: the shortest counterexample
+            // against *any* of them is what a bounded search must find first,
+            // and which one it broke is read back afterwards, from the trace.
+            let mut negated = Vec::with_capacity(self.invs.len());
+            for (name, inv) in &self.invs {
+                let t = self
+                    .encoder
+                    .encode_at(inv, j, tm)
+                    .map_err(|e| named(name, &e))?;
+                negated.push(tm.mk_not(t));
+            }
+            let violated = if negated.len() == 1 {
+                negated[0]
+            } else {
+                tm.mk_or(negated)
+            };
 
             let mut solver = Solver::new();
             // A **deterministic** budget per query, not a wall-clock timeout.
@@ -941,6 +976,7 @@ impl Bmc {
             &crate::itf::Meta {
                 description: "Generated by Nixie".to_string(),
                 source: source.to_string(),
+                violated: self.violated_invariants.clone(),
             },
         ))
     }
@@ -949,6 +985,16 @@ impl Bmc {
     #[must_use]
     pub fn verification(&self) -> Option<&Verification> {
         self.verification.as_ref()
+    }
+
+    /// Which named invariants the last counterexample broke.
+    ///
+    /// Empty until a replayed counterexample exists. A caller printing a
+    /// report or writing `#meta` puts these names on it: with several
+    /// invariants, "exit 12" without the name is half an answer.
+    #[must_use]
+    pub fn violated_invariants(&self) -> &[String] {
+        &self.violated_invariants
     }
 
     /// Read the model back as a trace.
@@ -1000,7 +1046,7 @@ impl Bmc {
     /// The configuration's constraints are checked too, not only the three
     /// formulas. A `CONSTRAINT` narrows the model the author asked about, and
     /// a trace that leaves it is a counterexample to a different question.
-    fn replay(&self, trace: &Trace) -> core::result::Result<(), String> {
+    fn replay(&mut self, trace: &Trace) -> core::result::Result<(), String> {
         let mut ev = nixie_tla::Evaluator::new();
         let Some(first) = trace.states.first() else {
             return Err("the trace has no states".into());
@@ -1044,15 +1090,30 @@ impl Bmc {
                 )?;
             }
         }
-        // And the point of the whole thing: the invariant must actually fail.
-        match ev.eval_state(&self.inv, last) {
-            Ok(nixie_tla::Value::Bool(false)) => Ok(()),
-            Ok(nixie_tla::Value::Bool(true)) => Err("the invariant holds in the last state".into()),
-            Ok(v) => Err(format!(
-                "the invariant evaluated to {v} in the last state, which is not a Boolean"
-            )),
-            Err(e) => Err(format!("the invariant could not be evaluated: {e}")),
+        // And the point of the whole thing: at least one named invariant
+        // must actually fail, and the ones that do are recorded by name —
+        // the disjunction the search violated is an encoding detail; the
+        // specification's question is *which* invariant broke.
+        let mut violated = Vec::new();
+        for (name, inv) in &self.invs {
+            match ev.eval_state(inv, last) {
+                Ok(nixie_tla::Value::Bool(false)) => violated.push(name.clone()),
+                Ok(nixie_tla::Value::Bool(true)) => {}
+                Ok(v) => {
+                    return Err(format!(
+                        "`{name}` evaluated to {v} in the last state, which is not a Boolean"
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!("`{name}` could not be evaluated: {e}"));
+                }
+            }
         }
+        if violated.is_empty() {
+            return Err("every named invariant holds in the last state".into());
+        }
+        self.violated_invariants = violated;
+        Ok(())
     }
 
     /// How many `ASSUME`s were dropped because they could not be lowered,
