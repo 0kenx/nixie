@@ -1,0 +1,3459 @@
+{
+ "source": "cli-integration-tests.md @ apalache 0.63.0 (nix store 159k2slm)",
+ "cells": [
+  {
+   "section": "check command emits no Java 25 compatibility warnings",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "NoVars.tla"
+   ],
+   "spec": "NoVars.tla",
+   "expected_exit": 1,
+   "expected_outcome": "other",
+   "id": "8e4ea23670"
+  },
+  {
+   "section": "Prints default computation length of 10 (regression #2087)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "y2k_instance.tla"
+   ],
+   "spec": "y2k_instance.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c21e832cd8"
+  },
+  {
+   "section": "check factorization find a counterexample (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--tuning-options=cvc5.smt.logic=QF_UFNIA",
+    "--length=2",
+    "--inv=Inv",
+    "factorization.tla"
+   ],
+   "spec": "factorization.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "103f2877c2"
+  },
+  {
+   "section": "check Fix531.tla reports no error: regression for issue 531 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Fix531.tla"
+   ],
+   "spec": "Fix531.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d0af61eb26"
+  },
+  {
+   "section": "check UnchangedExpr471.tla reports no error: regression for issue 471 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=ConstInit",
+    "--length=1",
+    "UnchangedExpr471.tla"
+   ],
+   "spec": "UnchangedExpr471.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "5a570f140f"
+  },
+  {
+   "section": "check Unchanged3143.tla reports no error: regression for issue 3143 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Unchanged3143.tla"
+   ],
+   "spec": "Unchanged3143.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "f3c00d80c2"
+  },
+  {
+   "section": "check ExistTuple476.tla reports no error: regression for issue 476 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "ExistTuple476.tla"
+   ],
+   "spec": "ExistTuple476.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1466fb2f69"
+  },
+  {
+   "section": "check InvSub for SafeMath reports no error: regression for issue 450 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--inv=InvSub",
+    "SafeMath.tla"
+   ],
+   "spec": "SafeMath.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "4c535e6752"
+  },
+  {
+   "section": "check InvAdd for SafeMath reports no error: regression for issue 450 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--inv=InvAdd",
+    "SafeMath.tla"
+   ],
+   "spec": "SafeMath.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e4d44ac5bb"
+  },
+  {
+   "section": "check Fix365_ExistsSubset succeeds: regression for issue 365 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "Fix365_ExistsSubset.tla"
+   ],
+   "spec": "Fix365_ExistsSubset.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a5f5a1a146"
+  },
+  {
+   "section": "check Fix365_ExistsSubset2 succeeds: regression for issue 365",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "Fix365_ExistsSubset2.tla"
+   ],
+   "spec": "Fix365_ExistsSubset2.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "5317f8d4ff"
+  },
+  {
+   "section": "check Fix365_ExistsSubset3 succeeds: regression for issue 365 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "Fix365_ExistsSubset3.tla"
+   ],
+   "spec": "Fix365_ExistsSubset3.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bb86cd6ff2"
+  },
+  {
+   "section": "check Bug20201118 succeeds: regression for issue 333 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--init=Init",
+    "--next=Next",
+    "--inv=Inv",
+    "Bug20201118.tla"
+   ],
+   "spec": "Bug20201118.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2d9569fa0c"
+  },
+  {
+   "section": "check Fix333 succeeds: another regression for issue 333 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=2",
+    "--init=Init",
+    "--next=Next",
+    "--inv=Inv",
+    "Fix333.tla"
+   ],
+   "spec": "Fix333.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c409fa2803"
+  },
+  {
+   "section": "check Bug540 succeeds: regression for issue 540 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=CInit",
+    "Bug540.tla"
+   ],
+   "spec": "Bug540.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1e1fc91a5b"
+  },
+  {
+   "section": "check Bug593 fails correctly: regression for issue 593 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Bug593.tla"
+   ],
+   "spec": "Bug593.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "53874de5e6"
+  },
+  {
+   "section": "check Bug3400 reports SANY semantic error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=IndInv1",
+    "--next=Next",
+    "--inv=IndInv1",
+    "Bug3400.tla"
+   ],
+   "spec": "Bug3400.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "0fd68820ef"
+  },
+  {
+   "section": "check Bug3400 reports SANY semantic error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=IndInv1",
+    "--next=Next",
+    "--inv=IndInv1",
+    "Bug3400.tla"
+   ],
+   "spec": "Bug3400.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "23360b6d3d"
+  },
+  {
+   "section": "check Bug20190118 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--init=Init",
+    "--next=Next",
+    "--inv=Inv",
+    "Bug20190118.tla"
+   ],
+   "spec": "Bug20190118.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "962caf6bf5"
+  },
+  {
+   "section": "check mis.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=AvoidBug",
+    "--length=5",
+    "--inv=IsIndependent",
+    "mis.tla"
+   ],
+   "spec": "mis.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9ef66ccca9"
+  },
+  {
+   "section": "check mis.tla errors on IntroBug",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=IntroBug",
+    "--length=5",
+    "--inv=IsIndependent",
+    "mis.tla"
+   ],
+   "spec": "mis.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "eb406af497"
+  },
+  {
+   "section": "check ast.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "ast.tla"
+   ],
+   "spec": "ast.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a6db449e7b"
+  },
+  {
+   "section": "check pr.tla suceeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=2",
+    "pr.tla"
+   ],
+   "spec": "pr.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8410e7037f"
+  },
+  {
+   "section": "check EWD840.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "EWD840.tla"
+   ],
+   "spec": "EWD840.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "0e3d3b122f"
+  },
+  {
+   "section": "check Paxos.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "Paxos.tla"
+   ],
+   "spec": "Paxos.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "00835fb8ea"
+  },
+  {
+   "section": "check Bug20190118 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Bug20190118.tla"
+   ],
+   "spec": "Bug20190118.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "66e0efc421"
+  },
+  {
+   "section": "check Bug20190921 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--cinit=CInit",
+    "Bug20190921.tla"
+   ],
+   "spec": "Bug20190921.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2cef9892a8"
+  },
+  {
+   "section": "check RangeWithConst succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=CInit",
+    "--inv=Inv",
+    "--length=1",
+    "RangeWithConst.tla"
+   ],
+   "spec": "RangeWithConst.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "220bb841ec"
+  },
+  {
+   "section": "check SelectSeqTests succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "SelectSeqTests.tla"
+   ],
+   "spec": "SelectSeqTests.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a673dd5882"
+  },
+  {
+   "section": "check Folds succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "Folds.tla"
+   ],
+   "spec": "Folds.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "50cb4b11dc"
+  },
+  {
+   "section": "check LocalFold succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "LocalFold.tla"
+   ],
+   "spec": "LocalFold.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9f00ef0aef"
+  },
+  {
+   "section": "check LocalFold2 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "LocalFold2.tla"
+   ],
+   "spec": "LocalFold2.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "cad96e50f6"
+  },
+  {
+   "section": "check FoldSetSeq succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetSeq.tla"
+   ],
+   "spec": "FoldSetSeq.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1c6a3a63d3"
+  },
+  {
+   "section": "check FoldSetSeqBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetSeqBad.tla"
+   ],
+   "spec": "FoldSetSeqBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "4f792e2ab5"
+  },
+  {
+   "section": "check FoldSetSet succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetSet.tla"
+   ],
+   "spec": "FoldSetSet.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c9c4a03d69"
+  },
+  {
+   "section": "check FoldSetSetBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetSetBad.tla"
+   ],
+   "spec": "FoldSetSetBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "b8fbd0a75d"
+  },
+  {
+   "section": "check FoldSetFun succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetFun.tla"
+   ],
+   "spec": "FoldSetFun.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "17f4b07211"
+  },
+  {
+   "section": "check FoldSetFunBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSetFunBad.tla"
+   ],
+   "spec": "FoldSetFunBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "2b304955c5"
+  },
+  {
+   "section": "check FoldSeqSeq succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqSeq.tla"
+   ],
+   "spec": "FoldSeqSeq.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "556ab20605"
+  },
+  {
+   "section": "check FoldSeqSeqBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqSeqBad.tla"
+   ],
+   "spec": "FoldSeqSeqBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "c7cf310429"
+  },
+  {
+   "section": "check FoldSeqSet succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqSet.tla"
+   ],
+   "spec": "FoldSeqSet.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a260edaea0"
+  },
+  {
+   "section": "check FoldSeqSetBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqSetBad.tla"
+   ],
+   "spec": "FoldSeqSetBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "f47709d741"
+  },
+  {
+   "section": "check FoldSeqFun succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqFun.tla"
+   ],
+   "spec": "FoldSeqFun.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "38e26ada8f"
+  },
+  {
+   "section": "check FoldSeqFunBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "FoldSeqFunBad.tla"
+   ],
+   "spec": "FoldSeqFunBad.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "596a95ee07"
+  },
+  {
+   "section": "check FoldSetInInit succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "FoldSetInInit.tla"
+   ],
+   "spec": "FoldSetInInit.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "3011dc31d0"
+  },
+  {
+   "section": "check Repeat succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=0",
+    "Repeat.tla"
+   ],
+   "spec": "Repeat.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "906f0f8bf2"
+  },
+  {
+   "section": "check RepeatBad fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=0",
+    "RepeatBad.tla"
+   ],
+   "spec": "RepeatBad.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "309305da4d"
+  },
+  {
+   "section": "check Counter.tla errors (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "32a70a39ce"
+  },
+  {
+   "section": "check y2k with length 20 and ConstInit errors (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=20",
+    "--inv=Safety",
+    "--cinit=ConstInit",
+    "y2k_cinit.tla"
+   ],
+   "spec": "y2k_cinit.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "175aef5172"
+  },
+  {
+   "section": "check y2k with length 19 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=19",
+    "--inv=Safety",
+    "y2k_instance.tla"
+   ],
+   "spec": "y2k_instance.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "53dc2b19bb"
+  },
+  {
+   "section": "check y2k with length 30 errors (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=30",
+    "--inv=Safety",
+    "y2k_instance.tla"
+   ],
+   "spec": "y2k_instance.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "83f6f36b7d"
+  },
+  {
+   "section": "check Counter.tla errors (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "32a70a39ce"
+  },
+  {
+   "section": "check NatCounter.tla errors (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "NatCounter.tla"
+   ],
+   "spec": "NatCounter.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "32c44fbf54"
+  },
+  {
+   "section": "check NeedForTypesWithTypes.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--cinit=ConstInit",
+    "--inv=Inv",
+    "NeedForTypesWithTypes.tla"
+   ],
+   "spec": "NeedForTypesWithTypes.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ec7bf36d7b"
+  },
+  {
+   "section": "check HandshakeWithTypes.tla with length 4 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=4",
+    "--inv=Inv",
+    "HandshakeWithTypes.tla"
+   ],
+   "spec": "HandshakeWithTypes.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "6f8e47177e"
+  },
+  {
+   "section": "check HandshakeWithTypes.tla with length 5 deadlocks (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "HandshakeWithTypes.tla"
+   ],
+   "spec": "HandshakeWithTypes.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "a5a5405794"
+  },
+  {
+   "section": "check HandshakeWithTypes.tla with length 5 passes with --no-deadlock",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--no-deadlock=1",
+    "--inv=Inv",
+    "HandshakeWithTypes.tla"
+   ],
+   "spec": "HandshakeWithTypes.tla",
+   "expected_exit": 0,
+   "expected_outcome": "ExecutionsTooShort",
+   "id": "26e96d737e"
+  },
+  {
+   "section": "check HandshakeWithTypes.tla with length 5 passes via CHECK_DEADLOCK FALSE",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--config=HandshakeWithTypes_no_deadlock.cfg",
+    "HandshakeWithTypes.tla"
+   ],
+   "spec": "HandshakeWithTypes.tla",
+   "expected_exit": 0,
+   "expected_outcome": "ExecutionsTooShort",
+   "id": "d26f7b397f"
+  },
+  {
+   "section": "check HandshakeWithTypes.tla with length 5 deadlocks with CHECK_DEADLOCK TRUE",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--config=HandshakeWithTypes_deadlock.cfg",
+    "--inv=Inv",
+    "HandshakeWithTypes.tla"
+   ],
+   "spec": "HandshakeWithTypes.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "02bc60af64"
+  },
+  {
+   "section": "check trivial violation of FALSE invariant (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=2",
+    "--inv=Inv",
+    "Bug20200306.tla"
+   ],
+   "spec": "Bug20200306.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "be1ed2b9bc"
+  },
+  {
+   "section": "check Init without an assignment fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--inv=Inv",
+    "Assignments20200309.tla"
+   ],
+   "spec": "Assignments20200309.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "8c6ae94311"
+  },
+  {
+   "section": "check Inline.tla suceeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "Inline.tla"
+   ],
+   "spec": "Inline.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "94fd61feff"
+  },
+  {
+   "section": "check Rec1.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "Rec1.tla"
+   ],
+   "spec": "Rec1.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "4d3aaa3d3e"
+  },
+  {
+   "section": "check Rec2.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "Rec2.tla"
+   ],
+   "spec": "Rec2.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "57f7c76cd7"
+  },
+  {
+   "section": "check Rec3.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "Rec3.tla"
+   ],
+   "spec": "Rec3.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "2511e4b15c"
+  },
+  {
+   "section": "check Rec4.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "Rec4.tla"
+   ],
+   "spec": "Rec4.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "3760e24e50"
+  },
+  {
+   "section": "check Rec5.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "Rec5.tla"
+   ],
+   "spec": "Rec5.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "c9ba30b8c3"
+  },
+  {
+   "section": "check Rec6.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=Inv",
+    "Rec6.tla"
+   ],
+   "spec": "Rec6.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "0a25e1d2d7"
+  },
+  {
+   "section": "check Rec8.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--inv=Inv",
+    "Rec8.tla"
+   ],
+   "spec": "Rec8.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "184cacbeff"
+  },
+  {
+   "section": "check Rec9.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=3",
+    "--inv=Inv",
+    "Rec9.tla"
+   ],
+   "spec": "Rec9.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "a6b25a1d4b"
+  },
+  {
+   "section": "check Rec10.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Rec10.tla"
+   ],
+   "spec": "Rec10.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "3b6481bfa1"
+  },
+  {
+   "section": "check Rec11.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Rec11.tla"
+   ],
+   "spec": "Rec11.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "0eaafe3f33"
+  },
+  {
+   "section": "check Rec12.tla fails check",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Rec12.tla"
+   ],
+   "spec": "Rec12.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "acc43cbaff"
+  },
+  {
+   "section": "check Rec13.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Rec13.tla"
+   ],
+   "spec": "Rec13.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e5fdbd652d"
+  },
+  {
+   "section": "check ExistsAsValue.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "ExistsAsValue.tla"
+   ],
+   "spec": "ExistsAsValue.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9e8ed05521"
+  },
+  {
+   "section": "check reorderTest.tla MayFail succeeds: fixed SMT fails under SMT-based assignment finding",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--next=MayFail",
+    "--tuning-options-file=reorderTest.properties",
+    "reorderTest.tla"
+   ],
+   "spec": "reorderTest.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bd543fb336"
+  },
+  {
+   "section": "check reorderTest.tla MustFail fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--next=MustFail",
+    "reorderTest.tla"
+   ],
+   "spec": "reorderTest.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "2df94cca87"
+  },
+  {
+   "section": "check Empty.tla fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Empty.tla"
+   ],
+   "spec": "Empty.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "2a6c4be52d"
+  },
+  {
+   "section": "check NoVars.tla succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "NoVars.tla"
+   ],
+   "spec": "NoVars.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "b456182965"
+  },
+  {
+   "section": "check HourClock.tla without Init fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=NonExistantInit",
+    "HourClock.tla"
+   ],
+   "spec": "HourClock.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "67193227ee"
+  },
+  {
+   "section": "check HourClock.tla without Next fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--next=NonExistantNext",
+    "HourClock.tla"
+   ],
+   "spec": "HourClock.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "8815e50eda"
+  },
+  {
+   "section": "check HourClock.tla without Inv fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=NonExistantInv",
+    "HourClock.tla"
+   ],
+   "spec": "HourClock.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "64d37c39d7"
+  },
+  {
+   "section": "check NonNullaryLet succeeds: regression for issue 429 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "NonNullaryLet.tla"
+   ],
+   "spec": "NonNullaryLet.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "90e6e9d6cb"
+  },
+  {
+   "section": "check CaseNoOther succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "CaseNoOther.tla"
+   ],
+   "spec": "CaseNoOther.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "78f7438a41"
+  },
+  {
+   "section": "check CaseNoOtherBool succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "CaseNoOtherBool.tla"
+   ],
+   "spec": "CaseNoOtherBool.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e4a18932b9"
+  },
+  {
+   "section": "check Callback.tla succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Callback.tla"
+   ],
+   "spec": "Callback.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "918435d900"
+  },
+  {
+   "section": "check Selections succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Selections.tla"
+   ],
+   "spec": "Selections.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "34f176e2ad"
+  },
+  {
+   "section": "check test1 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "test1.tla"
+   ],
+   "spec": "test1.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "26069575e7"
+  },
+  {
+   "section": "check ITE_CASE succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "ITE_CASE.tla"
+   ],
+   "spec": "ITE_CASE.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "f080ceef45"
+  },
+  {
+   "section": "check Deadlock712 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Deadlock712.tla"
+   ],
+   "spec": "Deadlock712.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1343421d62"
+  },
+  {
+   "section": "check SimpleLambda succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "SimpleLambda.tla"
+   ],
+   "spec": "SimpleLambda.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bef4cc9323"
+  },
+  {
+   "section": "check NestedCallByName succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "NestedCallByName.tla"
+   ],
+   "spec": "NestedCallByName.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "5b18e6737c"
+  },
+  {
+   "section": "check RecordExcept987 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "RecordExcept987.tla"
+   ],
+   "spec": "RecordExcept987.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1cdfe2d38a"
+  },
+  {
+   "section": "check Bug985 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Bug985.tla"
+   ],
+   "spec": "Bug985.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a90ae73ad2"
+  },
+  {
+   "section": "check Bug1126 succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Bug1126.tla"
+   ],
+   "spec": "Bug1126.tla",
+   "expected_exit": 75,
+   "expected_outcome": "other",
+   "id": "911f24780a"
+  },
+  {
+   "section": "check --inv with a temporal property fails (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=FalseLiveness",
+    "LongPrefix.tla"
+   ],
+   "spec": "LongPrefix.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "c09202760c"
+  },
+  {
+   "section": "check FalseLiveness fails (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "LongPrefix.tla"
+   ],
+   "spec": "LongPrefix.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "7375f07d30"
+  },
+  {
+   "section": "check Liveness succeeds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "LongPrefix.tla"
+   ],
+   "spec": "LongPrefix.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bc60ee6f07"
+  },
+  {
+   "section": "check LongLoops: Liveness succeeds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "LongLoops.tla"
+   ],
+   "spec": "LongLoops.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a6cb425b45"
+  },
+  {
+   "section": "check LongLoops: FalseLiveness fails (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "LongLoops.tla"
+   ],
+   "spec": "LongLoops.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "0ace6ca93b"
+  },
+  {
+   "section": "check NoLoopsNoProblems succeeds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "NoLoopsNoProblems.tla"
+   ],
+   "spec": "NoLoopsNoProblems.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "4d63186631"
+  },
+  {
+   "section": "check NoLoopsNoProblems succeeds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "NoLoopsNoProblems.tla"
+   ],
+   "spec": "NoLoopsNoProblems.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "165bb77b06"
+  },
+  {
+   "section": "check ManyBoxes (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "ManyBoxes.tla"
+   ],
+   "spec": "ManyBoxes.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "dd4d71cfa2"
+  },
+  {
+   "section": "check ManyBoxes (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "ManyBoxes.tla"
+   ],
+   "spec": "ManyBoxes.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "d5c70f32ae"
+  },
+  {
+   "section": "check ManyDiamonds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "ManyDiamonds.tla"
+   ],
+   "spec": "ManyDiamonds.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c32b33ddbb"
+  },
+  {
+   "section": "check ManyDiamonds (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "ManyDiamonds.tla"
+   ],
+   "spec": "ManyDiamonds.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "a83bd680a4"
+  },
+  {
+   "section": "check DiamondBox (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "DiamondBox.tla"
+   ],
+   "spec": "DiamondBox.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "cabff79d6c"
+  },
+  {
+   "section": "check DiamondBox (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "DiamondBox.tla"
+   ],
+   "spec": "DiamondBox.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "2dc2883336"
+  },
+  {
+   "section": "check BoxDiamond (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "BoxDiamond.tla"
+   ],
+   "spec": "BoxDiamond.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "3403670ab3"
+  },
+  {
+   "section": "check BoxDiamond (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "BoxDiamond.tla"
+   ],
+   "spec": "BoxDiamond.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "9cbcaf17e0"
+  },
+  {
+   "section": "check NestedTemporalInBool (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "NestedTemporalInBool.tla"
+   ],
+   "spec": "NestedTemporalInBool.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2fcbc6c35a"
+  },
+  {
+   "section": "check NestedTemporalInBool (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "NestedTemporalInBool.tla"
+   ],
+   "spec": "NestedTemporalInBool.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "6ec41487ae"
+  },
+  {
+   "section": "check NoTemporalOperatorsInTemporalProp (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Property",
+    "NoTemporalOperatorsInTemporalProp.tla"
+   ],
+   "spec": "NoTemporalOperatorsInTemporalProp.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "b9989899b3"
+  },
+  {
+   "section": "check NoTemporalOperatorsInTemporalProp (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=PropertyWithTemporal",
+    "NoTemporalOperatorsInTemporalProp.tla"
+   ],
+   "spec": "NoTemporalOperatorsInTemporalProp.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "f95a46c685"
+  },
+  {
+   "section": "check NoTemporalOperatorsInTemporalProp (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=ExplicitInvariant",
+    "NoTemporalOperatorsInTemporalProp.tla"
+   ],
+   "spec": "NoTemporalOperatorsInTemporalProp.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "5ff89d54d1"
+  },
+  {
+   "section": "check actions in temporal operators (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "TemporalPropsOverActions.tla"
+   ],
+   "spec": "TemporalPropsOverActions.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1d3d6a3333"
+  },
+  {
+   "section": "check actions in temporal operators (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "TemporalPropsOverActions.tla"
+   ],
+   "spec": "TemporalPropsOverActions.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "cffe0336b4"
+  },
+  {
+   "section": "check LetIn (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=Liveness",
+    "LetIn.tla"
+   ],
+   "spec": "LetIn.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d170a8bcc0"
+  },
+  {
+   "section": "check LetIn (temporal)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=FalseLiveness",
+    "LetIn.tla"
+   ],
+   "spec": "LetIn.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "0dbdd4dcc8"
+  },
+  {
+   "section": "check Bug2107 succeeds (temporal): regression for #2107",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=P1",
+    "Bug2107.tla"
+   ],
+   "spec": "Bug2107.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "6ff1bf7e53"
+  },
+  {
+   "section": "check Bug2107 succeeds (temporal): regression for #2107",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=P2",
+    "Bug2107.tla"
+   ],
+   "spec": "Bug2107.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e8c9f61144"
+  },
+  {
+   "section": "check Bug2107 succeeds (temporal): regression for #2107",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--temporal=P3",
+    "Bug2107.tla"
+   ],
+   "spec": "Bug2107.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "3c1179d1b1"
+  },
+  {
+   "section": "check SetSndRcv succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=6",
+    "--cinit=CInit",
+    "SetSndRcv.tla"
+   ],
+   "spec": "SetSndRcv.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e6b3a72953"
+  },
+  {
+   "section": "check SetAddDel succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=6",
+    "--cinit=CInit",
+    "SetAddDel.tla"
+   ],
+   "spec": "SetAddDel.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2e34ff3153"
+  },
+  {
+   "section": "check PizzaOrder succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=ConstInit",
+    "--inv=NoDoubleDelivery",
+    "PizzaOrder.tla"
+   ],
+   "spec": "PizzaOrder.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "b8be36fb18"
+  },
+  {
+   "section": "check OracleFunSet succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "OracleFunSet.tla"
+   ],
+   "spec": "OracleFunSet.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a14e07e4a7"
+  },
+  {
+   "section": "check Verifier_functionComparison fails (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Verifier_functionComparison.tla"
+   ],
+   "spec": "Verifier_functionComparison.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "7189b1ba16"
+  },
+  {
+   "section": "check PickPerf succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--discard-disabled=0",
+    "--tuning-options=search.invariant.mode=after",
+    "PickPerf.tla"
+   ],
+   "spec": "PickPerf.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1aa5b9de1b"
+  },
+  {
+   "section": "check PickPerf2 succeeds (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--discard-disabled=0",
+    "--tuning-options=search.invariant.mode=after",
+    "PickPerf2.tla"
+   ],
+   "spec": "PickPerf2.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "87ce02df38"
+  },
+  {
+   "section": "check TrivialFail fails with --discard-disabled=false",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--discard-disabled=false",
+    "TrivialFail.tla"
+   ],
+   "spec": "TrivialFail.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "eb442a4578"
+  },
+  {
+   "section": "check ConstantOperatorImpl succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=Inv",
+    "ConstantOperatorImpl.tla"
+   ],
+   "spec": "ConstantOperatorImpl.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d1ebcc7669"
+  },
+  {
+   "section": "simulate Paxos.tla with timeout succeeds",
+   "mode": "simulate",
+   "argv": [
+    "simulate",
+    "--timeout-smt=1",
+    "--length=10",
+    "--inv=Inv",
+    "Paxos.tla"
+   ],
+   "spec": "Paxos.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d76be813a7"
+  },
+  {
+   "section": "simulate y2k with --output-traces succeeds",
+   "mode": "simulate",
+   "argv": [
+    "simulate",
+    "--out-dir=./test-out-dir",
+    "--length=10",
+    "--max-run=5",
+    "--output-traces",
+    "--inv=Safety",
+    "y2k_instance.tla"
+   ],
+   "spec": "y2k_instance.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d5101074f1"
+  },
+  {
+   "section": "check NonLinearArithmetic.tla with default CVC5 logic reports how to enable nonlinear arithmetic",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=cvc5",
+    "--length=0",
+    "--inv=SquareNonNegative",
+    "NonLinearArithmetic.tla"
+   ],
+   "spec": "NonLinearArithmetic.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "aba2be4fa6"
+  },
+  {
+   "section": "check NonLinearArithmetic.tla with CVC5 nonlinear arithmetic logic reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=cvc5",
+    "--tuning-options=cvc5.smt.logic=QF_UFNIA",
+    "--length=0",
+    "--inv=SquareNonNegative",
+    "NonLinearArithmetic.tla"
+   ],
+   "spec": "NonLinearArithmetic.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "cd1a567969"
+  },
+  {
+   "section": "configure default Init and Next",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ea7aa5ab2e"
+  },
+  {
+   "section": "configure an invariant via CLI",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "12196bae76"
+  },
+  {
+   "section": "configure all params via CLI",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=Init1",
+    "--next=Next1",
+    "--inv=Inv",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "8346492ad5"
+  },
+  {
+   "section": "configure via TLC config",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config1.cfg",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ff95e1215e"
+  },
+  {
+   "section": "configure via TLC config and override it via CLI",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config1.cfg",
+    "--init=Init2",
+    "--next=Next2",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "2e43a37a93"
+  },
+  {
+   "section": "configure missing property in TLC config",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config3.cfg",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "33f190aa22"
+  },
+  {
+   "section": "configure via TLC config with SPECIFICATION",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config2.cfg",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "7d124507c5"
+  },
+  {
+   "section": "configure via TLC config with SPECIFICATION and fairness",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config4.cfg",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "4dcd2cf97c"
+  },
+  {
+   "section": "configure via TLC config with SPECIFICATION and fairness",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Config5.cfg",
+    "Config.tla"
+   ],
+   "spec": "Config.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d3f7ec4249"
+  },
+  {
+   "section": "configure complains about circular dependencies",
+   "mode": "check",
+   "argv": [
+    "check",
+    "ConfigUnsorted.tla"
+   ],
+   "spec": "ConfigUnsorted.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "ab69c37d30"
+  },
+  {
+   "section": "configure via TLC config and assign constants",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=ConfigParams.cfg",
+    "ConfigParams.tla"
+   ],
+   "spec": "ConfigParams.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "47cf2017f8"
+  },
+  {
+   "section": "configure via TLC config and replace operators",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=ConfigReplacements2.cfg",
+    "ConfigReplacements.tla"
+   ],
+   "spec": "ConfigReplacements.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "53b2b5dc5b"
+  },
+  {
+   "section": "configure via TLC config on non-existant config",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--config=ThisConfigDoesNotExist.cfg",
+    "ConfigReplacements.tla"
+   ],
+   "spec": "ConfigReplacements.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "41037f3209"
+  },
+  {
+   "section": "configure via TLC config on no config",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "ConfigReplacements.tla"
+   ],
+   "spec": "ConfigReplacements.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "befcf3ca5e"
+  },
+  {
+   "section": "enable debug mode, which outputs SMT log",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--length=0",
+    "--debug",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "0ab08db462"
+  },
+  {
+   "section": "check SMT seed is picked up by Z3",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=z3",
+    "--out-dir=./test-out-dir",
+    "--length=0",
+    "--debug",
+    "--tuning-options=smt.randomSeed=4242",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "4d5c26496a"
+  },
+  {
+   "section": "check SMT seed is picked up by CVC5",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=cvc5",
+    "--out-dir=./test-out-dir",
+    "--length=0",
+    "--debug",
+    "--tuning-options=smt.randomSeed=4242",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "414fa077ba"
+  },
+  {
+   "section": "check Slicer1",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Slicer1.tla"
+   ],
+   "spec": "Slicer1.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "529127709a"
+  },
+  {
+   "section": "check Slicer2",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Slicer2.tla"
+   ],
+   "spec": "Slicer2.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "47b8aec05a"
+  },
+  {
+   "section": "check Slicer3",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Slicer3.tla"
+   ],
+   "spec": "Slicer3.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "0e8909b625"
+  },
+  {
+   "section": "check Slicer4",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Slicer4.tla"
+   ],
+   "spec": "Slicer4.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "ea0c412aeb"
+  },
+  {
+   "section": "check Slicer5",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Slicer5.tla"
+   ],
+   "spec": "Slicer5.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "f55ac740b0"
+  },
+  {
+   "section": "check ActionInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=IncreaseInv",
+    "ActionInv.tla"
+   ],
+   "spec": "ActionInv.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "079bb290f7"
+  },
+  {
+   "section": "check ActionInv with a false invariant",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=KeepInv",
+    "ActionInv.tla"
+   ],
+   "spec": "ActionInv.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "4fdd27f77b"
+  },
+  {
+   "section": "check Invariants with StateInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=StateInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "357bf7b1cf"
+  },
+  {
+   "section": "check Invariants with BuggyStateInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=BuggyStateInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "d468bf0b81"
+  },
+  {
+   "section": "check Invariants with ActionInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=ActionInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1c10dca9f5"
+  },
+  {
+   "section": "check Invariants with BuggyActionInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=BuggyActionInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "3deea9baa2"
+  },
+  {
+   "section": "check Invariants with TraceInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=TraceInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "81a22854a7"
+  },
+  {
+   "section": "check Invariants with BuggyTraceInv",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=BuggyTraceInv",
+    "Invariants.tla"
+   ],
+   "spec": "Invariants.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "c828ff807c"
+  },
+  {
+   "section": "check View.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--max-error=50",
+    "--view=View1",
+    "View.tla"
+   ],
+   "spec": "View.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "048df62449"
+  },
+  {
+   "section": "check View2.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--max-error=50",
+    "--view=View1",
+    "View2.tla"
+   ],
+   "spec": "View2.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "ea73930654"
+  },
+  {
+   "section": "check View2.tla without --view",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--max-error=10",
+    "View2.tla"
+   ],
+   "spec": "View2.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "28389f96d8"
+  },
+  {
+   "section": "check letpoly.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "letpoly.tla"
+   ],
+   "spec": "letpoly.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "dfc50aace7"
+  },
+  {
+   "section": "check letpoly_inst.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "letpoly_inst.tla"
+   ],
+   "spec": "letpoly_inst.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "025b245871"
+  },
+  {
+   "section": "check Bug1023.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=ConstInit",
+    "--inv=Inv",
+    "Bug1023.tla"
+   ],
+   "spec": "Bug1023.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8d27b0a4cf"
+  },
+  {
+   "section": "check Bug880.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=ConstInit",
+    "--inv=Inv",
+    "Bug880.tla"
+   ],
+   "spec": "Bug880.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "aa0e807f80"
+  },
+  {
+   "section": "check Bug931.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Bug931.tla"
+   ],
+   "spec": "Bug931.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "bac278d76a"
+  },
+  {
+   "section": "check Bug1682.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=Inv",
+    "--inv=Inv",
+    "--length=1",
+    "Bug1682.tla"
+   ],
+   "spec": "Bug1682.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2309acda62"
+  },
+  {
+   "section": "check Bug1735.tla (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "Bug1735.tla"
+   ],
+   "spec": "Bug1735.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "470eadcd3d"
+  },
+  {
+   "section": "check Bug1794.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Bug1794.tla"
+   ],
+   "spec": "Bug1794.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "7a65f12597"
+  },
+  {
+   "section": "check Bug1880.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Bug1880.tla"
+   ],
+   "spec": "Bug1880.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8e72a0335c"
+  },
+  {
+   "section": "check Bug1903.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Bug1903.tla"
+   ],
+   "spec": "Bug1903.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ce03cdd22b"
+  },
+  {
+   "section": "check Bug2268.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--cinit=CInit",
+    "Bug2268.tla"
+   ],
+   "spec": "Bug2268.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "14238b90b6"
+  },
+  {
+   "section": "check Bug2750.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Bug2750.cfg",
+    "Bug2750.tla"
+   ],
+   "spec": "Bug2750.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "7089d1b9d3"
+  },
+  {
+   "section": "check Test2750.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config=Test2750.cfg",
+    "Test2750.tla"
+   ],
+   "spec": "Test2750.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e2331b486b"
+  },
+  {
+   "section": "check Bug2772.tla errors on unsupported syntax",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=ErrInv",
+    "--length=1",
+    "Bug2772.tla"
+   ],
+   "spec": "Bug2772.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "925e5f7ba2"
+  },
+  {
+   "section": "check Bug2772.tla succeeds on supported syntax",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=OkInv",
+    "--length=1",
+    "Bug2772.tla"
+   ],
+   "spec": "Bug2772.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "be1676ac53"
+  },
+  {
+   "section": "check profiling",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--run-dir=./profile-run-dir",
+    "--smtprof",
+    "schroedinger_cat.tla"
+   ],
+   "spec": "schroedinger_cat.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ac323ed748"
+  },
+  {
+   "section": "check y2k with --output-traces succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--length=10",
+    "--output-traces",
+    "--inv=Safety",
+    "y2k_instance.tla"
+   ],
+   "spec": "y2k_instance.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "fb6e12859c"
+  },
+  {
+   "section": "check ModelVal.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=CInit",
+    "--inv=Inv",
+    "ModelVal.tla"
+   ],
+   "spec": "ModelVal.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "f3d2db00db"
+  },
+  {
+   "section": "check ModelValFail.tla fails",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--cinit=CInit",
+    "--inv=Inv",
+    "ModelValFail.tla"
+   ],
+   "spec": "ModelValFail.tla",
+   "expected_exit": 120,
+   "expected_outcome": "other",
+   "id": "72bdb428bb"
+  },
+  {
+   "section": "check MC3_TwoPhaseUFO.tla succeeds with model values",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=TCConsistent",
+    "MC3_TwoPhaseUFO.tla"
+   ],
+   "spec": "MC3_TwoPhaseUFO.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bd07326da8"
+  },
+  {
+   "section": "check MC3_TwoPhaseTyped.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=TCConsistent",
+    "--length=3",
+    "MC3_TwoPhaseTyped.tla"
+   ],
+   "spec": "MC3_TwoPhaseTyped.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a617ab7085"
+  },
+  {
+   "section": "check OptionTests.tla succeeds",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "OptionTests.tla"
+   ],
+   "spec": "OptionTests.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9967919de1"
+  },
+  {
+   "section": "check PolyFold.tla reports no error: regression for #1085",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "PolyFold.tla"
+   ],
+   "spec": "PolyFold.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "f32a168ad1"
+  },
+  {
+   "section": "check Test669.tla reports an error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Test669.tla"
+   ],
+   "spec": "Test669.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "91a849d86f"
+  },
+  {
+   "section": "check Bug1058.tla reports no error: regression for #Bug1058",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Bug1058.tla"
+   ],
+   "spec": "Bug1058.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "dae0dc2233"
+  },
+  {
+   "section": "check EmptyFunctionSet.tla: empty function-set operands after rewriting",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=0",
+    "--no-deadlock",
+    "EmptyFunctionSet.tla"
+   ],
+   "spec": "EmptyFunctionSet.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "b6761bed38"
+  },
+  {
+   "section": "check Bug1136.tla reports no error: regression for #1136",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Bug1136.tla"
+   ],
+   "spec": "Bug1136.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "606cd055fc"
+  },
+  {
+   "section": "check Test928.tla reports no error on NoFail: regression for #928",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=NoFail",
+    "--length=1",
+    "Test928.tla"
+   ],
+   "spec": "Test928.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "29bf332f58"
+  },
+  {
+   "section": "check Test928.tla reports an error on Fail: regression for #928",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Fail",
+    "--length=1",
+    "Test928.tla"
+   ],
+   "spec": "Test928.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "5a52a61dd6"
+  },
+  {
+   "section": "check Test1182.tla reports no error on Inv: regression for #1182",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Test1182.tla"
+   ],
+   "spec": "Test1182.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "ccf098e274"
+  },
+  {
+   "section": "check Test951.tla reports no error on Inv: regression for #951",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "Test951.tla"
+   ],
+   "spec": "Test951.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "146f43ce8b"
+  },
+  {
+   "section": "check Test1259.tla reports no error: regression for #1259",
+   "mode": "check",
+   "argv": [
+    "check",
+    "Test1259.tla"
+   ],
+   "spec": "Test1259.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "6ae4aeb6fe"
+  },
+  {
+   "section": "check Test1226.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--inv=Inv",
+    "Test1226.tla"
+   ],
+   "spec": "Test1226.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e738ef6a34"
+  },
+  {
+   "section": "check MegaSpec1.tla reports no error with `--debug`: regression for #1313",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--debug",
+    "--cinit=CInit",
+    "MegaSpec1.tla"
+   ],
+   "spec": "MegaSpec1.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8c72eb75ff"
+  },
+  {
+   "section": "check Test1305.tla reports 10 errors",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--view=View",
+    "--max-error=10",
+    "Test1305.tla"
+   ],
+   "spec": "Test1305.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "5f79908e1f"
+  },
+  {
+   "section": "check TestSequences.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestSequences.tla"
+   ],
+   "spec": "TestSequences.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "eee2d40fba"
+  },
+  {
+   "section": "check TestSequencesExt.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestSequencesExt.tla"
+   ],
+   "spec": "TestSequencesExt.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "59db574b42"
+  },
+  {
+   "section": "check TestBags.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=Inv",
+    "TestBags.tla"
+   ],
+   "spec": "TestBags.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "091521a0f7"
+  },
+  {
+   "section": "check TestBagsExt.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=z3",
+    "--length=0",
+    "--inv=AllTests",
+    "TestBagsExt.tla"
+   ],
+   "spec": "TestBagsExt.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "b62f285326"
+  },
+  {
+   "section": "check TestInlining.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestInlining.tla"
+   ],
+   "spec": "TestInlining.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8f787dd665"
+  },
+  {
+   "section": "check TestFolds.tla reports an error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestFolds.tla"
+   ],
+   "spec": "TestFolds.tla",
+   "expected_exit": 75,
+   "expected_outcome": "other",
+   "id": "41eb4a555a"
+  },
+  {
+   "section": "check Test1343.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=2",
+    "Test1343.tla"
+   ],
+   "spec": "Test1343.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "765739e2df"
+  },
+  {
+   "section": "check TestSets.tla reports no error (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestSets.tla"
+   ],
+   "spec": "TestSets.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c2c1169ea6"
+  },
+  {
+   "section": "check TestSets.tla reports an error on FailExpandLargePowerset",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=FailExpandLargePowerset",
+    "TestSets.tla"
+   ],
+   "spec": "TestSets.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "f5c1536891"
+  },
+  {
+   "section": "check TestCommunityFunctions.tla reports no error (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestCommunityFunctions.tla"
+   ],
+   "spec": "TestCommunityFunctions.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1519e7ab03"
+  },
+  {
+   "section": "check TestFiniteSetsExt.tla reports no error (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestFiniteSetsExt.tla"
+   ],
+   "spec": "TestFiniteSetsExt.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a1d518e874"
+  },
+  {
+   "section": "check TestFunctions.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestFunctions.tla"
+   ],
+   "spec": "TestFunctions.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "1d084cf0f9"
+  },
+  {
+   "section": "check TestBuiltinAsArg1626.tla reports no error (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=AllTests",
+    "TestBuiltinAsArg1626.tla"
+   ],
+   "spec": "TestBuiltinAsArg1626.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "678ab641dd"
+  },
+  {
+   "section": "check TestHash2.tla reports no error (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--cinit=ConstInit",
+    "TestHash2.tla"
+   ],
+   "spec": "TestHash2.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "66c5c9a38f"
+  },
+  {
+   "section": "check Test1425.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "Test1425.tla"
+   ],
+   "spec": "Test1425.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "b26c387079"
+  },
+  {
+   "section": "check Test1623.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=3",
+    "--config=Test1623.cfg",
+    "--inv=Inv",
+    "Test1623.tla"
+   ],
+   "spec": "Test1623.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "911e7a9c76"
+  },
+  {
+   "section": "check MC_FoldExcept3.tla (slow) reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=DriftInv",
+    "--next=NextSlow",
+    "antipatterns/fold-except/MC_FoldExcept3.tla"
+   ],
+   "spec": "antipatterns/fold-except/MC_FoldExcept3.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "28e3100d44"
+  },
+  {
+   "section": "check MC_FoldExcept3.tla (fast) reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=DriftInv",
+    "--next=NextFast",
+    "antipatterns/fold-except/MC_FoldExcept3.tla"
+   ],
+   "spec": "antipatterns/fold-except/MC_FoldExcept3.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "be6caa63a0"
+  },
+  {
+   "section": "check RecMem1627.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=TypeOK",
+    "--length=1",
+    "RecMem1627.tla"
+   ],
+   "spec": "RecMem1627.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2bde19403a"
+  },
+  {
+   "section": "check UnchangedAsInv1663.tla reports no error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "--length=1",
+    "UnchangedAsInv1663.tla"
+   ],
+   "spec": "UnchangedAsInv1663.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "93b5dfd875"
+  },
+  {
+   "section": "check TestRecordsNew.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "TestRecordsNew.tla"
+   ],
+   "spec": "TestRecordsNew.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8d4be8406b"
+  },
+  {
+   "section": "check MC_LamportMutexTyped.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=4",
+    "MC_LamportMutexTyped.tla"
+   ],
+   "spec": "MC_LamportMutexTyped.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a05ecd52b4"
+  },
+  {
+   "section": "check TestVariants.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=AllTests",
+    "TestVariants.tla"
+   ],
+   "spec": "TestVariants.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "033a2d548b"
+  },
+  {
+   "section": "check TestReqAckVariants.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "TestReqAckVariants.tla"
+   ],
+   "spec": "TestReqAckVariants.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "382928e301"
+  },
+  {
+   "section": "check InfDomFun (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "InfDomFun.tla"
+   ],
+   "spec": "InfDomFun.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "b7b2b8eb2d"
+  },
+  {
+   "section": "check Consensus_epr",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Safety",
+    "Consensus_epr.tla"
+   ],
+   "spec": "Consensus_epr.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9d987eecd6"
+  },
+  {
+   "section": "check FunExcept1 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Sanity",
+    "FunExcept1.tla"
+   ],
+   "spec": "FunExcept1.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2e9e08a7fc"
+  },
+  {
+   "section": "check FunExcept2 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Sanity",
+    "FunExcept2.tla"
+   ],
+   "spec": "FunExcept2.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9367cad50a"
+  },
+  {
+   "section": "check FunExcept3 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Sanity",
+    "FunExcept3.tla"
+   ],
+   "spec": "FunExcept3.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "193e4d8c6b"
+  },
+  {
+   "section": "check FunInInfiniteSubset (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--init=TypeOkay_",
+    "--inv=TypeOkay",
+    "--length=1",
+    "FunInInfiniteSubset.tla"
+   ],
+   "spec": "FunInInfiniteSubset.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8e26028670"
+  },
+  {
+   "section": "check ERC20.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=5",
+    "--inv=NoNegativeBalances",
+    "MC_ERC20.tla"
+   ],
+   "spec": "MC_ERC20.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "8d3b6bc860"
+  },
+  {
+   "section": "check Bug2973.tla with InitSameArgs",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--init=InitSameArgs",
+    "Bug2973.tla"
+   ],
+   "spec": "Bug2973.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "9084f6ea0d"
+  },
+  {
+   "section": "check Bug2973.tla with InitDifferentArgs",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=1",
+    "--init=InitDifferentArgs",
+    "Bug2973.tla"
+   ],
+   "spec": "Bug2973.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "bf2f1fba00"
+  },
+  {
+   "section": "check Bug3158.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "--inv=Inv",
+    "--run-dir=_run3158",
+    "Bug3158.tla"
+   ],
+   "spec": "Bug3158.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "4874499118"
+  },
+  {
+   "section": "check Bug20201118 succeeds: regression for issue 333 (array-encoding)",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=10",
+    "--init=Init",
+    "--next=Next",
+    "--inv=Inv",
+    "Bug20201118.tla"
+   ],
+   "spec": "Bug20201118.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2d9569fa0c"
+  },
+  {
+   "section": "check TestInvLabels.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "TestInvLabels.tla"
+   ],
+   "spec": "TestInvLabels.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "ed4989243b"
+  },
+  {
+   "section": "check InlineAssumptions3318.tla",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--inv=Inv",
+    "InlineAssumptions3318.tla"
+   ],
+   "spec": "InlineAssumptions3318.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "2f73986c20"
+  },
+  {
+   "section": "output manager: set out-dir by CLI flag",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--write-intermediate=0",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "109c0e4292"
+  },
+  {
+   "section": "output manager: write-intermediate files",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--write-intermediate=true",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "97aee81ff2"
+  },
+  {
+   "section": "output manager: use the --profiling flag to write profile-rules.txt",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--profiling=true",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "e7b784197a"
+  },
+  {
+   "section": "output manager: counterexamples are written to the run directory",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--tuning-options=cvc5.smt.logic=QF_UFNIA",
+    "--out-dir=./test-out-dir",
+    "--write-intermediate=0",
+    "--length=2",
+    "--inv=Inv",
+    "factorization.tla"
+   ],
+   "spec": "factorization.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "036157c78f"
+  },
+  {
+   "section": "output manager: intermediate output can be written to specified run directory",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--out-dir=./test-out-dir",
+    "--run-dir=./test-run-dir",
+    "--write-intermediate=true",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "d597c95764"
+  },
+  {
+   "section": "output manager: counterexamples can be written to specified run directory",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--tuning-options=cvc5.smt.logic=QF_UFNIA",
+    "--out-dir=./test-out-dir",
+    "--write-intermediate=0",
+    "--length=2",
+    "--inv=Inv",
+    "--run-dir=./test-run-dir",
+    "factorization.tla"
+   ],
+   "spec": "factorization.tla",
+   "expected_exit": 12,
+   "expected_outcome": "Error",
+   "id": "a254b777b1"
+  },
+  {
+   "section": "configuration management: read run-dir from local `.apalache.json`",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "3904f8a05a"
+  },
+  {
+   "section": "configuration management: reject legacy `.apalache.cfg`",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config-file=.apalache.cfg",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "91ae861e12"
+  },
+  {
+   "section": "configuration management: CLI config file overrides local `.apalache.json`",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config-file=cli-config.json",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "a359c1a3d5"
+  },
+  {
+   "section": "configuration management: CLI argument overrides config-file",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--config-file=cli-config.json",
+    "--run-dir=./configured-run-dir",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "c2d34d6b46"
+  },
+  {
+   "section": "configuration management: invalid features are rejected with error",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "165a886d7a"
+  },
+  {
+   "section": "configuration management: unsupported keys produce an error on load",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--length=0",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 255,
+   "expected_outcome": "other",
+   "id": "e7206860ef"
+  },
+  {
+   "section": "configuration management: derived configuration can be dumped to a file",
+   "mode": "check",
+   "argv": [
+    "check",
+    "--smt-solver=cvc5",
+    "--config-file=demo-config.json",
+    "--run-dir=configdump-dir",
+    "--debug",
+    "Counter.tla"
+   ],
+   "spec": "Counter.tla",
+   "expected_exit": 0,
+   "expected_outcome": "NoError",
+   "id": "85e53f5568"
+  }
+ ]
+}
