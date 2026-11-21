@@ -1355,3 +1355,22 @@ Remaining from addendum 39: item 2 (dense-slab substitution cache —
 API ripples to cache-owning callers), item 3 (incremental ternary
 index), item 4 (arena alloc read).  Machine still measurement-dead for
 wall; counters carried this landing as usual.
+
+## Forty-first addendum: tier-1 item 2 landed — the substitution slab (`6269fa88`)
+
+Fresh profile of bzip2recover/2763 post-bv-wrap showed the residual
+RE-RANKED: the substitution machine itself at 34 % of the run with
+hashbrown frames at 14.4 % (two hashed probes per DAG node).  Landed
+`SubstCache` (monomorphized trait: FxHashMap arm for per-call sites,
+`SubstMemo` dense-slab arm for SubstitutionBuilder's long-lived caches
++ compose's temp cache).  Counters bit-identical ×4; hashbrown-in-subst
+480→324 samples (−32 %); the remaining 324 are the SUBST-map probes —
+**the recorded follow-up is a domain-bitmap prefilter** (one bit per
+term id over-approximating the substitution domain, built once per
+builder; a set bit falls through to the exact map probe, a clear bit
+skips the hash entirely — sound because shadowing only removes
+entries).  `run_free_var_step` (10 %) is the other untouched member of
+the walker family.
+
+Also re-ranked by the same profile: `mk_bv_*` rebuild frames (the
+substitution's re-interning) are the block after the probes.
