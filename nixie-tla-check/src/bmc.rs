@@ -1217,7 +1217,14 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         if matches!(t.as_ref(), Kera::SetEnum(xs) | Kera::Tuple(xs) if xs.is_empty())
             || matches!(
                 t.as_ref(),
-                Kera::Tuple(_) | Kera::RecFun { .. } | Kera::FunDef { .. }
+                Kera::Tuple(_)
+                    | Kera::RecFun { .. }
+                    | Kera::FunDef { .. }
+                    // A `CHOOSE` whose filter came out empty has no member to
+                    // take an element sort from; its own inferred type is the
+                    // element type.
+                    | Kera::Choose { .. }
+                    | Kera::ChooseUnbounded { .. }
             )
         {
             out.push(t.clone());
