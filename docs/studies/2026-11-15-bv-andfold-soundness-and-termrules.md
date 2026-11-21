@@ -1341,3 +1341,17 @@ real work, not fixable by the memo family).
 
 Not re-listed: the window-blocked census/wall-A/B set (resume protocol
 above).  `collect_unified_bv_terms` checked — already epoch-marked.
+
+## Fortieth addendum: tier-1 item 1 landed — LANDED (`0515153e`)
+
+The iter_views conversion (addendum 39 item 1) for the three evidenced
+hot scans: detect_gates, forward_subsume_matching's pre-count,
+eliminate's occurrence passes.  Counters exact on four probes incl.
+readelf/7707's banked 2 957.  Bar green (the one timeout was
+odd_width_identity_pairs_hold at load 50 — 80 s solo; environment, not
+the change — the same test passed every earlier full run).
+
+Remaining from addendum 39: item 2 (dense-slab substitution cache —
+API ripples to cache-owning callers), item 3 (incremental ternary
+index), item 4 (arena alloc read).  Machine still measurement-dead for
+wall; counters carried this landing as usual.
