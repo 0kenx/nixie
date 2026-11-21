@@ -178,6 +178,18 @@ pub struct Encoder {
     /// Recursive functions already defined, so a second use reuses the array
     /// rather than defining a second one.
     recfuns: HashMap<(*const Kera, u32), (TermId, TermId)>,
+    /// Domains whose member lists this encoder learned while encoding another
+    /// constraint, keyed by the domain term.
+    ///
+    /// `f \in [S -> T]` pins `DOMAIN f = S` as an equation, which the solver
+    /// reasons about but `candidates_of` cannot read back — a domain *variable*
+    /// has no member list. Remembering the members the equation was built from
+    /// is exact — the equation says precisely that the domain is the set of
+    /// those members — and it is what lets a later `\A a \in DOMAIN f : …`
+    /// over the same function enumerate instead of decline. This is the
+    /// `TestHash2.tla` shape (`ConstInit` pins `hash` with `[S -> T]`, and
+    /// `IsInjective` quantifies over `DOMAIN hash`).
+    known_domains: HashMap<TermId, Vec<Member>>,
 }
 
 impl Encoder {
@@ -197,6 +209,7 @@ impl Encoder {
             fresh: 0,
             side: Vec::new(),
             recfuns: HashMap::new(),
+            known_domains: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -549,6 +562,11 @@ impl Encoder {
             // genuinely opaque one — a set variable — has none.
             Value::Scalar(t) => {
                 let t = *t;
+                if let Some(members) = self.known_domains.get(&t) {
+                    return Ok(SetCell {
+                        members: members.clone(),
+                    });
+                }
                 match self.candidates_of(t, 0, tm) {
                     Some(members) => Ok(SetCell { members }),
                     None => Err(EncodeError::NotEnumerable(
@@ -1145,6 +1163,12 @@ impl Encoder {
                 let elem = self.element_sort_of(domain, tm)?;
                 let base = self.set_as_arena(set, tm)?;
                 let want = self.native_set_of(&base.members, elem, tm)?;
+                // Remember that this domain's members are exactly `set`'s, so
+                // a later `DOMAIN f` (a quantifier, a fold) enumerates instead
+                // of declining. See `known_domains`.
+                self.known_domains
+                    .entry(domain)
+                    .or_insert_with(|| base.members.clone());
                 let mut conj = vec![tm.mk_eq(domain, want)];
                 for m in &base.members {
                     let Value::Scalar(key) = &*m.value else {
@@ -1165,17 +1189,144 @@ impl Encoder {
                     return Err(EncodeError::Unsupported("a standard set".into()));
                 };
                 let x = self.go(a, tm)?;
-                match name {
-                    // `x \in Nat` is `x >= 0` for an integer `x`.
-                    "Nat" => {
-                        let zero = tm.mk_int(0);
-                        scalar(tm.mk_ge(x, zero))
+                in_standard(x, name, tm)
+                    .map(|t| Rc::new(Value::Scalar(t)))
+                    .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
+            }
+            // `s \in Seq(S)`: pointwise, `\A i \in 1..Len(s) : s[i] \in S`,
+            // enumerated when the elements are statically known — a literal
+            // tuple — and declined otherwise (a symbolic sequence's length
+            // has no enumeration until the frames work lands). Never a
+            // blanket TRUE for a "type-defining" `S`: `<<1, -2>> \notin
+            // Seq(Nat)` is a fact about values, and the type checker only
+            // ever knew the elements were `Int`.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Opaque(n, xs) if n.as_str() == "Seq" && xs.len() == 1) =>
+            {
+                let Kera::Opaque(_, xs) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("Seq".into()));
+                };
+                let inner = Rc::clone(&xs[0]);
+                // A literal tuple's components are the whole membership
+                // question; each goes through the ordinary `\in` dispatch,
+                // so `Nat`, ranges and set terms all compose.
+                let parts: Option<Vec<Rc<Value>>> = match a.as_ref() {
+                    Kera::Tuple(ks) => {
+                        let mut out = Vec::with_capacity(ks.len());
+                        for k in ks {
+                            out.push(self.value(k, tm)?);
+                        }
+                        Some(out)
                     }
-                    // Every value of the matching sort is in these, and the
-                    // type checker has already established the sort.
-                    "Int" | "Real" | "STRING" | "BOOLEAN" => scalar(tm.mk_bool(true)),
-                    other => Err(EncodeError::Unsupported(format!("`{other}` as a set"))),
+                    _ => match &*self.value(a, tm)? {
+                        Value::Tuple(vs) => Some(vs.clone()),
+                        _ => None,
+                    },
+                };
+                match parts {
+                    Some(ps) => {
+                        let mut conj = Vec::with_capacity(ps.len());
+                        for p in ps {
+                            conj.push(self.membership(p, &inner, tm)?);
+                        }
+                        // Empty is `TRUE`: the empty sequence is in every
+                        // `Seq(S)`, elements or no elements.
+                        scalar(tm.mk_and(conj))
+                    }
+                    None => Err(EncodeError::Unsupported(
+                        "`\\in Seq(S)` over a sequence whose elements are not \
+                         statically known (a symbolic length has no enumeration)"
+                            .into(),
+                    )),
                 }
+            }
+            // `x \in SUBSET T` is subset-or-equal, decided by the set theory
+            // — no 2^n expansion, no candidate list. This is Apalache's
+            // `PowSetCtorRule` in substance: keep the powerset symbolic and
+            // decide membership structurally.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Powerset(_)) => {
+                let Kera::Powerset(base) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("SUBSET".into()));
+                };
+                let elem = self.go(a, tm)?;
+                let inner = match self.set_repr(base, tm)? {
+                    SetRepr::Native(t) => t,
+                    SetRepr::Arena(cell) => {
+                        // The base's element sort is the sort of its members;
+                        // when there are none, the element being tested is a
+                        // set whose element sort is the one to use (a subset
+                        // of the empty set is `{}` at that sort). Anything
+                        // else has no sort to build the empty base at, and is
+                        // declined rather than guessed.
+                        let e = match cell.members.first().map(|m| &*m.value) {
+                            Some(Value::Scalar(k)) => self.sort_of(*k, tm)?,
+                            _ => {
+                                let s = self.sort_of(elem, tm)?;
+                                match tm.sorts.get(s).map(|x| x.kind.clone()) {
+                                    Some(nixie_core::SortKind::Set(el)) => el,
+                                    _ => {
+                                        return Err(EncodeError::Unsupported(
+                                            "SUBSET of a base with no element sort".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        };
+                        self.native_set_of(&cell.members, e, tm)?
+                    }
+                };
+                scalar(tm.mk_set_subset(elem, inner))
+            }
+            // Membership in a binary set operation whose one side is a
+            // standard **infinite** set is encoded structurally on that side,
+            // because the standard side has no finite representation to
+            // enumerate: `N \in Nat \ {0}` is `N >= 0 /\ N /= 0`, not a
+            // candidate list. Without this, an `ASSUME` pinning a constant
+            // with exactly this shape cannot be encoded, is dropped, and the
+            // search runs with an arbitrary `N` — the `EWD840.tla` shape.
+            //
+            // The finite side goes back through the ordinary `\in` dispatch
+            // (by re-encoding a synthesized `In` node), so every other
+            // membership encoding — native, arena, structural — applies to it
+            // unchanged. A recursion here is always on the *non-standard*
+            // side, so it cannot loop.
+            Kera::In(a, s) if bin_standard(s).is_some() => {
+                let (op, std_first, x, y) = bin_standard(s).expect("checked above");
+                // `elem` as an SMT term, needed for the structural side; a
+                // structural membership only exists for scalar elements.
+                let mut side = |t: &KeraRef, structural: bool| -> Result<TermId> {
+                    if structural {
+                        let name = standard_set(t).expect("caller checked");
+                        let e = self.go(a, tm)?;
+                        in_standard(e, name, tm)
+                            .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
+                    } else {
+                        let node: KeraRef = Rc::new(Kera::In(Rc::clone(a), Rc::clone(t)));
+                        match &*self.value(&node, tm)? {
+                            Value::Scalar(v) => Ok(*v),
+                            _ => Err(EncodeError::Unsupported(
+                                "a membership test that did not produce a Boolean".into(),
+                            )),
+                        }
+                    }
+                };
+                let lhs = side(x, std_first);
+                let rhs = side(y, !std_first);
+                let (l, r) = (lhs?, rhs?);
+                let combined = match op {
+                    SetOp::Union => tm.mk_or([l, r]),
+                    SetOp::Intersect => tm.mk_and([l, r]),
+                    // `a \ b`: in `a` and not in `b`.
+                    SetOp::Difference => {
+                        if std_first {
+                            let not_r = tm.mk_not(r);
+                            tm.mk_and([l, not_r])
+                        } else {
+                            let not_l = tm.mk_not(l);
+                            tm.mk_and([not_l, r])
+                        }
+                    }
+                };
+                scalar(combined)
             }
             // Membership follows the *set's* representation, not the mode.
             // `x \in 1..3` in native mode reaches an arena candidate list,
@@ -1306,10 +1457,42 @@ impl Encoder {
                 }
                 self.mk_set(members)
             }
-            Kera::Filter { .. } | Kera::Map { .. } if self.set_encoding == SetEncoding::Native => {
-                Err(EncodeError::Unsupported(
-                    "a set comprehension (the set theory has no comprehension)".into(),
-                ))
+            // A comprehension in native mode is declined **only when its base
+            // set has no candidate list**. When the base is enumerable — a
+            // literal, a range, a set this encoder built, or a framed state
+            // set — the filter/map is built as an arena cell and converted
+            // back with `native_set_of`, exactly as a bounded quantifier
+            // already crosses that line through `set_as_arena`. Declining
+            // the enumerable case was what blocked `MustardWatch.tla`'s
+            // `{t \in Threads : …}` in `Init`, where the base is a literal.
+            Kera::Filter { var, set, pred } if self.set_encoding == SetEncoding::Native => {
+                let base = self.set_as_arena(set, tm)?;
+                let mut members = Vec::with_capacity(base.members.len());
+                for m in &base.members {
+                    let keep = self.with_bound(var, Rc::clone(&m.value), pred, tm)?;
+                    let Value::Scalar(keep) = &*keep else {
+                        return Err(EncodeError::Unsupported(
+                            "a set-valued filter predicate".into(),
+                        ));
+                    };
+                    members.push(Member {
+                        value: Rc::clone(&m.value),
+                        present: tm.mk_and([m.present, *keep]),
+                    });
+                }
+                self.mk_set(members)
+            }
+            Kera::Map { var, set, expr } if self.set_encoding == SetEncoding::Native => {
+                let base = self.set_as_arena(set, tm)?;
+                let mut members = Vec::with_capacity(base.members.len());
+                for m in &base.members {
+                    let mapped = self.with_bound(var, Rc::clone(&m.value), expr, tm)?;
+                    members.push(Member {
+                        value: mapped,
+                        present: m.present,
+                    });
+                }
+                self.mk_set(members)
             }
             Kera::Filter { var, set, pred } => {
                 let base = self.set(set, tm)?;
@@ -1343,6 +1526,57 @@ impl Encoder {
 
             // `UNION S` flattens one level: every candidate of every candidate,
             // present when both the inner set and the member are.
+            // `SUBSET S` as a **value**: the full 2^n expansion over the
+            // base's candidate list, bounded by `max_candidates` — the same
+            // budget that guards every other blow-up, and for the same
+            // reason: 2^n turns a large set into an out-of-memory kill
+            // where the budget turns it into a named refusal. Members are
+            // conditional exactly when the base's candidates are.
+            //
+            // Only the *value* needs the expansion. Membership took the
+            // structural shortcut above, so a `SUBSET` that is only ever
+            // tested never enumerates at all.
+            Kera::Powerset(base) => {
+                let cell = self.set(base, tm)?;
+                // Bit-parallel over the candidate list: `out` starts as the
+                // one empty-subset candidate and each base member doubles it.
+                let mut out = vec![Member {
+                    value: Rc::new(Value::Set(SetCell {
+                        members: Vec::new(),
+                    })),
+                    present: tm.mk_bool(true),
+                }];
+                for m in &cell.members {
+                    if out.len() > self.max_candidates {
+                        return Err(EncodeError::TooManyCandidates {
+                            limit: self.max_candidates,
+                        });
+                    }
+                    let mut next = Vec::with_capacity(out.len() * 2);
+                    for sub in &out {
+                        // Without this member.
+                        next.push(Member {
+                            value: Rc::clone(&sub.value),
+                            present: sub.present,
+                        });
+                        // With it — its own presence guards the choice.
+                        let Value::Set(inner) = &*sub.value else {
+                            return Err(EncodeError::ShapeClash);
+                        };
+                        let mut members = inner.members.clone();
+                        members.push(Member {
+                            value: Rc::clone(&m.value),
+                            present: m.present,
+                        });
+                        next.push(Member {
+                            value: Rc::new(Value::Set(SetCell { members })),
+                            present: tm.mk_and([sub.present, m.present]),
+                        });
+                    }
+                    out = next;
+                }
+                self.mk_set(out)
+            }
             Kera::BigUnion(a) => {
                 let outer = self.set(a, tm)?;
                 let mut members = Vec::new();
@@ -1552,6 +1786,9 @@ impl Encoder {
                     Some((k, v, _)) => (self.sort_of(*k, tm)?, self.sort_of(*v, tm)?),
                     None => {
                         let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                            if std::env::var_os("NIXIE_TLA_DEBUG_SORT").is_some() {
+                                eprintln!("[fundef-sort-miss2] ptr={:?}", Rc::as_ptr(term));
+                            }
                             return Err(EncodeError::Unsupported(
                                 "a function over an empty domain, with no sort to give it".into(),
                             ));
@@ -2033,6 +2270,23 @@ impl Encoder {
                                 }
                             },
                         };
+                        // The base `<<>>` is a tuple *and* a sequence, and
+                        // inference keeps whichever shape is more precise —
+                        // which for a fold over a literal comparison target
+                        // can be the *tuple* shape, while the steps produce
+                        // sequences (`Append`). Starting the accumulator in
+                        // the sequence shape (same value: the empty sequence)
+                        // keeps every step at one sort — the issue's
+                        // "the base takes the accumulator's sort".
+                        if let Value::Tuple(parts) = &*a
+                            && parts.is_empty()
+                            && let Some(first) = items.first()
+                            && let Value::Scalar(f) = &**first
+                            && let Ok(elem_sort) = self.sort_of(*f, tm)
+                        {
+                            let seq_sort = crate::sorts::seq_sort(elem_sort, tm);
+                            a = Rc::new(Value::Scalar(self.empty_seq(seq_sort, elem_sort, tm)?));
+                        }
                         for item in items {
                             a = self.with_two_bound(acc, a, elem, item, body, tm)?;
                         }
@@ -2299,6 +2553,37 @@ impl Encoder {
             // Cardinality follows the set's representation too: the theory
             // decides it for a native set, the de-duplicating sum for an
             // arena one.
+            // `IsABag(B) == \\A x \\in DOMAIN B : B[x] > 0` over the
+            // function value, whose domain is carried. Kept as an operator
+            // rather than desugared in the lowerer because the evaluator
+            // answers it totally (`IsABag(42)` is FALSE, not an error).
+            Kera::Opaque(name, args) if matches!((name.as_str(), args.len()), ("IsABag", 1)) => {
+                let f = self.value(&args[0], tm)?;
+                let Value::Fun { domain, array } = &*f else {
+                    return Err(EncodeError::Unsupported(
+                        "`IsABag` of something that is not a function".into(),
+                    ));
+                };
+                let (domain, array) = (*domain, *array);
+                let cell = self.candidates_of(domain, 0, tm).ok_or_else(|| {
+                    EncodeError::NotEnumerable(
+                        "`IsABag` over a domain with no candidate list".into(),
+                    )
+                })?;
+                let zero = tm.mk_int(0);
+                let mut conj = Vec::with_capacity(cell.len());
+                for m in cell.iter() {
+                    let Value::Scalar(k) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "a function domain whose members have no SMT sort".into(),
+                        ));
+                    };
+                    let read = tm.mk_select(array, *k);
+                    let positive = tm.mk_gt(read, zero);
+                    conj.push(tm.mk_implies(m.present, positive));
+                }
+                scalar(tm.mk_and(conj))
+            }
             Kera::Opaque(name, args)
                 if matches!(
                     (name.as_str(), args.len()),
@@ -2347,6 +2632,42 @@ fn standard_set(term: &KeraRef) -> Option<&'static str> {
         "Real" => Some("Real"),
         "STRING" => Some("STRING"),
         "BOOLEAN" => Some("BOOLEAN"),
+        _ => None,
+    }
+}
+
+/// A binary set operation with a standard *infinite* set on one side, as
+/// `(op, the-standard-side-is-first, x, y)`.
+///
+/// `Nat \ {0}` and `Nat \cap S` are the shapes an `ASSUME` uses to pin a
+/// constant, and neither has a finite member list on the standard side.
+fn bin_standard(s: &KeraRef) -> Option<(SetOp, bool, &KeraRef, &KeraRef)> {
+    let Kera::SetBin(op, x, y) = s.as_ref() else {
+        return None;
+    };
+    match (standard_set(x).is_some(), standard_set(y).is_some()) {
+        (true, _) => Some((*op, true, x, y)),
+        (false, true) => Some((*op, false, x, y)),
+        (false, false) => None,
+    }
+}
+
+/// `e \in <a standard infinite set>`, structurally: `Nat` is `e >= 0`, and
+/// the others contain every value of the sort the type checker already
+/// assigned, so membership in them is `TRUE`.
+///
+/// `None` for a name with no structural reading, which is a refusal rather
+/// than a guess.
+fn in_standard(e: TermId, name: &str, tm: &mut TermManager) -> Option<TermId> {
+    match name {
+        // `x \in Nat` is `x >= 0` for an integer `x`.
+        "Nat" => {
+            let zero = tm.mk_int(0);
+            Some(tm.mk_ge(e, zero))
+        }
+        // Every value of the matching sort is in these, and the type checker
+        // has already established the sort.
+        "Int" | "Real" | "STRING" | "BOOLEAN" => Some(tm.mk_bool(true)),
         _ => None,
     }
 }
@@ -2420,6 +2741,14 @@ fn set_fold_order_independent(body: &KeraRef, acc: &Name, elem: &Name) -> bool {
     // `Min` are associative, commutative and idempotent, which is more than
     // order-independence needs.
     if is_min_max(body, acc, elem) {
+        return true;
+    }
+    // Bag addition, as the `Bags` desugaring writes it:
+    // `[x \\in DOMAIN a \\cup DOMAIN b |-> CopiesIn(a,x) + CopiesIn(b,x)]`.
+    // Pointwise addition of naturals is commutative and associative, so a
+    // fold whose every step adds one contribution is order-independent —
+    // this is `BagUnion`, and `BagOfAll`'s step reduces to it.
+    if is_bag_addition(body, acc, elem) {
         return true;
     }
     // An AC chain: `a + b + …`, `a * b * …`, `a \cup b`, `a \cap b`,
@@ -2550,6 +2879,72 @@ fn is_min_max(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
     t != u && matches!((t, u), (0, 1) | (1, 0))
 }
 
+/// Whether `body` is a **bag-addition** step over `acc`: the `\\oplus`
+/// desugaring
+/// `[x \\in DOMAIN P \\cup DOMAIN Q |-> CopiesIn(P,x) + CopiesIn(Q,x)]`
+/// where `acc` occurs in exactly one of the two bag operands (`P`), and the
+/// other (`Q`) is accumulator-free.
+///
+/// The commutation argument is the shape's, not the operands': each step adds
+/// one accumulator-free contribution pointwise, so composing the steps in any
+/// order sums the same contributions at every point. `BagUnion` is the
+/// special case `Q = elem`; `BagOfAll`'s step is `Q = [y \\in {F(elem)} |->
+/// B[elem]]`. An `acc` on *both* sides (`Add(acc[x], g(acc)[x])`) is refused:
+/// there the step depends on the accumulator twice and order can matter.
+fn is_bag_addition(e: &KeraRef, acc: &Name, elem: &Name) -> bool {
+    let Kera::FunDef { var, set, body } = e.as_ref() else {
+        return false;
+    };
+    let _ = elem;
+    let Kera::SetBin(SetOp::Union, a, b) = set.as_ref() else {
+        return false;
+    };
+    // `CopiesIn(P, x) == IF x \\in DOMAIN P THEN P[x] ELSE 0`, with the same
+    // `P` in the guard and the read (pointer-identical: the desugaring
+    // builds it once and shares it).
+    let copies_in = |t: &KeraRef| -> Option<KeraRef> {
+        let Kera::Ite(c, tb, eb) = t.as_ref() else {
+            return None;
+        };
+        let Kera::In(i, s) = c.as_ref() else {
+            return None;
+        };
+        if !matches!(i.as_ref(), Kera::Var(v) if v == var) {
+            return None;
+        }
+        let Kera::Domain(p1) = s.as_ref() else {
+            return None;
+        };
+        let Kera::FunApp(p2, i2) = tb.as_ref() else {
+            return None;
+        };
+        if !matches!(i2.as_ref(), Kera::Var(v) if v == var) || p1 != p2 {
+            return None;
+        }
+        if !matches!(eb.as_ref(), Kera::Int(_)) {
+            return None;
+        }
+        Some(Rc::clone(p1))
+    };
+    // The domain union must be exactly the two operands' domains.
+    let Kera::Arith(ArithOp::Add, x, y) = body.as_ref() else {
+        return false;
+    };
+    let (Some(p), Some(q)) = (copies_in(x), copies_in(y)) else {
+        return false;
+    };
+    let dom_ok =
+        |d: &KeraRef, op: &KeraRef| -> bool { matches!(d.as_ref(), Kera::Domain(o) if o == op) };
+    if !((dom_ok(a, &p) && dom_ok(b, &q)) || (dom_ok(a, &q) && dom_ok(b, &p))) {
+        return false;
+    }
+    // Exactly one side mentions the accumulator: the other is the
+    // order-independent contribution.
+    let mp = mentions(&p, acc);
+    let mq = mentions(&q, acc);
+    mp != mq
+}
+
 /// Whether `acc` is read in `e` only as `acc[elem]`.
 ///
 /// Under an `EXCEPT` at index `elem`, such a read always sees the original
@@ -2653,6 +3048,10 @@ fn describe(k: &Kera) -> String {
         Kera::Forall { .. } | Kera::Exists { .. } => "a quantifier",
         Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => "`CHOOSE`",
         Kera::In(_, _) => "`\\in`",
+        // The set theory *is* wired into the solver; what this names is the
+        // construct the encoding could not serve — usually a base set with
+        // no candidate list to enumerate from. Saying "not wired up" here
+        // sent readers looking for a wiring bug that was not there.
         Kera::SetEnum(_)
         | Kera::Filter { .. }
         | Kera::Map { .. }
@@ -2660,7 +3059,7 @@ fn describe(k: &Kera) -> String {
         | Kera::Powerset(_)
         | Kera::BigUnion(_)
         | Kera::Range(_, _)
-        | Kera::Times(_) => "a set expression (the set theory is not wired up yet)",
+        | Kera::Times(_) => "a set expression with no enumerable members to build it from",
         Kera::FunDef { .. } => "a function constructor `[x \\in S |-> e]`",
         Kera::Domain(_) => "`DOMAIN`",
         Kera::FunSet { .. } => "a function set `[S -> T]`",

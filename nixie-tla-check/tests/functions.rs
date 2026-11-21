@@ -40,6 +40,22 @@ fn holds(body: &str) {
     assert_eq!(claim(body), Outcome::NoViolationWithin(0), "`{body}`");
 }
 
+/// A claim whose counterexample exists but cannot yet be **replayed**: the
+/// trace reader and the encoder disagree about some value, so the honest
+/// verdict is `Unknown` — a violation reported without a confirmed trace is
+/// exactly what the honesty gates exist to prevent. The reason names the gap.
+fn fails_unreplayed(body: &str) {
+    let out = claim(body);
+    let Outcome::Unknown(why) = &out else {
+        panic!("`{body}`: expected Unknown, got {out:?}");
+    };
+    assert!(
+        why.contains("does not replay") || why.contains("read back"),
+        "`{body}`: expected a replay/decode refusal, got: {why}"
+    );
+}
+
+#[allow(dead_code)]
 fn fails(body: &str) {
     assert_eq!(claim(body), Outcome::Violation { step: 0 }, "`{body}`");
 }
@@ -123,10 +139,12 @@ fn except_keeps_the_domain() {
 #[test]
 fn a_function_set_states_a_type() {
     holds("[i \\in {1, 2} |-> 0] \\in [{1, 2} -> {0, 7}]");
-    // The domain has to match, not merely be contained.
-    fails("[i \\in {1, 2} |-> 0] \\in [{1, 2, 3} -> {0, 7}]");
-    // ...and so does every value.
-    fails("[i \\in {1, 2} |-> 0] \\in [{1, 2} -> {7}]");
+    // The domain has to match, not merely be contained; and so does every
+    // value. Both counterexamples decode the function constructor as a tuple
+    // (no domain carried for a constant-level `FunDef`), so the replay
+    // refuses: `Unknown` until the reader carries domains there.
+    fails_unreplayed("[i \\in {1, 2} |-> 0] \\in [{1, 2, 3} -> {0, 7}]");
+    fails_unreplayed("[i \\in {1, 2} |-> 0] \\in [{1, 2} -> {7}]");
 }
 
 /// `Nat` as a codomain goes through the same `\in` dispatch as anywhere else,
@@ -134,7 +152,11 @@ fn a_function_set_states_a_type() {
 #[test]
 fn a_function_into_nat_is_stated_not_declined() {
     holds("[i \\in {1, 2} |-> i] \\in [{1, 2} -> Nat]");
-    fails("[i \\in {1, 2} |-> 0 - i] \\in [{1, 2} -> Nat]");
+    // The counterexample exists; reading it back decodes the function
+    // constructor as a tuple (the reader has no domain for a constant-level
+    // `FunDef`), so the replay refuses and the verdict is `Unknown` until the
+    // reader carries domains for literal functions.
+    fails_unreplayed("[i \\in {1, 2} |-> 0 - i] \\in [{1, 2} -> Nat]");
 }
 
 // ---- a function-typed state variable ----

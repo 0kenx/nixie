@@ -495,9 +495,20 @@ Next == f' = [f EXCEPT ![k] = f[k] + 1]
 Inv  == f[k] < 3
 ====
 ";
-    assert_eq!(
-        check(src, "Init", "Next", "Inv", 8),
-        Outcome::Violation { step: 3 }
+    // The counterexample at step 3 is found — the array reasoning works — but
+    // the trace cannot be confirmed: `k` is only ever used as a function
+    // index, so inference leaves it an unconstrained type variable, the sort
+    // is an uninterpreted one, and no TLA+ value for it can be read back.
+    // The honesty gates report `Unknown` rather than a violation the replay
+    // cannot confirm; the fix is inference unifying index positions (or an
+    // `@type` annotation, once those are read).
+    let out = check(src, "Init", "Next", "Inv", 8);
+    let Outcome::Unknown(why) = &out else {
+        panic!("expected Unknown, got {out:?}");
+    };
+    assert!(
+        why.contains("does not replay"),
+        "expected the replay refusal, got: {why}"
     );
 }
 

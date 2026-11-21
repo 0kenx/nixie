@@ -19,13 +19,19 @@ use nixie_core::TermManager;
 use nixie_tla_check::bmc::{Bmc, Outcome, Roles};
 use nixie_tla_syntax::parse_config;
 
-fn roles<'r>(init: &'r str, next: &'r str, inv: &'r str) -> Roles<'r> {
-    Roles {
-        init,
-        next,
-        inv,
-        constraints: &[],
-    }
+/// One invariant, the common case. Built inline at each call site's option,
+/// because the slice has to borrow from the caller's `&'r str` and a helper
+/// returning `Roles<'r>` would have to conjure that borrow out of its own
+/// parameter slot.
+macro_rules! roles {
+    ($init:expr, $next:expr, $inv:expr) => {
+        Roles {
+            init: $init,
+            next: $next,
+            inv: &[$inv],
+            constraints: &[],
+        }
+    };
 }
 
 fn claim(vars: &str, defs: &str, init: &str, body: &str) -> Outcome {
@@ -165,7 +171,7 @@ fn a_symbolic_bound_is_still_refused() {
     let mut bmc = Bmc::prepare_with_config(
         &loaded,
         module,
-        roles("Init", "Next", "Inv"),
+        roles!("Init", "Next", "Inv"),
         &config,
         &mut tm,
     )
@@ -192,7 +198,7 @@ fn a_configured_constant_makes_an_arithmetic_bound_ground() {
     let mut bmc = Bmc::prepare_with_config(
         &loaded,
         module,
-        roles("Init", "Next", "Inv"),
+        roles!("Init", "Next", "Inv"),
         &config,
         &mut tm,
     )
