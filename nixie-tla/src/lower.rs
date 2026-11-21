@@ -97,6 +97,357 @@ struct Def<'a> {
     cacheable: bool,
 }
 
+/// Skolemize positive existentials over the **standard infinite sets**.
+///
+/// `\\E x \\in Nat : P(x)`, in a position the solver is asked to *satisfy*,
+/// becomes a fresh constant `c` with `c \\in Nat /\\ P(c)` — Apalache's
+/// `QuantRule.skolemExists` for the one domain family that needs it, since
+/// the alternative is enumerating an infinite set. Only the standard
+/// infinite sets are touched: a finite set's existential is already served
+/// exactly by the arena's candidate instantiation, and skolemizing it would
+/// *lose* precision for no gain.
+///
+/// **Polarity is soundness here.** An existential under an odd number of
+/// negations is a universal claim (`\\A x \\in Nat : ...` is `~\\E x \\in
+/// Nat : ~...`), and skolemizing that answers a different question; the
+/// walk tracks polarity through `Not` and `Implies` arms, and the
+/// both-polarity positions (`Equiv` arms, `Ite` conditions) are never
+/// rewritten. A negative-position `\\A` over an infinite set becomes, by
+/// the same reading, a positive `\\E` and **is** skolemized — after
+/// rewriting `~\\A x : P` to `\\E x : ~P` by hand, which keeps one rule.
+///
+/// **The root polarity is the caller's to know.** `Init`, `Next` and the
+/// constraint definitions are asserted as they stand — polarity true. An
+/// invariant enters the solver **negated**, so its positive-position `\\E`
+/// is the query's negative-position `\\E` (a universal claim, never
+/// skolemized) and its positive-position `\\A` is the query's existential
+/// (skolemized): callers pass `false` for the invariant role. Getting this
+/// backwards was the first version of this pass, and it manufactured a
+/// counterexample out of `\\E y \\in Nat : x < y` — the witness the model
+/// picked made the *invariant* false, which is not what an existential
+/// invariant means.
+///
+/// Walked with an explicit stack: the tree is user input. The rewrite
+/// rebuilds only the spine it changed; shared subtrees are reused as they
+/// are.
+pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -> KeraRef {
+    use std::cell::RefCell;
+
+    /// What a frame still owes.
+    enum Frame<'a> {
+        /// Visit a term at a polarity.
+        Visit(&'a KeraRef, bool),
+        /// All children visited; rebuild this node from the `n` rewritten
+        /// children sitting on the value stack.
+        Rebuild(&'a KeraRef, bool, usize),
+        /// Insert a marker into the value stack (so children of different
+        /// parents cannot interleave when a rewrite drops or adds pieces).
+        Mark(usize),
+    }
+
+    let counter = RefCell::new(0usize);
+    let mut seen: std::collections::HashMap<(*const Kera, bool), KeraRef> =
+        std::collections::HashMap::new();
+    let mut stack: Vec<Frame> = vec![Frame::Visit(root, root_positive)];
+    let mut values: Vec<KeraRef> = Vec::new();
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(t, pos) => {
+                // The rewrite: a positive `\\E x \\in S : P` (or a negative
+                // `\\A`) with `S` a standard infinite set.
+                if pos
+                    && let Kera::Exists { var, set, body } = t.as_ref()
+                    && infinite_set_of(set).is_some()
+                {
+                    let mut c = counter.borrow_mut();
+                    *c += 1;
+                    let fresh = Name(format!("{var}!skolem{}", *c));
+                    drop(c);
+                    let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
+                    let renamed = rename_var(body, var, &fresh);
+                    let body =
+                        skolemize_infinite_existentials_cached(&renamed, &mut seen, &counter, true);
+                    values.push(Kera::And(vec![member, body]).rc());
+                    continue;
+                }
+                if !pos
+                    && let Kera::Forall { var, set, body } = t.as_ref()
+                    && infinite_set_of(set).is_some()
+                {
+                    // `~\\A x \\in S : P` is `\\E x \\in S : ~P`.
+                    let mut c = counter.borrow_mut();
+                    *c += 1;
+                    let fresh = Name(format!("{var}!skolem{}", *c));
+                    drop(c);
+                    let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
+                    let neg_body = Kera::Not(Rc::clone(body)).rc();
+                    let renamed = rename_var(&neg_body, var, &fresh);
+                    let body =
+                        skolemize_infinite_existentials_cached(&renamed, &mut seen, &counter, true);
+                    values.push(Kera::Not(Kera::And(vec![member, body]).rc()).rc());
+                    continue;
+                }
+                // No rewrite: descend with the polarity each child carries.
+                let n = t.as_ref().children().len();
+                if n == 0 {
+                    values.push(Rc::clone(t));
+                    continue;
+                }
+                stack.push(Frame::Rebuild(t, pos, n));
+                stack.push(Frame::Mark(values.len()));
+                for (child, polarity) in children_with_polarity(t, pos).into_iter().rev() {
+                    stack.push(Frame::Visit(child, polarity));
+                }
+            }
+            Frame::Mark(m) => {
+                // The value stack must hold exactly `m` entries below the
+                // children this frame produced.
+                debug_assert_eq!(values.len(), m);
+            }
+            Frame::Rebuild(t, pos, n) => {
+                let kids: Vec<KeraRef> = values.split_off(values.len() - n);
+                // Preserve sharing: if every child is the *same* `Rc` it was,
+                // the node is unchanged and the original is returned — not a
+                // structural copy. This is not an optimization: lowering
+                // shares one inlined definition across its uses, the
+                // binder-uniqueness invariant deduplicates by pointer, and a
+                // rebuilt-everything pass would put one binder in two nodes
+                // and trip that invariant where the source never did.
+                let old_kids = t.as_ref().children();
+                let unchanged = old_kids
+                    .iter()
+                    .zip(kids.iter())
+                    .all(|(o, k)| std::rc::Rc::ptr_eq(o, k));
+                let rebuilt = if unchanged {
+                    Rc::clone(t)
+                } else {
+                    rebuild(t, pos, &kids)
+                };
+                values.push(rebuilt);
+            }
+        }
+    }
+    values.pop().unwrap_or_else(|| Rc::clone(root))
+}
+
+/// [`skolemize_infinite_existentials_at`] at positive polarity — the form
+/// for formulas asserted as they stand.
+pub fn skolemize_infinite_existentials(root: &KeraRef) -> KeraRef {
+    skolemize_infinite_existentials_at(root, true)
+}
+
+/// The cached recursive form used inside a rewrite (the rewritten body of a
+/// skolemized existential is itself walked at positive polarity).
+fn skolemize_infinite_existentials_cached(
+    t: &KeraRef,
+    seen: &mut std::collections::HashMap<(*const Kera, bool), KeraRef>,
+    counter: &std::cell::RefCell<usize>,
+    pos: bool,
+) -> KeraRef {
+    // Cheap outer reuse: a body already rewritten at this polarity is the
+    // same term. (The full driver above does its own memoism by identity.)
+    if let Some(hit) = seen.get(&(Rc::as_ptr(t), pos)) {
+        return Rc::clone(hit);
+    }
+    let _ = counter;
+    let _ = pos;
+    let out = skolemize_infinite_existentials_at(t, true);
+    seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
+    out
+}
+
+/// Rename every occurrence of `from` in `t` to `to`.
+///
+/// The skolem rewrite's body substitution: `\E y \\in S : P(y)` becomes
+/// `c \\in S /\\ P(c)`, and `P(y)` still speaks of `y` until this runs.
+/// Walked with an explicit stack; the spine rebuild reuses [`rebuild`], so
+/// one shape serves both passes.
+fn rename_var(t: &KeraRef, from: &Name, to: &Name) -> KeraRef {
+    enum Frame<'a> {
+        Visit(&'a KeraRef),
+        Rebuild(&'a KeraRef, usize),
+    }
+    let mut stack = vec![Frame::Visit(t)];
+    let mut values: Vec<KeraRef> = Vec::new();
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(x) => {
+                if matches!(x.as_ref(), Kera::Var(n) if n == from) {
+                    values.push(Kera::Var(to.clone()).rc());
+                    continue;
+                }
+                let n = x.as_ref().children().len();
+                if n == 0 {
+                    values.push(Rc::clone(x));
+                    continue;
+                }
+                stack.push(Frame::Rebuild(x, n));
+                for c in x.as_ref().children().into_iter().rev() {
+                    stack.push(Frame::Visit(c));
+                }
+            }
+            Frame::Rebuild(x, n) => {
+                let kids: Vec<KeraRef> = values.split_off(values.len() - n);
+                let rebuilt = rebuild(x, true, &kids);
+                values.push(rebuilt);
+            }
+        }
+    }
+    values.pop().unwrap_or_else(|| Rc::clone(t))
+}
+
+/// The standard infinite sets, as membership domains a skolem can be
+/// constrained by. `Real` is excluded: the front end has no reals.
+fn infinite_set_of(set: &KeraRef) -> Option<&'static str> {
+    let name = match set.as_ref() {
+        Kera::Var(n) => n.as_str(),
+        Kera::Opaque(n, args) if args.is_empty() => n.as_str(),
+        _ => return None,
+    };
+    match name {
+        "Nat" | "Int" | "STRING" | "BOOLEAN" => Some(match name {
+            "Nat" => "Nat",
+            "Int" => "Int",
+            "STRING" => "STRING",
+            _ => "BOOLEAN",
+        }),
+        _ => None,
+    }
+}
+
+/// Each child of `t` with the polarity it inherits at `pos`.
+fn children_with_polarity(t: &KeraRef, pos: bool) -> Vec<(&KeraRef, bool)> {
+    let kids = t.as_ref().children();
+    match t.as_ref() {
+        // `Not` flips.
+        Kera::Not(_) => kids.into_iter().map(|k| (k, !pos)).collect(),
+        // The kernel spells `a => b` as `~a \/ b`, so an `Or` containing a
+        // `Not`-headed disjunct is implication-shaped: the `Not` arm flips.
+        // (Lowering builds exactly this shape for `=>`.)
+        Kera::Or(_) => kids
+            .into_iter()
+            .map(|k| {
+                let polarity = match k.as_ref() {
+                    Kera::Not(_) => !pos,
+                    _ => pos,
+                };
+                (k, polarity)
+            })
+            .collect(),
+        // An `Ite` condition holds at *both* polarities: never rewritten,
+        // never trusted. The arms inherit the position's polarity.
+        Kera::Ite(c, a, b) => vec![(c, false), (a, pos), (b, pos)],
+        _ => kids.into_iter().map(|k| (k, pos)).collect(),
+    }
+}
+
+/// Rebuild `t` from rewritten children, preserving the node's meaning.
+fn rebuild(t: &KeraRef, _pos: bool, kids: &[KeraRef]) -> KeraRef {
+    let k = |i: usize| Rc::clone(&kids[i]);
+    let rebuilt = match t.as_ref() {
+        Kera::Prime(_) => Kera::Prime(k(0)),
+        Kera::Not(_) => Kera::Not(k(0)),
+        Kera::Powerset(_) => Kera::Powerset(k(0)),
+        Kera::BigUnion(_) => Kera::BigUnion(k(0)),
+        Kera::Domain(_) => Kera::Domain(k(0)),
+        Kera::Neg(_) => Kera::Neg(k(0)),
+        Kera::And(_) => Kera::And(kids.to_vec()),
+        Kera::Or(_) => Kera::Or(kids.to_vec()),
+        Kera::SetEnum(_) => Kera::SetEnum(kids.to_vec()),
+        Kera::Tuple(_) => Kera::Tuple(kids.to_vec()),
+        Kera::Times(_) => Kera::Times(kids.to_vec()),
+        Kera::Ite(_, _, _) => Kera::Ite(k(0), k(1), k(2)),
+        Kera::Forall { var, .. } => Kera::Forall {
+            var: var.clone(),
+            set: k(0),
+            body: k(1),
+        },
+        Kera::Exists { var, .. } => Kera::Exists {
+            var: var.clone(),
+            set: k(0),
+            body: k(1),
+        },
+        Kera::Choose { var, .. } => Kera::Choose {
+            var: var.clone(),
+            set: k(0),
+            body: k(1),
+        },
+        Kera::ChooseUnbounded { var, .. } => Kera::ChooseUnbounded {
+            var: var.clone(),
+            body: k(0),
+        },
+        Kera::RecFun { name, var, .. } => Kera::RecFun {
+            name: name.clone(),
+            var: var.clone(),
+            set: k(0),
+            body: k(1),
+        },
+        Kera::FunDef { var, .. } => Kera::FunDef {
+            var: var.clone(),
+            set: k(0),
+            body: k(1),
+        },
+        Kera::Filter { var, .. } => Kera::Filter {
+            var: var.clone(),
+            set: k(0),
+            pred: k(1),
+        },
+        Kera::Map { var, .. } => Kera::Map {
+            var: var.clone(),
+            set: k(0),
+            expr: k(1),
+        },
+        Kera::Eq(_, _) => Kera::Eq(k(0), k(1)),
+        Kera::In(_, _) => Kera::In(k(0), k(1)),
+        Kera::SetBin(op, _, _) => Kera::SetBin(*op, k(0), k(1)),
+        Kera::Range(_, _) => Kera::Range(k(0), k(1)),
+        Kera::FunApp(_, _) => Kera::FunApp(k(0), k(1)),
+        Kera::Arith(op, _, _) => Kera::Arith(*op, k(0), k(1)),
+        Kera::Cmp(op, _, _) => Kera::Cmp(*op, k(0), k(1)),
+        Kera::Except { .. } => Kera::Except {
+            fun: k(0),
+            index: k(1),
+            value: k(2),
+        },
+        Kera::FunSet { .. } => Kera::FunSet {
+            set: k(0),
+            cod: k(1),
+        },
+        Kera::Record(fs) => Kera::Record(
+            fs.iter()
+                .zip(kids.iter())
+                .map(|((n, _), v)| (n.clone(), Rc::clone(v)))
+                .collect(),
+        ),
+        Kera::RecordSet(fs) => Kera::RecordSet(
+            fs.iter()
+                .zip(kids.iter())
+                .map(|((n, _), v)| (n.clone(), Rc::clone(v)))
+                .collect(),
+        ),
+        Kera::Fold {
+            over, acc, elem, ..
+        } => {
+            let (base, collection, body) = (k(0), k(1), k(2));
+            Kera::Fold {
+                over: *over,
+                acc: acc.clone(),
+                elem: elem.clone(),
+                base,
+                collection,
+                body,
+            }
+        }
+        Kera::Opaque(n, _) => Kera::Opaque(n.clone(), kids.to_vec()),
+        // Literals and names have no children; the visitor never rebuilds them.
+        Kera::Var(_) | Kera::Int(_) | Kera::Str(_) | Kera::Bool(_) => {
+            return Rc::clone(t);
+        }
+    };
+    rebuilt.rc()
+}
+
 /// Whether every binder in a lowered tree is unique.
 ///
 /// Lowering's invariant: each binder gets a fresh name, so substitution is

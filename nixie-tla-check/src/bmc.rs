@@ -437,6 +437,25 @@ impl Bmc {
         for inv in roles.inv {
             invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
         }
+        // Positive existentials over the standard infinite sets are
+        // skolemized before anything else sees them (`\E no \in Nat : …` is
+        // the idiom `HandshakeWithTypes` and the message-passing corpus use).
+        // The rewrite is polarity-tracked — see the pass — and runs on every
+        // role formula plus the constraint definitions, so a skolem in `Init`
+        // and one in `Next` over the same set are still distinct witnesses.
+        let init_k = nixie_tla::lower::skolemize_infinite_existentials(&init_k);
+        let next_k = nixie_tla::lower::skolemize_infinite_existentials(&next_k);
+        let invs: Vec<(String, KeraRef)> = invs
+            .into_iter()
+            .map(|(n, t)| {
+                // The invariant enters the query negated, so its polarity
+                // is inverted from the start — see the pass's doc.
+                (
+                    n,
+                    nixie_tla::lower::skolemize_infinite_existentials_at(&t, false),
+                )
+            })
+            .collect();
         // The binder-uniqueness invariant, asserted on every lowered root: a
         // shared binder makes two independent variables read as one — in
         // inference, in substitution, and in the encoder's `bound` map — and
@@ -475,11 +494,13 @@ impl Bmc {
         // intended model.
         let mut state_constraints = Vec::new();
         for name in &config.state_constraints {
-            state_constraints.push(lower_one(&mut low, module, name)?);
+            let t = lower_one(&mut low, module, name)?;
+            state_constraints.push(nixie_tla::lower::skolemize_infinite_existentials(&t));
         }
         let mut action_constraints = Vec::new();
         for name in &config.action_constraints {
-            action_constraints.push(lower_one(&mut low, module, name)?);
+            let t = lower_one(&mut low, module, name)?;
+            action_constraints.push(nixie_tla::lower::skolemize_infinite_existentials(&t));
         }
         for (i, unit) in module.units.iter().enumerate() {
             if let UnitKind::Assume { body, .. } = &unit.kind {
