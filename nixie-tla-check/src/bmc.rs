@@ -437,6 +437,23 @@ impl Bmc {
         for inv in roles.inv {
             invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
         }
+        // The binder-uniqueness invariant, asserted on every lowered root: a
+        // shared binder makes two independent variables read as one — in
+        // inference, in substitution, and in the encoder's `bound` map — and
+        // the wrong answer it produces would look like anything except its
+        // cause. (An `EmptyBag` with a fixed binder name was the first
+        // instance; this check is so there is not a second.)
+        for (name, root) in std::iter::once((init, &init_k))
+            .chain(std::iter::once((next, &next_k)))
+            .chain(invs.iter().map(|(n, t)| (n.as_str(), t)))
+        {
+            if let Err(why) = nixie_tla::lower::binder_uniqueness(root) {
+                return Err(SetupError::Lower {
+                    name: name.to_string(),
+                    why,
+                });
+            }
+        }
 
         // `ASSUME` is not decoration: a TLA+ specification is only claimed to
         // hold under its assumptions, and they are usually the only thing

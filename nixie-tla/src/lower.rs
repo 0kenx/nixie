@@ -97,6 +97,38 @@ struct Def<'a> {
     cacheable: bool,
 }
 
+/// Whether every binder in a lowered tree is unique.
+///
+/// Lowering's invariant: each binder gets a fresh name, so substitution is
+/// capture-free and inference can key bound variables by name alone. A
+/// repeated binder breaks both silently — two independent variables read as
+/// one — which is exactly how `EmptyBag`'s fixed `bag_e#0` made every bag in
+/// a specification share one element type. Checked over the whole tree with
+/// an explicit stack and pointer deduplication (a lowered term is a shared
+/// DAG).
+///
+/// Public so the checker and the corpus harness can assert it too.
+pub fn binder_uniqueness(root: &KeraRef) -> core::result::Result<(), String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut visited: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+    let mut stack: Vec<&KeraRef> = vec![root];
+    while let Some(t) = stack.pop() {
+        if !visited.insert(std::rc::Rc::as_ptr(t)) {
+            continue;
+        }
+        for name in t.as_ref().binders() {
+            if !seen.insert(name.as_str().to_string()) {
+                return Err(format!(
+                    "the binder `{name}` occurs more than once: two independent variables \
+                     would read as one in inference, substitution and encoding"
+                ));
+            }
+        }
+        stack.extend(t.as_ref().children());
+    }
+    Ok(())
+}
+
 /// Why a configuration replacement could not be applied.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReplaceError {
@@ -228,6 +260,21 @@ enum Frame<'a> {
     ExpandFun(String, &'a [Bound], &'a Expr),
     /// Stop treating this name as being lowered.
     PopRecursion(String),
+    /// Build `BagOfAll(F, B)` from `2` values: `B` first, then `F(elem)`
+    /// under a scope binding `F`'s parameter to the fold's element name. The
+    /// result is the Apalache rewire in kernel form:
+    /// `ApaFoldSet(\\partial, elem => partial (+) [y \\in {F(elem)} |-> B[elem]],
+    ///  EmptyBag, DOMAIN B)` — a fold whose step adds one singleton bag, so
+    /// the order of the fold is immaterial (bag addition is commutative and
+    /// associative, being pointwise `+`).
+    BuildBagOfAll {
+        /// The fold's accumulator name (the partial bag).
+        acc: Name,
+        /// The fold's element name.
+        elem: Name,
+        /// The result function's binder (the mapped-to value `F(elem)`).
+        out: Name,
+    },
     /// Build a fold from `3` values (base, collection, operator body).
     BuildFold {
         /// Whether the collection is a set or a sequence.
@@ -606,6 +653,55 @@ impl<'a> Lowerer<'a> {
                 .rc(),
             ),
             ("BagToSet", 1) => Some(Kera::Domain(Rc::clone(&args[0])).rc()),
+
+            // `BagUnion(S) == ApaFoldSet((+)-as-prefix, EmptyBag, S)`: a
+            // fold adding each bag to the accumulator. Bag addition is
+            // pointwise `+`, so the fold's value does not depend on the
+            // order — the `ApaFoldSet` order-independence audit recognizes
+            // exactly this body.
+            ("BagUnion", 1) => {
+                let acc = self.fresh_name("bag_acc");
+                let elem = self.fresh_name("bag_e");
+                let body = self.bag_desugar(
+                    "\\oplus",
+                    &[Kera::Var(acc.clone()).rc(), Kera::Var(elem.clone()).rc()],
+                )?;
+                Some(
+                    Kera::Fold {
+                        over: FoldOver::Set,
+                        acc,
+                        elem,
+                        base: self.builtin_constant("EmptyBag")?,
+                        collection: Rc::clone(&args[0]),
+                        body,
+                    }
+                    .rc(),
+                )
+            }
+            // `BagCardinality(B) == \\Sigma_{e \\in DOMAIN B} B[e]` —
+            // Apalache's rewire folds `i + B[e]` from 0, and so does this.
+            // A `+`-chain fold whose accumulator leaf is bare is provably
+            // order-independent, which the `ApaFoldSet` audit checks.
+            ("BagCardinality", 1) => {
+                let acc = self.fresh_name("bag_i");
+                let elem = self.fresh_name("bag_e");
+                Some(
+                    Kera::Fold {
+                        over: FoldOver::Set,
+                        acc: acc.clone(),
+                        elem: elem.clone(),
+                        base: Kera::Int("0".into()).rc(),
+                        collection: Kera::Domain(Rc::clone(&args[0])).rc(),
+                        body: Kera::Arith(
+                            ArithOp::Add,
+                            Kera::Var(acc).rc(),
+                            Kera::FunApp(Rc::clone(&args[0]), Kera::Var(elem).rc()).rc(),
+                        )
+                        .rc(),
+                    }
+                    .rc(),
+                )
+            }
             ("BagIn", 2) => {
                 Some(Kera::In(Rc::clone(&args[0]), Kera::Domain(Rc::clone(&args[1])).rc()).rc())
             }
@@ -698,6 +794,50 @@ impl<'a> Lowerer<'a> {
     pub fn with_step_budget(mut self, n: usize) -> Self {
         self.step_budget = n;
         self
+    }
+
+    /// `TRUE`, `FALSE` and `BOOLEAN` are part of the language, not names a
+    /// module declares. Falling through to `Var("TRUE")` made them *free
+    /// names*: the evaluator refused them, and an encoder would have seen an
+    /// undeclared symbol where a boolean was meant.
+    ///
+    /// Checked only after scopes and definitions, so a binding of the same
+    /// name still wins — the language reserves them, but nothing here
+    /// depends on that.
+    fn builtin_constant(&mut self, name: &str) -> Option<KeraRef> {
+        match name {
+            "TRUE" => Some(Kera::Bool(true).rc()),
+            "FALSE" => Some(Kera::Bool(false).rc()),
+            "BOOLEAN" => {
+                Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc())
+            }
+            // The nullary `Bags` operator lowers to its definition —
+            // `SetToBag({})` is `[e \in {} |-> 1]` — so every consumer sees
+            // the same function it would see for the spelled-out form. The
+            // binder comes from `fresh_name` like every other binder: inference
+            // keys bound variables by **name**, so one fixed name here meant
+            // every `EmptyBag` in a specification shared a single element type
+            // — `TestBags.tla` failed with "Str and Int" the moment a second
+            // bag appeared.
+            "EmptyBag" => {
+                let var = self.fresh_name("bag_e");
+                Some(
+                    Kera::FunDef {
+                        var,
+                        set: Kera::SetEnum(Vec::new()).rc(),
+                        body: Kera::Int("1".into()).rc(),
+                    }
+                    .rc(),
+                )
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether [`Self::builtin_constant`] would produce a value for `name`,
+    /// without borrowing the lowerer mutably for the common no case.
+    fn builtin_constant_probe(&self, name: &str) -> bool {
+        matches!(name, "TRUE" | "FALSE" | "BOOLEAN" | "EmptyBag")
     }
 
     fn fresh_name(&mut self, base: &str) -> Name {
@@ -1002,10 +1142,22 @@ impl<'a> Lowerer<'a> {
                             expr.span,
                         ));
                     };
+                    // The recursive name is a binder like any other, so it
+                    // gets a fresh one and the body sees the fresh name
+                    // through its scope: two recursive functions called
+                    // `f` in sibling `LET`s would otherwise lower with the
+                    // *same* binder, and inference — which keys free names
+                    // by name — would fuse two unrelated functions into
+                    // one variable. The binder-uniqueness check exists to
+                    // make that impossible to reintroduce.
+                    let rec_name = recursive.then(|| self.fresh_name(&name));
+                    if let Some(rn) = &rec_name {
+                        scope.insert(name.clone(), Binding::Value(Kera::Var(rn.clone()).rc()));
+                    }
                     stack.push(Frame::BuildFun {
                         var,
                         domains: total,
-                        recursive: recursive.then(|| Name(name.clone())),
+                        recursive: rec_name,
                     });
                     stack.push(Frame::PopScope);
                     stack.push(Frame::Expand(body));
@@ -1056,6 +1208,53 @@ impl<'a> Lowerer<'a> {
                         None => Kera::FunDef { var, set, body }.rc(),
                     });
                 }
+                Frame::BuildBagOfAll { acc, elem, out } => {
+                    let (Some(f_of_elem), Some(bag)) = (values.pop(), values.pop()) else {
+                        return Err(LowerError::unsupported(
+                            "`BagOfAll`",
+                            "internal: missing children",
+                            expr.span,
+                        ));
+                    };
+                    // `B[elem]`: the copies carried over for this element.
+                    let copies = Kera::FunApp(bag.clone(), Kera::Var(elem.clone()).rc()).rc();
+                    // `[out \\in {F(elem)} |-> B[elem]]`: the singleton bag.
+                    let single = Kera::FunDef {
+                        var: out,
+                        set: Kera::SetEnum(vec![f_of_elem]).rc(),
+                        body: copies,
+                    }
+                    .rc();
+                    // `acc (+) single`, through the same `\\oplus` desugaring
+                    // every bag addition takes, so encoders and the evaluator
+                    // see one shape.
+                    let step = self
+                        .bag_desugar("\\oplus", &[Kera::Var(acc.clone()).rc(), single])
+                        .ok_or_else(|| {
+                            LowerError::unsupported(
+                                "`BagOfAll`",
+                                "internal: bag addition has no lowering",
+                                expr.span,
+                            )
+                        })?;
+                    values.push(
+                        Kera::Fold {
+                            over: FoldOver::Set,
+                            acc,
+                            elem,
+                            base: self.builtin_constant("EmptyBag").ok_or_else(|| {
+                                LowerError::unsupported(
+                                    "`BagOfAll`",
+                                    "internal: EmptyBag has no lowering",
+                                    expr.span,
+                                )
+                            })?,
+                            collection: Kera::Domain(bag).rc(),
+                            body: step,
+                        }
+                        .rc(),
+                    );
+                }
                 Frame::BuildFold { over, acc, elem } => {
                     let (Some(body), Some(collection), Some(base)) =
                         (values.pop(), values.pop(), values.pop())
@@ -1099,35 +1298,6 @@ impl<'a> Lowerer<'a> {
 impl Default for Lowerer<'_> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// The TLA+ built-in constants.
-///
-/// `TRUE`, `FALSE` and `BOOLEAN` are part of the language, not names a module
-/// declares. Falling through to `Var("TRUE")` made them *free names*: the
-/// evaluator refused them, and an encoder would have seen an undeclared
-/// symbol where a boolean was meant.
-///
-/// Checked only after scopes and definitions, so a binding of the same name
-/// still wins — the language reserves them, but nothing here depends on that.
-fn builtin_constant(name: &str) -> Option<KeraRef> {
-    match name {
-        "TRUE" => Some(Kera::Bool(true).rc()),
-        "FALSE" => Some(Kera::Bool(false).rc()),
-        "BOOLEAN" => Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc()),
-        // The nullary `Bags` operator lowers to its definition —
-        // `SetToBag({})` is `[e \in {} |-> 1]` — so every consumer sees
-        // the same function it would see for the spelled-out form.
-        "EmptyBag" => Some(
-            Kera::FunDef {
-                var: Name("bag_e#0".into()),
-                set: Kera::SetEnum(Vec::new()).rc(),
-                body: Kera::Int("1".into()).rc(),
-            }
-            .rc(),
-        ),
-        _ => None,
     }
 }
 
@@ -1701,8 +1871,8 @@ impl<'a> Lowerer<'a> {
                             Some((bounds, body)) => {
                                 stack.push(Frame::ExpandFun(id.name.clone(), bounds, body));
                             }
-                            None if builtin_constant(&id.name).is_some() => {
-                                if let Some(v) = builtin_constant(&id.name) {
+                            None if self.builtin_constant_probe(&id.name) => {
+                                if let Some(v) = self.builtin_constant(&id.name) {
                                     values.push(v);
                                 }
                             }
@@ -1767,6 +1937,58 @@ impl<'a> Lowerer<'a> {
                     && self.folds_here(&id.name, args)
                 {
                     return self.expand_fold(e, over, args, span, stack);
+                }
+                // `BagOfAll(F, B)`, through Apalache's own rewire
+                // (`__rewire_bags_in_apalache.tla`): a fold over `DOMAIN B`
+                // adding `[y \\in {F(e)} |-> B[e]]` to the accumulator. A
+                // local definition of the same name still wins, exactly as
+                // for the folds.
+                if !head.is_qualified()
+                    && id.name == "BagOfAll"
+                    && args.len() == 2
+                    && self.lookup("BagOfAll").is_none()
+                    && !self.defs.contains_key("BagOfAll")
+                {
+                    let [f, bag] = args.as_slice() else {
+                        return Err(LowerError::unsupported(
+                            "`BagOfAll`",
+                            "internal: wrong argument count",
+                            span,
+                        ));
+                    };
+                    let Some(Binding::Op { params, body }) = self.as_operator(f) else {
+                        return Err(LowerError::unsupported(
+                            "`BagOfAll`",
+                            "its first argument must be an operator: pass a defined                              operator name or a `LAMBDA`",
+                            f.span,
+                        ));
+                    };
+                    if params.len() != 1 {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: "BagOfAll's operator".into(),
+                                expected: 1,
+                                found: params.len(),
+                            },
+                            f.span,
+                        ));
+                    }
+                    let acc = self.fresh_name("bag_acc");
+                    let elem = self.fresh_name("bag_e");
+                    let out = self.fresh_name("bag_out");
+                    // `F(elem)`: F's body lowered once, its parameter bound to
+                    // the fold's element name.
+                    let mut fscope = HashMap::new();
+                    fscope.insert(
+                        params[0].0.clone(),
+                        Binding::Value(Kera::Var(elem.clone()).rc()),
+                    );
+                    stack.push(Frame::BuildBagOfAll { acc, elem, out });
+                    stack.push(Frame::PopScope);
+                    stack.push(Frame::Expand(body));
+                    stack.push(Frame::PushScope(fscope));
+                    stack.push(Frame::Expand(bag));
+                    return Ok(());
                 }
                 // A parameter bound to a value cannot be applied: higher-order
                 // parameters are inlined as values, and applying one needs the
