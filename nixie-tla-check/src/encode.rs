@@ -1193,6 +1193,52 @@ impl Encoder {
                     .map(|t| Rc::new(Value::Scalar(t)))
                     .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
             }
+            // `s \in Seq(S)`: pointwise, `\A i \in 1..Len(s) : s[i] \in S`,
+            // enumerated when the elements are statically known — a literal
+            // tuple — and declined otherwise (a symbolic sequence's length
+            // has no enumeration until the frames work lands). Never a
+            // blanket TRUE for a "type-defining" `S`: `<<1, -2>> \notin
+            // Seq(Nat)` is a fact about values, and the type checker only
+            // ever knew the elements were `Int`.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Opaque(n, xs) if n.as_str() == "Seq" && xs.len() == 1) =>
+            {
+                let Kera::Opaque(_, xs) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("Seq".into()));
+                };
+                let inner = Rc::clone(&xs[0]);
+                // A literal tuple's components are the whole membership
+                // question; each goes through the ordinary `\in` dispatch,
+                // so `Nat`, ranges and set terms all compose.
+                let parts: Option<Vec<Rc<Value>>> = match a.as_ref() {
+                    Kera::Tuple(ks) => {
+                        let mut out = Vec::with_capacity(ks.len());
+                        for k in ks {
+                            out.push(self.value(k, tm)?);
+                        }
+                        Some(out)
+                    }
+                    _ => match &*self.value(a, tm)? {
+                        Value::Tuple(vs) => Some(vs.clone()),
+                        _ => None,
+                    },
+                };
+                match parts {
+                    Some(ps) => {
+                        let mut conj = Vec::with_capacity(ps.len());
+                        for p in ps {
+                            conj.push(self.membership(p, &inner, tm)?);
+                        }
+                        // Empty is `TRUE`: the empty sequence is in every
+                        // `Seq(S)`, elements or no elements.
+                        scalar(tm.mk_and(conj))
+                    }
+                    None => Err(EncodeError::Unsupported(
+                        "`\\in Seq(S)` over a sequence whose elements are not \
+                         statically known (a symbolic length has no enumeration)"
+                            .into(),
+                    )),
+                }
+            }
             // `x \in SUBSET T` is subset-or-equal, decided by the set theory
             // — no 2^n expansion, no candidate list. This is Apalache's
             // `PowSetCtorRule` in substance: keep the powerset symbolic and
@@ -1495,7 +1541,9 @@ impl Encoder {
                 // Bit-parallel over the candidate list: `out` starts as the
                 // one empty-subset candidate and each base member doubles it.
                 let mut out = vec![Member {
-                    value: Rc::new(Value::Set(SetCell { members: Vec::new() })),
+                    value: Rc::new(Value::Set(SetCell {
+                        members: Vec::new(),
+                    })),
                     present: tm.mk_bool(true),
                 }];
                 for m in &cell.members {
@@ -2222,6 +2270,23 @@ impl Encoder {
                                 }
                             },
                         };
+                        // The base `<<>>` is a tuple *and* a sequence, and
+                        // inference keeps whichever shape is more precise —
+                        // which for a fold over a literal comparison target
+                        // can be the *tuple* shape, while the steps produce
+                        // sequences (`Append`). Starting the accumulator in
+                        // the sequence shape (same value: the empty sequence)
+                        // keeps every step at one sort — the issue's
+                        // "the base takes the accumulator's sort".
+                        if let Value::Tuple(parts) = &*a
+                            && parts.is_empty()
+                            && let Some(first) = items.first()
+                            && let Value::Scalar(f) = &**first
+                            && let Ok(elem_sort) = self.sort_of(*f, tm)
+                        {
+                            let seq_sort = crate::sorts::seq_sort(elem_sort, tm);
+                            a = Rc::new(Value::Scalar(self.empty_seq(seq_sort, elem_sort, tm)?));
+                        }
                         for item in items {
                             a = self.with_two_bound(acc, a, elem, item, body, tm)?;
                         }
