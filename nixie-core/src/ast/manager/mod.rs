@@ -707,6 +707,66 @@ impl TermManager {
     }
 }
 
+/// A reusable substitution session for MANY terms under ONE fixed mapping
+/// (round-fixpoint loops like the eliminator's reconstruct pass): the
+/// mapping is cloned once, the memo and the domain prefilter are built
+/// once, and every term substitutes through [`TermManager::
+/// substitute_session`] sharing them.  The per-call `substitute` form
+/// re-clones the mapping and allocates a fresh memo per term — on loops
+/// over definitions sharing meganode prefixes that re-walked every
+/// shared prefix per definition (the bzip2recover class spent a third
+/// of its run there).  Cache sharing across one mapping is the
+/// documented-blessed pattern (`substitute_cached`'s doc); the session
+/// boundary is exactly "the mapping does not change".
+#[derive(Debug, Clone, Default)]
+pub struct SubstSession {
+    subst: FxHashMap<TermId, TermId>,
+    cache: SubstMemo,
+    domain: Option<std::rc::Rc<[u64]>>,
+}
+
+impl SubstSession {
+    /// A session for `mapping`; the domain bitmap builds lazily on first
+    /// use (empty mappings never build one).
+    #[must_use]
+    pub fn new(mapping: &FxHashMap<TermId, TermId>) -> Self {
+        Self {
+            subst: mapping.clone(),
+            cache: SubstMemo::default(),
+            domain: None,
+        }
+    }
+}
+
+impl TermManager {
+    /// Substitute `id` under the session's fixed mapping, sharing the
+    /// session's memo across every call (see [`SubstSession`]).
+    pub fn substitute_session(&mut self, id: TermId, session: &mut SubstSession) -> TermId {
+        if session.domain.is_none() {
+            let max_id = session
+                .subst
+                .keys()
+                .map(|k| k.0 as usize)
+                .max()
+                .unwrap_or(0);
+            let mut bits = vec![0u64; max_id / 64 + 1];
+            for &k in session.subst.keys() {
+                bits[k.0 as usize / 64] |= 1u64 << (k.0 % 64);
+            }
+            session.domain = Some(bits.into());
+        }
+        let keep = FxHashSet::default();
+        let domain = session.domain.clone().unwrap_or_default();
+        self.substitute_cached_keep_domain::<SubstMemo>(
+            id,
+            &session.subst,
+            &keep,
+            &mut session.cache,
+            Some(&domain),
+        )
+    }
+}
+
 /// Builder for constructing substitutions incrementally with optimizations
 ///
 /// This provides better performance than repeatedly calling substitute when
@@ -725,6 +785,17 @@ pub struct SubstitutionBuilder {
     /// `term_to_bv` dense-slab precedent; the hashed form's probes were
     /// 14 % of the bzip2recover-class run after the bv-wrap landing).
     cache: SubstMemo,
+    /// Over-approximating membership bitmap of `mapping`'s DOMAIN (one bit
+    /// per term id; set = "may be substituted here"): consulted before the
+    /// per-node hash probe in the substitution walk, so the overwhelmingly
+    /// common not-in-domain node skips hashing entirely.  Built lazily on
+    /// the first [`Self::apply`] after any mapping mutation (every mutator
+    /// clears it alongside the cache); an `Rc` so the walk's contexts share
+    /// one copy.  Sound as a prefilter because every per-scope map is a
+    /// SUBSET of `mapping` (keep-filtering and binder shadowing only
+    /// remove entries): a set bit falls through to the exact probe, a
+    /// clear bit provably misses.
+    domain_bits: Option<std::rc::Rc<[u64]>>,
 }
 
 impl SubstitutionBuilder {
@@ -734,6 +805,7 @@ impl SubstitutionBuilder {
         Self {
             mapping: FxHashMap::default(),
             cache: SubstMemo::default(),
+            domain_bits: None,
         }
     }
 
@@ -743,6 +815,7 @@ impl SubstitutionBuilder {
         Self {
             mapping: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
             cache: SubstMemo::default(),
+            domain_bits: None,
         }
     }
 
@@ -750,6 +823,7 @@ impl SubstitutionBuilder {
     pub fn add(&mut self, from: TermId, to: TermId) -> &mut Self {
         // Invalidate cache when adding new mapping
         self.cache.clear();
+        self.domain_bits = None;
         self.mapping.insert(from, to);
         self
     }
@@ -757,6 +831,7 @@ impl SubstitutionBuilder {
     /// Add multiple substitution mappings
     pub fn add_many(&mut self, mappings: impl IntoIterator<Item = (TermId, TermId)>) -> &mut Self {
         self.cache.clear();
+        self.domain_bits = None;
         self.mapping.extend(mappings);
         self
     }
@@ -786,6 +861,7 @@ impl SubstitutionBuilder {
 
         self.mapping = new_mapping;
         self.cache.clear();
+        self.domain_bits = None;
         self
     }
 
@@ -794,7 +870,22 @@ impl SubstitutionBuilder {
     /// This uses a persistent cache across multiple applications,
     /// making it more efficient when substituting many terms.
     pub fn apply(&mut self, id: TermId, manager: &mut TermManager) -> TermId {
-        manager.substitute_cached(id, &self.mapping, &mut self.cache)
+        if self.domain_bits.is_none() {
+            self.domain_bits = Some(Self::build_domain_bits(&self.mapping));
+        }
+        let bits = self.domain_bits.clone().unwrap_or_default();
+        manager.substitute_cached_domain(id, &self.mapping, &mut self.cache, &bits)
+    }
+
+    /// One bit per term id up to the mapping's highest domain id; set for
+    /// ids present in the mapping's domain.
+    fn build_domain_bits(mapping: &FxHashMap<TermId, TermId>) -> std::rc::Rc<[u64]> {
+        let max_id = mapping.keys().map(|k| k.0 as usize).max().unwrap_or(0);
+        let mut bits = vec![0u64; max_id / 64 + 1];
+        for &k in mapping.keys() {
+            bits[k.0 as usize / 64] |= 1u64 << (k.0 % 64);
+        }
+        bits.into()
     }
 
     /// Apply the substitution to multiple terms efficiently
@@ -826,11 +917,13 @@ impl SubstitutionBuilder {
     pub fn clear(&mut self) {
         self.mapping.clear();
         self.cache.clear();
+        self.domain_bits = None;
     }
 
     /// Reset the cache (useful for freeing memory)
     pub fn reset_cache(&mut self) {
         self.cache.clear();
+        self.domain_bits = None;
     }
 
     /// Get cache statistics (for debugging/optimization)

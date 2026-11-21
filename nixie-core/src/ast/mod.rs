@@ -39,6 +39,7 @@ pub use congruence::{CongruenceClosure, Explanation};
 pub use context::{Context, NamedAssertion, NamedContext};
 pub use egraph::{EClass, EClassId, EGraph, EGraphStats, ENode, ENodeKind};
 pub use interpolation::{InterpolationContext, InterpolationStats};
+pub use manager::SubstSession;
 pub use manager::bv_fold;
 pub use manager::bv_fold::bv_wrap_unsigned;
 pub use manager::ff_fold::FfBuildError;

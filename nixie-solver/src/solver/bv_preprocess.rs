@@ -1727,6 +1727,13 @@ impl Solver {
         for _round in 0..=eliminations.len() {
             let assignments: rustc_hash::FxHashMap<TermId, TermId> =
                 model.assignments().iter().map(|(&t, &v)| (t, v)).collect();
+            // One substitution session per ROUND: the mapping is fixed
+            // within it, so every definition substitutes through a shared
+            // dense-slab memo + domain prefilter instead of the per-call
+            // form's fresh cache and re-cloned mapping per definition (the
+            // definitions share meganode prefixes; re-walking them per
+            // definition was a third of the bzip2recover-class run).
+            let mut session = nixie_core::ast::SubstSession::new(&assignments);
             let mut changed = false;
             for &(var, def) in eliminations {
                 if model.get(var).is_some() {
@@ -1735,7 +1742,7 @@ impl Solver {
                 let substituted = if assignments.is_empty() {
                     def
                 } else {
-                    manager.substitute(def, &assignments)
+                    manager.substitute_session(def, &mut session)
                 };
                 // Fold: rebuilding through the rewriter's builders turns a
                 // fully-assigned definition into a literal.

@@ -148,6 +148,12 @@ impl SubstCache for SubstMemo {
 struct SubstContext<C: SubstCache = FxHashMap<TermId, TermId>> {
     subst: FxHashMap<TermId, TermId>,
     cache: C,
+    /// Shared over-approximation of `subst`'s domain (see
+    /// `SubstitutionBuilder::domain_bits`); `None` disables the
+    /// prefilter.  A set bit does NOT promise membership — the exact map
+    /// probe decides; a clear bit provably misses (every scope's map is a
+    /// subset of the mapping the bitmap was built from).
+    domain: Option<std::rc::Rc<[u64]>>,
 }
 
 impl<C: SubstCache> SubstContext<C> {
@@ -156,6 +162,16 @@ impl<C: SubstCache> SubstContext<C> {
     /// (checked first, matching the order the recursive version's entry
     /// checks used) or an already-memoized `cache` entry.
     fn resolved(&self, id: TermId) -> Option<TermId> {
+        // Domain prefilter: a clear bit means no scope map built from the
+        // bitmap's mapping holds `id` — skip the hashed probe.  A set bit
+        // (or no bitmap) probes exactly as before.
+        if let Some(bits) = &self.domain {
+            let idx = id.0 as usize;
+            let word = idx / 64;
+            if word >= bits.len() || bits[word] & (1u64 << (idx % 64)) == 0 {
+                return self.cache.memo_get(id);
+            }
+        }
         self.subst
             .get(&id)
             .copied()
@@ -290,6 +306,19 @@ impl TermManager {
         self.substitute_cached_keep(id, subst, &keep, cache)
     }
 
+    /// [`Self::substitute_cached`] with the domain prefilter (see
+    /// [`Self::substitute_cached_keep_domain`]).
+    pub(in crate::ast::manager) fn substitute_cached_domain<C: SubstCache>(
+        &mut self,
+        id: TermId,
+        subst: &FxHashMap<TermId, TermId>,
+        cache: &mut C,
+        domain: &std::rc::Rc<[u64]>,
+    ) -> TermId {
+        let keep = FxHashSet::default();
+        self.substitute_cached_keep_domain::<C>(id, subst, &keep, cache, Some(domain))
+    }
+
     /// [`Self::substitute_cached`] with a keep-shield (see
     /// [`Self::substitute_keeping`]).
     pub(in crate::ast::manager) fn substitute_cached_keep<C: SubstCache>(
@@ -298,6 +327,21 @@ impl TermManager {
         subst: &FxHashMap<TermId, TermId>,
         keep: &FxHashSet<TermId>,
         cache: &mut C,
+    ) -> TermId {
+        self.substitute_cached_keep_domain::<C>(id, subst, keep, cache, None)
+    }
+
+    /// [`Self::substitute_cached_keep`] with the caller's domain-membership
+    /// prefilter (see `SubstitutionBuilder::domain_bits`): consulted before
+    /// the per-node substitution-map probe.  Semantics are identical with
+    /// or without the bitmap — it only skips probes that provably miss.
+    pub(in crate::ast::manager) fn substitute_cached_keep_domain<C: SubstCache>(
+        &mut self,
+        id: TermId,
+        subst: &FxHashMap<TermId, TermId>,
+        keep: &FxHashSet<TermId>,
+        cache: &mut C,
+        domain: Option<&std::rc::Rc<[u64]>>,
     ) -> TermId {
         // Fast path matching the entry checks every recursive call used to
         // make: a direct substitution-map hit, or already memoized from a
@@ -328,6 +372,7 @@ impl TermManager {
         let mut contexts: Vec<SubstContext<C>> = vec![SubstContext {
             subst: filtered,
             cache: core::mem::take(cache),
+            domain: domain.cloned(),
         }];
         let mut work: Vec<SubstStep> = vec![SubstStep::Expand { id, ctx: 0 }];
 
@@ -604,6 +649,12 @@ impl TermManager {
         contexts.push(SubstContext {
             subst: effective,
             cache: C::default(),
+            // NO inherited prefilter: `prepare_binder_subst` may ADD
+            // entries to a scope's map (alpha-renaming old_var->fresh_var)
+            // that the parent's bitmap does not cover — a clear bit would
+            // skip their probe and silently capture.  Binder scopes probe
+            // exactly.
+            domain: None,
         });
 
         // `work` is a LIFO stack: the combine step must be pushed *before*
@@ -680,6 +731,7 @@ impl TermManager {
                 contexts.push(SubstContext {
                     subst: effective,
                     cache: C::default(),
+                    domain: contexts[0].domain.clone(),
                 });
                 (new_bound, Some(bctx))
             }
@@ -754,6 +806,7 @@ impl TermManager {
                     contexts.push(SubstContext {
                         subst: effective,
                         cache: C::default(),
+                        domain: contexts[0].domain.clone(),
                     });
                     pending.push((case.body, bctx));
                     case_plans.push(MatchCasePlan::Rewrite {
