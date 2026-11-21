@@ -104,6 +104,15 @@ pub enum SetEncoding {
     Native,
 }
 
+/// The identity a `CHOOSE x : x \\notin S` idiom is keyed by.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum UnboundedChooseKey {
+    /// A ground set: its canonical member rendering, and the element sort.
+    Ground(String, SortId),
+    /// A symbolic set: its term, and the element sort.
+    Term(TermId, SortId),
+}
+
 /// How one set-valued term came out.
 ///
 /// Not the same thing as [`SetEncoding`], which says what a *new* set is built
@@ -178,6 +187,12 @@ pub struct Encoder {
     /// Recursive functions already defined, so a second use reuses the array
     /// rather than defining a second one.
     recfuns: HashMap<(*const Kera, u32), (TermId, TermId)>,
+    /// The shared constants behind `CHOOSE x : x \\notin S` occurrences,
+    /// keyed by the set's identity so the same idiom over the same set is
+    /// one value everywhere — which is what `CHOOSE`'s determinism
+    /// requires. A ground set keys by its canonical value (two spellings,
+    /// one constant); a symbolic one by its term.
+    unbounded_chooses: HashMap<UnboundedChooseKey, TermId>,
     /// Domains whose member lists this encoder learned while encoding another
     /// constraint, keyed by the domain term.
     ///
@@ -209,6 +224,7 @@ impl Encoder {
             fresh: 0,
             side: Vec::new(),
             recfuns: HashMap::new(),
+            unbounded_chooses: HashMap::new(),
             known_domains: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
@@ -935,8 +951,16 @@ impl Encoder {
             let single = tm.mk_set_singleton(*k);
             // A candidate that may not be present contributes conditionally.
             // `ite` at a set sort is decided by the set theory, so this needs
-            // no case split of its own.
-            let piece = tm.mk_ite(m.present, single, empty);
+            // no case split of its own — but a *literally true* guard is
+            // folded away: the theories reason about `a ∪ b` far better than
+            // about `ite(true, a, {}) ∪ b`, and `CHOOSE x \in S : TRUE`'s
+            // filter is the motivating all-true case.
+            let piece = if matches!(m.present, t if matches!(tm.get(t).map(|d| d.kind.clone()), Some(nixie_core::TermKind::True)))
+            {
+                single
+            } else {
+                tm.mk_ite(m.present, single, empty)
+            };
             acc = tm.mk_set_union(acc, piece);
         }
         Ok(acc)
@@ -1799,10 +1823,43 @@ impl Encoder {
                     // TLA+ requires for the positive divisors it defines.
                     ArithOp::Div => tm.mk_div(x, y),
                     ArithOp::Mod => tm.mk_mod(x, y),
+                    // `^` with a **ground** exponent is a product — exact,
+                    // linear once unfolded, and the only form with a value
+                    // the replay can confirm. A negative exponent is
+                    // undefined in TLA+ and refused; a symbolic one is
+                    // non-linear and declined by name rather than
+                    // approximated by an uninterpreted function whose models
+                    // nothing could replay.
                     ArithOp::Exp => {
-                        return Err(EncodeError::Unsupported(
-                            "`^` (exponentiation is non-linear)".into(),
-                        ));
+                        let Some(n) = ground_int(b) else {
+                            return Err(EncodeError::Unsupported(
+                                "`^` with a symbolic exponent (non-linear)".into(),
+                            ));
+                        };
+                        if n < num_bigint::BigInt::ZERO {
+                            return Err(EncodeError::Unsupported(
+                                "`^` with a negative exponent (undefined in TLA+)".into(),
+                            ));
+                        }
+                        let Ok(exp) = u32::try_from(&n) else {
+                            return Err(EncodeError::Unsupported(
+                                "`^` with an exponent too large to unfold".into(),
+                            ));
+                        };
+                        if exp > 64 {
+                            return Err(EncodeError::Unsupported(
+                                "`^` with an exponent above the unfolding budget of 64".into(),
+                            ));
+                        }
+                        if exp == 0 {
+                            tm.mk_int(1)
+                        } else {
+                            let mut acc = x;
+                            for _ in 1..exp {
+                                acc = tm.mk_mul([acc, x]);
+                            }
+                            acc
+                        }
                     }
                 })
             }
@@ -2345,6 +2402,100 @@ impl Encoder {
                 Ok(a)
             }
 
+            // `CHOOSE x \\in S : P` — an arbitrary-but-fixed element of the
+            // filter `{x \\in S : P}`, as `set.choose` over its native set.
+            // The set theory owns the semantics: extensionally equal filters
+            // give the same value (congruence — which is TLA+'s determinism
+            // requirement exactly, and *more* precise than Apalache's
+            // per-occurrence CherryPick), and an empty filter leaves the
+            // value unconstrained but consistent, which matches the one
+            // thing TLA+ promises about it.
+            Kera::Choose { var, set, body } => {
+                let filter: KeraRef = Rc::new(Kera::Filter {
+                    var: var.clone(),
+                    set: Rc::clone(set),
+                    pred: Rc::clone(body),
+                });
+                let Value::Set(cell) = &*self.value(&filter, tm)? else {
+                    return Err(EncodeError::Unsupported(
+                        "`CHOOSE` over a set with no candidate list".into(),
+                    ));
+                };
+                // The element sort: from the members when there are any, and
+                // from the caller's inference when the filter came out empty
+                // (`CHOOSE x \\in {} : TRUE` is a term with a type).
+                let elem_sort = match cell.members.first().map(|m| &*m.value) {
+                    Some(Value::Scalar(k)) => self.sort_of(*k, tm)?,
+                    _ => {
+                        let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                            return Err(EncodeError::Unsupported(
+                                "`CHOOSE` over an empty filter, with no element sort to give it"
+                                    .into(),
+                            ));
+                        };
+                        sort
+                    }
+                };
+                let filtered = self.native_set_of(&cell.members, elem_sort, tm)?;
+                scalar(tm.mk_set_choose(filtered))
+            }
+            // `CHOOSE x : x \\notin S` — the fresh-value idiom. One shared
+            // constant per filter set: TLA+ says `CHOOSE` picks the same
+            // value wherever it is written, so two occurrences over the same
+            // `S` are one constant, and the non-membership it asked for is a
+            // fact about that constant rather than a guess.
+            Kera::ChooseUnbounded { var, body } => {
+                if let Kera::Not(inner) = body.as_ref()
+                    && let Kera::In(x, s) = inner.as_ref()
+                    && matches!(x.as_ref(), Kera::Var(n) if n == var)
+                {
+                    let inside = self.value(s, tm)?;
+                    let Value::Scalar(set_term) = &*inside else {
+                        return Err(EncodeError::Unsupported(
+                            "`CHOOSE x : x \\notin S` over a set with no term form".into(),
+                        ));
+                    };
+                    let set_term = *set_term;
+                    let Some(elem_sort) = self.element_sort_of(set_term, tm).ok() else {
+                        return Err(EncodeError::Unsupported(
+                            "`CHOOSE x : x \\notin S` over a set with no element sort".into(),
+                        ));
+                    };
+                    // The key is the set's **canonical value** when it is
+                    // ground — two spellings of the same set (`{1, 2}` and
+                    // `{2, 1}`) are one idiom and must share one constant,
+                    // which is what CHOOSE's determinism says. A set that is
+                    // not ground keeps its term identity.
+                    let ground_key = match nixie_tla::Evaluator::new().eval(s) {
+                        Ok(nixie_tla::Value::Set(members)) => {
+                            let mut parts: Vec<String> =
+                                members.iter().map(|v| format!("{v:?}")).collect();
+                            parts.sort();
+                            Some(parts.join(","))
+                        }
+                        _ => None,
+                    };
+                    let key: UnboundedChooseKey = match &ground_key {
+                        Some(k) => UnboundedChooseKey::Ground(k.clone(), elem_sort),
+                        None => UnboundedChooseKey::Term(set_term, elem_sort),
+                    };
+                    let chosen = self.unbounded_chooses.entry(key).or_insert_with(|| {
+                        let n = self.fresh;
+                        self.fresh = self.fresh.wrapping_add(1);
+                        tm.mk_var(&format!("@choose_fresh_{n}"), elem_sort)
+                    });
+                    let member = tm.mk_set_member(*chosen, set_term);
+                    let outside = tm.mk_not(member);
+                    self.side.push(outside);
+                    scalar(*chosen)
+                } else {
+                    Err(EncodeError::Unsupported(
+                        "an unbounded `CHOOSE` whose predicate is not the fresh-value idiom \\
+                         (`CHOOSE x : x \\notin S`)"
+                            .into(),
+                    ))
+                }
+            }
             // The `Sequences` operators, on the datatype `sorts::seq_sort`
             // builds: a length and an array from `1..`. Every one of them is
             // exact — nothing here approximates — and the ones that are not

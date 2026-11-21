@@ -157,11 +157,17 @@ fn definitions_are_inlined_before_evaluation() {
 }
 
 #[test]
-fn choose_is_deliberately_not_evaluated() {
-    // TLA+ says only that `CHOOSE` picks *some* satisfying element. Any answer
-    // here could differ from TLC's without either being wrong, so evaluating
-    // it would turn a differential into noise.
-    let e = eval_err("A == CHOOSE x \\in 1..3 : x > 1");
+fn choose_evaluates_deterministically() {
+    // TLA+ says only that `CHOOSE` picks *some* satisfying element — but the
+    // evaluator is now the **replay oracle** for a checker whose encoder
+    // answers `CHOOSE`, so it must commit to one: the smallest filter member
+    // in `Value`'s order. The choice may differ from TLC's without either
+    // being wrong; what matters, and what this pins, is that it is stable —
+    // an oracle whose answer moved between runs would make every replay a
+    // coin flip. An *empty filter* is still refused: there is no element to
+    // commit to.
+    assert_eq!(eval("A == CHOOSE x \\in {3, 1, 2} : x > 1"), "2");
+    let e = eval_err("A == CHOOSE x \\in 1..3 : x > 9");
     assert!(matches!(e, EvalErrorKind::Unsupported(_)), "got {e:?}");
 }
 

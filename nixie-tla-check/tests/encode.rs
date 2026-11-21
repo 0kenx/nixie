@@ -128,7 +128,13 @@ fn division_on_literals_is_decided() {
 /// equality right.
 #[test]
 fn unencodable_constructs_are_declined_by_name() {
-    for (body, want) in [("2 ^ 3", "^"), ("[x \\in {1} |-> x]", "function")] {
+    // `2 ^ 3` no longer belongs here — a ground exponent is an unfolded
+    // product since issue #24 — so the `^` refusal is pinned by a symbolic
+    // exponent instead.
+    for (body, want) in [
+        ("CHOOSE v \\in {1} : v # 2 ^ v", "^"),
+        ("[x \\in {1} |-> x]", "function"),
+    ] {
         let e = encode_err(body);
         let EncodeError::Unsupported(what) = &e else {
             panic!("expected Unsupported for `{body}`, got {e:?}");

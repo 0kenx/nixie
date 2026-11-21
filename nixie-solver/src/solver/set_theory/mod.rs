@@ -706,10 +706,38 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // — and the model synthesizer needs them for its equality classes.
     let mut eq_pairs: Vec<(TermId, TermId)> =
         s.set_equalities.iter().map(|&(_, a, b)| (a, b)).collect();
+    // **Choose pairs, early.** `choose(s) = choose(t)` is conditioned on the
+    // equality atom `(= s t)`, and that atom is decided by exactly the
+    // extensional machinery below — witnesses, definitions, adjacency. A
+    // pair that enters only at the axiom-minting stage (where the
+    // congruence implications are built) conditions on an atom nobody ever
+    // defines, and `CHOOSE x \in {1, 2} : TRUE = CHOOSE y \in {2, 1} :
+    // TRUE` — the same set in two orders — goes undecided. So the pairs are
+    // enumerated here, registered with the equality machinery, and the
+    // implications are minted later from this very list.
+    const MAX_CHOOSE_PAIRS: usize = 128;
+    let mut choose_pairs: Vec<(TermId, TermId, TermId, TermId)> = Vec::new();
+    let mut pair_budget_exceeded = false;
+    for (i, &(uc, tc)) in s.chooses.iter().enumerate() {
+        for &(ud, td) in s.chooses.iter().skip(i + 1) {
+            if tc == td || element_sort(tc, manager) != element_sort(td, manager) {
+                continue;
+            }
+            if choose_pairs.len() >= MAX_CHOOSE_PAIRS {
+                pair_budget_exceeded = true;
+                break;
+            }
+            choose_pairs.push((uc, ud, tc, td));
+        }
+    }
+    for &(_, _, tc, td) in &choose_pairs {
+        relations.push((tc, td));
+        eq_pairs.push((tc, td));
+    }
     // The implicit opaque/constructor pairs, shared verbatim with the
     // model synthesizer ([`survey_for_model`]) so the two never diverge.
-    let (implicit, mut pair_budget_exceeded) =
-        implicit_pairs(&s, relations.len(), max_set_pairs(), manager);
+    let (implicit, more) = implicit_pairs(&s, relations.len(), max_set_pairs(), manager);
+    pair_budget_exceeded |= more;
     relations.extend(implicit.iter().copied());
     eq_pairs.extend(implicit);
     for &(a, b) in &relations {
@@ -1491,22 +1519,13 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // opaque pair that is exactly the atom the pair machinery above relates
     // (and EUF commits when a derivation exists), and for an asserted
     // equality it is the assertion itself, hash-consed to the same term.
-    const MAX_CHOOSE_PAIRS: usize = 128;
-    let mut choose_pairs = 0usize;
-    for (i, &(ua, ta)) in s.chooses.iter().enumerate() {
-        for &(ub, tb) in s.chooses.iter().skip(i + 1) {
-            if ta == tb || element_sort(ta, manager) != element_sort(tb, manager) {
-                continue;
-            }
-            if choose_pairs >= MAX_CHOOSE_PAIRS {
-                pair_budget_exceeded = true;
-                break;
-            }
-            choose_pairs += 1;
-            let same = manager.mk_eq(ta, tb);
-            let agree = manager.mk_eq(ua, ub);
-            axioms.push(manager.mk_implies(same, agree));
-        }
+    // From the list enumerated before the witness minting — the pairs are
+    // already registered with the equality machinery there, so the
+    // antecedent here is an atom with a definition rather than a hope.
+    for &(ua, ub, ta, tb) in &choose_pairs {
+        let same = manager.mk_eq(ta, tb);
+        let agree = manager.mk_eq(ua, ub);
+        axioms.push(manager.mk_implies(same, agree));
     }
     // `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` the ite
     // *is* `a`, so the two chooses must agree — but the equality atom the

@@ -245,9 +245,55 @@ impl Evaluator {
                 }
                 standard_operator(n.as_str(), &vals)
             }
-            Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => Err(EvalErrorKind::Unsupported(
-                "`CHOOSE` (TLA+ leaves which element it picks unspecified)".into(),
-            )),
+            // `CHOOSE x \\in S : P` — deterministic here, as the *replay*
+            // oracle needs it to be. TLA+ leaves the element unspecified but
+            // fixed; this evaluator fixes it as the smallest member of the
+            // filter in `Value`'s order, which is one legitimate reading and
+            // is stable across runs (a hash-ordered choice would make the
+            // differential corpus nondeterministic). The encoding is free to
+            // pick a different member — congruence only forces *equal filters
+            // to equal values* — so a trace whose replay hinges on which
+            // member was picked still fails replay honestly.
+            Kera::Choose { var, set, body } => {
+                let all: Vec<Value> = self.set_of(set, env)?.into_iter().collect();
+                let mut candidates = Vec::new();
+                for v in all {
+                    let keep = self
+                        .with_bound(var, v.clone(), env, |e, en| e.boolean(body, en))
+                        .unwrap_or(false);
+                    if keep {
+                        candidates.push(v);
+                    }
+                }
+                candidates.into_iter().next().ok_or_else(|| {
+                    EvalErrorKind::Unsupported(
+                        "`CHOOSE` over an empty filter (TLA+ leaves the value unspecified)".into(),
+                    )
+                })
+            }
+            // The fresh-value idiom, `CHOOSE x : x \\notin S`: a value
+            // outside `S`, fixed. For a finite integer set the smallest
+            // non-negative non-member is one such value; anything else has
+            // no value this evaluator can name.
+            Kera::ChooseUnbounded { var, body } => {
+                if let Kera::Not(inner) = body.as_ref()
+                    && let Kera::In(x, s) = inner.as_ref()
+                    && matches!(x.as_ref(), Kera::Var(n) if n == var)
+                {
+                    let members = self.set_of(s, env)?;
+                    let mut candidate: i128 = 0;
+                    loop {
+                        let v = Value::Int(candidate);
+                        if !members.contains(&v) {
+                            return Ok(v);
+                        }
+                        candidate = candidate.saturating_add(1);
+                    }
+                }
+                Err(EvalErrorKind::Unsupported(
+                    "an unbounded `CHOOSE` whose predicate is not the fresh-value idiom".into(),
+                ))
+            }
 
             Kera::Not(a) => Ok(Value::Bool(!self.boolean(a, env)?)),
             Kera::And(xs) => {
