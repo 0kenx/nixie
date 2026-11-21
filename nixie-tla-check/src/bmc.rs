@@ -746,7 +746,83 @@ impl Bmc {
             transitions.push(t);
         }
 
+        // **One solver for the whole unrolling.** `Init` and `Trans_k`
+        // persist; each depth's `~Inv_j` is asserted under `push`/`pop`, so
+        // the query is exactly the formula the fresh-solver path asked — but
+        // everything the search *learned* at depth j serves depth j+1, which
+        // the fresh path threw away. That is Apalache's incremental context
+        // (`IncrementalExecutionContext`) and it is what the corpus's
+        // "solver undecided" bucket was paying for: nine-plus specifications
+        // re-derived the same reachability at every depth and exhausted the
+        // budget on the second pass.
+        //
+        // What sits **inside** the push is only the negated invariant (and
+        // the blocked-trace clauses): everything outside — assumptions,
+        // `Init`, the transitions, the `.cfg` constraints, the definitional
+        // side constraints — is a fact about the specification, not about
+        // the query, and stays asserted for every later depth.
+        let mut solver = Solver::new();
+        // A **deterministic** budget per query, not a wall-clock timeout.
+        // Some specifications now reach the solver with hundreds of set
+        // and datatype terms and do not finish in any useful time; a
+        // corpus harness that hangs is not a measurement. A clock would
+        // bound it too, and would make the verdict depend on machine load
+        // — the corpus numbers stopped being reproducible the moment they
+        // did. Conflicts are counted by the solver itself, so the same
+        // input gives the same answer on any machine, and running out
+        // reports `Unknown` like any other undecided query.
+        if let Some(limit) = self.conflict_limit {
+            solver.set_conflict_limit(limit);
+        }
+        for a in &assumed {
+            solver.assert(*a, tm);
+        }
+        solver.assert(init, tm);
+        // How many of the encoder's definitional side constraints have been
+        // asserted already: encoding step j can introduce new ones (a
+        // recursive function reached at that step), and facts are asserted
+        // once, outside the push.
+        let mut side_sent = 0usize;
+        for c in self.encoder.side_constraints().to_vec() {
+            solver.assert(c, tm);
+            side_sent += 1;
+        }
+
         for j in 0..=depth {
+            if j > 0 {
+                solver.assert(transitions[(j - 1) as usize], tm);
+            }
+            // A `CONSTRAINT` holds in every state of the trace, including the
+            // one being tested, and an `ACTION_CONSTRAINT` over every step
+            // taken. Both *narrow* the search to the model the author
+            // configured. A constraint with no encoding is refused rather than
+            // dropped: unlike an `ASSUME`, dropping one here would widen the
+            // search past the configured model, which is the direction that
+            // manufactures counterexamples — and it would do so invisibly,
+            // because nothing else records that the model was bounded.
+            for c in &self.state_constraints {
+                let step = j;
+                let t = self
+                    .encoder
+                    .encode_at(c, step, tm)
+                    .map_err(|e| named("CONSTRAINT", &e))?;
+                solver.assert(t, tm);
+            }
+            for c in &self.action_constraints {
+                let step = j.saturating_sub(1);
+                let t = self
+                    .encoder
+                    .encode_at(c, step, tm)
+                    .map_err(|e| named("ACTION_CONSTRAINT", &e))?;
+                solver.assert(t, tm);
+            }
+            // New definitional facts since the last depth.
+            let sides = self.encoder.side_constraints().to_vec();
+            while side_sent < sides.len() {
+                solver.assert(sides[side_sent], tm);
+                side_sent += 1;
+            }
+
             // `--inv=A,B` is conjunctive over the invariants, so the
             // counterexample condition is the disjunction of their negations.
             // One query, not one per invariant: the shortest counterexample
@@ -765,67 +841,30 @@ impl Bmc {
             } else {
                 tm.mk_or(negated)
             };
+            // Encoding this depth's invariant can itself introduce facts —
+            // a `CHOOSE x : x \\notin S` mints its non-membership here —
+            // so drain again, before the query is asked rather than at the
+            // next depth: one depth late is a different formula.
+            let sides = self.encoder.side_constraints().to_vec();
+            while side_sent < sides.len() {
+                solver.assert(sides[side_sent], tm);
+                side_sent += 1;
+            }
 
-            let mut solver = Solver::new();
-            // A **deterministic** budget per query, not a wall-clock timeout.
-            // Some specifications now reach the solver with hundreds of set
-            // and datatype terms and do not finish in any useful time; a
-            // corpus harness that hangs is not a measurement. A clock would
-            // bound it too, and would make the verdict depend on machine load
-            // — the corpus numbers stopped being reproducible the moment they
-            // did. Conflicts are counted by the solver itself, so the same
-            // input gives the same answer on any machine, and running out
-            // reports `Unknown` like any other undecided query.
-            if let Some(limit) = self.conflict_limit {
-                solver.set_conflict_limit(limit);
-            }
-            for a in &assumed {
-                solver.assert(*a, tm);
-            }
-            solver.assert(init, tm);
-            for t in transitions.iter().take(j as usize) {
-                solver.assert(*t, tm);
-            }
-            // A `CONSTRAINT` holds in every state of the trace, including the
-            // one being tested, and an `ACTION_CONSTRAINT` over every step
-            // taken. Both *narrow* the search to the model the author
-            // configured. A constraint with no encoding is refused rather than
-            // dropped: unlike an `ASSUME`, dropping one here would widen the
-            // search past the configured model, which is the direction that
-            // manufactures counterexamples — and it would do so invisibly,
-            // because nothing else records that the model was bounded.
-            for c in &self.state_constraints {
-                for step in 0..=j {
-                    let t = self
-                        .encoder
-                        .encode_at(c, step, tm)
-                        .map_err(|e| named("CONSTRAINT", &e))?;
-                    solver.assert(t, tm);
-                }
-            }
-            for c in &self.action_constraints {
-                for step in 0..j {
-                    let t = self
-                        .encoder
-                        .encode_at(c, step, tm)
-                        .map_err(|e| named("ACTION_CONSTRAINT", &e))?;
-                    solver.assert(t, tm);
-                }
-            }
-            // Everything the encoded terms *depend on*: a recursive function
-            // is an array plus one equation per point of its domain, and the
-            // equations are facts rather than part of any value. Asserted with
-            // the formulas that produced them; without this the function would
-            // be an arbitrary array and the check would be about a different
-            // specification.
-            for c in self.encoder.side_constraints().to_vec() {
-                solver.assert(c, tm);
-            }
+            solver.push();
+            solver.assert(violated, tm);
             for c in &self.blocked {
                 solver.assert(*c, tm);
             }
-            solver.assert(violated, tm);
-            match solver.check(tm) {
+            let answer = solver.check(tm);
+            if answer != SolverResult::Sat {
+                // Pop before any early return: an abandoned scope would leak
+                // its assertions into the *next* `check` call on this `Bmc`
+                // (the `--max-error` loop reuses it), answering a different
+                // question than the one asked.
+                solver.pop();
+            }
+            match answer {
                 SolverResult::Sat => {
                     // A `Sat` answer is a counterexample **candidate**. It is
                     // only a counterexample once it has been read back as
@@ -840,6 +879,10 @@ impl Bmc {
                     // encoding or the solver — and every such disagreement
                     // stays visible in [`Bmc::verification`] so it gets
                     // chased rather than explained away.
+                    //
+                    // The model is read before the pop; the trace extraction
+                    // walks it, and a popped scope's model is not one to
+                    // read.
                     let (trace, verdict) = match solver.model() {
                         None => (
                             None,
@@ -853,6 +896,7 @@ impl Bmc {
                             },
                         },
                     };
+                    solver.pop();
                     self.counterexample = trace;
                     self.verification = Some(verdict.clone());
                     // A search that ran with dropped assumptions is a search
