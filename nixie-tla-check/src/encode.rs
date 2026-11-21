@@ -1193,6 +1193,56 @@ impl Encoder {
                     .map(|t| Rc::new(Value::Scalar(t)))
                     .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
             }
+            // `x \in a..b` is `a <= x /\ x <= b` — Apalache's own rewrite
+            // (`ExprOptimizer`), and the difference between a range with a
+            // symbolic bound being checkable and not: the arena needs ground
+            // ends to enumerate, the comparison needs nothing. This is the
+            // single largest blocker class in the corpus ("`..` with a
+            // non-literal upper bound", 21+ specifications).
+            Kera::In(x, s) if matches!(s.as_ref(), Kera::Range(_, _)) => {
+                let Kera::Range(lo, hi) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("..".into()));
+                };
+                let e = self.go(x, tm)?;
+                let l = self.go(lo, tm)?;
+                let h = self.go(hi, tm)?;
+                let ge = tm.mk_ge(e, l);
+                let le = tm.mk_le(e, h);
+                scalar(tm.mk_and([ge, le]))
+            }
+            // `r \in [f_1 : S_1, …, f_n : S_n]` is the conjunction of the
+            // field memberships — never an enumeration of the cartesian
+            // product, which is what the arena path would need. Each field's
+            // membership goes back through the ordinary dispatch, so a range
+            // or a standard set as `S_i` composes (`SetMembershipSimplifier`'s
+            // structural rule, the same one `Nat` already takes).
+            Kera::In(r, s) if matches!(s.as_ref(), Kera::RecordSet(_)) => {
+                let Kera::RecordSet(fs) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("a record set".into()));
+                };
+                let mut conj = Vec::with_capacity(fs.len());
+                for (name, set) in fs {
+                    let field: KeraRef =
+                        Rc::new(Kera::FunApp(Rc::clone(r), Rc::new(Kera::Str(name.clone()))));
+                    let v = self.value(&field, tm)?;
+                    conj.push(self.membership(v, set, tm)?);
+                }
+                scalar(tm.mk_and(conj))
+            }
+            // `t \in S_1 \\X … \\X S_n` is likewise componentwise.
+            Kera::In(t, s) if matches!(s.as_ref(), Kera::Times(_)) => {
+                let Kera::Times(sets) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("\\X".into()));
+                };
+                let mut conj = Vec::with_capacity(sets.len());
+                for (i, set) in sets.iter().enumerate() {
+                    let index = Rc::new(Kera::Int((i + 1).to_string()));
+                    let field: KeraRef = Rc::new(Kera::FunApp(Rc::clone(t), index));
+                    let v = self.value(&field, tm)?;
+                    conj.push(self.membership(v, set, tm)?);
+                }
+                scalar(tm.mk_and(conj))
+            }
             // `s \in Seq(S)`: pointwise, `\A i \in 1..Len(s) : s[i] \in S`,
             // enumerated when the elements are statically known — a literal
             // tuple — and declined otherwise (a symbolic sequence's length
@@ -2590,6 +2640,24 @@ impl Encoder {
                     ("Cardinality", 1) | ("IsFiniteSet", 1)
                 ) =>
             {
+                // `Cardinality(a..b)` is arithmetic — `IF a <= b THEN
+                // b - a + 1 ELSE 0` — rather than an enumeration, so a
+                // symbolic bound costs nothing (Apalache's `ExprOptimizer`
+                // does the same). Note `a..b` may be *empty*: TLA+ ranges
+                // are empty when `a > b`, not ill-formed.
+                if name.as_str() == "Cardinality"
+                    && matches!(args[0].as_ref(), Kera::Range(_, _))
+                    && let Kera::Range(lo, hi) = args[0].as_ref()
+                {
+                    let l = self.go(lo, tm)?;
+                    let h = self.go(hi, tm)?;
+                    let nonempty = tm.mk_le(l, h);
+                    let one = tm.mk_int(1);
+                    let span = tm.mk_sub(h, l);
+                    let count = tm.mk_add([span, one]);
+                    let zero = tm.mk_int(0);
+                    return scalar(tm.mk_ite(nonempty, count, zero));
+                }
                 let repr = self.set_repr(&args[0], tm)?;
                 match (name.as_str(), repr) {
                     ("Cardinality", SetRepr::Native(set)) => scalar(tm.mk_set_card(set)),
