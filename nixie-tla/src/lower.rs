@@ -275,6 +275,16 @@ enum Frame<'a> {
         /// The result function's binder (the mapped-to value `F(elem)`).
         out: Name,
     },
+    /// Build `SelectSeq(seq, F(_))` from `1` value: `F(elem)` under a scope
+    /// binding `F`'s parameter to the fold's element name. Apalache's own
+    /// rewire, in kernel form:
+    /// `ApaFoldSeqLeft((s, e) => IF F(e) THEN Append(s, e) ELSE s, <<>>, seq)`.
+    BuildSelectSeq {
+        /// The fold's accumulator name (the growing sequence).
+        acc: Name,
+        /// The fold's element name.
+        elem: Name,
+    },
     /// Build a fold from `3` values (base, collection, operator body).
     BuildFold {
         /// Whether the collection is a set or a sequence.
@@ -1255,6 +1265,36 @@ impl<'a> Lowerer<'a> {
                         .rc(),
                     );
                 }
+                Frame::BuildSelectSeq { acc, elem } => {
+                    let (Some(f_of_elem), Some(seq)) = (values.pop(), values.pop()) else {
+                        return Err(LowerError::unsupported(
+                            "`SelectSeq`",
+                            "internal: missing children",
+                            expr.span,
+                        ));
+                    };
+                    let keep = Kera::Ite(
+                        f_of_elem,
+                        Kera::Opaque(
+                            Name("Append".into()),
+                            vec![Kera::Var(acc.clone()).rc(), Kera::Var(elem.clone()).rc()],
+                        )
+                        .rc(),
+                        Kera::Var(acc.clone()).rc(),
+                    )
+                    .rc();
+                    values.push(
+                        Kera::Fold {
+                            over: FoldOver::SeqLeft,
+                            acc,
+                            elem,
+                            base: Kera::Tuple(Vec::new()).rc(),
+                            collection: seq,
+                            body: keep,
+                        }
+                        .rc(),
+                    );
+                }
                 Frame::BuildFold { over, acc, elem } => {
                     let (Some(body), Some(collection), Some(base)) =
                         (values.pop(), values.pop(), values.pop())
@@ -1943,6 +1983,54 @@ impl<'a> Lowerer<'a> {
                 // adding `[y \\in {F(e)} |-> B[e]]` to the accumulator. A
                 // local definition of the same name still wins, exactly as
                 // for the folds.
+                // `SelectSeq(seq, F(_))` — Apalache's rewire to a left fold
+                // that appends the elements `F` accepts. A local definition
+                // of the same name still wins, exactly as for the folds.
+                if !head.is_qualified()
+                    && id.name == "SelectSeq"
+                    && args.len() == 2
+                    && self.lookup("SelectSeq").is_none()
+                    && !self.defs.contains_key("SelectSeq")
+                {
+                    let [seq, test] = args.as_slice() else {
+                        return Err(LowerError::unsupported(
+                            "`SelectSeq`",
+                            "internal: wrong argument count",
+                            span,
+                        ));
+                    };
+                    let Some(Binding::Op { params, body }) = self.as_operator(test) else {
+                        return Err(LowerError::unsupported(
+                            "`SelectSeq`",
+                            "its second argument must be an operator: pass a defined \
+                             operator name or a `LAMBDA`",
+                            test.span,
+                        ));
+                    };
+                    if params.len() != 1 {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: "SelectSeq's operator".into(),
+                                expected: 1,
+                                found: params.len(),
+                            },
+                            test.span,
+                        ));
+                    }
+                    let acc = self.fresh_name("sel_acc");
+                    let elem = self.fresh_name("sel_e");
+                    let mut tscope = HashMap::new();
+                    tscope.insert(
+                        params[0].0.clone(),
+                        Binding::Value(Kera::Var(elem.clone()).rc()),
+                    );
+                    stack.push(Frame::BuildSelectSeq { acc, elem });
+                    stack.push(Frame::PopScope);
+                    stack.push(Frame::Expand(body));
+                    stack.push(Frame::PushScope(tscope));
+                    stack.push(Frame::Expand(seq));
+                    return Ok(());
+                }
                 if !head.is_qualified()
                     && id.name == "BagOfAll"
                     && args.len() == 2
