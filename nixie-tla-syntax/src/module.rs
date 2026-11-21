@@ -23,6 +23,7 @@
 
 use crate::ast::Module;
 use crate::error::SyntaxError;
+use crate::span::Span;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -94,6 +95,24 @@ pub struct LoadedSpec {
     /// Modules involved in an `EXTENDS` cycle, which TLA+ forbids. Reported
     /// rather than looped on.
     pub cycles: Vec<String>,
+    /// `@type:` annotations, attached to the declaration that follows them,
+    /// with the module they belong to. The text is raw: the Type1 grammar
+    /// lives one layer up, where the type system does.
+    pub annotations: Vec<Annotation>,
+}
+
+/// One `@type:` annotation, bound to the declaration that follows it.
+#[derive(Debug, Clone)]
+pub struct Annotation {
+    /// The module the annotated declaration belongs to.
+    pub module: String,
+    /// The annotated declaration's name (a CONSTANT, VARIABLE, or operator
+    /// definition — whichever unit the comment precedes).
+    pub name: String,
+    /// The annotation text after `@type:`, untrimmed of nothing.
+    pub text: String,
+    /// Where the comment was, for diagnostics.
+    pub span: Span,
 }
 
 impl LoadedSpec {
@@ -105,11 +124,14 @@ impl LoadedSpec {
     /// is exactly what a caller that did not ask for a search path should get.
     #[must_use]
     pub fn single(parsed: crate::ParsedFile) -> Self {
+        let name = parsed.module.name.name.clone();
+        let annotations = attach_annotations(&name, &parsed.module, &parsed.comments);
         Self {
-            root: parsed.module.name.name.clone(),
-            modules: vec![(parsed.module.name.name.clone(), parsed.module)],
+            root: name.clone(),
+            modules: vec![(name, parsed.module)],
             missing: Vec::new(),
             cycles: Vec::new(),
+            annotations,
         }
     }
 
@@ -175,6 +197,8 @@ impl Loader {
 
         // Breadth-first over EXTENDS, iteratively: the import graph is
         // user-controlled and may be deep.
+        let mut comments_by_module: BTreeMap<String, Vec<crate::token::Comment>> = BTreeMap::new();
+        comments_by_module.insert(root_name.clone(), parsed.comments);
         let mut queue: Vec<(String, Module)> = vec![(root_name.clone(), parsed.module)];
         while let Some((name, module)) = queue.pop() {
             let extends: Vec<String> = module
@@ -203,7 +227,13 @@ impl Loader {
                     continue;
                 }
                 match self.find_and_parse(&dep, &dirs) {
-                    Some(m) => queue.push((dep, m)),
+                    Some(m) => {
+                        // `@type:` annotations travel with the module they
+                        // annotate; the file's comments are kept until the
+                        // attachment pass at the end.
+                        comments_by_module.insert(dep.clone(), m.comments.clone());
+                        queue.push((dep, m))
+                    }
                     None => {
                         missing.insert(dep);
                     }
@@ -212,9 +242,18 @@ impl Loader {
         }
 
         let (order, cycles) = topological_order(&root_name, &deps, &loaded);
-        let modules = order
+        let modules: Vec<(String, Module)> = order
             .into_iter()
             .filter_map(|n| loaded.remove(&n).map(|m| (n, m)))
+            .collect();
+
+        let annotations: Vec<Annotation> = modules
+            .iter()
+            .flat_map(|(name, module)| {
+                let empty = Vec::new();
+                let comments = comments_by_module.get(name).unwrap_or(&empty);
+                attach_annotations(name, module, comments)
+            })
             .collect();
 
         Ok(LoadedSpec {
@@ -222,6 +261,7 @@ impl Loader {
             modules,
             missing: missing.into_iter().collect(),
             cycles,
+            annotations,
         })
     }
 
@@ -242,6 +282,76 @@ impl Loader {
         }
         None
     }
+}
+
+/// Attach each `\* @type: …` comment to the declaration that follows it.
+///
+/// "Follows" is by source position: the annotated unit is the first one
+/// whose span starts after the comment ends, in the same module. A comment
+/// that precedes nothing (end of module) is dropped — there is no
+/// declaration to annotate, and inventing one would be the silent-gap
+/// pattern this codebase refuses elsewhere.
+fn attach_annotations(
+    module: &str,
+    m: &Module,
+    comments: &[crate::token::Comment],
+) -> Vec<Annotation> {
+    use crate::token::Comment;
+    let named: Vec<(u32, &str)> = comments
+        .iter()
+        .filter_map(|c: &Comment| {
+            let body = c.text.trim();
+            let rest = body.strip_prefix("@type:")?;
+            Some((c.span.start.offset, rest.trim()))
+        })
+        .collect();
+    if named.is_empty() {
+        return Vec::new();
+    }
+    // Declaration start offsets with their names, in source order.
+    let mut decls: Vec<(u32, String)> = Vec::new();
+    for unit in &m.units {
+        // The anchor is the **name's** position, not the unit's: a
+        // `CONSTANT`/`VARIABLE` unit's span starts at the keyword, which is
+        // *before* the annotation comment that precedes the name inside it —
+        // anchoring on the unit start mis-bound every such annotation to the
+        // *next* declaration, found the moment the first annotated spec ran.
+        // A declaration block declares **several** names, each with its own
+        // position, and an interleaved comment annotates the *next* name,
+        // not the block: `VARIABLES \* @type: Int; x, \* @type: Str; y`
+        // (Test1226's very shape) binds each annotation to the name that
+        // follows it. One anchor per name.
+        let named: Vec<(u32, String)> = match &unit.kind {
+            crate::ast::UnitKind::OpDef { name, .. } => {
+                vec![(name.span.start.offset, name.name.clone())]
+            }
+            crate::ast::UnitKind::VariableDecl(ids) => ids
+                .iter()
+                .map(|i| (i.span.start.offset, i.name.clone()))
+                .collect(),
+            crate::ast::UnitKind::ConstantDecl(ds) => ds
+                .iter()
+                .map(|d| (d.name.span.start.offset, d.name.name.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        decls.extend(named);
+    }
+    decls.sort_by_key(|(off, _)| *off);
+    let mut out = Vec::new();
+    for (off, text) in named {
+        // The first declaration after the comment.
+        let Some((_, name)) = decls.iter().find(|(doff, _)| *doff > off) else {
+            continue;
+        };
+        out.push(Annotation {
+            module: module.to_string(),
+            name: name.clone(),
+            text: text.to_string(),
+            span: crate::span::Span::default(),
+        });
+    }
+    out
 }
 
 /// Dependency-first order, with any `EXTENDS` cycle reported rather than

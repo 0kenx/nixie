@@ -596,6 +596,34 @@ impl Bmc {
         // One inference over all three, so a state variable has one type
         // across the whole specification rather than three unrelated ones.
         let mut inf = Inference::new();
+        // `@type:` annotations seed it first: they are the author's claim
+        // about a name's shape, and everything derived later is *checked
+        // against* them — a conflict is the type error it is (exit 120),
+        // never a silent override. Only names the roles' formulas could
+        // reach matter, but seeding every annotation of the loaded modules
+        // is harmless (unification is lazy about unused names) and catches
+        // contradictory annotations the way Apalache does.
+        let mut uninterpreted: std::collections::HashMap<String, nixie_tla::types::TyId> =
+            std::collections::HashMap::new();
+        for ann in &spec.annotations {
+            let parsed = match nixie_tla::annotations::parse_type1(&ann.text) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Err(SetupError::Types(format!(
+                        "the @type: annotation on `{}` does not parse: {e}",
+                        ann.name
+                    )));
+                }
+            };
+            if let Err(e) =
+                nixie_tla::annotations::assume(&mut inf, &ann.name, &parsed, &mut uninterpreted)
+            {
+                return Err(SetupError::Types(format!(
+                    "the @type: annotation on `{}` conflicts: {e}",
+                    ann.name
+                )));
+            }
+        }
         for t in [&init_k, &next_k]
             .into_iter()
             .chain(invs.iter().map(|(_, t)| t))

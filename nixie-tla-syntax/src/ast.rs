@@ -572,6 +572,10 @@ pub struct Module {
     pub units: Vec<Unit>,
     /// The span from `----` to `====`.
     pub span: Span,
+    /// The comments this module's file carried, for `@type:` extraction.
+    /// Empty for built-in modules; the loader copies the file's comments in
+    /// before the attachment pass.
+    pub comments: Vec<crate::token::Comment>,
 }
 
 impl Module {

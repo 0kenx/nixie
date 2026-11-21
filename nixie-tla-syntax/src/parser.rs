@@ -274,6 +274,9 @@ impl Parser {
                     name,
                     units,
                     span: start.merge(end),
+                    // Filled by the caller (`parse_file`), which owns the
+                    // lexer's comment list.
+                    comments: Vec::new(),
                 });
             }
             if self.at_eof() {
@@ -2362,7 +2365,8 @@ static EOF_TOKEN_SENTINEL: Token = Token {
 pub fn parse_file(src: &str) -> Result<ParsedFile> {
     let lexed = lexer::lex(src)?;
     let mut parser = Parser::new(lexed.tokens);
-    let module = parser.parse_file()?;
+    let mut module = parser.parse_file()?;
+    module.comments = lexed.comments.clone();
     Ok(ParsedFile {
         module,
         comments: lexed.comments,

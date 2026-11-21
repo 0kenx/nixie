@@ -46,6 +46,15 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
             let spur = tm.intern_str(&format!("TlaOpaque{n}"));
             Ok(tm.sorts.intern(nixie_core::SortKind::Uninterpreted(spur)))
         }
+        // A declared uninterpreted type from an `@type:` annotation: its own
+        // base, one sort per NAME, so two occurrences of `T` are one type
+        // (the annotation side interned them into one variable) and `T` is
+        // never `Int` or `Str`. Literals of it are strings of the form
+        // `"x_OF_T"`, which the string sort already keeps distinct.
+        Type::Uninterpreted(name) => {
+            let spur = tm.intern_str(&format!("TlaUninterpreted{name}"));
+            Ok(tm.sorts.intern(nixie_core::SortKind::Uninterpreted(spur)))
+        }
         // A TLA+ set maps onto the solver's finite-set sort, which is the one
         // place a *state variable* of set type can live: the arena encoding
         // needs a statically known candidate list, and `s@1` has nowhere to

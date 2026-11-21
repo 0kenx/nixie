@@ -33,6 +33,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod annotations;
 pub mod error;
 pub mod eval;
 pub mod kera;

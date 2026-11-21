@@ -153,6 +153,11 @@ pub enum Type {
     /// representative slot so that two occurrences of the same variable print
     /// the same way.
     Var(u32),
+    /// An **uninterpreted** base type, from an `@type:` annotation's
+    /// uppercase name. Interned by name on the annotation side into one
+    /// inference variable, so two occurrences are one type and one opaque
+    /// sort; the name is kept for diagnostics.
+    Uninterpreted(String),
 }
 
 impl fmt::Display for Type {
@@ -188,6 +193,7 @@ impl fmt::Display for Type {
                 f.write_str("]")
             }
             Self::Var(n) => write!(f, "'{n}"),
+            Self::Uninterpreted(name) => write!(f, "{name}"),
         }
     }
 }

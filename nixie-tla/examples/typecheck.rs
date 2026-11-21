@@ -172,5 +172,6 @@ fn shape_name(t: &nixie_tla::Type) -> String {
         }
         .into(),
         T::Var(_) => "'unconstrained".into(),
+        T::Uninterpreted(_) => "uninterpreted".into(),
     }
 }
