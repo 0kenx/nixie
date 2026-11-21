@@ -70,20 +70,28 @@ fn a_constant_assignment_makes_a_range_enumerable() {
     );
 }
 
-/// …and without it the same specification cannot be prepared at all, because
-/// nothing pins `N`. The point is that the difference is *reported*, not that
-/// a plausible bound is invented.
+/// …and without it, the specification as written leaves `N` arbitrary. The
+/// checker answers for that specification — and the answer is a violation,
+/// because the invariant only holds for the pinned `N` the author meant. The
+/// difference is *answered*, not papered over with an invented bound.
 #[test]
 fn without_the_assignment_the_same_spec_is_refused() {
+    // Since range *membership* became a comparison (issue #22), an unpinned
+    // `N` no longer makes the encoding refuse: the query is answered for the
+    // arbitrary `N` the specification actually leaves open — and the answer
+    // is that the invariant does not hold (a small `N` breaks it), which is
+    // the true verdict about the specification as written, not a guess.
     let parsed = nixie_tla_syntax::parse_file(BOUNDED).expect("parses");
     let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
     let module = spec.root_module().expect("has a root module");
     let mut tm = TermManager::new();
     let mut bmc =
         Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
-    assert!(
-        bmc.check(4, &mut tm).is_err(),
-        "an unpinned `N` must be refused, not guessed"
+    let out = bmc.check(4, &mut tm).expect("checks");
+    assert_eq!(
+        out,
+        Outcome::Violation { step: 0 },
+        "with `N` free, x = 1 leaves `x \\in 1..N` when N = 0"
     );
 }
 
