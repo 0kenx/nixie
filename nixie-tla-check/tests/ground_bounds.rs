@@ -157,12 +157,15 @@ Inv  == x \in 0 .. N - 1
 ====
 ";
 
-/// With nothing pinning `N`, `0 .. N-1` has no candidate list and the checker
-/// must say so rather than pick a bound. The invariant is encoded when it is
-/// checked, not when the specification is prepared, so the refusal surfaces
-/// there.
+/// With nothing pinning `N`, `x \\in 0..N-1` used to be refused because the
+/// arena could not enumerate the range. Since membership became a comparison
+/// (issue #22) the query is answered — and the answer is a **violation**:
+/// with `N` free, `x = 1` leaves the invariant when `N = 1`. That is the
+/// true verdict about the specification as written; what still refuses is
+/// anything that needs the range's *elements* (a fold, a cardinality over a
+/// set built from it), which no comparison can serve.
 #[test]
-fn a_symbolic_bound_is_still_refused() {
+fn a_symbolic_bound_is_answered_not_enumerated() {
     let parsed = nixie_tla_syntax::parse_file(SYMBOLIC).expect("parses");
     let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
     let module = loaded.root_module().expect("has a root module");
@@ -175,14 +178,12 @@ fn a_symbolic_bound_is_still_refused() {
         &config,
         &mut tm,
     )
-    .expect("prepares: only `Init` and `Next` are encoded here");
-    let Err(why) = bmc.check(1, &mut tm) else {
-        panic!("a symbolic bound must not be enumerated");
-    };
-    let text = why.to_string();
-    assert!(
-        text.contains("non-literal upper bound"),
-        "expected a refusal naming the bound, got: {text}"
+    .expect("prepares");
+    let out = bmc.check(1, &mut tm).expect("checks");
+    assert_eq!(
+        out,
+        Outcome::Violation { step: 0 },
+        "with `N` free the invariant does not hold — the honest verdict"
     );
 }
 
