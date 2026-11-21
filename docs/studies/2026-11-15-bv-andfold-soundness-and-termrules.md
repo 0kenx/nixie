@@ -1407,3 +1407,28 @@ The next lever on that class would be reducing REBUILT nodes
 themselves (e.g. short-circuiting substitutions whose result equals
 the input — `resolved(id).unwrap_or(t)` already identity-shapes the
 children; the rebuilds that remain construct genuinely new terms).
+
+## Forty-third addendum: the survey tail closed by code-read (machine at load 43 / si 92 MB/s — no builds, no measurement)
+
+Two addendum-39/42 items read and dispositioned:
+
+* **ClauseArena::alloc (tier-2 item 4): NO LEVER.**  The allocator is
+  bump-pointer (`pos` + aligned extent), one capacity amortization, one
+  activity-slot push, header write + literal memcpy — no mechanical
+  waste.  Its 6.6–8.7 % encode-bound share is the intrinsic cost of a
+  clause per gate.  Dead as a survey item.
+* **Rebuilt-node skip (addendum 42's tail idea): SCOPED, INVARIANT-
+  GATED.**  `rebuild_children_with` re-runs mk_*/intern even when every
+  child substituted to itself; skipping would save the probe per
+  unchanged node — but mk_* applies FOLD rules, so skip≡original is
+  counter-identical ONLY IF every manager node is already mk_*-normal
+  (parser-built nodes may not be; the substitution currently
+  normalizes them as a side effect).  Needs an audit of the parser's
+  construction path before any build.  Est. 1–3 % of the
+  substitution-class cells; low priority.
+
+The survey is thereby exhausted to: the ternary index (ordering hazard
+— clauses shrink into length 3, so id-ascending upkeep hooks every
+mutate site), the skip idea above, and the window-blocked measurement
+set (census, wall A/Bs).  Nothing further is actionable under the
+current machine state.
