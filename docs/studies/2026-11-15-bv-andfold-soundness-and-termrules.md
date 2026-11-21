@@ -1374,3 +1374,36 @@ the walker family.
 
 Also re-ranked by the same profile: `mk_bv_*` rebuild frames (the
 substitution's re-interning) are the block after the probes.
+
+## Forty-second addendum: the domain prefilter + SubstSession — LANDED (`bca04f4a`), and a cross-agent incident handled
+
+The addendum-41 follow-ups landed: the Rc-domain bitmap on
+SubstitutionBuilder (with the capture-avoidance SOUNDNESS fix found by
+the suite — binder scopes add rename entries a parent bitmap cannot
+cover; they carry None), and the public SubstSession used by
+bv_reconstruct_eliminations (one session per round: shared memo +
+bitmap instead of per-definition fresh caches and re-cloned mappings).
+Counters exact on five probes.
+
+**The incident**: mid-bar, two solver tests failed
+(`choose_of_ite_picks_the_taken_branch`,
+`rejected_set_synthesis_cannot_publish_identical_choices`).  Bisection
+through my own change-set (bitmap disabled → still failing; session
+switch reverted → still failing) exonerated it; a throwaway worktree at
+HEAD `69e394e8` (16 other-agent commits — the tla #20/#22/#24/#25
+sets/CHOOSE/skolemization merge wave — landed since my previous green
+bar) reproduced BOTH failures without my changes.  The bar was completed
+excluding those two PRE-EXISTING failures (12 869/12 869 everything
+else), with the exoneration evidence recorded here.  The sets/CHOOSE
+regression is its owners' to fix; next session should check whether
+HEAD still fails those before running any full-suite bar.
+
+**The re-attribution** (this addendum's real finding): the substitution
+block's remaining hashbrown frames are `TermManager::intern` /
+`SortManager::intern` — hashconsing every REBUILT node in
+`rebuild_substituted`'s mk_* path.  The probe-overhead layers (memo,
+cache, domain) are exhausted; what remains is intrinsic rebuild work.
+The next lever on that class would be reducing REBUILT nodes
+themselves (e.g. short-circuiting substitutions whose result equals
+the input — `resolved(id).unwrap_or(t)` already identity-shapes the
+children; the rebuilds that remain construct genuinely new terms).
