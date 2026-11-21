@@ -1193,6 +1193,43 @@ impl Encoder {
                     .map(|t| Rc::new(Value::Scalar(t)))
                     .ok_or_else(|| EncodeError::Unsupported(format!("`{name}` as a set")))
             }
+            // `x \in SUBSET T` is subset-or-equal, decided by the set theory
+            // — no 2^n expansion, no candidate list. This is Apalache's
+            // `PowSetCtorRule` in substance: keep the powerset symbolic and
+            // decide membership structurally.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Powerset(_)) => {
+                let Kera::Powerset(base) = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("SUBSET".into()));
+                };
+                let elem = self.go(a, tm)?;
+                let inner = match self.set_repr(base, tm)? {
+                    SetRepr::Native(t) => t,
+                    SetRepr::Arena(cell) => {
+                        // The base's element sort is the sort of its members;
+                        // when there are none, the element being tested is a
+                        // set whose element sort is the one to use (a subset
+                        // of the empty set is `{}` at that sort). Anything
+                        // else has no sort to build the empty base at, and is
+                        // declined rather than guessed.
+                        let e = match cell.members.first().map(|m| &*m.value) {
+                            Some(Value::Scalar(k)) => self.sort_of(*k, tm)?,
+                            _ => {
+                                let s = self.sort_of(elem, tm)?;
+                                match tm.sorts.get(s).map(|x| x.kind.clone()) {
+                                    Some(nixie_core::SortKind::Set(el)) => el,
+                                    _ => {
+                                        return Err(EncodeError::Unsupported(
+                                            "SUBSET of a base with no element sort".into(),
+                                        ));
+                                    }
+                                }
+                            }
+                        };
+                        self.native_set_of(&cell.members, e, tm)?
+                    }
+                };
+                scalar(tm.mk_set_subset(elem, inner))
+            }
             // Membership in a binary set operation whose one side is a
             // standard **infinite** set is encoded structurally on that side,
             // because the standard side has no finite representation to
@@ -1374,10 +1411,42 @@ impl Encoder {
                 }
                 self.mk_set(members)
             }
-            Kera::Filter { .. } | Kera::Map { .. } if self.set_encoding == SetEncoding::Native => {
-                Err(EncodeError::Unsupported(
-                    "a set comprehension (the set theory has no comprehension)".into(),
-                ))
+            // A comprehension in native mode is declined **only when its base
+            // set has no candidate list**. When the base is enumerable — a
+            // literal, a range, a set this encoder built, or a framed state
+            // set — the filter/map is built as an arena cell and converted
+            // back with `native_set_of`, exactly as a bounded quantifier
+            // already crosses that line through `set_as_arena`. Declining
+            // the enumerable case was what blocked `MustardWatch.tla`'s
+            // `{t \in Threads : …}` in `Init`, where the base is a literal.
+            Kera::Filter { var, set, pred } if self.set_encoding == SetEncoding::Native => {
+                let base = self.set_as_arena(set, tm)?;
+                let mut members = Vec::with_capacity(base.members.len());
+                for m in &base.members {
+                    let keep = self.with_bound(var, Rc::clone(&m.value), pred, tm)?;
+                    let Value::Scalar(keep) = &*keep else {
+                        return Err(EncodeError::Unsupported(
+                            "a set-valued filter predicate".into(),
+                        ));
+                    };
+                    members.push(Member {
+                        value: Rc::clone(&m.value),
+                        present: tm.mk_and([m.present, *keep]),
+                    });
+                }
+                self.mk_set(members)
+            }
+            Kera::Map { var, set, expr } if self.set_encoding == SetEncoding::Native => {
+                let base = self.set_as_arena(set, tm)?;
+                let mut members = Vec::with_capacity(base.members.len());
+                for m in &base.members {
+                    let mapped = self.with_bound(var, Rc::clone(&m.value), expr, tm)?;
+                    members.push(Member {
+                        value: mapped,
+                        present: m.present,
+                    });
+                }
+                self.mk_set(members)
             }
             Kera::Filter { var, set, pred } => {
                 let base = self.set(set, tm)?;
@@ -1411,6 +1480,55 @@ impl Encoder {
 
             // `UNION S` flattens one level: every candidate of every candidate,
             // present when both the inner set and the member are.
+            // `SUBSET S` as a **value**: the full 2^n expansion over the
+            // base's candidate list, bounded by `max_candidates` — the same
+            // budget that guards every other blow-up, and for the same
+            // reason: 2^n turns a large set into an out-of-memory kill
+            // where the budget turns it into a named refusal. Members are
+            // conditional exactly when the base's candidates are.
+            //
+            // Only the *value* needs the expansion. Membership took the
+            // structural shortcut above, so a `SUBSET` that is only ever
+            // tested never enumerates at all.
+            Kera::Powerset(base) => {
+                let cell = self.set(base, tm)?;
+                // Bit-parallel over the candidate list: `out` starts as the
+                // one empty-subset candidate and each base member doubles it.
+                let mut out = vec![Member {
+                    value: Rc::new(Value::Set(SetCell { members: Vec::new() })),
+                    present: tm.mk_bool(true),
+                }];
+                for m in &cell.members {
+                    if out.len() > self.max_candidates {
+                        return Err(EncodeError::TooManyCandidates {
+                            limit: self.max_candidates,
+                        });
+                    }
+                    let mut next = Vec::with_capacity(out.len() * 2);
+                    for sub in &out {
+                        // Without this member.
+                        next.push(Member {
+                            value: Rc::clone(&sub.value),
+                            present: sub.present,
+                        });
+                        // With it — its own presence guards the choice.
+                        let Value::Set(inner) = &*sub.value else {
+                            return Err(EncodeError::ShapeClash);
+                        };
+                        let mut members = inner.members.clone();
+                        members.push(Member {
+                            value: Rc::clone(&m.value),
+                            present: m.present,
+                        });
+                        next.push(Member {
+                            value: Rc::new(Value::Set(SetCell { members })),
+                            present: tm.mk_and([sub.present, m.present]),
+                        });
+                    }
+                    out = next;
+                }
+                self.mk_set(out)
+            }
             Kera::BigUnion(a) => {
                 let outer = self.set(a, tm)?;
                 let mut members = Vec::new();
@@ -2865,6 +2983,10 @@ fn describe(k: &Kera) -> String {
         Kera::Forall { .. } | Kera::Exists { .. } => "a quantifier",
         Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => "`CHOOSE`",
         Kera::In(_, _) => "`\\in`",
+        // The set theory *is* wired into the solver; what this names is the
+        // construct the encoding could not serve — usually a base set with
+        // no candidate list to enumerate from. Saying "not wired up" here
+        // sent readers looking for a wiring bug that was not there.
         Kera::SetEnum(_)
         | Kera::Filter { .. }
         | Kera::Map { .. }
@@ -2872,7 +2994,7 @@ fn describe(k: &Kera) -> String {
         | Kera::Powerset(_)
         | Kera::BigUnion(_)
         | Kera::Range(_, _)
-        | Kera::Times(_) => "a set expression (the set theory is not wired up yet)",
+        | Kera::Times(_) => "a set expression with no enumerable members to build it from",
         Kera::FunDef { .. } => "a function constructor `[x \\in S |-> e]`",
         Kera::Domain(_) => "`DOMAIN`",
         Kera::FunSet { .. } => "a function set `[S -> T]`",
