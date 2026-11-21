@@ -347,13 +347,13 @@ impl Solver {
         let mut gates: Vec<Gate> = Vec::new();
 
         // Ternary clauses indexed by the variables they contain (for XOR
-        // lookup) and scanned directly for AND.
+        // lookup) and scanned directly for AND.  Single-pass `iter_views`
+        // (one view construction per id — the `iter_ids`+`get` form built
+        // two over headers scattered across cache lines; this scan was
+        // 17 % of a search-heavy cell inside `ClauseDatabase::view`).
         let mut ternary: Vec<SmallVec<[Lit; 3]>> = Vec::new();
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.lits.len() != 3 {
+        for (_cid, c) in self.clauses.iter_views() {
+            if c.lits.len() != 3 {
                 continue;
             }
             ternary.push(c.lits.iter().copied().collect());
