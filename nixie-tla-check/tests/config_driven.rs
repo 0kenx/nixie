@@ -306,10 +306,13 @@ Inv   == x < 3
         run(C, "INVARIANT Inv", "Init", "Next", "Inv", 5),
         Outcome::Violation { step: 3 }
     );
-    // The constraint excludes exactly that state.
+    // The constraint excludes exactly that state — and, since the
+    // constrained behaviours all stop at `x = 2`, the deadlock check
+    // (on since issue #26) reports the stuck state rather than a clean
+    // bound. The *violation* is still excluded, which is the point.
     assert_eq!(
         run(C, "CONSTRAINT Bound", "Init", "Next", "Inv", 5),
-        Outcome::NoViolationWithin(5)
+        Outcome::Deadlock { step: 2 }
     );
 }
 

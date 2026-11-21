@@ -399,29 +399,28 @@ fn a_missing_named_constraint_is_an_error() {
 ///
 /// Found on Apalache's `UnchangedAsInv1663.tla`, where the checker happily
 /// reported a counterexample: with no transition asserted at depth 0, the
-/// next-state value in `UNCHANGED x` is unconstrained, so `~Inv` is trivially
-/// satisfiable. The answer was a faithful reading of the encoded formula and a
-/// meaningless statement about the specification.
+/// An action-level invariant is no longer rejected — it is a legitimate
+/// question (issue #26: Apalache's `maybeActionInvariants`), checked over
+/// step pairs; the dedicated `tests/deadlock.rs` pins that machinery. What
+/// stays rejected here is the *temporal* level, which is a lasso question
+/// this bounded loop does not ask.
 #[test]
-fn an_action_used_as_an_invariant_is_rejected() {
+fn a_temporal_invariant_is_still_rejected() {
     let src = r"
----- MODULE ActionInv ----
+---- MODULE TemporalInv ----
 EXTENDS Integers
 VARIABLE x
 Init == x = 0
-Next == x' = x
-Inv  == UNCHANGED x
+Next == UNCHANGED x
+Inv  == []TRUE
 ====
 ";
     assert!(
         matches!(
             setup_err(src, "Init", "Next", "Inv"),
-            SetupError::Level {
-                role: "an invariant",
-                ..
-            }
+            SetupError::Level { .. }
         ),
-        "an action invariant must be rejected, not reported as violated"
+        "a temporal invariant must be refused"
     );
 }
 

@@ -66,6 +66,8 @@ fn main() {
     let mut no_violation = 0usize;
     let mut violations: Vec<String> = Vec::new();
     let mut unknown = 0usize;
+    let mut too_short = 0usize;
+    let mut deadlocks: Vec<String> = Vec::new();
     let mut assumptions_unsat = 0usize;
     let mut weakened = 0usize;
     let mut cfg_unaware = 0usize;
@@ -193,8 +195,10 @@ fn main() {
         let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
             Ok(mut b) => {
                 // Deterministic, so two runs over the corpus agree; see
-                // `Bmc::set_conflict_limit`.
+                // `Bmc::set_conflict_limit`. Deadlock checking is ON —
+                // Apalache's default — so the corpus measures it too.
                 b.set_conflict_limit(limit);
+                b.set_check_deadlocks(true);
                 b
             }
             Err(e) => {
@@ -308,6 +312,20 @@ fn main() {
             // Not a search failure: a decision that the specification has no
             // behaviours. Counted separately so it cannot hide among either
             // the clean runs or the undecided ones.
+            Ok(Outcome::Deadlock { step }) => {
+                if list {
+                    println!("{path}\tdeadlock\t{step}");
+                }
+                checked += 1;
+                deadlocks.push(format!("{file}: deadlock after {step} step(s)"));
+            }
+            Ok(Outcome::ExecutionsTooShort) => {
+                if list {
+                    println!("{path}\texecutions-too-short");
+                }
+                checked += 1;
+                too_short += 1;
+            }
             Ok(Outcome::AssumptionsUnsatisfiable) => {
                 if list {
                     println!("{path}\tassumptions-unsatisfiable");
@@ -349,6 +367,13 @@ fn main() {
     println!("      of which decoded but not replayed: {not_replayed}");
     println!("      of which with unapplied .cfg   : {cfg_unaware}");
     println!("    solver undecided              : {unknown}");
+    println!("    executions too short          : {too_short}");
+    if !deadlocks.is_empty() {
+        println!("  deadlocks:");
+        for d in deadlocks.iter().take(16) {
+            println!("      {d}");
+        }
+    }
     println!("    contradictory assumptions      : {assumptions_unsat}");
     for v in violations.iter().take(64) {
         println!("      {v}");

@@ -55,6 +55,27 @@ pub enum Outcome {
         /// The number of `Next` steps taken before the violating state.
         step: u32,
     },
+    /// A reachable state exists, at this many steps, that **no transition
+    /// leaves**: a deadlock.
+    ///
+    /// Apalache's `check` looks for deadlocks by default, and its exit code
+    /// for one is the same 12 a counterexample gets — the distinction is in
+    /// the outcome line, not the code. The no-successor half is a *proof*
+    /// (the `Next` query at this step came back `Unsat` over every state
+    /// that has one), never a guess: an undecided query makes the whole
+    /// verdict [`Outcome::Unknown`].
+    Deadlock {
+        /// The number of `Next` steps taken before the stuck state.
+        step: u32,
+    },
+    /// No behaviour of the full `--length` exists.
+    ///
+    /// With deadlock checking off and no violation found, the honest report
+    /// is not "no error" but "nothing ran that far": every behaviour stopped
+    /// short, which is either a deadlock nobody asked about or a bound past
+    /// the specification's lifetime. Apalache's own outcome and exit code
+    /// (0) — the message carries the distinction.
+    ExecutionsTooShort,
     /// The search could not be completed.
     ///
     /// Carries what stopped it. Never reported as either of the above: an
@@ -71,6 +92,17 @@ pub enum Outcome {
     /// decide; this is decided, and what it decided is that the question is
     /// empty.
     AssumptionsUnsatisfiable,
+}
+
+/// The result of one step's deadlock question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeadlockSearch {
+    /// No reachable state at this step is stuck.
+    None,
+    /// A reachable state at this step has no successor.
+    Found(u32),
+    /// The question could not be answered.
+    Unknown(String),
 }
 
 /// Why a specification could not be checked at all.
@@ -214,6 +246,14 @@ pub struct Bmc {
     counterexample: Option<Trace>,
     /// Whether that counterexample was confirmed independently.
     verification: Option<Verification>,
+    /// Whether the search also looks for **deadlocks** — reachable states no
+    /// transition leaves. Apalache's default (`checkDeadlocks = true`).
+    check_deadlocks: bool,
+    /// The step behind the last reported [`Outcome::Deadlock`].
+    deadlock_step: Option<u32>,
+    /// The names of the **action** invariants — formulas constraining a step
+    /// pair `(s_j, s_{j+1})`, checked over pairs rather than single states.
+    action_invariant_names: Vec<String>,
     /// Clauses ruling out counterexamples already reported.
     ///
     /// Asserted on every subsequent query, which is how a *second*
@@ -427,8 +467,21 @@ impl Bmc {
         };
         require(init, "an initial predicate", nixie_tla_syntax::Level::State)?;
         require(next, "a next-state action", nixie_tla_syntax::Level::Action)?;
+        // The invariant levels split three ways, and only the temporal one
+        // is refused: an action-level invariant is a legitimate thing to ask
+        // (Apalache's `ActionInv.tla`), checked over step pairs; a temporal
+        // one is a lasso question this bounded loop does not ask, and
+        // pretending otherwise would answer a different question silently.
+        let levels = nixie_tla_syntax::check_module(module);
         for inv in roles.inv {
-            require(inv, "an invariant", nixie_tla_syntax::Level::State)?;
+            if invariant_kind(&levels, inv) == InvariantKind::Temporal {
+                return Err(SetupError::Level {
+                    name: (*inv).to_string(),
+                    role: "an invariant",
+                    found: "a temporal".to_string(),
+                    wanted: "a state or action".to_string(),
+                });
+            }
         }
 
         let init_k = lower_one(&mut low, module, init)?;
@@ -602,7 +655,7 @@ impl Bmc {
             }
         }
 
-        let state = state_variables(module);
+        let state = all_state_variables(spec);
         // Native sets, not the arena. A set-valued **state variable** has no
         // statically knowable candidate list — `s@1` holds whatever the
         // transition relation puts there — so the arena cannot represent one
@@ -682,6 +735,14 @@ impl Bmc {
             conflict_limit: None,
             counterexample: None,
             verification: None,
+            check_deadlocks: true,
+            deadlock_step: None,
+            action_invariant_names: roles
+                .inv
+                .iter()
+                .filter(|inv| invariant_kind(&levels, inv) == InvariantKind::Action)
+                .map(|inv| (*inv).to_string())
+                .collect(),
             blocked: Vec::new(),
             violated_invariants: Vec::new(),
         })
@@ -758,8 +819,16 @@ impl Bmc {
             .encoder
             .encode_at(&self.init, 0, tm)
             .map_err(|e| named("Init", &e))?;
+        // One extra transition when there are action invariants: they are
+        // checked over the pair `(s_j, s_{j+1})`, so the last one needs
+        // `Next@depth`, which the state-invariant queries never assert.
+        let unroll_to = if self.action_invariant_names.is_empty() {
+            depth
+        } else {
+            depth.saturating_add(1)
+        };
         let mut transitions = Vec::new();
-        for i in 0..depth {
+        for i in 0..unroll_to {
             let t = self
                 .encoder
                 .encode_at(&self.next, i, tm)
@@ -849,19 +918,25 @@ impl Bmc {
             // One query, not one per invariant: the shortest counterexample
             // against *any* of them is what a bounded search must find first,
             // and which one it broke is read back afterwards, from the trace.
-            let mut negated = Vec::with_capacity(self.invs.len());
-            for (name, inv) in &self.invs {
+            // The state-invariant query. Action-level names are NOT part of
+            // it: their `j+1` half would be unconstrained here (the step's
+            // transition is not asserted for this query), and a free `s_{j+1}`
+            // satisfies any negated action invariant — a counterexample the
+            // specification cannot produce. They get their own query below,
+            // with the transition asserted.
+            let state_invs: Vec<&(String, KeraRef)> = self
+                .invs
+                .iter()
+                .filter(|(n, _)| !self.action_invariant_names.contains(n))
+                .collect();
+            let mut negated = Vec::with_capacity(state_invs.len());
+            for (name, inv) in &state_invs {
                 let t = self
                     .encoder
                     .encode_at(inv, j, tm)
                     .map_err(|e| named(name, &e))?;
                 negated.push(tm.mk_not(t));
             }
-            let violated = if negated.len() == 1 {
-                negated[0]
-            } else {
-                tm.mk_or(negated)
-            };
             // Encoding this depth's invariant can itself introduce facts —
             // a `CHOOSE x : x \\notin S` mints its non-membership here —
             // so drain again, before the query is asked rather than at the
@@ -872,89 +947,356 @@ impl Bmc {
                 side_sent += 1;
             }
 
-            solver.push();
-            solver.assert(violated, tm);
-            for c in &self.blocked {
-                solver.assert(*c, tm);
-            }
-            let answer = solver.check(tm);
-            if answer != SolverResult::Sat {
-                // Pop before any early return: an abandoned scope would leak
-                // its assertions into the *next* `check` call on this `Bmc`
-                // (the `--max-error` loop reuses it), answering a different
-                // question than the one asked.
-                solver.pop();
-            }
-            match answer {
-                SolverResult::Sat => {
-                    // A `Sat` answer is a counterexample **candidate**. It is
-                    // only a counterexample once it has been read back as
-                    // TLA+ values and replayed by `nixie-tla`'s evaluator —
-                    // the independent implementation of TLA+ that
-                    // `bench/tla_eval` checks against TLC. Until both succeed
-                    // the honest verdict is [`Outcome::Unknown`], never
-                    // [`Outcome::Violation`]: exit 12 is what users and tools
-                    // act on, and an undecodable or non-replaying trace is
-                    // not evidence of a violation. It is evidence that the
-                    // pipeline disagrees with itself somewhere — lowering,
-                    // encoding or the solver — and every such disagreement
-                    // stays visible in [`Bmc::verification`] so it gets
-                    // chased rather than explained away.
-                    //
-                    // The model is read before the pop; the trace extraction
-                    // walks it, and a popped scope's model is not one to
-                    // read.
-                    let (trace, verdict) = match solver.model() {
-                        None => (
-                            None,
-                            Verification::NotDecoded("the solver produced no model".to_string()),
-                        ),
-                        Some(model) => match self.extract(model, j, tm) {
-                            Err(why) => (None, Verification::NotDecoded(why)),
-                            Ok(t) => match self.replay(&t) {
-                                Err(why) => (Some(t), Verification::NotReplayed(why)),
-                                Ok(()) => (Some(t), Verification::Replayed),
-                            },
-                        },
-                    };
+            if !negated.is_empty() {
+                let violated = if negated.len() == 1 {
+                    negated[0]
+                } else {
+                    tm.mk_or(negated)
+                };
+                solver.push();
+                solver.assert(violated, tm);
+                for c in &self.blocked {
+                    solver.assert(*c, tm);
+                }
+                let answer = solver.check(tm);
+                if answer != SolverResult::Sat {
+                    // Pop before any early return: an abandoned scope would leak
+                    // its assertions into the *next* `check` call on this `Bmc`
+                    // (the `--max-error` loop reuses it), answering a different
+                    // question than the one asked.
                     solver.pop();
-                    self.counterexample = trace;
-                    self.verification = Some(verdict.clone());
-                    // A search that ran with dropped assumptions is a search
-                    // over a **superset** of the intended states. A `Sat`
-                    // there may be an artefact of exactly the widening, so it
-                    // is `Unknown` and says why — the count is what a caller
-                    // needs in order to decide whether to trust it.
-                    if self.dropped_assumptions > 0 {
-                        return Ok(Outcome::Unknown(format!(
-                            "a counterexample was found, but {} assumption(s) \
+                }
+                match answer {
+                    SolverResult::Sat => {
+                        // A `Sat` answer is a counterexample **candidate**. It is
+                        // only a counterexample once it has been read back as
+                        // TLA+ values and replayed by `nixie-tla`'s evaluator —
+                        // the independent implementation of TLA+ that
+                        // `bench/tla_eval` checks against TLC. Until both succeed
+                        // the honest verdict is [`Outcome::Unknown`], never
+                        // [`Outcome::Violation`]: exit 12 is what users and tools
+                        // act on, and an undecodable or non-replaying trace is
+                        // not evidence of a violation. It is evidence that the
+                        // pipeline disagrees with itself somewhere — lowering,
+                        // encoding or the solver — and every such disagreement
+                        // stays visible in [`Bmc::verification`] so it gets
+                        // chased rather than explained away.
+                        //
+                        // The model is read before the pop; the trace extraction
+                        // walks it, and a popped scope's model is not one to
+                        // read.
+                        let (trace, verdict) = match solver.model() {
+                            None => (
+                                None,
+                                Verification::NotDecoded(
+                                    "the solver produced no model".to_string(),
+                                ),
+                            ),
+                            Some(model) => match self.extract(model, j, tm) {
+                                Err(why) => (None, Verification::NotDecoded(why)),
+                                Ok(t) => match self.replay(&t) {
+                                    Err(why) => (Some(t), Verification::NotReplayed(why)),
+                                    Ok(()) => (Some(t), Verification::Replayed),
+                                },
+                            },
+                        };
+                        solver.pop();
+                        self.counterexample = trace;
+                        self.verification = Some(verdict.clone());
+                        // A search that ran with dropped assumptions is a search
+                        // over a **superset** of the intended states. A `Sat`
+                        // there may be an artefact of exactly the widening, so it
+                        // is `Unknown` and says why — the count is what a caller
+                        // needs in order to decide whether to trust it.
+                        if self.dropped_assumptions > 0 {
+                            return Ok(Outcome::Unknown(format!(
+                                "a counterexample was found, but {} assumption(s) \
                              could not be encoded, so the search ran over more \
                              states than the specification allows and the trace \
                              may be an artefact",
-                            self.dropped_assumptions
+                                self.dropped_assumptions
+                            )));
+                        }
+                        return match &verdict {
+                            Verification::Replayed => Ok(Outcome::Violation { step: j }),
+                            Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
+                                "a counterexample was found but could not be read \
+                             back as TLA+ values: {why}"
+                            ))),
+                            Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
+                                "a counterexample was read back but does not replay \
+                             — the encoding and the evaluator disagree: {why}"
+                            ))),
+                        };
+                    }
+                    SolverResult::Unsat => {}
+                    SolverResult::Unknown => {
+                        return Ok(Outcome::Unknown(format!(
+                            "the solver could not decide the {j}-step query"
                         )));
                     }
-                    return match &verdict {
-                        Verification::Replayed => Ok(Outcome::Violation { step: j }),
-                        Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
-                            "a counterexample was found but could not be read \
-                             back as TLA+ values: {why}"
-                        ))),
-                        Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
-                            "a counterexample was read back but does not replay \
-                             — the encoding and the evaluator disagree: {why}"
-                        ))),
-                    };
                 }
-                SolverResult::Unsat => {}
+            } // state-invariant query
+
+            // ---- the action-invariant query, at this step ----
+            //
+            // Over the executed pair `(s_j, s_{j+1})`: the transition is
+            // asserted, so the invariant's primed half reads a state that
+            // really follows — no free `s_{j+1}` can satisfy its negation.
+            if !self.action_invariant_names.is_empty() {
+                // The step's own transition, asserted persistently for the
+                // rest of the unrolling (it is a fact about step j+1's
+                // reachability, not about this query).
+                if j < transitions.len() as u32 {
+                    solver.assert(transitions[j as usize], tm);
+                }
+                let action_invs: Vec<&(String, KeraRef)> = self
+                    .invs
+                    .iter()
+                    .filter(|(n, _)| self.action_invariant_names.contains(n))
+                    .collect();
+                let mut negated = Vec::with_capacity(action_invs.len());
+                for (name, inv) in &action_invs {
+                    let t = self
+                        .encoder
+                        .encode_at(inv, j, tm)
+                        .map_err(|e| named(name, &e))?;
+                    negated.push(tm.mk_not(t));
+                }
+                let violated = if negated.len() == 1 {
+                    negated[0]
+                } else {
+                    tm.mk_or(negated)
+                };
+                solver.push();
+                solver.assert(violated, tm);
+                for c in &self.blocked {
+                    solver.assert(*c, tm);
+                }
+                let answer = solver.check(tm);
+                if answer != SolverResult::Sat {
+                    solver.pop();
+                }
+                match answer {
+                    SolverResult::Sat => {
+                        // The same read-back-and-replay gate as a state
+                        // violation: the trace has `j + 2` states, and the
+                        // action invariants replay over its last pair.
+                        let (trace, verdict) = match solver.model() {
+                            None => (
+                                None,
+                                Verification::NotDecoded(
+                                    "the solver produced no model".to_string(),
+                                ),
+                            ),
+                            Some(model) => match self.extract(model, j.saturating_add(1), tm) {
+                                Err(why) => (None, Verification::NotDecoded(why)),
+                                Ok(t) => match self.replay(&t) {
+                                    Err(why) => (Some(t), Verification::NotReplayed(why)),
+                                    Ok(()) => (Some(t), Verification::Replayed),
+                                },
+                            },
+                        };
+                        solver.pop();
+                        self.counterexample = trace;
+                        self.verification = Some(verdict.clone());
+                        if self.dropped_assumptions > 0 {
+                            return Ok(Outcome::Unknown(format!(
+                                "a counterexample was found, but {} assumption(s) \
+                                 could not be encoded, so the search ran over more \
+                                 states than the specification allows and the trace \
+                                 may be an artefact",
+                                self.dropped_assumptions
+                            )));
+                        }
+                        return match &verdict {
+                            Verification::Replayed => Ok(Outcome::Violation {
+                                step: j.saturating_add(1),
+                            }),
+                            Verification::NotDecoded(why) => Ok(Outcome::Unknown(format!(
+                                "a counterexample was found but could not be read \
+                                 back as TLA+ values: {why}"
+                            ))),
+                            Verification::NotReplayed(why) => Ok(Outcome::Unknown(format!(
+                                "a counterexample was read back but does not replay \
+                                 — the encoding and the evaluator disagree: {why}"
+                            ))),
+                        };
+                    }
+                    SolverResult::Unsat => {}
+                    SolverResult::Unknown => {
+                        return Ok(Outcome::Unknown(format!(
+                            "the solver could not decide the {j}-step action-invariant query"
+                        )));
+                    }
+                }
+            }
+        }
+
+        // ---- the deadlock question, as a post-pass ----
+        //
+        // Asked per step, but **after** the whole invariant sweep. Apalache
+        // interleaves the two per step (their `SeqModelChecker`), and the
+        // difference in *reporting order* is documented here deliberately:
+        // running the deadlock probes between the invariant queries perturbs
+        // the CDCL trajectory (clauses learned in a probe scope are popped,
+        // but the activity state legitimately persists), and on exactly the
+        // expensive specifications that trajectory decides whether the
+        // model-refutation loop converges at all — the PlusCal two-array
+        // corpus pin answered `Unknown` at depth 8 with interleaving and
+        // checks clean without. Verdict identity for the invariants is the
+        // acceptance criterion, so the deadlock queries run against an
+        // unmodified invariant trajectory, at the cost of a violation at
+        // depth 5 outranking a deadlock at depth 2 in the report. The scan
+        // itself still runs at every step `j < depth`: the bound's last
+        // state has no encoded successor, and "no transition leaves the last
+        // state of the unrolling" is a statement about the *bound*, not the
+        // specification.
+        if self.check_deadlocks {
+            // Its own incremental solver, built step by step: the probe at
+            // step `j` must see exactly the prefix through `j` transitions,
+            // and the invariant sweep's solver has already asserted them
+            // all. Asserting the same hash-consed terms again is cheap; the
+            // learning this pass loses is the price of never letting a
+            // probe perturb an invariant query's trajectory (see the note
+            // above — that perturbation was measurable, not theoretical).
+            let mut dl_solver = Solver::new();
+            if let Some(limit) = self.conflict_limit {
+                dl_solver.set_conflict_limit(limit);
+            }
+            for a in &assumed {
+                dl_solver.assert(*a, tm);
+            }
+            dl_solver.assert(init, tm);
+            for c in self.encoder.side_constraints().to_vec() {
+                dl_solver.assert(c, tm);
+            }
+            for c in &self.state_constraints {
+                // The constraints hold in every state; the pass reaches
+                // every state the prefix defines.
+                for step in 0..depth {
+                    if let Ok(t) = self.encoder.encode_at(c, step, tm) {
+                        dl_solver.assert(t, tm);
+                    }
+                }
+            }
+            for j in 0..depth {
+                if j > 0 {
+                    dl_solver.assert(transitions[(j - 1) as usize], tm);
+                }
+                match self.find_deadlock(&mut dl_solver, j, tm) {
+                    DeadlockSearch::None => {}
+                    DeadlockSearch::Found(step) => {
+                        self.deadlock_step = Some(step);
+                        return Ok(Outcome::Deadlock { step });
+                    }
+                    DeadlockSearch::Unknown(why) => return Ok(Outcome::Unknown(why)),
+                }
+            }
+        }
+
+        // With deadlock checking off, "no violation" is only the whole answer
+        // when behaviours of the full length exist: a specification whose
+        // every behaviour stops short is not error-free, it is *short*, and
+        // saying "no error" would misread a bound past the specification's
+        // lifetime. Apalache's outcome name and exit code (0) are used as
+        // they are; the message carries the distinction.
+        if !self.check_deadlocks {
+            solver.push();
+            let answer = solver.check(tm);
+            solver.pop();
+            match answer {
+                // The prefix through `depth` transitions is satisfiable:
+                // some behaviour ran the full length.
+                SolverResult::Sat => {}
+                SolverResult::Unsat => return Ok(Outcome::ExecutionsTooShort),
                 SolverResult::Unknown => {
-                    return Ok(Outcome::Unknown(format!(
-                        "the solver could not decide the {j}-step query"
-                    )));
+                    return Ok(Outcome::Unknown(
+                        "the solver could not decide whether any behaviour \\
+                         reaches the full length"
+                            .into(),
+                    ));
                 }
             }
         }
         Ok(Outcome::NoViolationWithin(depth))
+    }
+
+    /// Whether the search looks for deadlocks; see [`Outcome::Deadlock`].
+    ///
+    /// Apalache's default is on; `--no-deadlock` (and the `.cfg`'s
+    /// `CHECK_DEADLOCK FALSE`) turn it off.
+    pub fn set_check_deadlocks(&mut self, on: bool) {
+        self.check_deadlocks = on;
+    }
+
+    /// The step of the last reported [`Outcome::Deadlock`].
+    #[must_use]
+    pub fn deadlock_step(&self) -> Option<u32> {
+        self.deadlock_step
+    }
+
+    /// The step-j deadlock question, against the persistent solver.
+    ///
+    /// Assumes the prefix through `j` transitions is already asserted at
+    /// the base scope. Two queries, and both of them cheap:
+    ///
+    /// 1. `prefix_j /\ Next@j` — if **sat**, some reachable state at this
+    ///    step has a successor, and the answer is *not a deadlock*;
+    /// 2. if **unsat**, `prefix_j` alone — if still sat, a reachable state
+    ///    exists and *none* of them has a successor: a deadlock, and the
+    ///    no-successor half is a proof.
+    ///
+    /// This is the *all-states* reading, and it is a deliberate granularity
+    /// choice, not an oversight: the some-state reading ("one reachable
+    /// state is stuck while others continue") needs the state-blocking
+    /// loop, which costs one `Sat` query with a model readback per
+    /// successor-having state — hundreds of rounds on exactly the
+    /// specifications that are already expensive. Apalache's symbolic mode
+    /// has the same limitation, documented as their issue 712 ("may miss a
+    /// deadlock"), and `Deadlock712.tla` is the corpus pin for it. A
+    /// partial deadlock that this reading misses cannot become a *false*
+    /// verdict: it only leaves the search reporting `NoViolationWithin`,
+    /// the same under-approximation Apalache ships.
+    fn find_deadlock(
+        &mut self,
+        solver: &mut Solver,
+        j: u32,
+        tm: &mut TermManager,
+    ) -> DeadlockSearch {
+        // `Next` at step j, hash-consed with the unrolling's own term.
+        let next_j = match self.encoder.encode_at(&self.next, j, tm) {
+            Ok(t) => t,
+            Err(_) => {
+                return DeadlockSearch::Unknown(
+                    "the deadlock query could not encode the next-state action".into(),
+                );
+            }
+        };
+        solver.push();
+        solver.assert(next_j, tm);
+        let with_successor = solver.check(tm);
+        solver.pop();
+        match with_successor {
+            SolverResult::Sat => DeadlockSearch::None,
+            SolverResult::Unsat => {
+                // Nothing at this step moves. Does anything at this step
+                // *exist*? Only then is it a deadlock.
+                solver.push();
+                let reachable = solver.check(tm);
+                solver.pop();
+                match reachable {
+                    SolverResult::Sat => DeadlockSearch::Found(j),
+                    SolverResult::Unsat => DeadlockSearch::None,
+                    SolverResult::Unknown => DeadlockSearch::Unknown(format!(
+                        "the solver could not decide whether a reachable state remains at step {j}"
+                    )),
+                }
+            }
+            SolverResult::Unknown => DeadlockSearch::Unknown(format!(
+                "the solver could not decide the {j}-step successor query"
+            )),
+        }
     }
 
     /// The counterexample behind the last [`Outcome::Violation`].
@@ -1176,9 +1518,21 @@ impl Bmc {
         // must actually fail, and the ones that do are recorded by name —
         // the disjunction the search violated is an encoding detail; the
         // specification's question is *which* invariant broke.
+        //
+        // An **action** invariant constrains a step pair, so it is evaluated
+        // over the last pair of states, not the last state — the encoder
+        // reads its `'` at step `j+1`, and the replay reads the same pair.
         let mut violated = Vec::new();
         for (name, inv) in &self.invs {
-            match ev.eval_state(inv, last) {
+            let result = if self.action_invariant_names.contains(name) {
+                match trace.states.windows(2).next_back() {
+                    Some([a, b]) => ev.eval_action(inv, a, b).map_err(|e| e.to_string()),
+                    _ => Err("the trace has no step pair to read an action invariant over".into()),
+                }
+            } else {
+                ev.eval_state(inv, last).map_err(|e| e.to_string())
+            };
+            match result {
                 Ok(nixie_tla::Value::Bool(false)) => violated.push(name.clone()),
                 Ok(nixie_tla::Value::Bool(true)) => {}
                 Ok(v) => {
@@ -1237,6 +1591,33 @@ impl Bmc {
     pub fn encoder(&self) -> &Encoder {
         &self.encoder
     }
+}
+
+/// What kind of invariant a name is, by its trusted level.
+///
+/// State invariants are checked in each state; **action** invariants
+/// (Apalache's `maybeActionInvariants`) mention `'` and constrain a step
+/// pair, so they are checked over `(s_j, s_{j+1})`; **temporal** ones are a
+/// different kind of question entirely (a lasso, not a state property) and
+/// are refused — Apalache's own exit code for `--inv=<temporal>` is 255.
+fn invariant_kind(levels: &nixie_tla_syntax::LevelReport, name: &str) -> InvariantKind {
+    use nixie_tla_syntax::Level;
+    match levels.trusted_level_of(name) {
+        Some(Level::Constant) | Some(Level::State) | None => InvariantKind::State,
+        Some(Level::Action) => InvariantKind::Action,
+        Some(Level::Temporal) => InvariantKind::Temporal,
+    }
+}
+
+/// The kind of one named invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvariantKind {
+    /// Holds or fails in a single state.
+    State,
+    /// Constrains a step pair `(s_j, s_{j+1})`.
+    Action,
+    /// A temporal property — refused for `--inv`.
+    Temporal,
 }
 
 /// Lower one zero-argument definition, naming what went wrong.
@@ -1307,11 +1688,25 @@ fn has_definition(module: &Module, name: &str) -> bool {
 }
 
 /// The `VARIABLE`-declared names of a module.
-fn state_variables(module: &Module) -> Vec<String> {
-    let mut out = Vec::new();
-    for unit in &module.units {
-        if let UnitKind::VariableDecl(ids) = &unit.kind {
-            out.extend(ids.iter().map(|i| i.name.clone()));
+/// The `VARIABLE`-declared names of **every** module a specification loads,
+/// not only the root: `test47.tla` EXTENDS `test47a`, which is where `x` is
+/// declared, and a checker that only read the root's declarations would
+/// treat `x` as a rigid `CONSTANT`. That misclassification is not cosmetic:
+/// `x'` encodes to the same variable as `x`, the transition becomes a
+/// self-loop, `Init /\ Next` is contradictory, and the deadlock check
+/// (correctly, given that formula!) reported a step-0 deadlock — the first
+/// wrong verdict of the pass, found by the corpus on the day it landed.
+fn all_state_variables(spec: &LoadedSpec) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (_, module) in &spec.modules {
+        for unit in &module.units {
+            if let UnitKind::VariableDecl(ids) = &unit.kind {
+                for id in ids {
+                    if !out.iter().any(|n| n == &id.name) {
+                        out.push(id.name.clone());
+                    }
+                }
+            }
         }
     }
     out

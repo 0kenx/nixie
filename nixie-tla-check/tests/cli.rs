@@ -130,12 +130,19 @@ Inv  == x = 1
 
 /// A missing invariant is refused rather than defaulted. Checking a
 /// specification against an invariant nobody named would answer a question
-/// nobody asked.
+/// `--inv` is optional exactly when deadlock checking is on (issue #26):
+/// a deadlock-only check is a complete question. With `--no-deadlock` and
+/// no invariant there is nothing to check at all, and that is still
+/// refused — loudly, naming what to give.
 #[test]
-fn a_missing_invariant_is_refused() {
+fn a_missing_invariant_is_refused_only_without_deadlock_checking() {
     let dir = scratch("noinv");
     let spec = write_spec(&dir, "Counter", COUNTER);
+    // Deadlock checking on by default: a legal (and complete) question.
     let r = run(&["check", spec.to_str().expect("a path")]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    // Both off: nothing to check.
+    let r = run(&["check", "--no-deadlock", spec.to_str().expect("a path")]);
     assert_ne!(r.code, 0);
     assert!(r.err.contains("--inv"), "{}", r.err);
     let _ = std::fs::remove_dir_all(&dir);

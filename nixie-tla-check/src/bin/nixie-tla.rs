@@ -83,6 +83,9 @@ struct Args {
     out_dir: Option<PathBuf>,
     /// `--config=FILE`: a TLC configuration to read roles and constants from.
     config: Option<PathBuf>,
+    /// `--no-deadlock`: do not look for deadlocks. Apalache's default is to
+    /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
+    no_deadlock: bool,
 }
 
 const USAGE: &str = "\
@@ -142,6 +145,7 @@ fn parse_args() -> Result<Args, String> {
         max_runs: None,
         out_dir: None,
         config: None,
+        no_deadlock: false,
     };
     let mut spec: Option<PathBuf> = None;
     for arg in it {
@@ -180,6 +184,7 @@ fn parse_args() -> Result<Args, String> {
                 "view" => a.view = Some(need(value)?),
                 "out-dir" => a.out_dir = Some(PathBuf::from(need(value)?)),
                 "config" => a.config = Some(PathBuf::from(need(value)?)),
+                "no-deadlock" => a.no_deadlock = true,
                 // Accepted, no effect: a `.cfg` is not read by default any
                 // more (see `run`), so there is nothing left to turn off.
                 // Kept rather than rejected so a caller scripted against
@@ -323,6 +328,7 @@ fn run(args: &Args) -> u8 {
     let mut cfg_init: Option<String> = None;
     let mut cfg_next: Option<String> = None;
     let mut cfg_invariants: Vec<String> = Vec::new();
+    let mut cfg_deadlock: Option<bool> = None;
     match &args.config {
         Some(path) => {
             if !path.exists() {
@@ -371,15 +377,7 @@ fn run(args: &Args) -> u8 {
             }
             cfg_invariants = config.invariants.clone();
             if let Some(deadlock) = config.check_deadlock {
-                // Honoured in full by the deadlock-checking pass, which is
-                // its own piece of work; said out loud here so a caller
-                // knows the verdict currently says nothing about deadlocks.
-                eprintln!(
-                    "note: {} says CHECK_DEADLOCK {deadlock}; deadlock checking \
-                     is not implemented yet, so the verdict covers the named \
-                     invariants only",
-                    path.display()
-                );
+                cfg_deadlock = Some(deadlock);
             }
         }
         None => {
@@ -426,6 +424,19 @@ fn run(args: &Args) -> u8 {
     } else {
         next
     };
+    // The deadlock setting, Apalache's precedence: the command line wins
+    // over the `.cfg`, with the warning `resolveDeadlockSetting` prints.
+    let check_deadlocks = if args.no_deadlock {
+        if cfg_deadlock == Some(true) {
+            eprintln!("warning: TLC CHECK_DEADLOCK=TRUE is overridden by --no-deadlock.");
+        }
+        false
+    } else if let Some(value) = cfg_deadlock {
+        eprintln!("Using CHECK_DEADLOCK={value} from the TLC configuration.");
+        value
+    } else {
+        true
+    };
     let inv: Vec<String> = match (&args.inv, cfg_invariants.is_empty()) {
         (Some(cli), false) => {
             eprintln!(
@@ -437,9 +448,15 @@ fn run(args: &Args) -> u8 {
         }
         (Some(cli), true) => cli.clone(),
         (None, false) => cfg_invariants,
+        // No invariant is legal **iff** deadlock checking is on: a
+        // deadlock-only check is a complete question on its own. With
+        // deadlocks off too, there is nothing to check at all.
+        (None, true) if check_deadlocks => Vec::new(),
         (None, true) => {
             eprintln!(
-                "error: no invariant to check: name one with `--inv`, or put INVARIANT in the --config file"
+                "error: nothing to check: name an invariant with `--inv` (or \
+                 put INVARIANT in the --config file), or leave deadlock \
+                 checking on"
             );
             return EXIT_SYSTEM;
         }
@@ -474,6 +491,7 @@ fn run(args: &Args) -> u8 {
             return exit_for(&e);
         }
     };
+    bmc.set_check_deadlocks(check_deadlocks);
 
     // Up to `--max-error` counterexamples. A bounded query has one *shortest*
     // counterexample, so asking again without ruling that one out returns it
@@ -494,6 +512,29 @@ fn run(args: &Args) -> u8 {
             Outcome::NoViolationWithin(k) => {
                 if found == 0 {
                     println!("no counterexample of {k} step(s) or fewer");
+                }
+                break;
+            }
+            // A reachable state with no successor. The same exit code as a
+            // counterexample — Apalache's — with the distinction in the
+            // message: "Deadlock", not "Error".
+            Outcome::Deadlock { step } => {
+                println!("The outcome is: Deadlock");
+                println!(
+                    "a reachable state after {step} step(s) has no successor; the no-successor claim is a proved `Unsat`, not a sample"
+                );
+                return EXIT_COUNTEREXAMPLE;
+            }
+            // Every behaviour stopped short of the bound. Exit 0 — Apalache's
+            // code — with the outcome line saying what actually happened,
+            // because "no error" and "nothing ran that far" are different
+            // facts a caller may treat differently.
+            Outcome::ExecutionsTooShort => {
+                if found == 0 {
+                    println!("The outcome is: ExecutionsTooShort");
+                    println!(
+                        "no behaviour of the full length exists; with deadlock checking off this is not a statement about errors"
+                    );
                 }
                 break;
             }

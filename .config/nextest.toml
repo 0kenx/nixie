@@ -122,3 +122,16 @@ slow-timeout = { period = "60s", terminate-after = 6 }
 [[profile.default.overrides]]
 filter = 'test(engine_agrees_with_brute_force) and package(nixie-math)'
 slow-timeout = { period = "60s", terminate-after = 10 }
+
+# The two PlusCal two-array regression pins (2026-11-25): depth-10 checks on
+# a spec whose per-step queries run ~10 s each. The per-step deadlock scan
+# (issue #26) adds up to two queries per step, pushing the wall past the
+# default 3x60 s budget under gate load. The assertions are verdict pins,
+# not wall claims; widen the budget rather than terminate a passing test,
+# per the pete_cxs_bp precedent.
+[[profile.default.overrides]]
+filter = 'test(a_two_array_pluscal_spec_never_answers_a_false_clean)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+[[profile.default.overrides]]
+filter = 'test(a_pluscal_bound_the_spec_cannot_exceed_holds)'
+slow-timeout = { period = "60s", terminate-after = 10 }
