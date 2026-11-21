@@ -121,7 +121,7 @@ use super::TermManager;
 
 mod simplify;
 mod size_depth;
-mod substitute;
+pub(in crate::ast::manager) mod substitute;
 
 #[cfg(test)]
 mod tests;

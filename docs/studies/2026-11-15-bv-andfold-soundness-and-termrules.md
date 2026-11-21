@@ -1283,3 +1283,94 @@ are cached for `fb545619`, `d444269d`, `aa89eb68`, `9953e791`,
 3. The 2026-11-19 handoff's targets #1 (closed: two landings + census)
    and #2 (entry spent: prefetch) are done; #3's nine singles are
    decomposed (addendum 31) with bzip2recover's slice landed.
+
+Post-close addendum: the flag-combo identity was verified empirically
+(pre-slack `9953e791` vs `350bbe32` on BBB-32 under `NIXIE_CSR_B=1`,
+`NIXIE_CSR_SCAN=1`, and default — counters identical in all three; the
+lrat-gated tables ran under the bar's lrat unit tests).  A late
+minigzip census attempt (si=718 KB/s residual swap-in) failed its own
+controls — 492 read 7–9 s vs its clean 5.6–6.0 s, 562 TO'd vs 10.0 —
+and was aborted before the block ran; the ABBA control discipline
+works.  The census remains item 1 behind the quiet gate.
+
+## Thirty-ninth addendum: the next-optimizations survey (code-read, evidence-linked)
+
+Machine measurement-dead (load 50+ all evening); this survey was done by
+reading, linked to the session's five banked cell profiles.  Ranked:
+
+**Tier 1 — mechanical, counter-identical (pure-perf class):**
+1. **`iter_views()` conversion of the per-round inprocessing scans.**
+   `ClauseDatabase::iter_views` (clause.rs:833) exists IN-TREE with a
+   doc stating exactly the waste: `iter_ids()` + `get()` per body builds
+   TWO view constructions per clause over headers scattered across
+   cache lines.  The hot per-round loops still use the double-view
+   pattern: congruence.rs:352 (`detect_gates` — 15.8 % of readelf/7707),
+   gate_subsume.rs:106+140 (`forward_subsume_matching`, 10.3 % of
+   yices/1420 — it scans TWICE, pre-count + main), eliminate.rs ×4,
+   bve.rs:61, bva.rs ×2, els, asymmetric_branching.  congruence.rs:611
+   already uses the single-pass form — the pattern is proven in-tree.
+   Audit per site: `iter_views` filters DELETED clauses; any loop that
+   consumes deleted headers keeps `get_by_ref`.
+2. **Dense-slab substitution cache.**  `substitute_cached_keep`'s cache
+   is caller-owned and LONG-LIVED (shared across many calls —
+   substitute.rs:215 doc); it is an `FxHashMap<TermId, TermId>` whose
+   probes are `substitute_cached_keep` 4.7 % + walk frames of
+   bzip2recover/2763.  The 2698d1f4 dense-slab precedent (same shape
+   for `term_to_bv`, killed 6 % of a run) applies: sentinel `Vec<TermId>`
+   keyed by the dense id.  API ripples to the cache-owning callers.
+
+**Tier 2 — structural, counter-identical with care:**
+3. **Incremental ternary index for gate congruence.**  `detect_gates`
+   full-scans every clause per inprocessing round to find len==3
+   non-deleted clauses — that scan IS `ClauseDatabase::view`'s 17.2 %
+   of readelf/7707 (the `get` per id, most discarded).  Track ternary
+   ids on add (append-order = id order); scan only that list,
+   preserving id-ascending emission → identical `gates` vec → identical
+   union-find → identical counters.  Deleted entries filter lazily.
+4. **`ClauseArena::alloc`** (6.6–8.7 % of encode-bound cells, per-gate
+   clause allocation): batch/reserve or header packing.  Read the arena
+   layout first — allocation shape is the risk surface.
+
+**Tier 3 — flagged:** `run_free_var_step` 10 % of bzip2recover (walker
+family — read before acting); on_backtrack `slice::get_mut` 7.7 % of
+duthen-50 (three refuted cost models, addendum 21 — new evidence
+required); `void_elimination_promises` 2.5 %, `mentions_walk` 4.5 %
+(minor); heap-insert deferral (counter-SENSITIVE, low payoff —
+addendum 32).  `traverse` is already epoch-marked (its 2.4–5.9 % is
+real work, not fixable by the memo family).
+
+Not re-listed: the window-blocked census/wall-A/B set (resume protocol
+above).  `collect_unified_bv_terms` checked — already epoch-marked.
+
+## Fortieth addendum: tier-1 item 1 landed — LANDED (`0515153e`)
+
+The iter_views conversion (addendum 39 item 1) for the three evidenced
+hot scans: detect_gates, forward_subsume_matching's pre-count,
+eliminate's occurrence passes.  Counters exact on four probes incl.
+readelf/7707's banked 2 957.  Bar green (the one timeout was
+odd_width_identity_pairs_hold at load 50 — 80 s solo; environment, not
+the change — the same test passed every earlier full run).
+
+Remaining from addendum 39: item 2 (dense-slab substitution cache —
+API ripples to cache-owning callers), item 3 (incremental ternary
+index), item 4 (arena alloc read).  Machine still measurement-dead for
+wall; counters carried this landing as usual.
+
+## Forty-first addendum: tier-1 item 2 landed — the substitution slab (`6269fa88`)
+
+Fresh profile of bzip2recover/2763 post-bv-wrap showed the residual
+RE-RANKED: the substitution machine itself at 34 % of the run with
+hashbrown frames at 14.4 % (two hashed probes per DAG node).  Landed
+`SubstCache` (monomorphized trait: FxHashMap arm for per-call sites,
+`SubstMemo` dense-slab arm for SubstitutionBuilder's long-lived caches
++ compose's temp cache).  Counters bit-identical ×4; hashbrown-in-subst
+480→324 samples (−32 %); the remaining 324 are the SUBST-map probes —
+**the recorded follow-up is a domain-bitmap prefilter** (one bit per
+term id over-approximating the substitution domain, built once per
+builder; a set bit falls through to the exact map probe, a clear bit
+skips the hash entirely — sound because shadowing only removes
+entries).  `run_free_var_step` (10 %) is the other untouched member of
+the walker family.
+
+Also re-ranked by the same profile: `mk_bv_*` rebuild frames (the
+substitution's re-interning) are the block after the probes.

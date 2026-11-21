@@ -103,11 +103,10 @@ impl Solver {
         // as the fold-only arm would (bit-identical trajectory).
         let min_candidates = crate::gate_subsume_min_candidates();
         let mut ncandidates = 0usize;
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned {
+        // Single-pass live scan (the `iter_ids`+`get` form built two view
+        // constructions per clause).
+        for (_cid, c) in self.clauses.iter_views() {
+            if c.learned {
                 continue;
             }
             if c.lits.iter().any(|&l| matchable[l.var().index()]) {

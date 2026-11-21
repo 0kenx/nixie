@@ -27,6 +27,7 @@ pub use dt_ite_lift::MAX_ITE_LIFT_NODES;
 pub mod bv_fold;
 pub mod ff_fold;
 mod query;
+use query::substitute::SubstMemo;
 mod rounding_mode;
 pub mod str_fold;
 
@@ -717,8 +718,13 @@ impl TermManager {
 pub struct SubstitutionBuilder {
     /// The substitution mapping
     mapping: FxHashMap<TermId, TermId>,
-    /// Shared cache for substitution results
-    cache: FxHashMap<TermId, TermId>,
+    /// Shared cache for substitution results — the DENSE-SLAB form
+    /// ([`SubstMemo`]): this cache lives for a whole elimination campaign
+    /// whose walks cover a large fraction of the manager's term-id space,
+    /// so per-node probes are array reads instead of hashes (the
+    /// `term_to_bv` dense-slab precedent; the hashed form's probes were
+    /// 14 % of the bzip2recover-class run after the bv-wrap landing).
+    cache: SubstMemo,
 }
 
 impl SubstitutionBuilder {
@@ -727,7 +733,7 @@ impl SubstitutionBuilder {
     pub fn new() -> Self {
         Self {
             mapping: FxHashMap::default(),
-            cache: FxHashMap::default(),
+            cache: SubstMemo::default(),
         }
     }
 
@@ -736,7 +742,7 @@ impl SubstitutionBuilder {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             mapping: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
-            cache: FxHashMap::with_capacity_and_hasher(capacity * 2, Default::default()),
+            cache: SubstMemo::default(),
         }
     }
 
@@ -762,7 +768,7 @@ impl SubstitutionBuilder {
     pub fn compose(&mut self, other: &SubstitutionBuilder, manager: &mut TermManager) -> &mut Self {
         // For each mapping in self, substitute using other
         let mut new_mapping = FxHashMap::default();
-        let mut temp_cache = FxHashMap::default();
+        let mut temp_cache = SubstMemo::default();
 
         for (&from, &to) in &self.mapping {
             let new_to = if other.mapping.contains_key(&to) {

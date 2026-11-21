@@ -1066,11 +1066,10 @@ impl Solver {
         // land at capacity and never double. Contents and per-literal
         // order are unchanged — trajectory-neutral by construction.
         {
-            for cid in self.clauses.iter_ids() {
-                let Some(c) = self.clauses.get(cid) else {
-                    continue;
-                };
-                if c.deleted || c.learned || c.lits.len() < 2 {
+            // Single-pass live scan (one view per id — see the
+            // `iter_views` doc for the double-construction waste).
+            for (_cid, c) in self.clauses.iter_views() {
+                if c.learned || c.lits.len() < 2 {
                     continue;
                 }
                 if c.lits.iter().any(|&lit| ctx.lit_val(lit) == 1) {
@@ -1086,11 +1085,9 @@ impl Solver {
             // Retain the exact counts. Neither clauses nor ctx's value
             // snapshot change before the connect pass finishes below.
         }
-        for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned || c.lits.len() < 2 {
+        // Single-pass live scan (one view per id).
+        for (cid, c) in self.clauses.iter_views() {
+            if c.learned || c.lits.len() < 2 {
                 continue;
             }
             let mut satisfied = false;
