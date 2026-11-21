@@ -266,15 +266,9 @@ fn a_deterministic_spec_has_one_counterexample() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The `.cfg` supplies `CONSTANT` values; the command line keeps the roles.
-/// Without the file `0 .. N-1` has no candidate list at all.
-#[test]
-fn a_cfg_supplies_constants_and_the_cli_keeps_the_roles() {
-    let dir = scratch("cfg");
-    let spec = write_spec(
-        &dir,
-        "Ring",
-        r"
+// ---- the `.cfg` divergences (issue #11) ----
+
+const RING: &str = r"
 ---- MODULE Ring ----
 EXTENDS Integers
 CONSTANT N
@@ -283,30 +277,253 @@ Init == x = 0
 Next == x' = (x + 1) % N
 Inv  == x \in 0 .. N - 1
 ====
+";
+
+/// A `<Spec>.cfg` next to the specification is **not** read: Apalache's own
+/// default since 0.25.0. Instead a hint names the file and the flag that
+/// enables it — silently reading it applied its `CONSTRAINT`/`CONSTANTS`
+/// without anyone asking, which changes the verdict.
+#[test]
+fn a_cfg_beside_the_spec_is_not_read_and_says_so() {
+    let dir = scratch("cfg-hint");
+    let spec = write_spec(&dir, "Ring", RING);
+    std::fs::write(dir.join("Ring.cfg"), "CONSTANTS\n    N = 4\n").expect("writes the cfg");
+
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=3",
+        spec.to_str().expect("a path"),
+    ]);
+    // Without the file, `N` is arbitrary and `0 .. N - 1` has no members: the
+    // checker declines rather than guessing — and the hint says how to enable.
+    assert_ne!(r.code, 0, "an arbitrary `N` must not pass silently");
+    assert!(
+        r.err.contains("TLC config file found"),
+        "the hint should point at the file: {}",
+        r.err
+    );
+    assert!(
+        r.err.contains("--config=Ring.cfg"),
+        "the hint should name the flag: {}",
+        r.err
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--config=FILE` reads the file: `CONSTANTS` pin `N`, and the roles come
+/// from `INIT`/`NEXT`/`INVARIANT` when the command line does not say. A
+/// command-line value overrides the file's, with a warning naming both.
+#[test]
+fn config_loads_constants_and_roles_with_cli_precedence() {
+    let dir = scratch("cfg-load");
+    let spec = write_spec(
+        &dir,
+        "Roles",
+        r"
+---- MODULE Roles ----
+EXTENDS Integers
+CONSTANT N
+VARIABLE x
+Init == x = 0
+Next == x' = (x + 1) % N
+Inv  == x \in 0 .. N - 1
+TypeInv == x >= 0
+====
 ",
     );
-    std::fs::write(dir.join("Ring.cfg"), "CONSTANTS\n    N = 4\n").expect("writes the cfg");
+    std::fs::write(
+        dir.join("roles.cfg"),
+        "CONSTANTS\n    N = 4\nINIT Init\nNEXT Next\nINVARIANT Inv\n",
+    )
+    .expect("writes the cfg");
+
+    // Roles from the file, constants from the file: no --init/--next/--inv.
+    let r = run(&[
+        "check",
+        "--length=3",
+        &format!("--config={}", dir.join("roles.cfg").display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+
+    // The command line wins, and says so: `--inv=TypeInv` overrides the
+    // file's `INVARIANT Inv`.
+    let r = run(&[
+        "check",
+        "--length=3",
+        "--inv=TypeInv",
+        &format!("--config={}", dir.join("roles.cfg").display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.err.contains("--inv=TypeInv overrides"),
+        "the override should warn: {}",
+        r.err
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// **The dangerous direction:** a `.cfg` `CONSTRAINT` prunes states. Reading
+/// it unasked made Nixie say "no error" (exit 0) on exactly the command where
+/// Apalache finds a violation (exit 12). Without `--config` the constraint is
+/// not applied and the violation is found.
+#[test]
+fn a_cfg_constraint_is_applied_only_when_configured() {
+    let dir = scratch("cfg-constraint");
+    let spec = write_spec(
+        &dir,
+        "Pruned",
+        r"
+---- MODULE Pruned ----
+EXTENDS Integers
+VARIABLE x
+Init == x \in {0, 5}
+Next == UNCHANGED x
+Inv  == x < 3
+NoBig == x < 3
+====
+",
+    );
+    // The constraint removes the state that violates the invariant.
+    std::fs::write(dir.join("pruned.cfg"), "CONSTRAINT\n    NoBig\n").expect("writes the cfg");
+
+    let without = run(&["check", "--inv=Inv", spec.to_str().expect("a path")]);
+    assert_eq!(without.code, 12, "stderr: {}", without.err);
 
     let with = run(&[
         "check",
         "--inv=Inv",
-        "--length=3",
+        &format!("--config={}", dir.join("pruned.cfg").display()),
         spec.to_str().expect("a path"),
     ]);
     assert_eq!(with.code, 0, "stderr: {}", with.err);
-    assert!(with.err.contains("Ring.cfg"), "{}", with.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
 
-    // And `--no-cfg` genuinely ignores it, leaving `N` arbitrary — which is a
-    // strictly harder question that this encoding declines rather than
-    // guessing at.
-    let without = run(&[
+/// `--max-run` is the number of **simulation** runs in Apalache, not an alias
+/// for `--max-error`. Under `check` it is refused; reinterpreting it silently
+/// changed how many counterexamples a caller asked for.
+#[test]
+fn max_run_is_refused_under_check() {
+    let dir = scratch("maxrun");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    let r = run(&[
         "check",
         "--inv=Inv",
-        "--length=3",
-        "--no-cfg",
+        "--max-run=5",
         spec.to_str().expect("a path"),
     ]);
-    assert_ne!(without.code, 0, "an arbitrary `N` must not pass silently");
-    assert!(!without.err.contains("Ring.cfg"), "{}", without.err);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(
+        r.err.contains("--max-error"),
+        "the refusal should point at the right flag: {}",
+        r.err
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--inv=A,B` is a list: every invariant is checked, the one that broke is
+/// named on stdout and in the ITF `#meta`, and a name that does not resolve
+/// refuses the whole list — never a silent subset.
+#[test]
+fn inv_takes_a_comma_separated_list() {
+    let dir = scratch("invlist");
+    let spec = write_spec(
+        &dir,
+        "TwoInvs",
+        r"
+---- MODULE TwoInvs ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = x + 1
+Low  == x > 2
+High == x < 10
+====
+",
+    );
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        "--inv=Low,High",
+        "--length=6",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("invariant Low"),
+        "stdout should name the broken invariant: {}",
+        r.out
+    );
+    let doc: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(out.join("violation1.itf.json")).expect("an ITF file"),
+    )
+    .expect("valid JSON");
+    assert_eq!(doc["#meta"]["violated"], serde_json::json!(["Low"]));
+
+    // An unresolvable name refuses everything: checking the other two would
+    // answer a narrower question than the caller asked.
+    let r = run(&[
+        "check",
+        "--inv=Low,NoSuchInvariant,High",
+        "--length=6",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 75, "stderr: {}", r.err);
+    assert!(r.err.contains("NoSuchInvariant"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A missing file or a foreign extension is exit **255**, not 150: Apalache
+/// distinguishes "you pointed me at the wrong thing" from "your spec does not
+/// parse", and so does a wrapper.
+#[test]
+fn a_missing_or_foreign_file_is_255() {
+    let dir = scratch("missing");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        &dir.join("Nope.tla").to_string_lossy(),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("no such file"), "{}", r.err);
+
+    let other = dir.join("spec.mc");
+    std::fs::write(&other, "not a spec").expect("writes");
+    let r = run(&["check", "--inv=Inv", &other.to_string_lossy()]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains(".tla"), "{}", r.err);
+
+    // And a `.cfg` that does not exist is refused too, not silently skipped.
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        &format!("--config={}", dir.join("absent.cfg").display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `.cfg` naming `SPECIFICATION` is refused by name: that is a temporal
+/// behaviour spec, and a bounded Init/Next unrolling would silently check
+/// something weaker than what the file says.
+#[test]
+fn a_cfg_with_specification_is_refused() {
+    let dir = scratch("cfg-spec");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    std::fs::write(dir.join("temporal.cfg"), "SPECIFICATION Spec\n").expect("writes the cfg");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        &format!("--config={}", dir.join("temporal.cfg").display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("SPECIFICATION"), "{}", r.err);
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -87,7 +87,24 @@ mod tests;
 /// actually owns: an uninterpreted sort, or (redundantly but harmlessly,
 /// since `arith_axioms.rs` already axiomatises these) `Int`/`Real`.
 ///
-/// `BitVec`, `Array`, `String` and `FloatingPoint` sorts each have their own
+/// `String` joins them, and this is a lesson paid for twice:
+///
+/// * The ground string path (`solve_ground_string_model`) *does* recurse
+///   through `ite` — but only for problems it can certify, and it declines
+///   any problem that also mentions a free Boolean / arithmetic variable.
+///   In exactly those mixed problems the `ite` then belonged to nobody:
+///   the CDCL(T) honesty gate fires only on `Str*` atoms, so a
+///   `String`-sorted `ite` reached the search as an EUF-opaque leaf. A
+///   `Sat` verdict stayed *sound* (the formula usually is satisfiable) but
+///   the model published an unconstrained value for what the `ite`
+///   defined — the TLA+ front end's `tcolor' = IF … THEN "black" ELSE
+///   tcolor` (`EWD840.tla`) produced a token colour no transition ever
+///   assigns, caught only by the front end's independent trace replay.
+/// * Eliminating the `ite` leaves plain `=` atoms between strings, which EUF
+///   owns and the ground path still evaluates — so pure-string problems
+///   lose nothing.
+///
+/// `BitVec`, `Array` and `FloatingPoint` sorts each have their own
 /// theory-specific encoder that recurses through `ite` directly as part of
 /// bit-blasting / axiom instantiation / ground solving -- and, critically,
 /// some bit-vector operators (`bvsmod`, `bvcomp`, the rotates,
@@ -104,12 +121,7 @@ pub(super) fn needs_ite_elimination(sort: SortId, manager: &TermManager) -> bool
         return false;
     }
     match manager.sorts.get(sort) {
-        Some(s) => {
-            !(s.is_bitvec()
-                || s.is_string()
-                || s.is_float()
-                || matches!(s.kind, SortKind::Array { .. }))
-        }
+        Some(s) => !(s.is_bitvec() || s.is_float() || matches!(s.kind, SortKind::Array { .. })),
         None => false,
     }
 }
