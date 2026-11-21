@@ -309,6 +309,30 @@ impl Evaluator {
             // the encoder and the replay must agree on what the predicate
             // *says*, or every trace through one reads as a counterexample to
             // the other.
+            // `s \in Seq(S)`, pointwise — the mirror of the encoder's arm,
+            // so a trace the encoder found replays. `Seq` is not a value
+            // this evaluator can build either; the elements are the whole
+            // question, and a literal tuple's elements are right there.
+            Kera::In(a, s) if matches!(s.as_ref(), Kera::Opaque(n, xs) if n.as_str() == "Seq" && xs.len() == 1) =>
+            {
+                let Kera::Opaque(_, xs) = s.as_ref() else {
+                    return Err(EvalErrorKind::Unsupported("Seq".into()));
+                };
+                let inner = std::rc::Rc::clone(&xs[0]);
+                let v = self.go(a, env)?;
+                let Value::Tuple(parts) = &v else {
+                    return Err(EvalErrorKind::Type {
+                        expected: "a sequence".into(),
+                        found: v.kind().into(),
+                    });
+                };
+                for p in parts {
+                    if !value_in_set(self, p.clone(), &inner, env)? {
+                        return Ok(Value::Bool(false));
+                    }
+                }
+                Ok(Value::Bool(true))
+            }
             Kera::In(f, s) if matches!(s.as_ref(), Kera::FunSet { .. }) => {
                 let Kera::FunSet { set, cod } = s.as_ref() else {
                     return Err(EvalErrorKind::Unsupported("a function set".into()));

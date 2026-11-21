@@ -369,3 +369,87 @@ fn tail_agrees_with_subseq() {
         "Tail(<<1, 2, 3>>) = SubSeq(<<1, 2, 3>>, 2, 3)",
     );
 }
+
+// ---- `Seq(S)` membership and SelectSeq (issue #23) ----
+
+/// `s \in Seq(S)` over a literal tuple is pointwise, never a blanket TRUE
+/// for a "type-defining" `S`: `<<1, -2>> \notin Seq(Nat)` is a fact about
+/// values, and the type checker only ever knew the elements were `Int`.
+#[test]
+fn seq_membership_is_pointwise() {
+    holds("q", "q = <<>>", r"<<1, 2, 3>> \in Seq(Nat)");
+    // `-2` is an integer and not a natural: the second conjunct of the TLC
+    // suite's own test.
+    fails("q", "q = <<>>", r"<<1, -2, 3>> \in Seq(Nat)");
+    holds("q", "q = <<>>", r"<<1, -2, 3>> \in Seq(Int)");
+    holds("q", "q = <<>>", r"<<>> \in Seq(Nat)");
+    // A set-typed element set composes through the ordinary membership.
+    holds("q", "q = <<>>", r"<<1, 2>> \in Seq({1, 2, 3})");
+    fails("q", "q = <<>>", r"<<1, 5>> \in Seq({1, 2, 3})");
+}
+
+/// A sequence variable with a symbolic length has no statically known
+/// elements; that half declines rather than enumerating a guessed length.
+#[test]
+fn seq_membership_over_a_symbolic_sequence_declines() {
+    let src = r#"
+---- MODULE SymSeq ----
+EXTENDS Sequences, Integers
+VARIABLE q
+Init == q = <<>>
+Next == q' = Append(q, 1)
+Inv  == q \in Seq(Nat)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert!(
+        bmc.check(1, &mut tm).is_err(),
+        "a symbolic length has no enumeration; the encoding must decline"
+    );
+}
+
+/// `SelectSeq(seq, F)` — Apalache's rewire to a left fold that appends the
+/// elements `F` accepts. The empty base starts in the accumulator's
+/// sequence shape, which is the fold-base sort half of the issue.
+#[test]
+fn select_seq_keeps_the_accepted_elements() {
+    holds(
+        "q",
+        "q = <<>>",
+        r#"SelectSeq(<<-1, 2, -3, 4, -5, 6>>, LAMBDA a: a \in Nat) = <<2, 4, 6>>"#,
+    );
+    holds(
+        "q",
+        "q = <<>>",
+        r#"SelectSeq(<<-1, -3, -5>>, LAMBDA a: a \in Nat) = <<>>"#,
+    );
+    // An operator name works as the test, not only a `LAMBDA`.
+    holds(
+        "q",
+        "q = <<>>",
+        r#"LET Nat(a) == a \in Nat IN SelectSeq(<<0, -1, 2, -3, 4>>, Nat) = <<0, 2, 4>>"#,
+    );
+    // And the wrong claim fails — the fold really filters.
+    fails(
+        "q",
+        "q = <<>>",
+        r#"SelectSeq(<<-1, 2>>, LAMBDA a: a \in Nat) = <<>>"#,
+    );
+}
+
+/// A fold with a `<<>>` base and sequence steps keeps one shape end to end:
+/// the accumulator is a sequence at every step, which is what the old
+/// "a set and a non-set were compared" refusal was hiding.
+#[test]
+fn a_sequence_fold_starts_in_the_accumulator_shape() {
+    holds(
+        "q",
+        "q = <<>>",
+        r"ApaFoldSeqLeft(LAMBDA a, b: Append(a, b), <<>>, <<1, 2, 3>>) = <<1, 2, 3>>",
+    );
+}
