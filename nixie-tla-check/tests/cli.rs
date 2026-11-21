@@ -534,3 +534,152 @@ fn a_cfg_with_specification_is_refused() {
     assert!(r.err.contains("SPECIFICATION"), "{}", r.err);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- the option table and subcommands (issue #27) ----
+
+/// Performance-only knobs are accepted with a note; verdict-changing ones
+/// are implemented or refused with the reason; unknown stays fatal.
+#[test]
+fn the_option_table_classes() {
+    let dir = scratch("opts");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+
+    // AcceptedNoEffect: a script from Apalache runs unchanged.
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=1",
+        "--algo=incremental",
+        "--smt-solver=z3",
+        "--debug",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.err.contains("--algo"), "{}", r.err);
+
+    // Refused, with the reason said out loud: a wall-clock timeout would
+    // make verdicts machine-load-dependent, which this checker refuses on
+    // principle.
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--timeout-smt=10",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("deterministic"), "{}", r.err);
+
+    // Temporal properties: refused, pointing at what exists today.
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--temporal=Always",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("--temporal"), "{}", r.err);
+
+    // Unknown stays fatal.
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--nonsense",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Apalache's stdout contract: `Output directory:`, `The outcome is:`, and
+/// the final `EXITCODE:` line, which scripts grep.
+#[test]
+fn the_stdout_contract_is_apalaches() {
+    let dir = scratch("stdout");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=2",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("Output directory:"), "{}", r.out);
+    assert!(r.out.contains("The outcome is: NoError"), "{}", r.out);
+    assert!(r.out.contains("EXITCODE: OK"), "{}", r.out);
+
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=6",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("The outcome is: Error"), "{}", r.out);
+    assert!(r.out.contains("EXITCODE: ERROR (12)"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `parse` and `typecheck` are their own subcommands with their own codes:
+/// 150 for a file that does not parse, 120 for one that does not type
+/// check, 0 otherwise — Apalache's cheap syntax gates.
+#[test]
+fn parse_and_typecheck_are_subcommands() {
+    let dir = scratch("subcmd");
+    let good = write_spec(&dir, "Good", COUNTER);
+    let bad = write_spec(&dir, "BadSyntax", "---- MODULE BadSyntax ----\nInit ==\n");
+    let bad_types = write_spec(
+        &dir,
+        "BadTypes",
+        r"
+---- MODULE BadTypes ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 1 /\ x = TRUE
+Next == UNCHANGED x
+Inv  == x = 1
+====
+",
+    );
+
+    let r = run(&["parse", good.to_str().expect("a path")]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("Parser has found no errors"), "{}", r.out);
+
+    let r = run(&["parse", bad.to_str().expect("a path")]);
+    assert_eq!(r.code, 150, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("Parser has found an error"), "{}", r.out);
+    assert!(r.out.contains("EXITCODE: ERROR (150)"), "{}", r.out);
+
+    let r = run(&["typecheck", good.to_str().expect("a path")]);
+    assert_eq!(r.code, 0, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(r.out.contains("no errors"), "{}", r.out);
+
+    let r = run(&["typecheck", bad_types.to_str().expect("a path")]);
+    assert_eq!(r.code, 120, "stdout: {}\nstderr: {}", r.out, r.err);
+    assert!(
+        r.out.contains("Type checker has found an error"),
+        "{}",
+        r.out
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The unsupported subcommands refuse with the reason, not a usage dump.
+#[test]
+fn unsupported_subcommands_refuse_with_reasons() {
+    let dir = scratch("refuse");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    for (mode, needle) in [
+        ("server", "Quint"),
+        ("transpile", "intermediate-format"),
+        ("config", "not supported"),
+    ] {
+        let r = run(&[mode, spec.to_str().expect("a path")]);
+        assert_eq!(r.code, 255, "{mode}: stdout: {}\nstderr: {}", r.out, r.err);
+        assert!(r.err.contains(needle), "{mode}: {}", r.err);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

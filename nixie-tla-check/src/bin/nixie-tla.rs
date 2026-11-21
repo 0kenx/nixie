@@ -86,6 +86,10 @@ struct Args {
     /// `--no-deadlock`: do not look for deadlocks. Apalache's default is to
     /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
     no_deadlock: bool,
+    /// `--run-dir=DIR`: Apalache's flat mirror of the run output. Nixie has
+    /// no timestamped run directories, so this is simply where the files go
+    /// when `--out-dir` does not say otherwise.
+    run_dir: Option<PathBuf>,
 }
 
 const USAGE: &str = "\
@@ -127,11 +131,33 @@ fn parse_args() -> Result<Args, String> {
     if mode == "-h" || mode == "--help" {
         return Err(USAGE.to_string());
     }
-    let simulate = match mode.as_str() {
-        "check" => false,
-        "simulate" => true,
+    // The subcommand surface (ApalacheCommand). `check` and `simulate` are
+    // the checking modes; `parse` and `typecheck` are thin wrappers over
+    // this binary's own front end and return their own exit codes (150
+    // syntax, 120 types); everything else Apalache spells is refused with
+    // the reason, which a script can read, rather than a usage dump.
+    match mode.as_str() {
+        "check" | "simulate" => {}
+        // (parse/typecheck are intercepted in `main` before option parsing.)
+        "transpile" => {
+            return Err("error: `transpile` is not supported; this checker has no \\
+                 intermediate-format output, only `--out-dir` traces"
+                .to_string());
+        }
+        "server" => {
+            return Err("error: `server` mode is not supported; it is the Quint \\
+                     integration path (deferred, see the tracking issue)"
+                .to_string());
+        }
+        "config" | "test" | "trace" => {
+            return Err(format!(
+                "error: `{mode}` is not supported; `check` (and `parse`/`typecheck`) \\
+                 are this binary's modes"
+            ));
+        }
         other => return Err(format!("unknown mode `{other}`\n\n{USAGE}")),
-    };
+    }
+    let simulate = mode == "simulate";
     let mut a = Args {
         simulate,
         spec: PathBuf::new(),
@@ -146,6 +172,7 @@ fn parse_args() -> Result<Args, String> {
         out_dir: None,
         config: None,
         no_deadlock: false,
+        run_dir: None,
     };
     let mut spec: Option<PathBuf> = None;
     for arg in it {
@@ -216,7 +243,58 @@ fn parse_args() -> Result<Args, String> {
                             .map_err(|_| "`--max-run` needs a whole number".to_string())?,
                     );
                 }
-                other => return Err(format!("unknown option `--{other}`\n\n{USAGE}")),
+                // ---- the option table for everything else ----
+                //
+                // One line per option, each in exactly one of three classes:
+                // * `Implemented` — handled above;
+                // * `AcceptedNoEffect` — performance-only knobs Apalache
+                //   documents; accepted with a printed note so scripts do
+                //   not break, and **never** an option that changes a
+                //   verdict (`--view`, `--no-deadlock`, `--max-run`,
+                //   `--temporal`, `--config` are all handled for real above
+                //   or refused);
+                // * `Refused` — semantics Nixie does not have, with the
+                //   reason said out loud (exit 255, not a silent ignore).
+                other => match other {
+                    "debug"
+                    | "profiling"
+                    | "smtprof"
+                    | "write-intermediate"
+                    | "features"
+                    | "algo"
+                    | "smt-encoding"
+                    | "smt-solver"
+                    | "tuning-options"
+                    | "tuning-options-file"
+                    | "discard-disabled" => {
+                        eprintln!(
+                            "note: `--{other}` is accepted and has no effect here; it is a \\
+                             performance knob of Apalache's, not a verdict input"
+                        );
+                    }
+                    "run-dir" => {
+                        // Accepted and honoured as the output directory's
+                        // flat mirror, below.
+                        let v = need(value)?;
+                        a.run_dir = Some(PathBuf::from(v));
+                    }
+                    "temporal" => {
+                        return Err("error: `--temporal` properties are not supported yet; \
+                             invariants (`--inv`) and deadlock checking are"
+                            .to_string());
+                    }
+                    "timeout-smt" => {
+                        return Err(
+                            "error: `--timeout-smt` is refused: this checker's budget is a \\
+                             deterministic conflict count (NIXIE_BMC_CONFLICTS), and a \\
+                             wall-clock timeout would make verdicts machine-load-dependent"
+                                .to_string(),
+                        );
+                    }
+                    other => {
+                        return Err(format!("unknown option `--{other}`\n\n{USAGE}"));
+                    }
+                },
             }
         } else if spec.is_none() {
             spec = Some(PathBuf::from(arg));
@@ -228,7 +306,119 @@ fn parse_args() -> Result<Args, String> {
     Ok(a)
 }
 
+/// `parse` and `typecheck`: the loader and the inferencer, alone.
+///
+/// Apalache has these as their own subcommands, and a ported script uses
+/// them as a cheap syntax gate. The exits are the checking codes that
+/// match: 150 for a file that does not parse, 120 for one that does not
+/// type check, 0 otherwise — and nothing is *checked*.
+fn front_end_mode(mode: &str, it: &mut impl Iterator<Item = String>) -> u8 {
+    // Only the spec path (and `--config`, for the constants a type check
+    // may need) makes sense here; everything else is a checking option.
+    let mut spec: Option<PathBuf> = None;
+    for arg in it {
+        if arg.starts_with("--config=") {
+            // Accepted so a scripted pipeline does not break; the constants
+            // it names matter to , not to a syntax/type gate over
+            // the module as written.
+        } else if arg.starts_with("--") {
+            eprintln!(
+                "error: `{arg}` is a checking option; `{mode}` takes only the spec path and --config="
+            );
+            println!("EXITCODE: ERROR ({EXIT_SYSTEM})");
+            return EXIT_SYSTEM;
+        } else if spec.is_none() {
+            spec = Some(PathBuf::from(arg));
+        } else {
+            eprintln!("more than one specification given: `{arg}`");
+            println!("EXITCODE: ERROR ({EXIT_SYSTEM})");
+            return EXIT_SYSTEM;
+        }
+    }
+    let Some(spec) = spec else {
+        eprintln!("no specification given");
+        println!("EXITCODE: ERROR ({EXIT_SYSTEM})");
+        return EXIT_SYSTEM;
+    };
+    if !spec.exists() {
+        eprintln!("error: no such file: {}", spec.display());
+        println!("EXITCODE: ERROR ({EXIT_SYSTEM})");
+        return EXIT_SYSTEM;
+    }
+    let mut loader = nixie_tla_syntax::Loader::new();
+    if let Some(dir) = spec.parent().filter(|d| !d.as_os_str().is_empty()) {
+        loader = loader.with_search_path(dir);
+    }
+    if let Ok(lib) = std::env::var("NIXIE_TLA_LIB") {
+        for d in lib.split(':').filter(|d| !d.is_empty()) {
+            loader = loader.with_search_path(Path::new(d));
+        }
+    }
+    let loaded = match loader.load(&spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("could not load {}: {e}", spec.display());
+            println!("Parser has found an error");
+            println!("EXITCODE: ERROR ({EXIT_SYNTAX})");
+            return EXIT_SYNTAX;
+        }
+    };
+    if mode == "parse" {
+        println!("Parser has found no errors");
+        println!("EXITCODE: OK");
+        return EXIT_OK;
+    }
+    // typecheck: infer every zero-argument definition, and say which name
+    // failed if one does.
+    let Some(module) = loaded.root_module() else {
+        println!("Type checker has found an error");
+        println!("EXITCODE: ERROR ({EXIT_SYNTAX})");
+        return EXIT_SYNTAX;
+    };
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&loaded);
+    let mut inf = nixie_tla::types::Inference::new();
+    let mut failures = Vec::new();
+    for unit in &module.units {
+        if let nixie_tla_syntax::UnitKind::OpDef {
+            name, params, body, ..
+        } = &unit.kind
+            && params.is_empty()
+            && let Ok(k) = low.lower(body)
+            && inf.infer(&k).is_err()
+        {
+            failures.push(name.name.clone());
+        }
+    }
+    if failures.is_empty() {
+        println!("Type checker has found no errors");
+        println!("EXITCODE: OK");
+        EXIT_OK
+    } else {
+        for name in &failures {
+            eprintln!("error: `{name}` does not type check");
+        }
+        println!("Type checker has found an error");
+        println!("EXITCODE: ERROR ({EXIT_TYPES})");
+        EXIT_TYPES
+    }
+}
+
 fn main() -> ExitCode {
+    // `parse`/`typecheck` exit with their own codes (150/120), which the
+    // `Result<String, _>` plumbing of the option parser cannot carry; they
+    // are intercepted here, before option parsing proper.
+    let mut argv = std::env::args().skip(1);
+    let Some(mode) = argv.next() else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(EXIT_SYSTEM);
+    };
+    if mode == "parse" || mode == "typecheck" {
+        let mut rest: Vec<String> = argv.collect();
+        rest.reverse();
+        let mut it = rest.into_iter();
+        return ExitCode::from(front_end_mode(&mode, &mut it));
+    }
     let args = match parse_args() {
         Ok(a) => a,
         Err(msg) => {
@@ -277,6 +467,13 @@ fn run(args: &Args) -> u8 {
     }
     if let Some(v) = &args.view {
         eprintln!("note: `--view={v}` is not used: this checker has no trace-diversity view");
+    }
+    // Apalache's stdout contract: the output directory line up front, the
+    // outcome line at the end, the exit code restated last. Scripts grep
+    // for these; see `Tool.scala`'s EXITCODE lines.
+    if let Some(dir) = args.out_dir.as_ref().or(args.run_dir.as_ref()) {
+        let _ = std::fs::create_dir_all(dir);
+        println!("Output directory: {}", dir.display());
     }
 
     // A missing file or a foreign extension is an invocation error (255), not
@@ -564,7 +761,8 @@ fn run(args: &Args) -> u8 {
                 if let Some(v) = bmc.verification() {
                     println!("  independently replayed: {}", describe(v));
                 }
-                if let Some(dir) = &args.out_dir {
+                let out_dir = args.out_dir.as_ref().or(args.run_dir.as_ref());
+                if let Some(dir) = out_dir {
                     let name = args
                         .spec
                         .file_name()
@@ -594,8 +792,12 @@ fn run(args: &Args) -> u8 {
     if found == 0 {
         if let Some(why) = undecided {
             eprintln!("undecided: {why}");
+            println!("The outcome is: Unknown");
+            println!("EXITCODE: ERROR (255)");
             return EXIT_SYSTEM;
         }
+        println!("The outcome is: NoError");
+        println!("EXITCODE: OK");
     } else {
         if let Some(why) = undecided {
             eprintln!("note: the search stopped early: {why}");
@@ -606,6 +808,8 @@ fn run(args: &Args) -> u8 {
                 args.max_errors
             );
         }
+        println!("The outcome is: Error");
+        println!("EXITCODE: ERROR ({EXIT_COUNTEREXAMPLE})");
         return EXIT_COUNTEREXAMPLE;
     }
     EXIT_OK
