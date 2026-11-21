@@ -74,12 +74,83 @@ type BinderSubstPrep = (FxHashMap<TermId, TermId>, SmallVec<[(Spur, SortId); 2]>
 /// `inner_cache`: a subterm's substituted value depends on *which*
 /// effective substitution is in force, not just its `TermId`, so caches
 /// must not be shared across scopes with different substitutions.
-struct SubstContext {
-    subst: FxHashMap<TermId, TermId>,
-    cache: FxHashMap<TermId, TermId>,
+/// Dense-slab memo for substitution caches ([`SubstCache`]'s slab arm):
+/// one `TermId` slot per term id, `u32::MAX` marking absence — a probe is
+/// an array read, not a hash.  For the LONG-LIVED caller-owned caches
+/// (`SubstitutionBuilder`) whose walks cover a large fraction of the
+/// term-id space this beats the hashed form outright (the
+/// `term_to_bv` dense-slab precedent); per-call sites with small walks
+/// keep [`FxHashMap`], whose per-walk footprint does not scale with the
+/// manager's whole id space.  Binder scopes opened under a slab caller
+/// get fresh slabs of their own (grown on demand, discarded with the
+/// scope).
+#[derive(Debug, Clone, Default)]
+pub(in crate::ast::manager) struct SubstMemo {
+    slab: Vec<TermId>,
 }
 
-impl SubstContext {
+const SUBST_MEMO_SENTINEL: TermId = TermId(u32::MAX);
+
+impl SubstMemo {
+    pub(in crate::ast::manager) fn clear(&mut self) {
+        self.slab.clear();
+    }
+    /// Occupied (non-sentinel) entries — the size statistic the old
+    /// `FxHashMap::len` reported.
+    pub(in crate::ast::manager) fn len(&self) -> usize {
+        self.slab
+            .iter()
+            .filter(|&&v| v != SUBST_MEMO_SENTINEL)
+            .count()
+    }
+    pub(in crate::ast::manager) fn capacity(&self) -> usize {
+        self.slab.len()
+    }
+}
+
+/// The memo-cache interface the substitution machine probes per node:
+/// monomorphized over the two representations (hashed map vs dense
+/// slab), so there is no dynamic dispatch on the walk path.
+pub(crate) trait SubstCache: Default {
+    fn memo_get(&self, id: TermId) -> Option<TermId>;
+    fn memo_insert(&mut self, id: TermId, value: TermId);
+}
+
+impl SubstCache for FxHashMap<TermId, TermId> {
+    #[inline]
+    fn memo_get(&self, id: TermId) -> Option<TermId> {
+        self.get(&id).copied()
+    }
+    #[inline]
+    fn memo_insert(&mut self, id: TermId, value: TermId) {
+        self.insert(id, value);
+    }
+}
+
+impl SubstCache for SubstMemo {
+    #[inline]
+    fn memo_get(&self, id: TermId) -> Option<TermId> {
+        match self.slab.get(id.0 as usize) {
+            Some(&v) if v != SUBST_MEMO_SENTINEL => Some(v),
+            _ => None,
+        }
+    }
+    #[inline]
+    fn memo_insert(&mut self, id: TermId, value: TermId) {
+        let idx = id.0 as usize;
+        if idx >= self.slab.len() {
+            self.slab.resize(idx + 1, SUBST_MEMO_SENTINEL);
+        }
+        self.slab[idx] = value;
+    }
+}
+
+struct SubstContext<C: SubstCache = FxHashMap<TermId, TermId>> {
+    subst: FxHashMap<TermId, TermId>,
+    cache: C,
+}
+
+impl<C: SubstCache> SubstContext<C> {
     /// `id`'s substituted value under this context, if already known
     /// without visiting its children: a direct substitution-map hit
     /// (checked first, matching the order the recursive version's entry
@@ -88,7 +159,7 @@ impl SubstContext {
         self.subst
             .get(&id)
             .copied()
-            .or_else(|| self.cache.get(&id).copied())
+            .or_else(|| self.cache.memo_get(id))
     }
 }
 
@@ -163,7 +234,7 @@ enum SubstStep {
 impl TermManager {
     /// Substitute variables in a term according to a mapping.
     pub fn substitute(&mut self, id: TermId, subst: &FxHashMap<TermId, TermId>) -> TermId {
-        self.substitute_cached(id, subst, &mut FxHashMap::default())
+        self.substitute_cached::<FxHashMap<TermId, TermId>>(id, subst, &mut FxHashMap::default())
     }
 
     /// [`Self::substitute`], except the terms in `keep` resolve to
@@ -181,9 +252,18 @@ impl TermManager {
         keep: &FxHashSet<TermId>,
     ) -> TermId {
         if keep.is_empty() {
-            return self.substitute_cached(id, subst, &mut FxHashMap::default());
+            return self.substitute_cached::<FxHashMap<TermId, TermId>>(
+                id,
+                subst,
+                &mut FxHashMap::default(),
+            );
         }
-        self.substitute_cached_keep(id, subst, keep, &mut FxHashMap::default())
+        self.substitute_cached_keep::<FxHashMap<TermId, TermId>>(
+            id,
+            subst,
+            keep,
+            &mut FxHashMap::default(),
+        )
     }
 
     /// Substitute with memoization, using an explicit heap stack instead of
@@ -200,11 +280,11 @@ impl TermManager {
     /// (`Forall`, `Exists`, `Let`, `Match`) drops shadowed variables from
     /// the substitution domain and alpha-renames any bound variable whose
     /// name would otherwise capture a free variable of a replacement term.
-    pub(in crate::ast::manager) fn substitute_cached(
+    pub(in crate::ast::manager) fn substitute_cached<C: SubstCache>(
         &mut self,
         id: TermId,
         subst: &FxHashMap<TermId, TermId>,
-        cache: &mut FxHashMap<TermId, TermId>,
+        cache: &mut C,
     ) -> TermId {
         let keep = FxHashSet::default();
         self.substitute_cached_keep(id, subst, &keep, cache)
@@ -212,12 +292,12 @@ impl TermManager {
 
     /// [`Self::substitute_cached`] with a keep-shield (see
     /// [`Self::substitute_keeping`]).
-    pub(in crate::ast::manager) fn substitute_cached_keep(
+    pub(in crate::ast::manager) fn substitute_cached_keep<C: SubstCache>(
         &mut self,
         id: TermId,
         subst: &FxHashMap<TermId, TermId>,
         keep: &FxHashSet<TermId>,
-        cache: &mut FxHashMap<TermId, TermId>,
+        cache: &mut C,
     ) -> TermId {
         // Fast path matching the entry checks every recursive call used to
         // make: a direct substitution-map hit, or already memoized from a
@@ -227,7 +307,7 @@ impl TermManager {
         if let Some(&replacement) = subst.get(&id) {
             return replacement;
         }
-        if let Some(&result) = cache.get(&id) {
+        if let Some(result) = cache.memo_get(id) {
             return result;
         }
 
@@ -245,7 +325,7 @@ impl TermManager {
         if !keep.is_empty() {
             filtered.retain(|k, _| !keep.contains(k));
         }
-        let mut contexts: Vec<SubstContext> = vec![SubstContext {
+        let mut contexts: Vec<SubstContext<C>> = vec![SubstContext {
             subst: filtered,
             cache: core::mem::take(cache),
         }];
@@ -269,10 +349,10 @@ impl TermManager {
 
     /// Dispatch one [`SubstStep`], possibly pushing more steps (and, for
     /// binder nodes, more [`SubstContext`]s) onto `work`/`contexts`.
-    fn run_substitute_step(
+    fn run_substitute_step<C: SubstCache>(
         &mut self,
         step: SubstStep,
-        contexts: &mut Vec<SubstContext>,
+        contexts: &mut Vec<SubstContext<C>>,
         work: &mut Vec<SubstStep>,
         keep: &FxHashSet<TermId>,
     ) {
@@ -287,7 +367,7 @@ impl TermManager {
                 // binder-free leaves (constants), which no binder scope can
                 // shadow — enforced by the caller's construction.
                 if keep.contains(&id) {
-                    contexts[ctx].cache.insert(id, id);
+                    contexts[ctx].cache.memo_insert(id, id);
                     return;
                 }
 
@@ -295,7 +375,7 @@ impl TermManager {
                     Some(term) => (term.kind.clone(), term.sort),
                     None => {
                         // Matches the recursive version's `None => return id`.
-                        contexts[ctx].cache.insert(id, id);
+                        contexts[ctx].cache.memo_insert(id, id);
                         return;
                     }
                 };
@@ -315,7 +395,7 @@ impl TermManager {
                     | TermKind::FpPlusZero { .. }
                     | TermKind::FpMinusZero { .. }
                     | TermKind::FpNaN { .. } => {
-                        contexts[ctx].cache.insert(id, id);
+                        contexts[ctx].cache.memo_insert(id, id);
                     }
 
                     // ======== Binders: capture-avoiding, handled specially ========
@@ -369,7 +449,7 @@ impl TermManager {
                 sort,
             } => {
                 let result = self.rebuild_substituted(&contexts[ctx], kind, sort);
-                contexts[ctx].cache.insert(id, result);
+                contexts[ctx].cache.memo_insert(id, result);
             }
 
             SubstStep::CombineQuantifier {
@@ -411,7 +491,7 @@ impl TermManager {
                         sort,
                     )
                 };
-                contexts[ctx].cache.insert(id, result);
+                contexts[ctx].cache.memo_insert(id, result);
             }
 
             SubstStep::CombineLet {
@@ -443,7 +523,7 @@ impl TermManager {
                     },
                     sort,
                 );
-                contexts[ctx].cache.insert(id, result);
+                contexts[ctx].cache.memo_insert(id, result);
             }
 
             SubstStep::CombineMatch {
@@ -482,7 +562,7 @@ impl TermManager {
                     },
                     sort,
                 );
-                contexts[ctx].cache.insert(id, result);
+                contexts[ctx].cache.memo_insert(id, result);
             }
         }
     }
@@ -496,7 +576,7 @@ impl TermManager {
     /// opens a fresh context for the body and patterns and schedules them
     /// alongside a `CombineQuantifier`.
     #[allow(clippy::too_many_arguments)]
-    fn expand_quantifier(
+    fn expand_quantifier<C: SubstCache>(
         &mut self,
         id: TermId,
         ctx: usize,
@@ -505,7 +585,7 @@ impl TermManager {
         vars: SmallVec<[(Spur, SortId); 2]>,
         body: TermId,
         patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]>,
-        contexts: &mut Vec<SubstContext>,
+        contexts: &mut Vec<SubstContext<C>>,
         work: &mut Vec<SubstStep>,
     ) {
         // Trigger patterns are siblings of `body` in this same scope, so
@@ -516,14 +596,14 @@ impl TermManager {
             patterns.iter().flat_map(|p| p.iter().copied()).collect();
         let prep = self.prepare_binder_subst(&vars, body, &pattern_terms, &contexts[ctx].subst);
         let Some((effective, new_vars)) = prep else {
-            contexts[ctx].cache.insert(id, id);
+            contexts[ctx].cache.memo_insert(id, id);
             return;
         };
 
         let body_ctx = contexts.len();
         contexts.push(SubstContext {
             subst: effective,
-            cache: FxHashMap::default(),
+            cache: C::default(),
         });
 
         // `work` is a LIFO stack: the combine step must be pushed *before*
@@ -570,14 +650,14 @@ impl TermManager {
     /// to be computed, letting the body's binder-substitution prep run
     /// unconditionally rather than depend on the binding-value results.
     #[allow(clippy::too_many_arguments)]
-    fn expand_let(
+    fn expand_let<C: SubstCache>(
         &mut self,
         id: TermId,
         ctx: usize,
         sort: SortId,
         bindings: SmallVec<[(Spur, TermId); 2]>,
         body: TermId,
-        contexts: &mut Vec<SubstContext>,
+        contexts: &mut Vec<SubstContext<C>>,
         work: &mut Vec<SubstStep>,
     ) {
         let bound: SmallVec<[(Spur, SortId); 2]> = bindings
@@ -599,7 +679,7 @@ impl TermManager {
                 let bctx = contexts.len();
                 contexts.push(SubstContext {
                     subst: effective,
-                    cache: FxHashMap::default(),
+                    cache: C::default(),
                 });
                 (new_bound, Some(bctx))
             }
@@ -638,14 +718,14 @@ impl TermManager {
     /// different names and so can differ on whether capture-avoidance opens
     /// a fresh context for that case's body.
     #[allow(clippy::too_many_arguments)]
-    fn expand_match(
+    fn expand_match<C: SubstCache>(
         &mut self,
         id: TermId,
         ctx: usize,
         sort: SortId,
         scrutinee: TermId,
         cases: SmallVec<[MatchCase; 4]>,
-        contexts: &mut Vec<SubstContext>,
+        contexts: &mut Vec<SubstContext<C>>,
         work: &mut Vec<SubstStep>,
     ) {
         let mut case_plans: SmallVec<[MatchCasePlan; 4]> = SmallVec::new();
@@ -673,7 +753,7 @@ impl TermManager {
                     let bctx = contexts.len();
                     contexts.push(SubstContext {
                         subst: effective,
-                        cache: FxHashMap::default(),
+                        cache: C::default(),
                     });
                     pending.push((case.body, bctx));
                     case_plans.push(MatchCasePlan::Rewrite {
@@ -720,7 +800,12 @@ impl TermManager {
     /// they are still listed explicitly (no catch-all) so that a newly
     /// added `TermKind` variant fails to compile, exactly like the
     /// recursive version's original exhaustiveness guarantee.
-    fn rebuild_substituted(&mut self, ctx: &SubstContext, kind: TermKind, sort: SortId) -> TermId {
+    fn rebuild_substituted<C: SubstCache>(
+        &mut self,
+        ctx: &SubstContext<C>,
+        kind: TermKind,
+        sort: SortId,
+    ) -> TermId {
         let sub = |t: TermId| ctx.resolved(t).unwrap_or(t);
         self.rebuild_children_with(kind, sort, &sub)
     }
