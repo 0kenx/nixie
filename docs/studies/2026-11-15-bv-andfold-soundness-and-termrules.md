@@ -1490,3 +1490,35 @@ wall question is explicitly NOT answerable on a shared box.
 Session closed here: 16 landings, 23 addenda, 7 traps, the survey
 dispositioned end-to-end, and the measurement frontier mapped exactly
 to the machine regime that bounds it.
+
+## Forty-seventh addendum: the unscanned-family sweep — new targets, first one LANDED (`9dc0f84d`)
+
+A z3-differential sweep of the 51 QF_BV families outside every prior
+sample (6-cell prefixes, then 20-cell deepening of gap families, 10 s
+cap, matched pairs): **zero disagreements anywhere**; ~35 gap cells
+clustered in: wienand-cav2008 (11!), brummayerbiere3 isqrt/icbrt (5),
+brummayerbiere bitrev (4), calypto (3), and singles/pairs elsewhere;
+we LEAD z3 on mcm (9-8) and float.
+
+**LANDED: `bvmul` AC canonicalization** (the wienand commute cluster,
+5 cells TO→0.02–0.89 s): nested mul chains flatten → sort → left-fold
+via raw intern (ring AC unconditional mod 2^w); O(1) already-canonical
+guard + manager-level pair memo keep mul-dense DAGs at zero marginal
+cost (hdp/3365 counters bit-identical; a first "slowdown" reading was
+load inflation — ac path 0 % in profile).  Validation per the
+term-rules discipline: 4 mechanism unit tests, 104-cell mul-dense
+re-check vs z3 (0 disagreements), parity 171-0-6, gate PASS.
+
+**Remaining new targets, ranked:**
+1. *wienand distrib/mult* (6+ cells): ring-distributive normalization
+   — expand `x*(y+z)` over the AC-canonical mul form.  Natural next
+   step on the landed base.
+2. *brummayerbiere bitrev* (4 cells): rev∘rev identity via 10-stage
+   shift-and-mask ladders — needs a constant-mask/shift algebra
+   normalizer (distribute shift over or/and with constant masks,
+   mask-mask meet).  A rewrite-engine project, z3-shaped.
+3. *brummayerbiere3 isqrt/icbrt* (5 cells): nonlinear-BV (`y²` range
+   properties) — needs a mul-to-algebra bridge (nixie-math's grobner
+   exists for QF_NIA) or squaring-aware blast sharing.  Largest scope.
+4. *calypto* (3), *brummayerbiere2 smulov* (2, signed-overflow checks),
+   singles — profile before scoping.
