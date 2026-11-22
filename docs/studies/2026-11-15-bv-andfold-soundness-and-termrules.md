@@ -1470,3 +1470,23 @@ fail).  Candidates: the CHOOSE commits' set logic, or an interaction
 with the substitution changes riding the same merge.  This is the tla
 line's to debug; the window and the clean-bisect protocol above are
 the hand-off.
+
+## Forty-sixth addendum: the census verdict — machine-bound, permanently deferred
+
+The minigzip census was attempted at the best regime available under
+continuous multi-agent operation (load 6–8, r=6–8, si≈1 MB/s): controls
+read 1.4× inflated (492: 7.5–8.4 s vs the 5.6–6.0 s clean baseline;
+562/582 TO vs 10.0/8.5 s decided), the gap cells unreachable, and the
+directionally-consistent pairs (B ≤ A on both controls, both rounds)
+are the only signal the regime yields.  **Conclusion: the 10 s-cap
+census requires a truly dedicated machine** — under co-tenant
+operation the box never returns to the true-quiet regime the hdp
+census caught (load 5, si 4–20 KB/s, one lucky hour).  The crossing
+question for the 33-cell block (and the deferred wall A/Bs) is
+permanently deferred to such a window; the counters-identical
+evidence at every landing stands as the correctness record, and the
+wall question is explicitly NOT answerable on a shared box.
+
+Session closed here: 16 landings, 23 addenda, 7 traps, the survey
+dispositioned end-to-end, and the measurement frontier mapped exactly
+to the machine regime that bounds it.
