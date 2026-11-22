@@ -2864,6 +2864,38 @@ impl Solver {
                     self.deferred_bv_asserts.len()
                 );
             }
+            // Folded-identity delivery, take two: the rewrites are implied
+            // by the originals *jointly*, so a rewrite set that is
+            // trivially contradictory — one variable pinned to two distinct
+            // constants, or a bare `false` — refutes the goal with a
+            // level-0 conflict as soon as those units are emitted,
+            // regardless of the literal-only emission gate below.
+            // That gate exists for trajectory stability (verbose implied
+            // clauses reshaped three boundary goals), but it also drops the
+            // two *unit pins* that carry the folded refutation: a
+            // `wienand-cav2008/distrib*` goal collapses to `v = 1 ∧ v = 0`
+            // at every width, yet its `Fresh__N` plumbing tail hands the
+            // ring pass one `const = var` equation, so
+            // `used_ring_elimination` disables non-literal emission
+            // wholesale and the search drowns in the raw multiplier miter
+            // (10 s-cap timeouts vs Z3's 15 ms preprocess-time refutation,
+            // `solve-eqs-elim-vars 14`, zero conflicts).  When the whole
+            // set is trivially unsat the rewrites cannot reshape any
+            // trajectory — the refutation is immediate — so the gate is
+            // bypassed and the units emitted (the three protected goals
+            // are solvable, so their sets never take this branch, and
+            // their path is bit-identical).  Emission (rather than an
+            // early return) also keeps the deferral bookkeeping and the
+            // `has_false_assertion` tail running, and leaves the level-0
+            // conflict in the SAT core for later same-set checks after a
+            // pop (`deferred_incremental_sequence_matches`).
+            let trivially_unsat =
+                bv_preprocess::rewrite_set_trivially_unsat(&pp.rewritten, manager).is_some();
+            if trivially_unsat && std::env::var("NIXIE_PRE_TRACE").is_ok() {
+                eprintln!(
+                    "[defer] stage4 rewrite set trivially unsat — emitting the refutation units"
+                );
+            }
             // Every rewrite the preprocessor emits is implied by the
             // originals, so asserting them alongside is sound in both
             // directions: the plain solve-eqs pass substitutes
@@ -2885,7 +2917,7 @@ impl Solver {
             // pre-ring assertion set and therefore the old trajectory).
             let ring_participated = pp.used_ring_elimination;
             for &r in &pp.rewritten {
-                if !defer_active && ring_participated {
+                if !defer_active && ring_participated && !trivially_unsat {
                     let is_literal = manager
                         .get(r)
                         .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False));

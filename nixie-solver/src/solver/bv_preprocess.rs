@@ -2647,6 +2647,153 @@ fn collect_var_mentions(
     }
 }
 
+/// Why a rewritten assertion set is trivially unsatisfiable — the shapes
+/// [`rewrite_set_trivially_unsat`] can refute without a search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TrivialRewriteUnsat {
+    /// `rewritten[index]` is the `false` constant.
+    FalseAssertion { index: usize },
+    /// One free variable is pinned to two different value constants by
+    /// `rewritten[first]` and `rewritten[second]` (`first < second`).
+    PinnedTwice {
+        var: TermId,
+        first: usize,
+        second: usize,
+    },
+}
+
+/// Detect a trivial contradiction in a rewritten assertion set (see
+/// [`Solver::bv_preprocess_assertions`] for the implication contract).
+///
+/// Every rewrite is implied by the original assertion set, so a rewrite
+/// set that is *syntactically* contradictory proves the originals
+/// unsatisfiable outright — this is the delivery half of the
+/// folded-identity mechanism: goals whose ring identities collapse under
+/// the normalizer (the `wienand-cav2008` distrib/commute family, whose
+/// miter plumbing reduces to `v = 1 ∧ v = 0`) refute before any bit-blast
+/// or SAT search, exactly like Z3's `qfbv` preamble producing `false`.
+/// The stage-4 emission gate (literal-only rewrites once the ring pass
+/// participated) would otherwise drop the two unit pins that carry the
+/// refutation, stranding the search on the raw multiplier miter.
+///
+/// Recognized shapes, each checked at assertion top level only:
+/// * the `false` constant;
+/// * a Boolean pin: a bare `Var` (asserts it), `Not(Var)`, `(= v true)`
+///   or `(= v false)`;
+/// * a bit-vector pin: `Eq(c, v)` / `Eq(v, c)` with `v` a `Var` and `c` a
+///   `BitVecConst`.
+///
+/// One variable pinned to two *equal* constants is consistent (and simply
+/// true); anything else — compound terms, other sorts, `Distinct` — is not
+/// a contradiction this detector claims, so unrecognized sets return
+/// `None` and the goal proceeds to the search (sound either way).
+pub(super) fn rewrite_set_trivially_unsat(
+    rewritten: &[TermId],
+    manager: &TermManager,
+) -> Option<TrivialRewriteUnsat> {
+    /// The value one assertion pins a variable to.  Booleans encode as
+    /// `(0, 0|1)`; bit-vectors as `(width, value)` — a well-typed `Eq`
+    /// already forces one width per variable, the width in the key is
+    /// defense in depth against an ill-typed rewrite slipping through.
+    type PinValue = (u32, BigInt);
+
+    // Is `sort` a Boolean sort?
+    let is_bool =
+        |sort: nixie_core::sort::SortId| manager.sorts.get(sort).is_some_and(|s| s.is_bool());
+    // Is `sort` a bit-vector sort of exactly `width` bits?
+    let is_bitvec_of = |sort: nixie_core::sort::SortId, width: u32| {
+        manager
+            .sorts
+            .get(sort)
+            .is_some_and(|s| s.bitvec_width() == Some(width))
+    };
+    let bool_value = |b: bool| -> PinValue { (0, BigInt::from(u8::from(b))) };
+
+    /// `(var, pinned value)` claimed by one assertion, if it is a unit pin.
+    fn pin_of(
+        assertion: TermId,
+        manager: &TermManager,
+        is_bool: impl Fn(nixie_core::sort::SortId) -> bool,
+        is_bitvec_of: impl Fn(nixie_core::sort::SortId, u32) -> bool,
+        bool_value: impl Fn(bool) -> (u32, BigInt),
+    ) -> Option<(TermId, (u32, BigInt))> {
+        let data = manager.get(assertion)?;
+        match &data.kind {
+            // A bare Boolean variable: asserting it pins it true.
+            TermKind::Var(_) if is_bool(data.sort) => Some((assertion, bool_value(true))),
+            TermKind::Not(operand) => {
+                let op = manager.get(*operand)?;
+                if matches!(op.kind, TermKind::Var(_)) && is_bool(op.sort) {
+                    Some((*operand, bool_value(false)))
+                } else {
+                    None
+                }
+            }
+            TermKind::Eq(a, b) => {
+                let da = manager.get(*a)?;
+                let db = manager.get(*b)?;
+                // `(= c v)` or `(= v c)` with `v` a variable and `c` a value
+                // constant of `v`'s sort; both orientations, exactly one
+                // variable side (an `(= v w)` pair is not a pin).
+                let var_side = |d: &nixie_core::ast::Term| {
+                    matches!(d.kind, TermKind::Var(_)).then_some(d.sort)
+                };
+                // The constant's value, type-checked against the
+                // *variable side's* sort (the `Eq`'s own sort is Boolean).
+                let value_of = |d: &nixie_core::ast::Term, var_sort: nixie_core::sort::SortId| {
+                    match &d.kind {
+                        TermKind::BitVecConst { value, width }
+                            if is_bitvec_of(var_sort, *width) =>
+                        {
+                            Some((*width, value.clone()))
+                        }
+                        // `(= b true)` / `(= b false)` normalize to `b` /
+                        // `(not b)` upstream, but accept the direct shapes —
+                        // the detector must not depend on the normalizer's
+                        // incidental output form.
+                        TermKind::True if is_bool(var_sort) => Some(bool_value(true)),
+                        TermKind::False if is_bool(var_sort) => Some(bool_value(false)),
+                        _ => None,
+                    }
+                };
+                match (var_side(da), var_side(db)) {
+                    (Some(_), Some(_)) => None,
+                    (Some(vs), None) => value_of(db, vs).map(|v| (*a, v)),
+                    (None, Some(vs)) => value_of(da, vs).map(|v| (*b, v)),
+                    (None, None) => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    let mut pins: rustc_hash::FxHashMap<TermId, (PinValue, usize)> =
+        rustc_hash::FxHashMap::default();
+    for (index, &assertion) in rewritten.iter().enumerate() {
+        if manager
+            .get(assertion)
+            .is_some_and(|d| matches!(d.kind, TermKind::False))
+        {
+            return Some(TrivialRewriteUnsat::FalseAssertion { index });
+        }
+        if let Some((var, value)) = pin_of(assertion, manager, is_bool, is_bitvec_of, bool_value) {
+            match pins.get(&var) {
+                Some(&(ref prev_value, prev_index)) if *prev_value != value => {
+                    return Some(TrivialRewriteUnsat::PinnedTwice {
+                        var,
+                        first: prev_index,
+                        second: index,
+                    });
+                }
+                _ => {
+                    pins.entry(var).or_insert((value, index));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// `(x, t)` when `lhs` is an eliminable free variable and `rhs` does not
 /// mention it.
 fn var_def_operand(
@@ -3130,5 +3277,192 @@ mod tests {
             );
             assert_eq!(solve_str(&script), expect, "{body}");
         }
+    }
+
+    /// The exact `wienand-cav2008/Distrib` plumbing shape: the miter's
+    /// property chain reduces (after solve-eqs + ring + SoM rewriting) to
+    /// ONE variable pinned to `1` by the folded identity and to `0` by the
+    /// asserted property — while the plumbing tail's `Fresh__1` equation
+    /// keeps the ring pass participating, which is what used to disable
+    /// non-literal rewrite emission and strand the search on the raw
+    /// multiplier miter (10 s-cap timeouts at every width ≥ 8).
+    /// [`super::rewrite_set_trivially_unsat`] now refutes pre-search.
+    #[test]
+    fn wienand_distrib_plumbing_refutes_pre_search() {
+        for width in [4u32, 8, 32, 64] {
+            let script = format!(
+                "(set-logic QF_BV)
+             (declare-fun x () (_ BitVec {width}))
+             (declare-fun b () (_ BitVec {width}))
+             (declare-fun y () (_ BitVec {width}))
+             (declare-fun fx () (_ BitVec {width}))
+             (declare-fun fb () (_ BitVec {width}))
+             (declare-fun fy () (_ BitVec {width}))
+             (declare-fun m1 () (_ BitVec {width}))
+             (declare-fun m2 () (_ BitVec {width}))
+             (declare-fun s () (_ BitVec {width}))
+             (declare-fun lhs () (_ BitVec {width}))
+             (declare-fun rhs () (_ BitVec {width}))
+             (declare-fun v32 () (_ BitVec 1))
+             (declare-fun v33 () (_ BitVec 1))
+             (declare-fun v34 () (_ BitVec 1))
+             (declare-fun property () (_ BitVec 1))
+             (declare-fun Fresh__0 () (_ BitVec 1))
+             (declare-fun Fresh__1 () (_ BitVec 1))
+             (assert (= fx x))
+             (assert (= fb b))
+             (assert (= fy y))
+             (assert (= m1 (bvmul fx fb)))
+             (assert (= m2 (bvmul fb fy)))
+             (assert (= lhs (bvadd m1 m2)))
+             (assert (= s (bvadd fx fy)))
+             (assert (= rhs (bvmul fb s)))
+             (assert (= (= Fresh__0 (_ bv1 1)) (= lhs rhs)))
+             (assert (= v32 Fresh__0))
+             (assert (= v33 (bvnot (_ bv1 1))))
+             (assert (= v34 (bvor v32 v33)))
+             (assert (= property ((_ extract 0 0) v34)))
+             (assert (= (= Fresh__1 (_ bv1 1)) (= property (_ bv0 1))))
+             (assert (= (_ bv1 1) Fresh__1))
+             (check-sat)"
+            );
+            assert_eq!(solve_str(&script), "unsat", "width {width}");
+        }
+    }
+
+    /// The end-to-end corpus reproducer (the file that timed out).
+    #[test]
+    fn wienand_distrib08_corpus_file_is_unsat() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../smt-lib/non-incremental/QF_BV/wienand-cav2008/Distrib/",
+            "distrib08.sf.smt2"
+        );
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return; // corpus not present in every checkout
+        };
+        assert_eq!(solve_str(&source), "unsat");
+    }
+
+    /// Pins that AGREE must not refute: the same variable pinned to the
+    /// same constant through two different chains stays `sat` — the
+    /// detector compares values, not occurrence counts.
+    #[test]
+    fn agreeing_pins_do_not_refute() {
+        let script = "(set-logic QF_BV)
+            (declare-fun x () (_ BitVec 8))
+            (declare-fun y () (_ BitVec 8))
+            (declare-fun v () (_ BitVec 1))
+            (assert (= x (_ bv128 8)))
+            (assert (= y (bvmul x (_ bv1 8))))
+            (assert (= v (_ bv1 1)))
+            (assert (= v ((_ extract 7 7) x)))
+            (check-sat)";
+        assert_eq!(solve_str(script), "sat");
+    }
+
+    /// A ring-pass pin in a satisfiable goal must not combine with an
+    /// unrelated pin into a false refutation: agreeing values only.
+    #[test]
+    fn ring_elimination_pins_stay_sat() {
+        let script = "(set-logic QF_BV)
+            (declare-fun x () (_ BitVec 8))
+            (declare-fun y () (_ BitVec 8))
+            (assert (= x (bvmul y y)))
+            (assert (= x (_ bv4 8)))
+            (assert (= y (_ bv2 8)))
+            (check-sat)";
+        assert_eq!(solve_str(script), "sat");
+    }
+
+    /// Detector unit tests, term-level: the exact shapes recognized.
+    #[test]
+    fn detector_recognizes_bv_pin_pairs() {
+        use super::TrivialRewriteUnsat;
+        use nixie_core::ast::TermManager;
+        let mut m = TermManager::new();
+        let w1 = m.sorts.bitvec(1);
+        let v = m.mk_var("v", w1);
+        let one = m.mk_bitvec(num_bigint::BigInt::from(1), 1);
+        let zero = m.mk_bitvec(num_bigint::BigInt::from(0), 1);
+        let pin_hi = m.mk_eq(one, v);
+        let pin_lo = m.mk_eq(v, zero);
+        let same_lo = m.mk_eq(v, zero);
+        // Conflicting pins → PinnedTwice over `v`, first < second.
+        match super::rewrite_set_trivially_unsat(&[pin_hi, pin_lo], &m) {
+            Some(TrivialRewriteUnsat::PinnedTwice { var, first, second }) => {
+                assert_eq!(var, v);
+                assert_eq!((first, second), (0, 1));
+            }
+            other => panic!("expected PinnedTwice, got {other:?}"),
+        }
+        // Agreeing pins → no contradiction.
+        assert!(super::rewrite_set_trivially_unsat(&[pin_lo, same_lo], &m).is_none());
+        // A single pin → none.
+        assert!(super::rewrite_set_trivially_unsat(&[pin_hi], &m).is_none());
+    }
+
+    /// Detector unit tests, Boolean shapes: a bare variable asserted both
+    /// true and false — directly and through `not`/`=` normal forms.
+    #[test]
+    fn detector_recognizes_bool_pin_pairs() {
+        use super::TrivialRewriteUnsat;
+        use nixie_core::ast::TermManager;
+        let mut m = TermManager::new();
+        let b = m.mk_var("b", m.sorts.bool_sort);
+        let t = m.mk_bool(true);
+        let f = m.mk_bool(false);
+        let not_b = m.mk_not(b);
+        // b ∧ (not b)
+        assert!(matches!(
+            super::rewrite_set_trivially_unsat(&[b, not_b], &m),
+            Some(TrivialRewriteUnsat::PinnedTwice { var, .. }) if var == b
+        ));
+        // (= b true) ∧ (= b false)
+        let eq_t = m.mk_eq(b, t);
+        let eq_f = m.mk_eq(b, f);
+        assert!(matches!(
+            super::rewrite_set_trivially_unsat(&[eq_t, eq_f], &m),
+            Some(TrivialRewriteUnsat::PinnedTwice { var, .. }) if var == b
+        ));
+        // b ∧ (= b true): agreeing — no contradiction.
+        assert!(super::rewrite_set_trivially_unsat(&[b, eq_t], &m).is_none());
+        // A bare `false` rewrite.
+        assert!(matches!(
+            super::rewrite_set_trivially_unsat(&[f], &m),
+            Some(TrivialRewriteUnsat::FalseAssertion { index: 0 })
+        ));
+    }
+
+    /// Detector unit tests, negatives: shapes that must NOT be claimed as
+    /// pins — var-var equalities, compound sides, mismatched-width consts,
+    /// other sorts.  A false positive here is a false `unsat` upstream.
+    #[test]
+    fn detector_ignores_non_pin_shapes() {
+        use nixie_core::ast::TermManager;
+        let mut m = TermManager::new();
+        let w8 = m.sorts.bitvec(8);
+        let x = m.mk_var("x", w8);
+        let y = m.mk_var("y", w8);
+        let c1 = m.mk_bitvec(num_bigint::BigInt::from(1), 8);
+        let c2 = m.mk_bitvec(num_bigint::BigInt::from(2), 8);
+        // (= x y) and (= y c2): var-var is not a pin; the var-const one is,
+        // but there is no second, conflicting pin of the same var.
+        let vv = m.mk_eq(x, y);
+        let vc = m.mk_eq(y, c2);
+        assert!(super::rewrite_set_trivially_unsat(&[vv, vc], &m).is_none());
+        // Compound side: (= (bvadd x c1) c2) is NOT a unit pin of x.
+        let sum = m.mk_bv_add(x, c1);
+        let compound = m.mk_eq(sum, c2);
+        let pin = m.mk_eq(x, c1);
+        assert!(super::rewrite_set_trivially_unsat(&[compound, pin], &m).is_none());
+        // An integer pin of a same-named-looking var is out of scope (the
+        // detector is BV/Bool-only), and must not fire.
+        let i = m.mk_var("i", m.sorts.int_sort);
+        let ione = m.mk_int(num_bigint::BigInt::from(1));
+        let izero = m.mk_int(num_bigint::BigInt::from(0));
+        let ipin1 = m.mk_eq(i, ione);
+        let ipin0 = m.mk_eq(i, izero);
+        assert!(super::rewrite_set_trivially_unsat(&[ipin1, ipin0], &m).is_none());
     }
 }

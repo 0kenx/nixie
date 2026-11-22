@@ -1522,3 +1522,135 @@ re-check vs z3 (0 disagreements), parity 171-0-6, gate PASS.
    exists for QF_NIA) or squaring-aware blast sharing.  Largest scope.
 4. *calypto* (3), *brummayerbiere2 smulov* (2, signed-overflow checks),
    singles — profile before scoping.
+
+## Forty-eighth addendum: wienand distrib — the identity already folded; the refutation was being dropped at delivery
+
+Target #1 from addendum 47 (ring-distributive normalization for the 6
+distrib cells) turned out to be **already built**: `bv_preprocess`'s
+SoM pass (product-over-sum distribution, monomial combining, canonical
+sort — the `poly_rewriter som=true` port recorded in its module docs,
+which even cites `wienand-cav2008/distrib16`) reduces every
+`distrib{04..64}.sf` goal to the same two unit equalities
+`v = 1 ∧ v = 0` (`NIXIE_BV_DUMP_PRE` shows it at every width).  Z3
+decides these files in ~15 ms with `solve-eqs-elim-vars 14`, zero
+conflicts — a pure preprocessing refutation.  Nixie TO'd at 10 s.
+
+**Root cause (found by isolating the layers):** the stage-4 parity pass
+(the unified general path's `bv_dispatch_unified` block in
+`solver/mod.rs`) computes those rewrites but only *asserts them
+alongside* the originals — and when `used_ring_elimination` is set it
+asserts **literal rewrites only** (the gate that protects three
+25 s-boundary goals whose verbose implied clauses reshaped the search
+trajectory).  The distrib files' property plumbing tail ends in
+`(assert (= (_ bv1 1) Fresh__1))` — a `const = var` ring equation the
+Gaussian pass duly eliminates, so the gate fires and the two unit pins
+carrying the folded refutation are dropped wholesale.  The search then
+grinds the raw 2w-bit multiplier miter (~3 k SAT vars, 170 k+ decisions,
+millions of conflicts — multiplier verification, exactly what the
+algebraic approach exists to avoid).  Positive control: rewriting that
+one equation to the width-1-equivalent `(bvule (_ bv1 1) Fresh__1)`
+(poly_diff sees no equality → ring pass declines → non-literal emission
+restored) took the same file from TO to **0.02 s unsat** on the
+unchanged binary.
+
+**Fix (delivery, not normalization):** `rewrite_set_trivially_unsat`
+(`bv_preprocess.rs`) — a trivial-contradiction detector over the
+rewritten set, run in stage-4 before the emission loop and regardless
+of the literal gate: one free variable pinned to two distinct value
+constants (BV `Eq(c,v)`/`Eq(v,c)` both orientations, Bool via bare
+`Var`/`Not(Var)`/`(= v true|false)`), or a bare `false`.  Soundness is
+the preprocessor's existing implication contract, unchanged: every
+rewrite is implied by the originals *jointly*, so a trivially
+contradictory rewrite set proves the original set unsat — this adds no
+clauses, so the three trajectory-protected goals keep their exact old
+path (the literal gate stays).  Proof/certified modes decline the
+shortcut (no proof object for it), mirroring the pure-BV dispatch.
+Unsat cores: conservative full-set core via `build_unsat_core()`
+(a valid unsatisfiable subset; query-time minimizer refines — verified
+incrementally with `:produce-unsat-cores`).
+
+**Effect:** distrib04/08/16/32/48/64 TO(10 s)→ **0.009–0.135 s unsat**
+(the whole 11-cell wienand gap from addendum 47 is now closed: 5 commute
+via the AC landing, 6 distrib via this).  Commute cells unaffected
+(re-checked).  Booth `mult_ub_*` unchanged (genuine multiplier
+verification; only `mult_ub_8x8_1` is a z3 gap, 6.7 s vs TO — recorded
+as a future target).
+
+**Validation (term-rules class):** 7 new tests — the corpus reproducer
+(`distrib08.sf.smt2` → unsat), the exact plumbing shape at widths
+4/8/32/64, agreeing-pins-stay-sat, ring-pins-stay-sat, and unit tests
+of the detector (BV pin pair with indices, Bool pin pairs, `false`,
+agreeing pins, var-var, compound sides, out-of-scope Int pins — every
+false positive there is a false `unsat`).  167-cell matched z3 re-check
+over wienand/tacas07/Goel-hwbench/mcm/float/brummayerbiere*: the 16
+disagreements are all pre-existing (base-binary confirmed; three
+initial apparent sat→TO "regressions" on float/rfunit were 10 s-cliff
+flakes — matched ABBA re-run identical verdicts, and `rfunit_flat-64`
+counters are BIT-IDENTICAL: 423 706 decisions, 1 872 604 propagations,
+3 633 conflicts on both binaries).  All five probe cells
+counter-identical (minigzip 492, BBB-32, duthen-50 steps.10, hdp 3365,
+bzip2recover 2763).  Full bar: fmt, clippy `-D warnings`, doc, full
+nextest (excl. the two pre-existing-at-HEAD sets failures), parity
+171-0-6, perf gate — **all green on the final form**: full nextest
+12 907/12 907 (the two pre-existing-at-HEAD sets failures excluded),
+doc tests ok, parity **171 Correct / 6 Inconclusive / 0 disagreements**,
+perf gate PASS (counters 1.000/1.000, wall 0.97), fmt/clippy/doc clean.
+
+**Layer audit (principle 2):** (1) emission gate — fixed here;
+(2) the dispatch-owned route already replaces its work set with the
+rewrites (no gate) — verified `NIXIE_BV_DISPATCH_UNIFIED=0` decides
+distrib08 unsat; (3) deferral route — detector runs before the emission
+loop in the same block, `NIXIE_BV_DEFER_BLAST=1` verified unsat;
+(4) incremental/check-count gating (`bv_preprocess_at_count`) and
+push/pop cache invalidation — verified with a two-check-sat script
+(sat then unsat, core names all six involved assertions, minimizer
+consistent); (5) the `has_false_assertion`/`encode_depth_exceeded`
+interactions — the early return needs no encoding and skips only
+Sat-honesty gates, sound; (6) the `FalseAssertion` detector case
+duplicates the literal-emission path's existing trivial-false handling
+(different core bookkeeping, both valid) — kept as defense in depth.
+Not in scope: mixed-logic goals (the stage-4 block is BV-fragment-gated)
+and the Booth-8x8 gap.
+
+**Mid-landing iteration (the deferral regression the full suite caught):**
+the first form returned `Unsat` directly from the detector, skipping the
+stage-4 emission loop — and with it the deferral bookkeeping
+(`deferred_bv_asserts.clear()`) and the level-0 units in the SAT core.
+`deferred_incremental_sequence_matches` (assert/check/push/assert/check/
+**pop**/check) failed: the post-`pop` check re-solved a set whose
+refutation had never been emitted → `unknown`.  The fix is architectural,
+not a patch: the detector now *bypasses the literal gate* instead of
+returning early — the contradictory units are emitted through the normal
+loop (level-0 conflict; the three trajectory-protected goals never take
+this branch, so their path stays bit-identical), and every tail
+bookkeeping (deferral clear, encode-depth gate, `has_false_assertion`)
+runs unchanged.  This also removed the proof/certified gate the early
+return needed: emitting implied units is exactly what the pre-existing
+non-ring path does in every mode, and the refutation is then a normal
+SAT-level-0 conflict a proof object can carry.  Distrib cells are
+0.03–0.42 s on this form (vs 0.009–0.135 on the early-return form — the
+search now starts and immediately conflicts; correctness and uniformity
+beat the milliseconds).
+
+**Shared-box incidents this session (recorded for the next agent):**
+(1) `/media/data` hit **100 % (80 M free)** — an LTO test-link died with
+`No space left on device`; freed 12 G by pruning stale test executables
+(740 of them, 4.7 G) and >24 h-old dep artifacts in `target/release/deps`
+(someone later freed ~340 G more).  (2) At the same moment **13 tracked
+root files vanished** (Cargo.toml, README.md, .gitignore, flake.nix, …) —
+a co-tenant's misfire, NOT this session's `find -delete` (which ran
+`-maxdepth 1` inside `target/release/deps`); recovered via index restore
+(`git restore <13 paths>` — the worktree copies were already gone, so
+nothing uncommitted was lost).  The **untracked** `Cargo.lock` was
+truncated to 0 bytes by the disk-full event and had to be regenerated
+(`cargo generate-lockfile` — versions re-resolved within Cargo.toml's
+constraints).  (3) An external SIGTERM killed one full-suite run and a
+180 s-budget brute-force test flaked under load 22–30
+(`bv_odd_width_blast_differential` — passes isolated in 105 s; the
+`budget_bitblast` flake class from 2026-11-16).
+
+**Remaining wienand-adjacent target:** `Booth/mult_ub_8x8_1` — z3 6.7 s
+unsat vs nixie TO (genuine Booth-multiplier verification, no
+distributive shortcut); `mult_ub_16x16_1+` TO on both.  Next entry
+points stay addendum 47's list: bitrev (4), isqrt/icbrt (5), calypto (3),
+smulov (2).
