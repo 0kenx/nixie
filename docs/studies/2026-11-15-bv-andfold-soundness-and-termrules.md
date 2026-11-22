@@ -1432,3 +1432,21 @@ The survey is thereby exhausted to: the ternary index (ordering hazard
 mutate site), the skip idea above, and the window-blocked measurement
 set (census, wall A/Bs).  Nothing further is actionable under the
 current machine state.
+
+## Forty-fourth addendum: trap #6 — the shared affinity mask, and its detector
+
+Two window probes today (si=4, load 14–17 — the best since the hdp
+census) still read 1.3–1.6× inflated and drifted round-to-round (492:
+12.86 s then 9.32 s vs the clean 5.6–6.0 s).  Cause: the machine
+policy's `taskset -c 0-7` applies to EVERY agent — when another agent
+benchmarks, its 8 workers time-share the SAME 8 cores, and the 20-core
+load average (14) hides it.  **Detector: `vmstat`'s runnable count `r`
+vs the mask width (8)** — today's readings sat at r=10–12 (1.3–1.5×
+oversubscription), exactly the observed inflation factor; si≈0 alone
+is NOT a valid window gate.  The census/window protocol's gate is
+thereby: `uptime` load ≲ 12 AND `vmstat` si/so ≈ 0 AND `r` ≤ 9
+sustained across several samples.
+
+With that, this campaign's log is complete: 16 landings, 20 addenda,
+the survey fully dispositioned, and every remaining measurement gated
+behind a now precisely-characterized window condition.
