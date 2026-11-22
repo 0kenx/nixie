@@ -1450,3 +1450,23 @@ sustained across several samples.
 With that, this campaign's log is complete: 16 landings, 20 addenda,
 the survey fully dispositioned, and every remaining measurement gated
 behind a now precisely-characterized window condition.
+
+## Forty-fifth addendum: the sets-test regression window pinned; a bisect-methodology trap
+
+Follow-up on the addendum-42 exoneration.  Current HEAD still fails
+both sets tests.  A `git bisect run` over 6269fa88..493ef13c returned a
+NONSENSE culprit (a doc-only commit) — and clean-worktree re-testing
+showed why: **rapid checkout switching in one worktree produces
+stale-link artifacts** (the bisect's "good" verdicts came from
+incremental rebuilds whose fingerprints lied; the same commits fail
+3/3 in a fresh worktree).  Bisect protocol for this tree: a CLEAN
+build per step (fresh worktree or `cargo clean -p`), ~8-10 min/step.
+
+Established window: **green at `6269fa88`** (full bar incl. both tests,
+12 823 passed) → **failing from the tla merge wave onward**
+(`0bff9641`/`69e394e8` merges bring BOTH the CHOOSE/set.choose work —
+`set_theory/mod.rs` — AND main's substitution slab; later clean builds
+fail).  Candidates: the CHOOSE commits' set logic, or an interaction
+with the substitution changes riding the same merge.  This is the tla
+line's to debug; the window and the clean-bisect protocol above are
+the hand-off.
