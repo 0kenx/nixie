@@ -33,6 +33,70 @@ pub enum AnnotationError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedType(pub Type);
 
+/// One parsed **operator signature** `(a, b) => c`, ready to be checked
+/// against the annotated operator's body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedSignature {
+    /// The parameter types, in order.
+    pub params: Vec<Type>,
+    /// The result type.
+    pub result: Type,
+}
+
+/// Parse an operator-signature annotation, `(a, b) => c` — or the
+/// single-parameter form without its parentheses, `P => R`, which is how
+/// the corpus writes most of them (`Seq({x: Int, ..}) => Bool`).
+///
+/// Returns `Ok(None)` when the text is not a signature shape at all (the
+/// caller falls back to [`parse_type1`]), and an error when it plainly
+/// meant to be one and does not parse.
+pub fn parse_signature1(src: &str) -> Result<Option<ParsedSignature>, AnnotationError> {
+    let toks = tokenize(src)?;
+    let mut p = Parser { toks, at: 0 };
+    let params = if p.peek() == Some(&Tok::LParen) {
+        p.at += 1;
+        let mut params = vec![parse_sig_param(&mut p)?];
+        while p.peek() == Some(&Tok::Comma) {
+            p.at += 1;
+            params.push(parse_sig_param(&mut p)?);
+        }
+        p.expect(&Tok::RParen, "to close a signature's parameter list")?;
+        params
+    } else {
+        // A lone parameter may be written bare. If no arrow follows, this
+        // is not a signature at all and the caller's value-type parse owns
+        // the text.
+        let first = p.parse_fun()?;
+        if p.peek() != Some(&Tok::BigArrow) {
+            return Ok(None);
+        }
+        vec![first]
+    };
+    p.expect(&Tok::BigArrow, "to separate a signature's result")?;
+    let result = p.parse_fun()?;
+    if p.at < p.toks.len() && !matches!(&p.toks[p.at], Tok::Semi) {
+        return Err(AnnotationError::Parse {
+            why: format!("trailing input after the type in `{src}`"),
+        });
+    }
+    Ok(Some(ParsedSignature { params, result }))
+}
+
+/// One parameter of a signature: an ordinary type, or an **operator
+/// parameter** `(A) => B` — the higher-order case, `ChooseOne(S, P(_))`'s
+/// `P` — which is a function type at the kernel level (the parameter is
+/// applied in the body, and application typing is already `Fun`).
+fn parse_sig_param(p: &mut Parser) -> Result<Type, AnnotationError> {
+    let first = p.parse_fun()?;
+    if p.peek() == Some(&Tok::BigArrow) {
+        p.at += 1;
+        let result = p.parse_fun()?;
+        Ok(Type::Fun(Box::new(first), Box::new(result)))
+    } else {
+        Ok(first)
+    }
+}
+
 /// The subset of Type1 this checker reads: Int/Bool/Str, Set(T), Seq(T),
 /// right-associative function arrows, tuples, records, and identifiers
 /// (lowercase = one type variable, uppercase = an uninterpreted type).
@@ -307,6 +371,21 @@ pub fn assume(
     let mut vars: std::collections::HashMap<String, TyId> = std::collections::HashMap::new();
     let tid = intern(inf, &ty.0, &mut vars, uninterpreted)?;
     inf.assume(name, tid)
+}
+
+/// Intern one parsed type for the signature check — the same interning
+/// [`assume`] does, exposed for a caller that checks an operator's *body*
+/// against a signature rather than seeding a name.
+///
+/// # Errors
+/// The inference's own error, on an arena or arity failure.
+pub fn intern_for_check(
+    inf: &mut Inference,
+    ty: &Type,
+    vars: &mut std::collections::HashMap<String, TyId>,
+    uninterpreted: &mut std::collections::HashMap<String, TyId>,
+) -> Result<TyId, TypeError> {
+    intern(inf, ty, vars, uninterpreted)
 }
 
 /// Intern a parsed type into the inference, with per-name variable interning.

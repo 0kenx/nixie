@@ -434,6 +434,184 @@ pub enum ExprKind {
     Paren(Box<Expr>),
 }
 
+impl Expr {
+    /// The expression's immediate subexpressions, in source order.
+    ///
+    /// The match is exhaustive on purpose: a new [`ExprKind`] variant breaks
+    /// compilation here rather than being silently skipped by the next walker
+    /// that grows out of this one. `LET` definitions' *units* are not
+    /// subexpressions; walkers that need them handle [`ExprKind::Let`]
+    /// themselves.
+    #[must_use]
+    pub fn subexprs(&self) -> Vec<&Expr> {
+        let mut out: Vec<&Expr> = Vec::new();
+        match &self.kind {
+            ExprKind::Name(_)
+            | ExprKind::Int { .. }
+            | ExprKind::Real(_)
+            | ExprKind::Str(_)
+            | ExprKind::At => {}
+            ExprKind::Apply { args, .. } => out.extend(args.iter()),
+            ExprKind::FnApply { func, args } => {
+                out.push(func);
+                out.extend(args.iter());
+            }
+            ExprKind::Qualified { base, args, .. } => {
+                out.push(base);
+                out.extend(args.iter());
+            }
+            ExprKind::Field { record, .. } => out.push(record),
+            ExprKind::Prefix { operand, .. }
+            | ExprKind::Postfix { operand, .. }
+            | ExprKind::Paren(operand) => out.push(operand),
+            ExprKind::Infix { lhs, rhs, .. } => {
+                out.push(lhs);
+                out.push(rhs);
+            }
+            ExprKind::Junction { items, .. }
+            | ExprKind::SetEnum(items)
+            | ExprKind::Tuple(items) => {
+                out.extend(items.iter());
+            }
+            ExprKind::Quant { bounds, body, .. } => {
+                for b in bounds {
+                    out.push(&b.domain);
+                }
+                out.push(body);
+            }
+            ExprKind::UnboundedQuant { body, .. } => out.push(body),
+            ExprKind::Choose { domain, body, .. } => {
+                if let Some(d) = domain {
+                    out.push(d);
+                }
+                out.push(body);
+            }
+            ExprKind::SetFilter { domain, pred, .. } => {
+                out.push(domain);
+                out.push(pred);
+            }
+            ExprKind::SetMap { expr, bounds } => {
+                out.push(expr);
+                for b in bounds {
+                    out.push(&b.domain);
+                }
+            }
+            ExprKind::FnConstruct { bounds, body } => {
+                for b in bounds {
+                    out.push(&b.domain);
+                }
+                out.push(body);
+            }
+            ExprKind::FnSet { domain, codomain } => {
+                out.push(domain);
+                out.push(codomain);
+            }
+            ExprKind::RecordLit(fields) | ExprKind::RecordSet(fields) => {
+                for (_, e) in fields {
+                    out.push(e);
+                }
+            }
+            ExprKind::Except { base, updates } => {
+                out.push(base);
+                for u in updates {
+                    for sel in &u.path {
+                        if let ExceptSel::Index(ix) = sel {
+                            out.extend(ix.iter());
+                        }
+                    }
+                    out.push(&u.value);
+                }
+            }
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } => {
+                out.push(cond);
+                out.push(then_branch);
+                out.push(else_branch);
+            }
+            ExprKind::Case { arms, other } => {
+                for a in arms {
+                    out.push(&a.guard);
+                    out.push(&a.value);
+                }
+                if let Some(o) = other {
+                    out.push(o);
+                }
+            }
+            ExprKind::Let { defs, body } => {
+                for d in defs {
+                    match &d.kind {
+                        UnitKind::OpDef { body, .. } | UnitKind::FnDef { body, .. } => {
+                            out.push(body);
+                        }
+                        _ => {}
+                    }
+                }
+                out.push(body);
+            }
+            ExprKind::Action {
+                body, subscript, ..
+            } => {
+                out.push(body);
+                out.push(subscript);
+            }
+            ExprKind::Fairness {
+                subscript, body, ..
+            } => {
+                out.push(subscript);
+                out.push(body);
+            }
+            ExprKind::Lambda { body, .. } => out.push(body),
+            ExprKind::Label { body, .. } => out.push(body),
+            ExprKind::AssumeProve { assumptions, goal } => {
+                for item in assumptions {
+                    if let AssumeItem::Expr(e) = item {
+                        out.push(e);
+                    }
+                }
+                out.push(goal);
+            }
+        }
+        out
+    }
+}
+
+/// Collect every `INSTANCE` target named inside `e`, including the ones a
+/// `LET` definition introduces (`LET M == INSTANCE A IN …`), without
+/// recursing on the native stack: the worklist is explicit, and dedup
+/// (`seen`) keeps shared subterms — a common `LET` fact referenced twice —
+/// from queuing the same subtree twice.
+fn collect_instance_targets<'e>(
+    e: &'e Expr,
+    out: &mut Vec<&'e Ident>,
+    seen: &mut std::collections::HashSet<*const Ident>,
+) {
+    let mut work: Vec<&'e Expr> = vec![e];
+    while let Some(cur) = work.pop() {
+        // The definition bodies themselves are ordinary subexpressions and
+        // are queued by `subexprs`; only the instance units need handling
+        // here.
+        if let ExprKind::Let { defs, .. } = &cur.kind {
+            for d in defs {
+                match &d.kind {
+                    UnitKind::Instance { instance, .. } | UnitKind::ModuleDef { instance, .. } => {
+                        if seen.insert(std::ptr::from_ref(&instance.module)) {
+                            out.push(&instance.module);
+                        }
+                        for (_, w) in &instance.substitutions {
+                            work.push(w);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        work.extend(cur.subexprs());
+    }
+}
+
 /// A declared operator name together with its arity.
 ///
 /// Arity is written with placeholders: `Op(_, _)` declares arity 2.
@@ -613,15 +791,43 @@ impl Module {
     /// without it.
     #[must_use]
     pub fn instantiated(&self) -> Vec<&Ident> {
-        self.units
-            .iter()
-            .filter_map(|u| match &u.kind {
+        let mut out: Vec<&Ident> = Vec::new();
+        let mut seen: std::collections::HashSet<*const Ident> = std::collections::HashSet::new();
+        for u in &self.units {
+            match &u.kind {
                 UnitKind::Instance { instance, .. } | UnitKind::ModuleDef { instance, .. } => {
-                    Some(&instance.module)
+                    if seen.insert(std::ptr::from_ref(&instance.module)) {
+                        out.push(&instance.module);
+                    }
+                    // A `WITH` replacement is itself an expression, and a
+                    // `LET` inside one can name a further instance.
+                    for (_, e) in &instance.substitutions {
+                        collect_instance_targets(e, &mut out, &mut seen);
+                    }
                 }
-                _ => None,
-            })
-            .collect()
+                // A `LET` definition can itself be an instance —
+                // `Next == LET M == INSTANCE A IN …` — and its target must
+                // be loaded exactly like a top-level one, or the instance
+                // cannot resolve at its use site. Every expression a unit
+                // carries is walked, explicitly and iteratively (a user's
+                // expression is arbitrarily deep and this walk must not
+                // grow the native stack).
+                UnitKind::OpDef { body, .. }
+                | UnitKind::FnDef { body, .. }
+                | UnitKind::Assume { body, .. }
+                | UnitKind::Theorem { body, .. } => {
+                    collect_instance_targets(body, &mut out, &mut seen);
+                }
+                UnitKind::Extends(_)
+                | UnitKind::ConstantDecl(_)
+                | UnitKind::VariableDecl(_)
+                | UnitKind::Recursive(_)
+                | UnitKind::ProofDirective(_)
+                | UnitKind::Separator
+                | UnitKind::Submodule(_) => {}
+            }
+        }
+        out
     }
 
     /// The declared constants, flattened across every `CONSTANT` unit.

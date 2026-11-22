@@ -208,3 +208,115 @@ fn an_unknown_instance_is_reported_by_name() {
         "the diagnostic must name it: {e}"
     );
 }
+
+#[test]
+fn an_instance_inside_a_let_resolves_and_substitutes() {
+    let s = Scratch::new(
+        "letinst",
+        &[
+            (
+                "A.tla",
+                "---- MODULE A ----\nVARIABLE v\nCONSTANT c\nF == v + c\n====\n",
+            ),
+            (
+                "B.tla",
+                "---- MODULE B ----\nVARIABLES w, q\n\
+                 N == LET M == INSTANCE A WITH v <- w, c <- 41 IN M!F\n\
+                 ==== \n",
+            ),
+        ],
+    );
+    let out = lower_in(&s, "B.tla", "N");
+    // Under the LET-level substitution: `w + 41`, never A's own `v` or `c`.
+    assert!(out.contains("w"), "substituted variable: {out}");
+    assert!(out.contains("41"), "substituted constant: {out}");
+}
+
+/// The LET-scoped instance must vanish after the LET: a same-named
+/// module-level instance is what `M!F` means outside the body.
+#[test]
+fn a_let_instance_is_scoped_and_restores_the_outer_one() {
+    let s = Scratch::new(
+        "letshadow",
+        &[
+            ("A.tla", "---- MODULE A ----\nCONSTANT c\nF == c\n====\n"),
+            (
+                "B.tla",
+                "---- MODULE B ----\n\
+                 I == INSTANCE A WITH c <- 1\n\
+                 In == LET I == INSTANCE A WITH c <- 2 IN I!F\n\
+                 Out == I!F\n\
+                 ====\n",
+            ),
+        ],
+    );
+    let inner = lower_in(&s, "B.tla", "In");
+    assert!(inner.contains('2'), "the LET instance wins inside: {inner}");
+    assert!(!inner.contains('1'), "not the outer one inside: {inner}");
+    let outer = lower_in(&s, "B.tla", "Out");
+    assert!(
+        outer.contains('1'),
+        "the module-level one after the LET: {outer}"
+    );
+}
+
+/// A LET-level instance whose target was never loaded is a hard error at
+/// the instance itself, not a name error at the use.
+#[test]
+fn a_let_instance_with_a_missing_target_errors_at_the_instance() {
+    let s = Scratch::new(
+        "letmissing",
+        &[(
+            "B.tla",
+            "---- MODULE B ----\nN == LET M == INSTANCE Nowhere IN M!F\n====\n",
+        )],
+    );
+    let spec = Loader::new().load(&s.path("B.tla")).expect("loads");
+    let root = spec.root_module().expect("root").clone();
+    let mut low = Lowerer::new();
+    low.add_spec(&spec);
+    let e = low.lower_named(&root, "N").map(|_| ()).unwrap_err();
+    assert!(
+        format!("{e}").contains("Nowhere"),
+        "the diagnostic names the missing module: {e}"
+    );
+}
+
+/// test59.tla's exact shape: the LET also mixes an ordinary definition
+/// with the instance, and the member is used under a prime-relevant
+/// expression.
+#[test]
+fn a_let_instance_with_a_sibling_definition_test59_shape() {
+    let s = Scratch::new(
+        "test59",
+        &[
+            (
+                "test59a.tla",
+                "---- MODULE test59a ----\nEXTENDS Naturals\nVARIABLE x\nxplus1 == x+1\n====\n",
+            ),
+            (
+                "test59.tla",
+                "---- MODULE test59 ----\nEXTENDS Naturals\nVARIABLE y\n\
+                 Next == LET x == y+1\n\
+                 \t\t  M == INSTANCE test59a\n\
+                 \t\tIN  y' = (M!xplus1 - 1) % 5\n\
+                 ====\n",
+            ),
+        ],
+    );
+    let out = lower_in(&s, "test59.tla", "Next");
+    // The LET's `x == y+1` is test59a's `VARIABLE x` implicit substitution,
+    // so `M!xplus1` is `(y+1) + 1` — never test59a's own free `x`.
+    assert!(
+        out.contains("Prime(Var(Name(\"y\")))"),
+        "the next-state relation: {out}"
+    );
+    assert!(
+        !out.contains("Var(Name(\"x\"))"),
+        "test59a's variable never appears free: {out}"
+    );
+    assert!(
+        out.contains("Arith(Add, Arith(Add, Var(Name(\"y\")), Int(\"1\")), Int(\"1\"))"),
+        "M!xplus1 is (y+1)+1: {out}"
+    );
+}

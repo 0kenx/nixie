@@ -1389,6 +1389,23 @@ impl Inference {
     fn apply(&mut self, tf: TyId, index: &KeraRef, out: TyId, node: &KeraRef) -> Result<()> {
         match index.as_ref() {
             Kera::Str(field) => {
+                // A subject already **settled as a function** — by an
+                // `@type:` annotation, or by an earlier application with a
+                // non-literal index — applies functionally, and the
+                // annotation stays authoritative: binding it to an open
+                // record here is exactly the merge the issue names, and it
+                // produced an unsortable hybrid where the settled function
+                // shape was meant. Only an unsettled subject takes the
+                // record shape (the heterogeneous-field-access preference).
+                let root = self.find(tf);
+                if matches!(
+                    self.slots.get(root.0 as usize),
+                    Some(Slot::Ty(Ty::Fun(_, _)))
+                ) {
+                    let ti = self.child(index)?;
+                    let want = self.mk(Ty::Fun(ti, out))?;
+                    return self.unify(tf, want);
+                }
                 let row = self.fresh()?;
                 let mut fields = BTreeMap::new();
                 fields.insert(field.clone(), out);
@@ -1621,6 +1638,21 @@ impl Inference {
                 f
             }
             ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => args[0],
+            // `FunAsSeq(f, len, capacity)`: `((Int -> a), Int, Int) =>
+            // Seq(a)` — the function's `1..len` prefix as a sequence, per
+            // `Apalache.tla`'s annotation. The two-argument form (TLC's)
+            // reads `capacity = len`.
+            ("FunAsSeq", 3) | ("FunAsSeq", 2) => {
+                let e = self.fresh()?;
+                let int = self.int_ty()?;
+                let f = self.mk(Ty::Fun(int, e))?;
+                self.unify(args[0], f)?;
+                self.unify(args[1], int)?;
+                if args.len() > 2 {
+                    self.unify(args[2], int)?;
+                }
+                self.mk(Ty::Seq(e))?
+            }
             ("SetAsFun", 1) => {
                 // Set(<<a, b>>) -> (a -> b), per the rewire's annotation.
                 let x = self.fresh()?;

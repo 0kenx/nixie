@@ -238,6 +238,29 @@ impl Evaluator {
                 self.primed = false;
                 out
             }
+            Kera::Opaque(n, args) if n.as_str() == "FunAsSeq" && args.len() == 2 => {
+                // The cast, as the replay oracle reads it: the function's
+                // `1..len` prefix as a sequence value. `len` beyond the
+                // function's domain reads an undefined position — refused,
+                // not defaulted, the same honesty the encoding applies.
+                let func = self.go(&args[0], env)?;
+                let len = self.go(&args[1], env)?;
+                let Value::Int(n) = len else {
+                    return Err(EvalErrorKind::Type {
+                        expected: "an integer length".into(),
+                        found: len.kind().into(),
+                    });
+                };
+                let n = usize::try_from(n).map_err(|_| {
+                    EvalErrorKind::Unsupported("a `FunAsSeq` length below zero".into())
+                })?;
+                let mut out = Vec::with_capacity(n);
+                for i in 1..=n {
+                    let v = apply(&func, &Value::Int(i as i128))?;
+                    out.push(v);
+                }
+                Ok(Value::Tuple(out))
+            }
             Kera::Opaque(n, args) => {
                 let mut vals = Vec::with_capacity(args.len());
                 for a in args {

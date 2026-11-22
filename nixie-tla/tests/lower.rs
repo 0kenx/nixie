@@ -540,3 +540,108 @@ A == F(10)
     low.add_spec(&spec);
     let _ = low.lower_named(module, "A").expect("must not lower");
 }
+
+/// A user-defined operator symbol passed as an operator argument, and a
+/// parameter spelled as an operator symbol applied infix in the body
+/// (issue #43): `Foo(a, _--_) == a -- 0` with `a ++ b == a + b` defined —
+/// `Foo(7, ++)` must inline the user's `++`, `Foo(7, +)` the built-in `+`.
+#[test]
+fn a_user_defined_operator_symbol_binds_as_an_argument() {
+    let src = r#"
+---- MODULE UserSym ----
+EXTENDS Integers
+a ++ b == a + b
+Foo(a, _--_) == a -- 0
+A == Foo(7, ++)
+B == Foo(7, +)
+C == Foo(7, LAMBDA x, y: x * y)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    use nixie_tla::kera::{ArithOp, Kera};
+    // `Foo(7, ++)`: the body `a -- 0` inlines the user's `++`, i.e. `7 + 0`.
+    let a = low.lower_named(module, "A").expect("A lowers");
+    assert!(
+        matches!(a.as_ref(), Kera::Arith(ArithOp::Add, _, _)) || contains_arith(&a, ArithOp::Add),
+        "A is an add: {:?}",
+        a
+    );
+    // `Foo(7, +)`: the built-in symbol, `7 + 0`.
+    let b = low.lower_named(module, "B").expect("B lowers");
+    assert!(contains_arith(&b, ArithOp::Add), "B is an add: {:?}", b);
+    // `Foo(7, LAMBDA x, y: x * y)`: the LAMBDA body, `7 * 0`.
+    let c = low.lower_named(module, "C").expect("C lowers");
+    assert!(contains_arith(&c, ArithOp::Mul), "C is a mul: {:?}", c);
+    // And none of them leaves an opaque `--` behind — the bug was exactly
+    // that `--` fell through to an opaque node the encoder had to decline.
+    for t in [&a, &b, &c] {
+        assert!(!contains_opaque(t, "--"), "no opaque `--` in {t:?}");
+    }
+}
+
+/// An operator-symbol parameter shadows a module-level definition of the
+/// same spelling — the same rule named parameters already follow.
+#[test]
+fn an_operator_symbol_parameter_shadows_a_module_level_symbol() {
+    let src = r#"
+---- MODULE Shadow ----
+EXTENDS Integers
+a ** b == a - b
+Foo(a, _**_) == a ** 0
+A == Foo(7, LAMBDA x, y: x * y)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    let a = low.lower_named(module, "A").expect("A lowers");
+    assert!(contains_arith(&a, ArithOp::Mul), "the LAMBDA wins: {a:?}");
+    assert!(
+        !contains_arith(&a, ArithOp::Sub),
+        "not the module-level `**`"
+    );
+}
+
+/// Does `t` contain an arithmetic node with operator `op`?
+fn contains_arith(t: &nixie_tla::KeraRef, op: nixie_tla::kera::ArithOp) -> bool {
+    use std::collections::HashSet;
+    let mut seen: HashSet<*const Kera> = HashSet::new();
+    let mut stack = vec![t];
+    while let Some(x) = stack.pop() {
+        if !seen.insert(std::rc::Rc::as_ptr(x)) {
+            continue;
+        }
+        if let Kera::Arith(which, _, _) = x.as_ref()
+            && std::mem::discriminant(which) == std::mem::discriminant(&op)
+        {
+            return true;
+        }
+        stack.extend(x.as_ref().children());
+    }
+    false
+}
+
+/// Does `t` contain an opaque node named `name`?
+fn contains_opaque(t: &nixie_tla::KeraRef, name: &str) -> bool {
+    use std::collections::HashSet;
+    let mut seen: HashSet<*const Kera> = HashSet::new();
+    let mut stack = vec![t];
+    while let Some(x) = stack.pop() {
+        if !seen.insert(std::rc::Rc::as_ptr(x)) {
+            continue;
+        }
+        if let Kera::Opaque(n, _) = x.as_ref()
+            && n.to_string() == name
+        {
+            return true;
+        }
+        stack.extend(x.as_ref().children());
+    }
+    false
+}

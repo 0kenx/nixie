@@ -113,14 +113,12 @@ Inv == Cardinality(DOMAIN f) = 2
     assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
 }
 
-/// The issue's own named defect, pinned as it stands: `f["b"]` rebinds `f`
-/// to an open record *despite* the `Str -> Int` annotation (the field-access
-/// preference unifies Fun with Rec). What the annotation guarantees today is
-/// that this cannot become a **wrong verdict**: the merged shape has no SMT
-/// sort and the check refuses (exit 120) — the remaining piece of this
-/// issue, recorded where it will be seen.
+/// The issue's own named defect, **closed**: `f["b"]` against the settled
+/// `Str -> Int` annotation is a *function* application — Apalache's settled
+/// shape — because a subject already settled as `Fun` never takes the
+/// field-access record preference. The annotation is authoritative.
 #[test]
-fn a_field_access_against_the_annotation_refuses_rather_than_guesses() {
+fn a_field_access_against_the_annotation_applies_the_function() {
     let src = r#"
 ---- MODULE FieldAgainst ----
 EXTENDS Integers
@@ -132,11 +130,27 @@ Next == UNCHANGED f
 Inv == f["b"] = 1
 ====
 "#;
-    let err = types_err(src, "Inv");
-    assert!(
-        err.contains("does not type check") || err.contains("no SMT sort"),
-        "a refusal, never a wrong verdict: {err}"
-    );
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
+    // And a wrong read at the settled shape is a violation, not a refusal.
+    let bad = src.replace("f[\"b\"] = 1", "f[\"b\"] = 2");
+    assert_eq!(claim(&bad, "Inv"), Outcome::Violation { step: 0 });
+}
+
+/// The preference itself is untouched where it belongs: an *unsettled*
+/// subject still takes the record shape on a field access, which is how
+/// unannotated heterogeneous records type at all.
+#[test]
+fn an_unannotated_field_access_still_prefers_the_record() {
+    let src = r#"
+---- MODULE FieldPlain ----
+EXTENDS Integers
+VARIABLE f
+Init == f = [a |-> 1, b |-> 2]
+Next == UNCHANGED f
+Inv == f["b"] = 2
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(0));
 }
 
 /// A **conflicting** annotation is a type error (exit 120), never a silent
@@ -268,4 +282,101 @@ Inv == Cardinality(seen) <= 1
         bmc.check(2, &mut tm).expect("checks"),
         Outcome::NoViolationWithin(2)
     );
+}
+
+// ---- operator-signature annotations, checked (issue #41) ----
+
+/// An operator signature is **checked** against the operator's body: the
+/// parameters are assumed at their annotated types and the body's inferred
+/// result must unify with the annotation's. A signature that matches
+/// changes nothing; one that disagrees is a type error (exit 120), and one
+/// that names nothing, or miscounts the parameters, is reported as the
+/// defect it is.
+#[test]
+fn an_operator_signature_annotation_is_checked_against_the_body() {
+    let ok = r#"
+---- MODULE SigOK ----
+EXTENDS Integers
+\* @type: (Int) => Int;
+F(x) == x + 1
+VARIABLE
+    \* @type: Int;
+    x
+Init == x = 0
+Next == UNCHANGED x
+Inv == F(x) = 1
+====
+"#;
+    assert_eq!(claim(ok, "Inv"), Outcome::NoViolationWithin(0));
+
+    // The result type disagrees with the body: a type error, never a
+    // silent note.
+    let wrong = r#"
+---- MODULE SigBad ----
+EXTENDS Integers
+\* @type: (Int) => Str;
+F(x) == x + 1
+VARIABLE
+    \* @type: Int;
+    x
+Init == x = 0
+Next == UNCHANGED x
+Inv == F(x) = 1
+====
+"#;
+    let err = types_err(wrong, "Inv");
+    assert!(err.contains("does not match its body"), "{err}");
+
+    // A parameter type that the body contradicts, caught the same way.
+    let badparam = r#"
+---- MODULE SigBadParam ----
+EXTENDS Integers
+\* @type: (Str) => Int;
+F(x) == x + 1
+VARIABLE
+    \* @type: Int;
+    x
+Init == x = 0
+Next == UNCHANGED x
+Inv == F(x) = 1
+====
+"#;
+    let err = types_err(badparam, "Inv");
+    assert!(
+        err.contains("does not match its body") || err.contains("does not check"),
+        "{err}"
+    );
+
+    // Polymorphic within one signature: `(a) => a` on the identity.
+    let poly = r#"
+---- MODULE SigPoly ----
+EXTENDS Integers
+\* @type: (a) => a;
+F(x) == x
+VARIABLE
+    \* @type: Int;
+    x
+Init == x = 0
+Next == UNCHANGED x
+Inv == F(x) = 0
+====
+"#;
+    assert_eq!(claim(poly, "Inv"), Outcome::NoViolationWithin(0));
+
+    // Wrong arity is a defect in the specification, named as such.
+    let arity = r#"
+---- MODULE SigArity ----
+EXTENDS Integers
+\* @type: (Int, Int) => Int;
+F(x) == x + 1
+VARIABLE
+    \* @type: Int;
+    x
+Init == x = 0
+Next == UNCHANGED x
+Inv == F(x) = 1
+====
+"#;
+    let err = types_err(arity, "Inv");
+    assert!(err.contains("parameter(s) but the operator takes"), "{err}");
 }

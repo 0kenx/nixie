@@ -77,10 +77,29 @@ fn builtin_operator_symbol(name: &str) -> Option<&'static str> {
 #[derive(Debug, Clone)]
 struct Instantiation<'a> {
     module: &'a Module,
+    /// The module where the instance was declared — the scope an implicit
+    /// substitution (a declared name with no `WITH`) resolves against.
+    /// `None` for a `LET`-scoped instance, whose declaring scope is whatever
+    /// module the lowering walk is inside at the use site.
+    source: Option<&'a Module>,
     /// Explicit `WITH` replacements, by the instantiated module's name.
     with: Vec<(String, &'a Expr)>,
     /// Parameters of a parameterised instance, `I(p) == INSTANCE M WITH …`.
     params: Vec<String>,
+}
+
+/// Where the replacement for one substituted name comes from.
+#[derive(Debug, Clone)]
+enum SubstSource<'a> {
+    /// A surface expression to lower (`WITH v <- e`, or a same-named
+    /// nullary definition visible at the instance).
+    Expr(&'a Expr),
+    /// An already-lowered kernel value (an enclosing instance's
+    /// substitution, a `.cfg`-pinned constant, a declared variable).
+    Value(KeraRef),
+    /// A function definition `f[x \\in S] == e` visible at the instance,
+    /// which denotes its function value.
+    Fun(String, &'a [Bound], &'a Expr),
 }
 
 /// The instance being looked through while lowering.
@@ -146,8 +165,22 @@ struct Def<'a> {
 /// rebuilds only the spine it changed; shared subtrees are reused as they
 /// are.
 pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -> KeraRef {
-    use std::cell::RefCell;
+    let counter = std::cell::RefCell::new(0usize);
+    skolemize_walk(root, root_positive, &counter)
+}
 
+/// The walk proper, sharing one name counter with everything it spawns.
+///
+/// One counter per top-level pass is load-bearing: the rewritten body of a
+/// skolemized quantifier is itself walked (through the cached form below),
+/// and independently-numbered sub-walks would mint the same `%`-fresh or
+/// `!skolem` name twice — two witnesses or binders the encoder would then
+/// read as one.
+fn skolemize_walk(
+    root: &KeraRef,
+    root_positive: bool,
+    counter: &std::cell::RefCell<usize>,
+) -> KeraRef {
     /// What a frame still owes.
     enum Frame<'a> {
         /// Visit a term at a polarity.
@@ -160,7 +193,6 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
         Mark(usize),
     }
 
-    let counter = RefCell::new(0usize);
     let mut seen: std::collections::HashMap<(*const Kera, bool), KeraRef> =
         std::collections::HashMap::new();
     let mut stack: Vec<Frame> = vec![Frame::Visit(root, root_positive)];
@@ -169,6 +201,17 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Visit(t, pos) => {
+                // A lowered tree is a shared DAG: the same subterm can sit
+                // under many parents. Visiting it once per parent would redo
+                // (and re-copy) any rewrite inside it once per occurrence —
+                // identical binder names in several nodes, which the
+                // binder-uniqueness invariant exists to refuse. One result
+                // per (node, polarity), shared by pointer, is both the fix
+                // and the cheaper walk.
+                if let Some(hit) = seen.get(&(Rc::as_ptr(t), pos)) {
+                    values.push(Rc::clone(hit));
+                    continue;
+                }
                 // The rewrite: a positive `\\E x \\in S : P` (or a negative
                 // `\\A`) with `S` a standard infinite set.
                 if pos
@@ -180,10 +223,12 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
                     let fresh = Name(format!("{var}!skolem{}", *c));
                     drop(c);
                     let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
-                    let renamed = rename_var(body, var, &fresh);
+                    let renamed = alpha_refresh_binders(&rename_var(body, var, &fresh), counter);
                     let body =
-                        skolemize_infinite_existentials_cached(&renamed, &mut seen, &counter, true);
-                    values.push(Kera::And(vec![member, body]).rc());
+                        skolemize_infinite_existentials_cached(&renamed, &mut seen, counter, true);
+                    let out = Kera::And(vec![member, body]).rc();
+                    seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
+                    values.push(out);
                     continue;
                 }
                 if !pos
@@ -197,10 +242,13 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
                     drop(c);
                     let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
                     let neg_body = Kera::Not(Rc::clone(body)).rc();
-                    let renamed = rename_var(&neg_body, var, &fresh);
+                    let renamed =
+                        alpha_refresh_binders(&rename_var(&neg_body, var, &fresh), counter);
                     let body =
-                        skolemize_infinite_existentials_cached(&renamed, &mut seen, &counter, true);
-                    values.push(Kera::Not(Kera::And(vec![member, body]).rc()).rc());
+                        skolemize_infinite_existentials_cached(&renamed, &mut seen, counter, true);
+                    let out = Kera::Not(Kera::And(vec![member, body]).rc()).rc();
+                    seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
+                    values.push(out);
                     continue;
                 }
                 // No rewrite: descend with the polarity each child carries.
@@ -237,8 +285,9 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
                 let rebuilt = if unchanged {
                     Rc::clone(t)
                 } else {
-                    rebuild(t, pos, &kids)
+                    refresh_own_binders(rebuild(t, pos, &kids), counter)
                 };
+                seen.insert((Rc::as_ptr(t), pos), Rc::clone(&rebuilt));
                 values.push(rebuilt);
             }
         }
@@ -265,11 +314,147 @@ fn skolemize_infinite_existentials_cached(
     if let Some(hit) = seen.get(&(Rc::as_ptr(t), pos)) {
         return Rc::clone(hit);
     }
-    let _ = counter;
     let _ = pos;
-    let out = skolemize_infinite_existentials_at(t, true);
+    let out = skolemize_walk(t, true, counter);
     seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
     out
+}
+
+/// Rename every binder in `t` to a globally new name.
+///
+/// A skolem rewrite copies the quantifier's body — `rename_var` rebuilds
+/// the spine — and a lowered tree is a shared DAG: the same subterm can sit
+/// under the copy *and* elsewhere in the original. Both copies would carry
+/// the same binder names, and the binder-uniqueness invariant (rightly)
+/// refuses the result. Refreshing every binder in the copied side, once,
+/// with names from the pass's shared counter (`<old>%<n>`, a spelling the
+/// lowerer never mints) keeps the copy's meaning and the invariant.
+///
+/// This is a true α-renaming — binder *fields* and their occurrences move
+/// together — which [`rename_var`] alone is not: it substitutes free
+/// occurrences and leaves binder fields verbatim, so using it here would
+/// detach occurrences from their binders and keep the collision it was
+/// meant to remove.
+fn alpha_refresh_binders(t: &KeraRef, counter: &std::cell::RefCell<usize>) -> KeraRef {
+    let mut binders: Vec<Name> = Vec::new();
+    let mut visited: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+    let mut stack: Vec<&KeraRef> = vec![t];
+    while let Some(x) = stack.pop() {
+        if !visited.insert(Rc::as_ptr(x)) {
+            continue;
+        }
+        for b in x.as_ref().binders() {
+            binders.push(b.clone());
+        }
+        for c in x.as_ref().children() {
+            stack.push(c);
+        }
+    }
+    let mut renames: std::collections::HashMap<Name, Name> = std::collections::HashMap::new();
+    for b in binders {
+        let fresh = {
+            let mut c = counter.borrow_mut();
+            *c += 1;
+            Name(format!("{b}%{}", *c))
+        };
+        renames.insert(b, fresh);
+    }
+    alpha_rename(t, &renames)
+}
+
+/// Refresh the binders *of this node itself* (not its descendants'), for a
+/// node the walk rebuilt because a child changed.
+///
+/// The unchanged-children shortcut above returns the original pointer, so a
+/// shared subterm stays shared. A rebuilt one is a *copy* that may coexist
+/// with the original at another position (a definition inlined at two
+/// polarities) — and the copy carries the node's binder. Renaming it, with
+/// occurrences confined to this node, restores global uniqueness.
+fn refresh_own_binders(t: KeraRef, counter: &std::cell::RefCell<usize>) -> KeraRef {
+    let own: Vec<Name> = t.as_ref().binders().iter().map(|b| (*b).clone()).collect();
+    if own.is_empty() {
+        return t;
+    }
+    let mut renames: std::collections::HashMap<Name, Name> = std::collections::HashMap::new();
+    for b in own {
+        let fresh = {
+            let mut c = counter.borrow_mut();
+            *c += 1;
+            Name(format!("{b}%{}", *c))
+        };
+        renames.insert(b, fresh);
+    }
+    alpha_rename(&t, &renames)
+}
+
+/// α-rename `t`: map binder fields *and* variable occurrences through
+/// `renames`, preserving sharing.
+///
+/// A lowered term's binder names are globally unique, so a flat map is
+/// capture-free by construction: no occurrence of a mapped name can be
+/// under a *different* binder of the same spelling. The walk is explicit
+/// (user-controlled depth), memoised by pointer (a shared DAG stays
+/// shared), and returns the *original* `Rc` for any subtree with nothing to
+/// rename — so unchanged parts keep their identity with the source tree,
+/// which is what the binder-uniqueness invariant and the encoder's term
+/// interning both rely on.
+fn alpha_rename(t: &KeraRef, renames: &std::collections::HashMap<Name, Name>) -> KeraRef {
+    if renames.is_empty() {
+        return Rc::clone(t);
+    }
+    enum Frame<'a> {
+        Visit(&'a KeraRef),
+        Rebuild(&'a KeraRef, usize),
+    }
+    let mut memo: std::collections::HashMap<*const Kera, KeraRef> =
+        std::collections::HashMap::new();
+    let mut stack: Vec<Frame> = vec![Frame::Visit(t)];
+    let mut values: Vec<KeraRef> = Vec::new();
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(x) => {
+                if let Some(hit) = memo.get(&Rc::as_ptr(x)) {
+                    values.push(Rc::clone(hit));
+                    continue;
+                }
+                if let Kera::Var(n) = x.as_ref()
+                    && let Some(to) = renames.get(n)
+                {
+                    let out = Kera::Var(to.clone()).rc();
+                    memo.insert(Rc::as_ptr(x), Rc::clone(&out));
+                    values.push(out);
+                    continue;
+                }
+                let n = x.as_ref().children().len();
+                if n == 0 {
+                    values.push(Rc::clone(x));
+                    continue;
+                }
+                stack.push(Frame::Rebuild(x, n));
+                for c in x.as_ref().children().into_iter().rev() {
+                    stack.push(Frame::Visit(c));
+                }
+            }
+            Frame::Rebuild(x, n) => {
+                let kids: Vec<KeraRef> = values.split_off(values.len() - n);
+                let old_kids = x.as_ref().children();
+                let binders_renamed = x.as_ref().binders().iter().any(|b| renames.contains_key(b));
+                let out = if !binders_renamed
+                    && old_kids
+                        .iter()
+                        .zip(kids.iter())
+                        .all(|(o, k)| Rc::ptr_eq(o, k))
+                {
+                    Rc::clone(x)
+                } else {
+                    rebuild_renamed(x, &kids, renames)
+                };
+                memo.insert(Rc::as_ptr(x), Rc::clone(&out));
+                values.push(out);
+            }
+        }
+    }
+    values.pop().unwrap_or_else(|| Rc::clone(t))
 }
 
 /// Rename every occurrence of `from` in `t` to `to`.
@@ -283,11 +468,22 @@ fn rename_var(t: &KeraRef, from: &Name, to: &Name) -> KeraRef {
         Visit(&'a KeraRef),
         Rebuild(&'a KeraRef, usize),
     }
+    // Memoised by pointer, and returning the *original* `Rc` wherever
+    // nothing below changed: a lowered term is a shared DAG, and a rewrite
+    // that copied per occurrence would put one binder name in several
+    // nodes — the exact shape the binder-uniqueness invariant refuses.
+    // Keeping the copy shared keeps the (unique) names unique.
+    let mut memo: std::collections::HashMap<*const Kera, KeraRef> =
+        std::collections::HashMap::new();
     let mut stack = vec![Frame::Visit(t)];
     let mut values: Vec<KeraRef> = Vec::new();
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Visit(x) => {
+                if let Some(hit) = memo.get(&Rc::as_ptr(x)) {
+                    values.push(Rc::clone(hit));
+                    continue;
+                }
                 if matches!(x.as_ref(), Kera::Var(n) if n == from) {
                     values.push(Kera::Var(to.clone()).rc());
                     continue;
@@ -304,12 +500,102 @@ fn rename_var(t: &KeraRef, from: &Name, to: &Name) -> KeraRef {
             }
             Frame::Rebuild(x, n) => {
                 let kids: Vec<KeraRef> = values.split_off(values.len() - n);
-                let rebuilt = rebuild(x, true, &kids);
+                let old_kids = x.as_ref().children();
+                let rebuilt = if old_kids
+                    .iter()
+                    .zip(kids.iter())
+                    .all(|(o, k)| Rc::ptr_eq(o, k))
+                {
+                    Rc::clone(x)
+                } else {
+                    rebuild(x, true, &kids)
+                };
+                memo.insert(Rc::as_ptr(x), Rc::clone(&rebuilt));
                 values.push(rebuilt);
             }
         }
     }
     values.pop().unwrap_or_else(|| Rc::clone(t))
+}
+
+/// [`rebuild`] with the node's binder fields mapped through `renames`.
+///
+/// Only the binder-carrying kinds differ; everything else is [`rebuild`]
+/// exactly. Binder fields and their occurrences are renamed *together* by
+/// the caller ([`alpha_rename`]) — renaming one without the other is how a
+/// bound occurrence becomes a free variable wearing the wrong name.
+fn rebuild_renamed(
+    t: &KeraRef,
+    kids: &[KeraRef],
+    renames: &std::collections::HashMap<Name, Name>,
+) -> KeraRef {
+    let k = |i: usize| Rc::clone(&kids[i]);
+    let mv = |n: &Name| renames.get(n).cloned().unwrap_or_else(|| n.clone());
+    match t.as_ref() {
+        Kera::Forall { var, .. } => Kera::Forall {
+            var: mv(var),
+            set: k(0),
+            body: k(1),
+        }
+        .rc(),
+        Kera::Exists { var, .. } => Kera::Exists {
+            var: mv(var),
+            set: k(0),
+            body: k(1),
+        }
+        .rc(),
+        Kera::Choose { var, .. } => Kera::Choose {
+            var: mv(var),
+            set: k(0),
+            body: k(1),
+        }
+        .rc(),
+        Kera::ChooseUnbounded { var, .. } => Kera::ChooseUnbounded {
+            var: mv(var),
+            body: k(0),
+        }
+        .rc(),
+        Kera::RecFun { name, var, .. } => Kera::RecFun {
+            name: mv(name),
+            var: mv(var),
+            set: k(0),
+            body: k(1),
+        }
+        .rc(),
+        Kera::FunDef { var, .. } => Kera::FunDef {
+            var: mv(var),
+            set: k(0),
+            body: k(1),
+        }
+        .rc(),
+        Kera::Filter { var, .. } => Kera::Filter {
+            var: mv(var),
+            set: k(0),
+            pred: k(1),
+        }
+        .rc(),
+        Kera::Map { var, .. } => Kera::Map {
+            var: mv(var),
+            set: k(0),
+            expr: k(1),
+        }
+        .rc(),
+        Kera::Fold {
+            over, acc, elem, ..
+        } => {
+            let (base, collection, body) = (k(0), k(1), k(2));
+            Kera::Fold {
+                over: *over,
+                acc: mv(acc),
+                elem: mv(elem),
+                base,
+                collection,
+                body,
+            }
+            .rc()
+        }
+        _ => rebuild(t, true, kids),
+    }
 }
 
 /// The standard infinite sets, as membership domains a skolem can be
@@ -593,6 +879,10 @@ pub struct Lowerer<'a> {
     /// `INSTANCE` targets that could not be resolved, with their spans —
     /// reported once, after `add_spec`, rather than silently dropped.
     missing_instances: Vec<(String, Span)>,
+    /// The module whose member the walk is lowering — the scope a
+    /// `LET`-scoped instance's implicit substitutions resolve against when
+    /// no instance context is open.
+    lower_module: Option<&'a Module>,
     fresh: usize,
     inline_depth: usize,
     max_inline_depth: usize,
@@ -675,6 +965,26 @@ enum Frame<'a> {
     /// Push one prebuilt kernel value. For interceptions that synthesize a
     /// kernel term the surface never wrote (`Repeat`'s `<<1..N>>`).
     Kera(KeraRef),
+    /// Bind a mapped fold's operator parameters: pop the lowered mapping
+    /// function, bind `p0` to `map[x]` and `p1` to the accumulator, and
+    /// enter that scope for the operator body.
+    BindMappedFold {
+        /// The operator's element parameter, bound to `fun[elem]`.
+        p0: String,
+        /// The operator's accumulator parameter.
+        p1: String,
+        /// The fold's element binder.
+        elem: Name,
+        /// The fold's accumulator binder.
+        acc: Name,
+        /// The collection: `DOMAIN fun` when `None`, the surface index set
+        /// otherwise.
+        indices: Option<&'a Expr>,
+    },
+    /// Build `FunAsSeq(f, len)` from the lowered `f` (below) and `len`
+    /// (top): `Opaque("FunAsSeq", [f, len])`, for the encoder's window
+    /// construction.
+    BuildFunAsSeq,
     /// Build `MkSeq` from the mapped body: the `[i \\in 1..n |-> body]`
     /// function constructor over the literal range.
     BuildMkSeq {
@@ -703,8 +1013,13 @@ enum Frame<'a> {
         /// The name the body refers to itself by, when it does.
         recursive: Option<Name>,
     },
-    /// Restore operator definitions shadowed by a `LET`.
-    PopLetDefs(Vec<(String, Option<Def<'a>>)>),
+    /// Restore operator definitions shadowed by a `LET`, and any `LET`-scoped
+    /// instances (`LET M == INSTANCE A IN …`) with the module-level bindings
+    /// they shadowed, in the same order.
+    PopLetDefs(
+        Vec<(String, Option<Def<'a>>)>,
+        Vec<(String, Option<Instantiation<'a>>)>,
+    ),
     /// Push a ready-made kernel value (a record field name in an `EXCEPT`
     /// path, which has no surface expression of its own).
     PushLiteral(KeraRef),
@@ -715,11 +1030,9 @@ enum Frame<'a> {
     /// arguments, and look through the instantiated module under them.
     PushInstanceCtx {
         module: &'a Module,
-        /// Names the popped substitution values belong to, in order.
+        /// Names the popped substitution values belong to, in order — every
+        /// substituted name, `WITH` and implicit alike.
         subst_names: Vec<String>,
-        /// Declared names with no explicit `WITH`, substituted by the
-        /// same-named symbol of the instantiating module.
-        implicit: Vec<String>,
         /// The member's own parameters, bound to the popped arguments.
         member_params: Vec<(String, usize)>,
     },
@@ -748,6 +1061,7 @@ impl<'a> Lowerer<'a> {
             modules: HashMap::new(),
             pending_ops: HashMap::new(),
             missing_instances: Vec::new(),
+            lower_module: None,
             recursive_names: std::collections::HashSet::new(),
             fresh: 0,
             inline_depth: 0,
@@ -878,7 +1192,7 @@ impl<'a> Lowerer<'a> {
         self.module_defs.insert(module.name.name.clone(), own);
     }
 
-    fn add_instance_unit(&mut self, _module: &'a Module, unit: &'a Unit) {
+    fn add_instance_unit(&mut self, module: &'a Module, unit: &'a Unit) {
         let (name, params, instance) = match &unit.kind {
             UnitKind::ModuleDef {
                 name,
@@ -906,6 +1220,7 @@ impl<'a> Lowerer<'a> {
         };
         let inst = Instantiation {
             module: target,
+            source: Some(module),
             with: instance
                 .substitutions
                 .iter()
@@ -1046,6 +1361,7 @@ impl<'a> Lowerer<'a> {
     /// Returns [`LowerErrorKind::Unsupported`] if there is no such definition,
     /// or the first lowering error.
     pub fn lower_named(&mut self, module: &'a Module, name: &str) -> Result<KeraRef> {
+        self.lower_module = Some(module);
         let found = module.units.iter().find_map(|u| match &u.kind {
             UnitKind::OpDef { name: n, body, .. } if n.name == name => Some(body),
             _ => None,
@@ -1100,7 +1416,12 @@ impl<'a> Lowerer<'a> {
     /// Everything not here stays `Opaque` and is typed by `standard_sig` or
     /// declined by name. `Guess` and `Gen` are **never** lowered — see the
     /// soundness note on each.
-    fn apalache_op(&mut self, name: &str, args: &[KeraRef], span: Span) -> Result<Option<KeraRef>> {
+    fn apalache_op(
+        &mut self,
+        name: &str,
+        args: &[KeraRef],
+        _span: Span,
+    ) -> Result<Option<KeraRef>> {
         // A user's local definition of the same name still wins: this is
         // reachable only after name resolution failed to find one, but a
         // `LET`-bound operator or parameter of the same name must not be
@@ -1151,16 +1472,6 @@ impl<'a> Lowerer<'a> {
             // already exact where they are decidable at all, so the hint is the
             // value.
             ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => Ok(Some(k(0))),
-            // `FunAsSeq(f, len)`: not lowered yet — it needs the sequence
-            // sort of a function's prefix, which the encoder does not build
-            // from function values. (MkSeq is intercepted at the Expand
-            // site, where its operator argument is still an `Expr`.)
-            ("FunAsSeq", 2) => Err(LowerError::unsupported(
-                "`FunAsSeq`",
-                "not lowered yet: it needs the sequence sort of a function's prefix, which \
-                     the encoder does not build from function values",
-                span,
-            )),
             // `SetAsFun(S)`: the function `[p[1] \\in {p[2] : p \\in S} ...]` —
             // exact as one `FunDef` over the *pairs*: domain =
             // `{p[1] : p \in S}`, value at `d` = `CHOOSE p \in S : p[1] = d`,
@@ -1509,6 +1820,37 @@ impl<'a> Lowerer<'a> {
             }
             match frame {
                 Frame::PushScope(s) => self.scopes.push(s),
+                Frame::BindMappedFold {
+                    p0,
+                    p1,
+                    elem,
+                    acc,
+                    indices,
+                } => {
+                    // The function is the value this frame's expansion put
+                    // directly beneath it: the body reads it as `fun[elem]`,
+                    // and the collection is its `DOMAIN` — or the surface
+                    // index set, lowered like any other expression.
+                    let Some(fun) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "a fold over a function",
+                            "internal: missing the function to fold over",
+                            expr.span,
+                        ));
+                    };
+                    let read = Kera::FunApp(Rc::clone(&fun), Kera::Var(elem).rc()).rc();
+                    let mut scope = HashMap::new();
+                    scope.insert(p0, Binding::Value(read));
+                    scope.insert(p1, Binding::Value(Kera::Var(acc).rc()));
+                    self.scopes.push(scope);
+                    match indices {
+                        Some(ix) => stack.push(Frame::Expand(ix)),
+                        None => {
+                            let dom = Kera::Domain(fun).rc();
+                            stack.push(Frame::Kera(dom));
+                        }
+                    }
+                }
                 Frame::PopScope => {
                     self.scopes.pop();
                 }
@@ -1661,7 +2003,6 @@ impl<'a> Lowerer<'a> {
                 Frame::PushInstanceCtx {
                     module,
                     subst_names,
-                    implicit,
                     member_params,
                 } => {
                     // Arguments were pushed last, so they come off first.
@@ -1690,18 +2031,13 @@ impl<'a> Lowerer<'a> {
                         };
                         subst.insert(n.clone(), v);
                     }
-                    // A declared name with no `WITH` clause is substituted by
-                    // the same-named symbol of the instantiating module --
-                    // resolved through the *enclosing* instance if there is
-                    // one, so that nested instantiations compose.
-                    for n in implicit {
-                        let v = self
-                            .ctx
-                            .last()
-                            .and_then(|c| c.subst.get(&n).cloned())
-                            .unwrap_or_else(|| Kera::Var(Name(n.clone())).rc());
-                        subst.insert(n, v);
-                    }
+                    // Every substituted name — `WITH` replacements and
+                    // implicit same-named symbols alike — arrives as a value
+                    // pushed by `push_instance_body`; the resolution rules
+                    // (enclosing instance, `.cfg` constant, definition,
+                    // declared symbol, hard error) live in
+                    // `resolve_implicit`, where the spans still point at the
+                    // instance rather than at a late name error.
                     self.ctx.push(Rc::new(InstanceCtx { module, subst }));
                     self.scopes.push(scope);
                 }
@@ -1709,8 +2045,8 @@ impl<'a> Lowerer<'a> {
                     self.ctx.pop();
                     self.scopes.pop();
                 }
-                Frame::PopLetDefs(saved) => {
-                    for (name, prev) in saved {
+                Frame::PopLetDefs(saved_defs, saved_insts) => {
+                    for (name, prev) in saved_defs {
                         match prev {
                             Some(d) => {
                                 self.defs.insert(name, d);
@@ -1718,6 +2054,16 @@ impl<'a> Lowerer<'a> {
                             None => {
                                 self.defs.remove(&name);
                                 self.funs.remove(&name);
+                            }
+                        }
+                    }
+                    for (name, prev) in saved_insts {
+                        match prev {
+                            Some(i) => {
+                                self.instances.insert(name, i);
+                            }
+                            None => {
+                                self.instances.remove(&name);
                             }
                         }
                     }
@@ -1920,6 +2266,16 @@ impl<'a> Lowerer<'a> {
                     values.push(built);
                 }
                 Frame::Kera(k) => values.push(k),
+                Frame::BuildFunAsSeq => {
+                    let (Some(len), Some(f)) = (values.pop(), values.pop()) else {
+                        return Err(LowerError::unsupported(
+                            "`FunAsSeq`",
+                            "internal: missing children",
+                            expr.span,
+                        ));
+                    };
+                    values.push(Kera::Opaque(Name("FunAsSeq".into()), vec![f, len]).rc());
+                }
                 Frame::BuildMkSeq { var, n } => {
                     let Some(body) = values.pop() else {
                         return Err(LowerError::unsupported(
@@ -2187,8 +2543,13 @@ impl<'a> Lowerer<'a> {
 
         // Every constant and variable the instantiated module declares must be
         // substituted: explicitly by `WITH`, or implicitly by the same-named
-        // symbol here. Leaving one unsubstituted would silently read the
-        // *wrong* module's symbol.
+        // symbol at the instance's declaring scope. Leaving one unsubstituted
+        // would silently read the *wrong* module's symbol — and the old
+        // fallback here did exactly that, minting a free kernel variable for
+        // any name it could not resolve, which the solver then treated as
+        // unconstrained. test59.tla is the shape that exposed it: the
+        // `LET x == y+1` before `M == INSTANCE test59a` is the same-named
+        // symbol test59a's `VARIABLE x` implicitly substitutes to.
         let declared: Vec<String> = target
             .constants()
             .iter()
@@ -2196,32 +2557,133 @@ impl<'a> Lowerer<'a> {
             .chain(target.variables().iter().map(|v| v.name.clone()))
             .collect();
         let mut subst_names: Vec<String> = Vec::new();
-        let mut subst_exprs: Vec<&'a Expr> = Vec::new();
+        let mut subst_sources: Vec<SubstSource<'a>> = Vec::new();
         for (n, e) in &inst.with {
             subst_names.push(n.clone());
-            subst_exprs.push(e);
+            subst_sources.push(SubstSource::Expr(e));
         }
-        let implicit: Vec<String> = declared
-            .into_iter()
-            .filter(|d| !subst_names.iter().any(|s| s == d))
-            .collect();
+        for d in declared {
+            if subst_names.contains(&d) {
+                continue;
+            }
+            let src = self.resolve_implicit(&d, inst, span)?;
+            subst_names.push(d);
+            subst_sources.push(src);
+        }
 
         stack.push(Frame::PopInstanceCtx);
         stack.push(Frame::Expand(def.body));
         stack.push(Frame::PushInstanceCtx {
             module: target,
             subst_names,
-            implicit,
             member_params: def.params.clone(),
         });
         // Arguments last so they are on top of the value stack.
         for a in args.iter().rev() {
             stack.push(Frame::Expand(a));
         }
-        for e in subst_exprs.into_iter().rev() {
-            stack.push(Frame::Expand(e));
+        for src in subst_sources.into_iter().rev() {
+            match src {
+                SubstSource::Expr(e) => stack.push(Frame::Expand(e)),
+                SubstSource::Value(v) => stack.push(Frame::PushLiteral(v)),
+                SubstSource::Fun(name, bounds, body) => {
+                    stack.push(Frame::ExpandFun(name, bounds, body));
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Resolve one *implicit* substitution: a declared name of the
+    /// instantiated module that no `WITH` clause covers. The replacement is
+    /// the same-named symbol at the instance's declaring scope, in the same
+    /// order a bare name there would resolve:
+    ///
+    /// 1. an enclosing instance's substitution (nested instances compose);
+    /// 2. a `.cfg`-pinned constant;
+    /// 3. a visible nullary definition — module-level, or `LET`-scoped when
+    ///    the instance itself sits in that `LET`;
+    /// 4. a visible function definition `f[x \\in S] == e`;
+    /// 5. a variable or constant the declaring module itself declares,
+    ///    which lowers as the free kernel name of that symbol;
+    /// 6. nothing — a hard error. The specification is ill-formed (TLA+
+    ///    requires every declared name to be substituted), and inventing a
+    ///    value here would fabricate a verdict.
+    fn resolve_implicit(
+        &self,
+        name: &str,
+        inst: &Instantiation<'a>,
+        span: Span,
+    ) -> Result<SubstSource<'a>> {
+        // The declaring scope: the module the instance unit lives in, or —
+        // for a `LET`-scoped instance — the module (or instance member) the
+        // lowering walk is currently inside.
+        let source = inst
+            .source
+            .or_else(|| self.ctx.last().map(|c| c.module))
+            .or(self.lower_module);
+        if let Some(v) = self.ctx.last().and_then(|c| c.subst.get(name)) {
+            return Ok(SubstSource::Value(Rc::clone(v)));
+        }
+        if let Some(v) = self.constants.get(name) {
+            return Ok(SubstSource::Value(Rc::clone(v)));
+        }
+        if let Some(def) = self.defs.get(name) {
+            if def.params.is_empty() {
+                return Ok(SubstSource::Expr(def.body));
+            }
+            return Err(LowerError::unsupported(
+                &format!("`{name}`"),
+                &format!(
+                    "it substitutes for a declared value of module `{}`, but is an \
+                     operator of {} argument(s); `WITH {name} <- \\dots` must name a value",
+                    inst.module.name.name,
+                    def.params.len()
+                ),
+                span,
+            ));
+        }
+        if let Some(&(bounds, body)) = self.funs.get(name) {
+            return Ok(SubstSource::Fun(name.to_string(), bounds, body));
+        }
+        if let Some(m) = source
+            && self.declares_in_closure(m, name)
+        {
+            return Ok(SubstSource::Value(Kera::Var(Name(name.to_string())).rc()));
+        }
+        Err(LowerError::unsupported(
+            &format!("`{name}`"),
+            &format!(
+                "module `{}` declares it and no `WITH` replacement or same-named \
+                 symbol is in scope at the instance",
+                inst.module.name.name
+            ),
+            span,
+        ))
+    }
+
+    /// Is `name` declared as a constant or variable of `m`, or of any module
+    /// `m` transitively extends? `EXTENDS` re-exports declarations, so a
+    /// declaration reached through it is as good as `m`'s own.
+    fn declares_in_closure(&self, m: &'a Module, name: &str) -> bool {
+        let mut work: Vec<&'a Module> = vec![m];
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        while let Some(cur) = work.pop() {
+            if !seen.insert(cur.name.name.as_str()) {
+                continue;
+            }
+            let declared = cur.constants().iter().any(|d| d.name.name == name)
+                || cur.variables().iter().any(|v| v.name == name);
+            if declared {
+                return true;
+            }
+            for e in cur.extends() {
+                if let Some(em) = self.modules.get(&e.name) {
+                    work.push(em);
+                }
+            }
+        }
+        false
     }
 
     /// Resolve a bare name through the instance being looked through, if any.
@@ -2347,6 +2809,24 @@ impl<'a> Lowerer<'a> {
         span: Span,
         stack: &mut Vec<Frame<'a>>,
     ) -> Result<()> {
+        self.expand_fold_with(e, over, args, false, span, stack)
+    }
+
+    /// The fold expansion proper, with the community modules' argument
+    /// order available: their folds (`FoldSet`, `FoldSeq`, …) accumulate in
+    /// the operator's **right** parameter — `op(element, accumulator)` —
+    /// where `ApaFoldSet`/`ApaFoldSeqLeft` accumulate in the left, so the
+    /// rewire binds the parameters the other way around rather than
+    /// synthesizing a swapped operator.
+    fn expand_fold_with(
+        &mut self,
+        e: &'a Expr,
+        over: FoldOver,
+        args: &'a [Expr],
+        swapped: bool,
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
         let [op, base, collection] = args else {
             return Err(LowerError::unsupported(
                 "a fold",
@@ -2383,14 +2863,25 @@ impl<'a> Lowerer<'a> {
         let acc = self.fresh_name(&params[0].0);
         let elem = self.fresh_name(&params[1].0);
         let mut scope = HashMap::new();
-        scope.insert(
-            params[0].0.clone(),
-            Binding::Value(Kera::Var(acc.clone()).rc()),
-        );
-        scope.insert(
-            params[1].0.clone(),
-            Binding::Value(Kera::Var(elem.clone()).rc()),
-        );
+        if swapped {
+            scope.insert(
+                params[0].0.clone(),
+                Binding::Value(Kera::Var(elem.clone()).rc()),
+            );
+            scope.insert(
+                params[1].0.clone(),
+                Binding::Value(Kera::Var(acc.clone()).rc()),
+            );
+        } else {
+            scope.insert(
+                params[0].0.clone(),
+                Binding::Value(Kera::Var(acc.clone()).rc()),
+            );
+            scope.insert(
+                params[1].0.clone(),
+                Binding::Value(Kera::Var(elem.clone()).rc()),
+            );
+        }
         self.binder_names
             .insert(e.span.start.offset, vec![acc.clone(), elem.clone()]);
         stack.push(Frame::BuildFold { over, acc, elem });
@@ -2398,6 +2889,77 @@ impl<'a> Lowerer<'a> {
         stack.push(Frame::Expand(body));
         stack.push(Frame::PushScope(scope));
         stack.push(Frame::Expand(collection));
+        stack.push(Frame::Expand(base));
+        Ok(())
+    }
+
+    /// `FoldFunction(op, base, fun)` / `FoldFunctionOnSet(op, base, fun,
+    /// indices)` — the community `Functions` module's folds over a
+    /// function's *values*, per Apalache's `__rewire_functions`: a set fold
+    /// over the indices whose body reads `op(fun[x], acc)`. The mapping
+    /// argument is lowered once; the scope frame that binds the operator's
+    /// parameters keeps that value for the body's reads and, for the
+    /// three-argument form, builds the collection as `DOMAIN` of it.
+    fn expand_mapped_fold(
+        &mut self,
+        e: &'a Expr,
+        op: &'a Expr,
+        base: &'a Expr,
+        fun: &'a Expr,
+        indices: Option<&'a Expr>,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let Some(Binding::Op { params, body }) = self.as_operator(op) else {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its first argument must be an operator: pass a defined \
+                 two-parameter operator or a `LAMBDA`",
+                op.span,
+            ));
+        };
+        if params.len() != 2 {
+            return Err(LowerError::new(
+                LowerErrorKind::Arity {
+                    name: "the folding operator".into(),
+                    expected: 2,
+                    found: params.len(),
+                },
+                op.span,
+            ));
+        }
+        if params.iter().any(|(_, arity)| *arity > 0) {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its operator takes an operator of its own, which the kernel \
+                 has no way to carry",
+                op.span,
+            ));
+        }
+        // The accumulator is `op`'s second parameter — these folds
+        // accumulate on the right — and the element its first, bound to
+        // `fun[x]`.
+        let acc = self.fresh_name(&params[1].0);
+        let elem = self.fresh_name(&params[0].0);
+        self.binder_names
+            .insert(e.span.start.offset, vec![acc.clone(), elem.clone()]);
+        // Run order: base, the function, the collection (from the function's
+        // `DOMAIN`, or the surface indices), the scope binding `op`'s
+        // parameters, the body, the fold.
+        stack.push(Frame::BuildFold {
+            over: FoldOver::Set,
+            acc: acc.clone(),
+            elem: elem.clone(),
+        });
+        stack.push(Frame::PopScope);
+        stack.push(Frame::Expand(body));
+        stack.push(Frame::BindMappedFold {
+            p0: params[0].0.clone(),
+            p1: params[1].0.clone(),
+            elem,
+            acc,
+            indices,
+        });
+        stack.push(Frame::Expand(fun));
         stack.push(Frame::Expand(base));
         Ok(())
     }
@@ -2840,6 +3402,95 @@ impl<'a> Lowerer<'a> {
                     stack.push(Frame::PushScope(scope));
                     return Ok(());
                 }
+                // `FunAsSeq(f, len[, capacity])` — Apalache's cast of a
+                // function's `1..len` prefix to a sequence. Lowered as one
+                // kernel operator the encoder builds exactly (a window over
+                // the function's own array), so `len` may be symbolic. The
+                // capacity is a hint Apalache's encoding needs and this one
+                // does not — the window's length already makes reads past
+                // `len` dead — so it is accepted and inert here, never
+                // silently reinterpreted.
+                if !head.is_qualified()
+                    && id.name == "FunAsSeq"
+                    && (args.len() == 2 || args.len() == 3)
+                    && self.lookup("FunAsSeq").is_none()
+                    && !self.defs.contains_key("FunAsSeq")
+                {
+                    let (f, len): (&'a Expr, &'a Expr) = match args.as_slice() {
+                        [f, len, _cap] => (f, len),
+                        [f, len] => (f, len),
+                        _ => {
+                            return Err(LowerError::unsupported(
+                                "`FunAsSeq`",
+                                "internal: wrong argument count",
+                                span,
+                            ));
+                        }
+                    };
+                    stack.push(Frame::BuildFunAsSeq);
+                    stack.push(Frame::Expand(len));
+                    stack.push(Frame::Expand(f));
+                    return Ok(());
+                }
+                // The community modules' folds, rewired exactly as
+                // Apalache's `__rewire_*` modules rewire them:
+                //
+                // * `FoldSet(op, base, S)` (FiniteSetsExt) and
+                //   `FoldSeq(op, base, seq)` (SequencesExt) accumulate in
+                //   the operator's **right** parameter — `op(x, acc)` — so
+                //   they are the kernel folds with the parameters bound the
+                //   other way around.
+                // * `FoldFunction(op, base, f)` / `FoldFunctionOnSet(op,
+                //   base, f, I)` (Functions) fold over the *values* `f[x]`
+                //   for `x \in I` (`DOMAIN f` for the former).
+                //
+                // A local definition of the same name still wins when the
+                // application does not look like the fold — the same rule
+                // `folds_here` applies to `ApaFoldSet`.
+                if !head.is_qualified()
+                    && matches!(
+                        (id.name.as_str(), args.len()),
+                        ("FoldSet", 3)
+                            | ("FoldSeq", 3)
+                            | ("FoldFunction", 3)
+                            | ("FoldFunctionOnSet", 4)
+                    )
+                    && self.folds_here(&id.name, args)
+                {
+                    match (id.name.as_str(), args.len()) {
+                        ("FoldSet", 3) => {
+                            self.expand_fold_with(e, FoldOver::Set, args, true, span, stack)?;
+                            return Ok(());
+                        }
+                        ("FoldSeq", 3) => {
+                            self.expand_fold_with(e, FoldOver::SeqLeft, args, true, span, stack)?;
+                            return Ok(());
+                        }
+                        ("FoldFunction", 3) => {
+                            let [op, base, fun] = args.as_slice() else {
+                                return Err(LowerError::unsupported(
+                                    "`FoldFunction`",
+                                    "internal: wrong argument count",
+                                    span,
+                                ));
+                            };
+                            self.expand_mapped_fold(e, op, base, fun, None, stack)?;
+                            return Ok(());
+                        }
+                        ("FoldFunctionOnSet", 4) => {
+                            let [op, base, fun, indices] = args.as_slice() else {
+                                return Err(LowerError::unsupported(
+                                    "`FoldFunctionOnSet`",
+                                    "internal: wrong argument count",
+                                    span,
+                                ));
+                            };
+                            self.expand_mapped_fold(e, op, base, fun, Some(indices), stack)?;
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
                 if !head.is_qualified()
                     && id.name == "BagOfAll"
                     && args.len() == 2
@@ -3069,6 +3720,7 @@ impl<'a> Lowerer<'a> {
             }
             ExprKind::Let { defs, body } => {
                 let mut saved: Vec<(String, Option<Def<'a>>)> = Vec::new();
+                let mut saved_insts: Vec<(String, Option<Instantiation<'a>>)> = Vec::new();
                 for d in defs {
                     match &d.kind {
                         UnitKind::OpDef {
@@ -3094,6 +3746,61 @@ impl<'a> Lowerer<'a> {
                                 .insert(name.name.clone(), (bounds.as_slice(), body));
                             saved.push((name.name.clone(), None));
                         }
+                        // `LET M == INSTANCE A [WITH …] IN …`: the instance is
+                        // scoped exactly like the definitions around it —
+                        // visible in the `IN` body, restored afterwards, and
+                        // shadowing a module-level instance of the same name
+                        // for that extent. test59.tla's `Next` is the case.
+                        UnitKind::ModuleDef {
+                            name,
+                            params,
+                            instance,
+                            ..
+                        } => {
+                            let Some(target) = self.modules.get(&instance.module.name).copied()
+                            else {
+                                return Err(LowerError::unsupported(
+                                    &format!("`{}`!…", name.name),
+                                    &format!(
+                                        "the instantiated module `{}` was not found on the \
+                                         search path",
+                                        instance.module.name
+                                    ),
+                                    d.span,
+                                ));
+                            };
+                            let inst = Instantiation {
+                                module: target,
+                                // The declaring scope is the module the walk
+                                // is inside (or an instance member of it);
+                                // recorded at use time, not here, because at
+                                // this point only the frames know.
+                                source: None,
+                                with: instance
+                                    .substitutions
+                                    .iter()
+                                    .map(|(n, e)| (n.name.clone(), e))
+                                    .collect(),
+                                params: params.iter().map(|p| p.name.name.clone()).collect(),
+                            };
+                            saved_insts.push((
+                                name.name.clone(),
+                                self.instances.insert(name.name.clone(), inst),
+                            ));
+                        }
+                        // A bare `INSTANCE M` unit cannot appear inside a
+                        // `LET` (its grammar is `name == INSTANCE …`), and the
+                        // parser cannot produce it there. If that ever
+                        // changes, refusing is the honest outcome — dropping
+                        // it silently would surface much later as a
+                        // name-resolution error pointing at the use.
+                        UnitKind::Instance { .. } => {
+                            return Err(LowerError::unsupported(
+                                "an `INSTANCE` inside `LET`",
+                                "a `LET`-scoped instance must be named, `M == INSTANCE …`",
+                                d.span,
+                            ));
+                        }
                         UnitKind::Recursive(_) => {
                             return Err(LowerError::unsupported(
                                 "`RECURSIVE` inside `LET`",
@@ -3102,10 +3809,17 @@ impl<'a> Lowerer<'a> {
                                 d.span,
                             ));
                         }
-                        _ => {}
+                        UnitKind::ConstantDecl(_)
+                        | UnitKind::VariableDecl(_)
+                        | UnitKind::Extends(_)
+                        | UnitKind::Assume { .. }
+                        | UnitKind::Theorem { .. }
+                        | UnitKind::ProofDirective(_)
+                        | UnitKind::Separator
+                        | UnitKind::Submodule(_) => {}
                     }
                 }
-                stack.push(Frame::PopLetDefs(saved));
+                stack.push(Frame::PopLetDefs(saved, saved_insts));
                 stack.push(Frame::Expand(body));
             }
             ExprKind::Except { base, updates } => {
@@ -3157,6 +3871,94 @@ impl<'a> Lowerer<'a> {
                     }
                 }
                 stack.push(Frame::Expand(base));
+            }
+            // A higher-order *parameter* whose spelling is an operator
+            // symbol — `Foo(a, _--_) == a -- 0`, applied at `a -- 0` — binds
+            // the operator passed at the call site (`Foo(7, +)`, `Foo(7,
+            // ++)`, a `LAMBDA`). Scope wins over a module-level definition of
+            // the same spelling, which is what shadowing means and what the
+            // application path already does for named parameters. test42.tla
+            // is the case.
+            ExprKind::Infix { op, lhs, rhs, .. }
+                if matches!(
+                    self.lookup(op.as_str()),
+                    Some(Binding::Op { .. }) | Some(Binding::BuiltinOp(_))
+                ) =>
+            {
+                match self.lookup(op.as_str()) {
+                    Some(Binding::BuiltinOp(sym)) => {
+                        stack.push(Frame::BuildBuiltinOp { sym, span });
+                        stack.push(Frame::Expand(rhs));
+                        stack.push(Frame::Expand(lhs));
+                    }
+                    Some(Binding::Op { params, body }) if params.len() == 2 => {
+                        stack.push(Frame::Inline {
+                            name: op.clone(),
+                            params,
+                            body,
+                            span,
+                            cache_as: None,
+                        });
+                        stack.push(Frame::Expand(rhs));
+                        stack.push(Frame::Expand(lhs));
+                    }
+                    Some(Binding::Op { params, .. }) => {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: op.clone(),
+                                expected: params.len(),
+                                found: 2,
+                            },
+                            span,
+                        ));
+                    }
+                    // The guard admits exactly the shapes above; reaching
+                    // this arm means a binding vanished mid-walk, which is
+                    // an internal defect to report, never to guess around.
+                    _ => {
+                        return Err(LowerError::unsupported(
+                            &format!("the operator `{op}`"),
+                            "internal: its operator binding disappeared from scope mid-walk",
+                            span,
+                        ));
+                    }
+                }
+            }
+            ExprKind::Prefix { op, operand, .. } | ExprKind::Postfix { op, operand, .. }
+                if matches!(self.lookup(op.as_str()), Some(Binding::Op { .. })) =>
+            {
+                match self.lookup(op.as_str()) {
+                    Some(Binding::Op { params, body }) if params.len() == 1 => {
+                        stack.push(Frame::Inline {
+                            name: op.clone(),
+                            params,
+                            body,
+                            span,
+                            cache_as: None,
+                        });
+                        stack.push(Frame::Expand(operand));
+                    }
+                    Some(Binding::Op { params, .. }) => {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: op.clone(),
+                                expected: params.len(),
+                                found: 1,
+                            },
+                            span,
+                        ));
+                    }
+                    // A built-in operator symbol is always binary, so a
+                    // prefix/postfix use of one can only be this internal
+                    // defect; report it rather than guessing a meaning.
+                    _ => {
+                        return Err(LowerError::unsupported(
+                            &format!("the operator `{op}`"),
+                            "internal: its operator binding disappeared from scope mid-walk",
+                            span,
+                        ));
+                    }
+                }
             }
             // A user-defined operator symbol: `a \oplus b == …`, `-. z == …`.
             // The definition is registered under its spelling, so it must be

@@ -113,6 +113,10 @@ pub struct Annotation {
     pub text: String,
     /// Where the comment was, for diagnostics.
     pub span: Span,
+    /// The start offset of the declaration's **name** the annotation bound
+    /// to — the anchor the attach pass chose, precise whatever the name's
+    /// scope (module level, or a `LET` definition inside a body).
+    pub decl_offset: u32,
 }
 
 impl LoadedSpec {
@@ -339,6 +343,61 @@ impl Loader {
 /// that precedes nothing (end of module) is dropped — there is no
 /// declaration to annotate, and inventing one would be the silent-gap
 /// pattern this codebase refuses elsewhere.
+/// The operator definition whose **name** starts at `decl_offset` — a
+/// module-level definition or a `LET`-scoped one inside a body, whichever
+/// the attach pass bound an annotation to.
+///
+/// Walked iteratively; `LET` bodies are reached through
+/// [`crate::ast::Expr::subexprs`].
+#[must_use]
+pub fn operator_at<'m>(
+    module: &'m Module,
+    decl_offset: u32,
+) -> Option<(&'m [crate::ast::OpDecl], &'m crate::ast::Expr)> {
+    let find_in_body =
+        |body: &'m crate::ast::Expr| -> Option<(&'m [crate::ast::OpDecl], &'m crate::ast::Expr)> {
+            let mut work = vec![body];
+            while let Some(cur) = work.pop() {
+                if let crate::ast::ExprKind::Let { defs, .. } = &cur.kind {
+                    for d in defs {
+                        if let crate::ast::UnitKind::OpDef {
+                            name, params, body, ..
+                        } = &d.kind
+                            && name.span.start.offset == decl_offset
+                        {
+                            return Some((params, body));
+                        }
+                    }
+                }
+                work.extend(cur.subexprs());
+            }
+            None
+        };
+    for unit in &module.units {
+        match &unit.kind {
+            crate::ast::UnitKind::OpDef {
+                name, params, body, ..
+            } => {
+                if name.span.start.offset == decl_offset {
+                    return Some((params, body));
+                }
+                if let Some(hit) = find_in_body(body) {
+                    return Some(hit);
+                }
+            }
+            crate::ast::UnitKind::FnDef { body, .. }
+            | crate::ast::UnitKind::Assume { body, .. }
+            | crate::ast::UnitKind::Theorem { body, .. } => {
+                if let Some(hit) = find_in_body(body) {
+                    return Some(hit);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn attach_annotations(
     module: &str,
     m: &Module,
@@ -356,22 +415,49 @@ fn attach_annotations(
     if named.is_empty() {
         return Vec::new();
     }
-    // Declaration start offsets with their names, in source order.
+    // Declaration anchors — the **name's** position, not the unit's: a
+    // `CONSTANT`/`VARIABLE` unit's span starts at the keyword, which is
+    // *before* the annotation comment that precedes the name inside it —
+    // anchoring on the unit start mis-bound every such annotation to the
+    // *next* declaration, found the moment the first annotated spec ran.
+    // A declaration block declares **several** names, each with its own
+    // position, and an interleaved comment annotates the *next* name,
+    // not the block: `VARIABLES \* @type: Int; x, \* @type: Str; y`
+    // (Test1226's very shape) binds each annotation to the name that
+    // follows it. One anchor per name.
+    //
+    // A `LET` definition is an anchor too, wherever it sits in a body: an
+    // annotation inside a definition binds to the *next* definition at its
+    // own level, and binding it to the next module-level unit instead
+    // attributed NestedCallByName's `LET F` signature to `Init` — the
+    // operator-signature check then declined a specification Apalache
+    // accepts. The walk is iterative (`Expr::subexprs`), LET bodies
+    // included through it.
     let mut decls: Vec<(u32, String)> = Vec::new();
+    let collect_body = |body: &crate::ast::Expr, decls: &mut Vec<(u32, String)>| {
+        let mut work = vec![body];
+        while let Some(cur) = work.pop() {
+            if let crate::ast::ExprKind::Let { defs, .. } = &cur.kind {
+                for d in defs {
+                    if let crate::ast::UnitKind::OpDef { name, .. } = &d.kind {
+                        decls.push((name.span.start.offset, name.name.clone()));
+                    }
+                }
+            }
+            work.extend(cur.subexprs());
+        }
+    };
     for unit in &m.units {
-        // The anchor is the **name's** position, not the unit's: a
-        // `CONSTANT`/`VARIABLE` unit's span starts at the keyword, which is
-        // *before* the annotation comment that precedes the name inside it —
-        // anchoring on the unit start mis-bound every such annotation to the
-        // *next* declaration, found the moment the first annotated spec ran.
-        // A declaration block declares **several** names, each with its own
-        // position, and an interleaved comment annotates the *next* name,
-        // not the block: `VARIABLES \* @type: Int; x, \* @type: Str; y`
-        // (Test1226's very shape) binds each annotation to the name that
-        // follows it. One anchor per name.
         let named: Vec<(u32, String)> = match &unit.kind {
-            crate::ast::UnitKind::OpDef { name, .. } => {
-                vec![(name.span.start.offset, name.name.clone())]
+            crate::ast::UnitKind::OpDef { name, body, .. } => {
+                let mut out = vec![(name.span.start.offset, name.name.clone())];
+                collect_body(body, &mut out);
+                out
+            }
+            crate::ast::UnitKind::FnDef { body, .. } => {
+                let mut out = Vec::new();
+                collect_body(body, &mut out);
+                out
             }
             crate::ast::UnitKind::VariableDecl(ids) => ids
                 .iter()
@@ -389,7 +475,7 @@ fn attach_annotations(
     let mut out = Vec::new();
     for (off, text) in named {
         // The first declaration after the comment.
-        let Some((_, name)) = decls.iter().find(|(doff, _)| *doff > off) else {
+        let Some((doff, name)) = decls.iter().find(|(doff, _)| *doff > off) else {
             continue;
         };
         out.push(Annotation {
@@ -397,6 +483,7 @@ fn attach_annotations(
             name: name.clone(),
             text: text.to_string(),
             span: crate::span::Span::default(),
+            decl_offset: *doff,
         });
     }
     out

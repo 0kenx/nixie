@@ -938,17 +938,23 @@ impl Encoder {
         let empty = tm.mk_set_empty_at(set_sort);
         let mut acc = empty;
         for m in members {
-            let Value::Scalar(k) = &*m.value else {
-                return Err(EncodeError::Unsupported(
-                    "a set whose members have no SMT sort, used as a function domain".into(),
-                ));
+            let k = match &*m.value {
+                Value::Scalar(k) => *k,
+                // A structural member (a tuple, a record) is not stuck: it
+                // reifies to the datatype the sorts module already gives
+                // it — the same reification the function-constructor arm
+                // applies to its keys, and what lets `SetAsFun`'s `CHOOSE`
+                // run over a set of pairs. Only genuinely unscalarisable
+                // members (a set or function *inside* the domain) still
+                // refuse, through `reify`'s own error.
+                _ => self.reify(&m.value, tm)?,
             };
-            if self.sort_of(*k, tm)? != element {
+            if self.sort_of(k, tm)? != element {
                 return Err(EncodeError::Unsupported(
                     "a function domain whose members do not share one sort".into(),
                 ));
             }
-            let single = tm.mk_set_singleton(*k);
+            let single = tm.mk_set_singleton(k);
             // A candidate that may not be present contributes conditionally.
             // `ite` at a set sort is decided by the set theory, so this needs
             // no case split of its own — but a *literally true* guard is
@@ -2509,6 +2515,7 @@ impl Encoder {
                         | ("Tail", 1)
                         | ("\\o", 2)
                         | ("SubSeq", 3)
+                        | ("FunAsSeq", 2)
                 ) =>
             {
                 // A sequence has two shapes here, and the operators take
@@ -2572,6 +2579,51 @@ impl Encoder {
                             EncodeError::Unsupported("`Head` of the empty sequence".into())
                         }),
                     };
+                }
+                // `FunAsSeq(f, len)` — the cast itself: a window of length
+                // `len` at offset 0 over the function's own array, so
+                // `s[i]` reads `f[i]` exactly and every read past `len` is
+                // dead by the window's length. The element sort is the one
+                // inference gave this term (`Seq(a)`); the array's own sort
+                // must agree — the cast is exact or it is refused.
+                if name.as_str() == "FunAsSeq" {
+                    let Value::Fun { array, .. } = &*value else {
+                        return Err(EncodeError::Unsupported(
+                            "`FunAsSeq` applied to something that is not a function".into(),
+                        ));
+                    };
+                    let array = *array;
+                    let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                        return Err(EncodeError::Unsupported(
+                            "`FunAsSeq` whose element sort was not inferred".into(),
+                        ));
+                    };
+                    let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+                        return Err(EncodeError::Unsupported(
+                            "`FunAsSeq` whose inferred sort is not a sequence".into(),
+                        ));
+                    };
+                    let array_sort = self.sort_of(array, tm)?;
+                    match tm.sorts.get(array_sort).map(|s| s.kind.clone()) {
+                        Some(nixie_core::SortKind::Array { domain, range })
+                            if domain == tm.sorts.int_sort && range == elem => {}
+                        _ => {
+                            return Err(EncodeError::Unsupported(
+                                "`FunAsSeq` over a function whose array is not Int-keyed at the \
+                                 sequence's element sort"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    let len = self.go(&args[1], tm)?;
+                    let zero = tm.mk_int(num_bigint::BigInt::from(0));
+                    let seq_sort = crate::sorts::seq_sort(elem, tm);
+                    let ctor = tm
+                        .sorts
+                        .datatype_name(seq_sort)
+                        .ok_or(EncodeError::ShapeClash)?
+                        .to_string();
+                    return scalar(tm.mk_dt_constructor(&ctor, [zero, len, array], seq_sort));
                 }
                 let Value::Scalar(target) = &*value else {
                     return Err(EncodeError::Unsupported(format!(

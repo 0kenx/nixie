@@ -81,37 +81,25 @@ fn the_hint_operators_are_identity() {
 // ---- SetAsFun ----
 
 /// `SetAsFun(S)`: the function mapping each pair's first to its second —
-/// Apalache's own rewire, exact through the kernel `CHOOSE`.
-/// `SetAsFun` lowers exactly (the `CHOOSE`-per-domain-point rewire) and
-/// type-checks, but the **encode** still declines it: the mapped domain's
-/// members come out as structural tuple components the function-domain
-/// builder has no scalar form for. The lowering is kept — the evaluator
-/// runs it, and the gap is one encoder arm — and the claim is recorded
-/// here so the day it closes, this test gets its assertions back:
-///
-/// ```text
-/// SetAsFun({<<"a", 1>>, <<"b", 2>>})["a"] = 1
-/// DOMAIN SetAsFun({<<"a", 1>>, <<"b", 2>>}) = {"a", "b"}
-/// ```
+/// Apalache's own rewire, exact through the kernel `CHOOSE` over the set
+/// of pairs. The encode gap this used to pin (the domain's tuple members
+/// had no scalar form) closed by reifying structural members in
+/// `native_set_of`, so both of the issue's claims are assertions again.
 #[test]
-#[ignore = "encode: SetAsFun's mapped tuple members have no scalar domain form yet"]
 fn set_as_fun_builds_the_function() {
-    let src = r#"
----- MODULE SAF ----
-EXTENDS Integers, Apalache
-VARIABLE x
-Init == x = 0
-Next == UNCHANGED <<x>>
-Inv == SetAsFun({<<"a", 1>>, <<"b", 2>>})["a"] = 1
-====
-"#;
-    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
-    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
-    let module = spec.root_module().expect("has a root module");
-    let mut tm = TermManager::new();
-    let mut bmc =
-        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
-    assert!(bmc.check(0, &mut tm).is_err(), "the encode gap, honestly");
+    // The issue's Inv, verbatim.
+    holds("", r#"SetAsFun({<<"a", 1>>, <<"b", 2>>})["a"] = 1"#);
+    // And its DOMAIN claim.
+    holds(
+        "",
+        r#"DOMAIN SetAsFun({<<"a", 1>>, <<"b", 2>>}) = {"a", "b"}"#,
+    );
+    // The function is exact, not approximate: a wrong value is a
+    // violation. (An out-of-domain read such as `SetAsFun({<<"a", 1>>})["b"]`
+    // is deliberately *not* asserted: TLA+ leaves it undefined, and the
+    // encoding's underspecified answer there is a documented choice, not a
+    // claim either way.)
+    fails("", r#"SetAsFun({<<"a", 1>>, <<"b", 2>>})["a"] = 2"#);
 }
 
 // ---- Repeat ----
@@ -203,4 +191,60 @@ Inv  == {body} # x
             "`{body}` must decline, not lower from its body"
         );
     }
+}
+
+// ---- FunAsSeq ----
+
+/// `FunAsSeq(f, len, capacity)`: the function's `1..len` prefix as a
+/// sequence — Apalache's own rewire shape, `SubSeq([i \in 1..cap |-> f[i]],
+/// 1, len)`, with `SubSeq`'s window arithmetic carrying a symbolic `len`
+/// exactly. The two-argument form reads `capacity = len`.
+#[test]
+fn fun_as_seq_casts_a_function_prefix() {
+    // The whole function, as a sequence: reads and length.
+    holds(
+        "",
+        r#"LET s == FunAsSeq([i \in 1..3 |-> 2 * i], 3, 3) IN s[2] = 4"#,
+    );
+    holds("", r#"Len(FunAsSeq([i \in 1..3 |-> 2 * i], 3, 3)) = 3"#);
+    // A prefix: only `1..len` is the sequence, the capacity just bounds it.
+    holds(
+        "",
+        r#"LET s == FunAsSeq([i \in 1..3 |-> 2 * i], 2, 3) IN /\ s[2] = 4 /\ Len(s) = 2"#,
+    );
+    // The elements are the function's, not placeholders.
+    fails("", r#"FunAsSeq([i \in 1..3 |-> 2 * i], 3, 3)[2] = 5"#);
+    // The two-argument form: capacity = len.
+    holds("", r#"FunAsSeq([i \in 1..3 |-> 7], 3)[3] = 7"#);
+}
+
+// ---- the community folds, rewired ----
+
+/// The community modules' folds, exactly as Apalache's `__rewire_*` modules
+/// define them: the operator's **right** parameter is the accumulator
+/// (`op(x, acc)`), and the function folds read the function's *values*.
+/// The `ApaFoldSet` order-independence audit still applies: a non-AC
+/// operator over a set is refused, never silently reordered.
+#[test]
+fn the_community_folds_rewire_with_their_argument_order() {
+    // FoldSet: op(x, acc) — right-associative accumulation over a set.
+    holds("", r#"FoldSet(LAMBDA x, acc: x + acc, 0, {1, 2, 3}) = 6"#);
+    // A sequence fold keeps its order (left fold), so a non-commutative
+    // operator is still exact: `((0 - 1) - 2) - 3`, never any other order.
+    holds(
+        "",
+        r#"FoldSeq(LAMBDA x, acc: acc - x, 0, <<1, 2, 3>>) = -6"#,
+    );
+    // FoldFunction: over the function's values, `op(f[i], acc)`.
+    holds(
+        "",
+        r#"FoldFunction(LAMBDA x, acc: x + acc, 0, [i \in {1, 2} |-> 10 * i]) = 30"#,
+    );
+    // FoldFunctionOnSet: over the values at the given indices only.
+    holds(
+        "",
+        r#"FoldFunctionOnSet(LAMBDA x, acc: x + acc, 0, [i \in {1, 2, 3} |-> i], {1, 3}) = 4"#,
+    );
+    // A wrong total is a violation, not a decline.
+    fails("", r#"FoldSet(LAMBDA x, acc: x + acc, 0, {1, 2, 3}) = 5"#);
 }

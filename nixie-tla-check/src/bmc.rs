@@ -579,19 +579,6 @@ impl Bmc {
             }
         }
 
-        // A fully ground assumption is **evaluated**, not asserted: it has
-        // only one value, and asking the solver what that value is would be
-        // asking a question already answered. One that is FALSE means the
-        // specification has no behaviours at all — TLC and Apalache report
-        // that and stop, and so does this, by name. One that is TRUE needs
-        // no constraint at all. An assumption the evaluator cannot decide
-        // (usually because it still mentions a symbolic `CONSTANT`) falls
-        // through to be asserted for the solver to reason about.
-        //
-        // The evaluation is on the lowered term, which is to say the
-        // **substituted** constants: a `.cfg` pinning `N = 3` has already
-        // replaced `N` by the time it reaches here, so `ASSUME N \in
-        // Nat \ {0}` is checked as `3 \in Nat \ {0}`, not with `N` free.
         let mut assertable: Vec<KeraRef> = Vec::new();
         for (label, a) in &assumptions {
             match nixie_tla::Evaluator::new().eval(a) {
@@ -617,23 +604,41 @@ impl Bmc {
         // contradictory annotations the way Apalache does.
         let mut uninterpreted: std::collections::HashMap<String, nixie_tla::types::TyId> =
             std::collections::HashMap::new();
+        // Operator signatures are **checked**, not seeded: an application
+        // has no kernel node to constrain (the body is inlined), so the
+        // check is the operator's own body against the signature — the
+        // parameters assumed at their annotated types, the result unified.
+        // A signature that names no operator, or one of the wrong arity,
+        // is a defect in the specification and is reported as such.
+        let mut signatures: Vec<(
+            &nixie_tla_syntax::module::Annotation,
+            nixie_tla::annotations::ParsedSignature,
+        )> = Vec::new();
         for ann in &spec.annotations {
             let parsed = match nixie_tla::annotations::parse_type1(&ann.text) {
                 Ok(p) => p,
                 Err(nixie_tla::annotations::AnnotationError::Unsupported { what }) => {
                     // An operator signature, or another construct this
-                    // checker has no type for. Operator *signatures* are
-                    // skipped with a note — the remaining piece of the
-                    // annotations issue — because a wrong one is still
-                    // caught by ordinary inference over the body. Anything
-                    // else unsupported is an error: silently ignoring an
-                    // annotation the author wrote is the silent-gap pattern.
+                    // checker has no type for. A signature is parsed and
+                    // checked below; anything else unsupported is an error:
+                    // silently ignoring an annotation the author wrote is
+                    // the silent-gap pattern.
                     if what.contains("signature") {
-                        eprintln!(
-                            "note: the operator-signature annotation on `{}` is not checked \
-                             yet; the body is inferred as usual",
-                            ann.name
-                        );
+                        let sig = nixie_tla::annotations::parse_signature1(&ann.text)
+                            .map_err(|e| {
+                                SetupError::Types(format!(
+                                    "the @type: annotation on `{}` does not parse: {e}",
+                                    ann.name
+                                ))
+                            })?
+                            .ok_or_else(|| {
+                                SetupError::Types(format!(
+                                    "the @type: annotation on `{}` was read as {what} but does \
+                                 not parse as one",
+                                    ann.name
+                                ))
+                            })?;
+                        signatures.push((ann, sig));
                         continue;
                     }
                     return Err(SetupError::Types(format!(
@@ -658,6 +663,113 @@ impl Bmc {
                 )));
             }
         }
+        // Check each operator signature against its operator's body, in a
+        // throwaway lowerer and inference so nothing this reads lands in
+        // the real caches (the same discipline the `.cfg` probe uses).
+        for (ann, sig) in &signatures {
+            // The anchor the attach pass chose is the *definition* this
+            // signature belongs to — a module-level operator or a `LET`
+            // definition inside a body, whichever the comment precedes.
+            let Some((params, body)) =
+                nixie_tla_syntax::module::operator_at(module, ann.decl_offset)
+            else {
+                // The annotated operator is not one this module defines —
+                // an `INSTANCE` member substituted by `WITH`, annotated in
+                // the module it came from. This checker cannot see that
+                // body, so the signature is neither checked nor failed:
+                // said out loud, the same way an uncheckable construct is
+                // named everywhere else.
+                eprintln!(
+                    "note: the operator-signature annotation on `{}` is on an operator not \
+                     defined in this module; it is not checked",
+                    ann.name
+                );
+                continue;
+            };
+            let name = &ann.name;
+            if params.len() != sig.params.len() {
+                return Err(SetupError::Types(format!(
+                    "the operator-signature annotation on `{name}` takes {} parameter(s) but \
+                     the operator takes {}",
+                    sig.params.len(),
+                    params.len()
+                )));
+            }
+            let mut probe = Lowerer::new();
+            probe.add_spec(spec);
+            let Ok(body_k) = probe.lower(body) else {
+                // The body that does not lower fails loudly in its own
+                // right when the roles reach it; a signature cannot add a
+                // verdict here, and declining the check is not that.
+                continue;
+            };
+            let mut check = nixie_tla::types::Inference::new();
+            let mut vars: std::collections::HashMap<String, nixie_tla::types::TyId> =
+                std::collections::HashMap::new();
+            // `TyId`s are local to one inference's arena, so the
+            // uninterpreted-name table is per check: an id minted by the
+            // previous operator's check would denote an unrelated type
+            // here, and the mismatch it produced looked like the
+            // annotation's fault. (Cross-spec identity of uninterpreted
+            // names is the main inference's business, not this probe's.)
+            let mut check_uninterpreted: std::collections::HashMap<String, nixie_tla::types::TyId> =
+                std::collections::HashMap::new();
+            for (p, ty) in params.iter().zip(sig.params.iter()) {
+                let tid = nixie_tla::annotations::intern_for_check(
+                    &mut check,
+                    ty,
+                    &mut vars,
+                    &mut check_uninterpreted,
+                )
+                .map_err(|e| {
+                    SetupError::Types(format!(
+                        "the operator-signature annotation on `{name}` does not check: {e}"
+                    ))
+                })?;
+                check.assume(&p.name.name, tid).map_err(|e| {
+                    SetupError::Types(format!(
+                        "the operator-signature annotation on `{name}` does not check: {e}"
+                    ))
+                })?;
+            }
+            let got = check.infer(&body_k).map_err(|e| {
+                SetupError::Types(format!(
+                    "the operator-signature annotation on `{name}` does not check against its \
+                 body: {e}"
+                ))
+            })?;
+            let want = nixie_tla::annotations::intern_for_check(
+                &mut check,
+                &sig.result,
+                &mut vars,
+                &mut check_uninterpreted,
+            )
+            .map_err(|e| {
+                SetupError::Types(format!(
+                    "the operator-signature annotation on `{name}` does not check: {e}"
+                ))
+            })?;
+            check.unify(got, want).map_err(|e| {
+                SetupError::Types(format!(
+                    "the operator-signature annotation on `{name}` does not match its body: {e}"
+                ))
+            })?;
+        }
+
+        // A fully ground assumption is **evaluated**, not asserted: it has
+        // only one value, and asking the solver what that value is would be
+        // asking a question already answered. One that is FALSE means the
+        // specification has no behaviours at all — TLC and Apalache report
+        // that and stop, and so does this, by name. One that is TRUE needs
+        // no constraint at all. An assumption the evaluator cannot decide
+        // (usually because it still mentions a symbolic `CONSTANT`) falls
+        // through to be asserted for the solver to reason about.
+        //
+        // The evaluation is on the lowered term, which is to say the
+        // **substituted** constants: a `.cfg` pinning `N = 3` has already
+        // replaced `N` by the time it reaches here, so `ASSUME N \in
+        // Nat \ {0}` is checked as `3 \in Nat \ {0}`, not with `N` free.
+
         for t in [&init_k, &next_k]
             .into_iter()
             .chain(invs.iter().map(|(_, t)| t))
@@ -1719,9 +1831,13 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         // function is here for a third: its sort has to be known *before* its
         // body is encoded, and the body is the only thing that would otherwise
         // reveal it.
-        // A function definition joins them: over an *empty* domain it has
-        // no entry to take a sort from — the `Bags` module's `EmptyBag`
-        // (`[e \in {} |-> 1]`) is exactly this shape.
+        // A `FunAsSeq` node joins them for the same reason a `CHOOSE`'s
+        // empty filter does: its element sort comes from the inferred
+        // `Seq(a)` of the cast, not from anything the encoding can read off
+        // the function value.
+        if matches!(t.as_ref(), Kera::Opaque(n, _) if n.as_str() == "FunAsSeq") {
+            out.push(t.clone());
+        }
         if matches!(t.as_ref(), Kera::SetEnum(xs) | Kera::Tuple(xs) if xs.is_empty())
             || matches!(
                 t.as_ref(),
