@@ -403,3 +403,52 @@ fn deep_input_does_not_overflow_the_stack() {
         let _ = low.lower_named(&m, "A");
     }
 }
+
+/// A built-in operator symbol passed as an operator argument (issue #19):
+/// `FooBar(7, +)` — the symbol keeps its exact meaning through the infix
+/// table, and only unambiguously-binary symbols are accepted, so unary
+/// minus cannot arrive here as a mis-typed `-`.
+#[test]
+fn a_builtin_operator_symbol_is_an_operator_argument() {
+    let src = r#"
+---- MODULE Bop ----
+EXTENDS Integers
+FooBar(a, Op(_,_)) == Op(a, 0)
+A == FooBar(7, +)
+B == FooBar(6, *)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    let a = low.lower_named(module, "A").expect("lowers");
+    let b = low.lower_named(module, "B").expect("lowers");
+    // `7 + 0` and `6 * 0`: the applications of the bound symbol are the
+    // infix forms, not opaque names.
+    use nixie_tla::kera::Kera;
+    let has_op = |t: &nixie_tla::KeraRef, op: &str| {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![t];
+        while let Some(x) = stack.pop() {
+            if !seen.insert(std::rc::Rc::as_ptr(x)) {
+                continue;
+            }
+            if let Kera::Arith(which, _, _) = x.as_ref()
+                && std::mem::discriminant(which)
+                    == std::mem::discriminant(&if op == "+" {
+                        nixie_tla::kera::ArithOp::Add
+                    } else {
+                        nixie_tla::kera::ArithOp::Mul
+                    })
+            {
+                return true;
+            }
+            stack.extend(x.as_ref().children());
+        }
+        false
+    };
+    assert!(has_op(&a, "+"), "A lowers through `+`");
+    assert!(has_op(&b, "*"), "B lowers through `*`");
+}

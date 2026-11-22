@@ -52,6 +52,21 @@ pub const DEFAULT_MAX_INLINE_DEPTH: usize = 64;
 /// diagnostic instead of an apparent hang.
 pub const DEFAULT_STEP_BUDGET: usize = 100_000;
 
+/// The built-in operator symbol a name denotes, if it is one that can be
+/// passed as an operator argument. The AC, unambiguously-binary set —
+/// Apalache's own `ToEtcExpr` accepts exactly these as first-class.
+fn builtin_operator_symbol(name: &str) -> Option<&'static str> {
+    match name {
+        "+" => Some("+"),
+        "*" => Some("*"),
+        "\\cup" | "\\union" => Some("\\cup"),
+        "\\cap" | "\\intersect" => Some("\\cap"),
+        "\\/" => Some("\\/"),
+        "/\\" => Some("/\\"),
+        _ => None,
+    }
+}
+
 /// A module instantiation: `I == INSTANCE M WITH a <- e`.
 ///
 /// `EXTENDS` makes another module's definitions visible unchanged; `INSTANCE`
@@ -503,6 +518,12 @@ pub enum ReplaceError {
 /// What a name is bound to while lowering.
 #[derive(Debug, Clone)]
 enum Binding<'a> {
+    /// A built-in operator symbol passed as an argument — `FooBar(7, +)`.
+    /// No surface body exists to inline, so the application site lowers
+    /// `Op(a, b)` through the ordinary operator table under a two-name
+    /// scope: the exact meaning of the symbol, with none of the guessing a
+    /// synthesized body would invite.
+    BuiltinOp(&'static str),
     /// An inlined value: an operator parameter, a `LET` definition, or a
     /// component of a destructured tuple pattern.
     Value(KeraRef),
@@ -635,6 +656,14 @@ enum Frame<'a> {
         acc: Name,
         /// The fold's element name.
         elem: Name,
+    },
+    /// Build `sym(x, y)` for a built-in operator symbol passed as an
+    /// argument: two values on the stack, one infix table lookup.
+    BuildBuiltinOp {
+        /// The binary operator's canonical spelling.
+        sym: &'static str,
+        /// For diagnostics.
+        span: Span,
     },
     /// Push one prebuilt kernel value. For interceptions that synthesize a
     /// kernel term the surface never wrote (`Repeat`'s `<<1..N>>`).
@@ -1367,6 +1396,15 @@ impl<'a> Lowerer<'a> {
                 if let Some(b @ Binding::Op { .. }) = self.lookup(&id.name) {
                     return Some(b);
                 }
+                // A built-in operator symbol: `FooBar(7, +)`, `FoldSet(\\cup,
+                // 0, S)`. Only unambiguously-binary symbols (the AC set:
+                // `+ * \\cup \\cap \\/ /\\`, plus the `\\union`/
+                // `\\intersect` spellings) — unary and binary `-` must stay
+                // distinct, and the token's fixity has already decided
+                // which one a bare `-` is by the time it is a Name.
+                if let Some(sym) = builtin_operator_symbol(&id.name) {
+                    return Some(Binding::BuiltinOp(sym));
+                }
                 let def = self.defs.get(&id.name)?;
                 Some(Binding::Op {
                     params: def.params.clone(),
@@ -1793,6 +1831,17 @@ impl<'a> Lowerer<'a> {
                         }
                         .rc(),
                     );
+                }
+                Frame::BuildBuiltinOp { sym, span } => {
+                    let (Some(y), Some(x)) = (values.pop(), values.pop()) else {
+                        return Err(LowerError::unsupported(
+                            "a built-in operator argument",
+                            "internal: missing children",
+                            span,
+                        ));
+                    };
+                    let built = build_infix(sym, x, y, span, &mut self.fresh)?;
+                    values.push(built);
                 }
                 Frame::Kera(k) => values.push(k),
                 Frame::BuildMkSeq { var, n } => {
@@ -2381,6 +2430,16 @@ impl<'a> Lowerer<'a> {
                             span,
                         ));
                     }
+                    Some(Binding::BuiltinOp(_)) => {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: id.name.clone(),
+                                expected: 2,
+                                found: 0,
+                            },
+                            span,
+                        ));
+                    }
                     // A value the TLC configuration pinned (`CONSTANT N = 3`).
                     // Substituted here rather than asserted as `N = 3`
                     // downstream, because that is what the configuration
@@ -2771,6 +2830,24 @@ impl<'a> Lowerer<'a> {
                     for a in args.iter().rev() {
                         stack.push(Frame::Expand(a));
                     }
+                    return Ok(());
+                }
+                // A parameter bound to a built-in symbol applies directly:
+                // `Op(a, b)` with `Op` = `+` is the infix `+`, exactly.
+                if let Some(Binding::BuiltinOp(sym)) = self.lookup(&id.name) {
+                    let [x, y] = args.as_slice() else {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: format!("the operator `{sym}`"),
+                                expected: 2,
+                                found: args.len(),
+                            },
+                            span,
+                        ));
+                    };
+                    stack.push(Frame::BuildBuiltinOp { sym, span });
+                    stack.push(Frame::Expand(y));
+                    stack.push(Frame::Expand(x));
                     return Ok(());
                 }
                 // An operator *parameter* shadows a global definition.
