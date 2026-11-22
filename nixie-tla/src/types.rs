@@ -1608,6 +1608,28 @@ impl Inference {
                 self.unify(args[0], f)?;
                 self.set_of(e)?
             }
+            // ---- Apalache's standard library (issue #16) ----
+            // `:>`/`:=`/`@@`: function constructors and merge, per
+            // `ToEtcExpr.scala`'s signatures.
+            (":>", 2) | (":=", 2) => self.mk(Ty::Fun(args[0], args[1]))?,
+            ("@@", 2) => {
+                let d = self.fresh()?;
+                let r = self.fresh()?;
+                let f = self.mk(Ty::Fun(d, r))?;
+                self.unify(args[0], f)?;
+                self.unify(args[1], f)?;
+                f
+            }
+            ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => args[0],
+            ("SetAsFun", 1) => {
+                // Set(<<a, b>>) -> (a -> b), per the rewire's annotation.
+                let x = self.fresh()?;
+                let y = self.fresh()?;
+                let pair = self.mk(Ty::Tuple(vec![x, y]))?;
+                let set = self.set_of(pair)?;
+                self.unify(args[0], set)?;
+                self.mk(Ty::Fun(x, y))?
+            }
             ("IsABag", 1) => {
                 let e = a(self)?;
                 let int = self.int_ty()?;
@@ -1674,15 +1696,6 @@ impl Inference {
                 let s = self.set_of(e)?;
                 self.unify(args[0], s)?;
                 self.bool_ty()?
-            }
-            (":>", 2) => self.mk(Ty::Fun(args[0], args[1]))?,
-            ("@@", 2) => {
-                let d = a(self)?;
-                let r = a(self)?;
-                let f = self.mk(Ty::Fun(d, r))?;
-                self.unify(args[0], f)?;
-                self.unify(args[1], f)?;
-                f
             }
             ("Assert", 2) => {
                 let b = self.bool_ty()?;

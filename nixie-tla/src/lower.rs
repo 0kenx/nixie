@@ -636,6 +636,17 @@ enum Frame<'a> {
         /// The fold's element name.
         elem: Name,
     },
+    /// Push one prebuilt kernel value. For interceptions that synthesize a
+    /// kernel term the surface never wrote (`Repeat`'s `<<1..N>>`).
+    Kera(KeraRef),
+    /// Build `MkSeq` from the mapped body: the `[i \\in 1..n |-> body]`
+    /// function constructor over the literal range.
+    BuildMkSeq {
+        /// The domain binder (the operator's parameter).
+        var: Name,
+        /// The literal length.
+        n: i128,
+    },
     /// Build a fold from `3` values (base, collection, operator body).
     BuildFold {
         /// Whether the collection is a set or a sequence.
@@ -991,6 +1002,119 @@ impl<'a> Lowerer<'a> {
     /// (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`, `BagOfAll`)
     /// deliberately do **not** desugar — they stay opaque and are declined
     /// by name downstream rather than approximated.
+    /// The Apalache standard-library operators that lower exactly
+    /// (`StandardLibrary.scala:59-80`).
+    ///
+    /// Everything not here stays `Opaque` and is typed by `standard_sig` or
+    /// declined by name. `Guess` and `Gen` are **never** lowered — see the
+    /// soundness note on each.
+    fn apalache_op(&mut self, name: &str, args: &[KeraRef], span: Span) -> Result<Option<KeraRef>> {
+        // A user's local definition of the same name still wins: this is
+        // reachable only after name resolution failed to find one, but a
+        // `LET`-bound operator or parameter of the same name must not be
+        // captured by the built-in either. (The call site has already failed
+        // `lookup`, which covers both.)
+        let k = |i: usize| Rc::clone(&args[i]);
+        match (name, args.len()) {
+            // TLC's `x :> y` / `f @@ g` pair with `:=`'s family: exact
+            // function constructors, cheaper than the general ones.
+            (":=", 2) | (":>", 2) => Ok(Some(
+                Kera::FunDef {
+                    var: self.fresh_name("apa_dom"),
+                    set: Kera::SetEnum(vec![k(0)]).rc(),
+                    body: k(1),
+                }
+                .rc(),
+            )),
+            ("@@", 2) => {
+                // `f @@ g`: g's entries win over f's where domains overlap —
+                // Apalache's `__rewire_functions_in_apalache` defines it as a
+                // fold of single-entry updates; the direct kernel form is the
+                // same function, built as one definition over the union of
+                // domains with `CopiesIn`-style reads that consult g first.
+                let var = self.fresh_name("apa_e");
+                let e = Kera::Var(var.clone()).rc();
+                let dom = Kera::SetBin(
+                    SetOp::Union,
+                    Kera::Domain(k(0)).rc(),
+                    Kera::Domain(k(1)).rc(),
+                )
+                .rc();
+                let in_f = Kera::In(Rc::clone(&e), Kera::Domain(k(0)).rc()).rc();
+                let read_f = Kera::FunApp(k(0), Rc::clone(&e)).rc();
+                let read_g = Kera::FunApp(k(1), Rc::clone(&e)).rc();
+                let body = Kera::Ite(in_f, read_f, read_g).rc();
+                Ok(Some(
+                    Kera::FunDef {
+                        var,
+                        set: dom,
+                        body,
+                    }
+                    .rc(),
+                ))
+            }
+            // `Skolem`, `Expand`, `ConstCardinality`: identity on their
+            // argument — Apalache's own rewires (`__rewire_*_in_apalache.tla`)
+            // make each a no-op hint to *its* encoder; this encoder's sets are
+            // already exact where they are decidable at all, so the hint is the
+            // value.
+            ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => Ok(Some(k(0))),
+            // `FunAsSeq(f, len)`: not lowered yet — it needs the sequence
+            // sort of a function's prefix, which the encoder does not build
+            // from function values. (MkSeq is intercepted at the Expand
+            // site, where its operator argument is still an `Expr`.)
+            ("FunAsSeq", 2) => Err(LowerError::unsupported(
+                "`FunAsSeq`",
+                "not lowered yet: it needs the sequence sort of a function's prefix, which \
+                     the encoder does not build from function values",
+                span,
+            )),
+            // `SetAsFun(S)`: the function `[p[1] \\in {p[2] : p \\in S} ...]` —
+            // exact as one `FunDef` over the *pairs*: domain =
+            // `{p[1] : p \in S}`, value at `d` = `CHOOSE p \in S : p[1] = d`,
+            // then `p[2]`. CHOOSE over a symbolic set is its own gap, so this
+            // lowers to the same kernel shape and the encoder's `CHOOSE`
+            // decides.
+            ("SetAsFun", 1) => {
+                // `[d \\in DOMAIN-of-pairs |-> CHOOSE p \\in S : p[1] = d][2]`
+                // needs `CHOOSE` in the kernel body — lowered here as such.
+                let var = self.fresh_name("apa_d");
+                let d = Kera::Var(var.clone()).rc();
+                let one = Kera::Int("1".into()).rc();
+                let two = Kera::Int("2".into()).rc();
+                let p1 = |p: &KeraRef| Kera::FunApp(Rc::clone(p), Rc::clone(&one)).rc();
+                let p2 = |p: &KeraRef| Kera::FunApp(Rc::clone(p), Rc::clone(&two)).rc();
+                let pvar_name = self.fresh_name("apa_p");
+                let p = Kera::Var(pvar_name.clone()).rc();
+                let eq = Kera::Eq(p1(&p), Rc::clone(&d)).rc();
+                let chosen = Kera::Choose {
+                    var: pvar_name,
+                    set: k(0),
+                    body: eq,
+                }
+                .rc();
+                let body = p2(&chosen);
+                let dom_var = self.fresh_name("apa_q");
+                let q = Kera::Var(dom_var.clone()).rc();
+                let dom = Kera::Map {
+                    var: dom_var,
+                    set: k(0),
+                    expr: p1(&q),
+                }
+                .rc();
+                Ok(Some(
+                    Kera::FunDef {
+                        var,
+                        set: dom,
+                        body,
+                    }
+                    .rc(),
+                ))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn bag_desugar(&mut self, name: &str, args: &[KeraRef]) -> Option<KeraRef> {
         // `IF e ∈ DOMAIN b THEN b[e] ELSE 0` over a shared operand pair.
         let copies_in = |_this: &mut Self, e: &KeraRef, b: &KeraRef| -> KeraRef {
@@ -1191,6 +1315,30 @@ impl<'a> Lowerer<'a> {
                     .rc(),
                 )
             }
+            _ => None,
+        }
+    }
+
+    /// The  a ground value denotes, or a decline-shaped  the
+    /// caller turns into its own error.
+    fn int_of(&self, v: &crate::value::Value) -> Option<i128> {
+        match v {
+            crate::value::Value::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    /// The integer a **ground surface** expression denotes, spot-lowered in
+    /// a throwaway lowerer so nothing lands in the real caches. For
+    /// `Repeat`/`MkSeq` counts, whose finiteness the lowering depends on.
+    fn ground_int_expr(&mut self, e: &'a Expr) -> Option<crate::value::Value> {
+        let mut probe = Lowerer::new();
+        probe.scopes = self.scopes.clone();
+        probe.defs = self.defs.clone();
+        probe.funs = self.funs.clone();
+        let k = probe.lower(e).ok()?;
+        match crate::eval::Evaluator::new().eval(&k) {
+            Ok(v @ crate::value::Value::Int(_)) => Some(v),
             _ => None,
         }
     }
@@ -1642,6 +1790,26 @@ impl<'a> Lowerer<'a> {
                             base: Kera::Tuple(Vec::new()).rc(),
                             collection: seq,
                             body: keep,
+                        }
+                        .rc(),
+                    );
+                }
+                Frame::Kera(k) => values.push(k),
+                Frame::BuildMkSeq { var, n } => {
+                    let Some(body) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "internal: missing children",
+                            expr.span,
+                        ));
+                    };
+                    let lo = Kera::Int("1".into()).rc();
+                    let hi = Kera::Int(n.to_string()).rc();
+                    values.push(
+                        Kera::FunDef {
+                            var,
+                            set: Kera::Range(lo, hi).rc(),
+                            body,
                         }
                         .rc(),
                     );
@@ -2382,6 +2550,161 @@ impl<'a> Lowerer<'a> {
                     stack.push(Frame::Expand(seq));
                     return Ok(());
                 }
+                // `Repeat(F, N, x)`: N-fold application of F, with the step
+                // index — Apalache's `RepeatRule` — as ONE ordered fold over
+                // the literal sequence `<<1..N>>`, **literal N in 0..=64
+                // only** (a symbolic count has no finite unfolding, and
+                // Apalache errors on non-constant counts too). A sequence
+                // fold, not a set fold: F need not be commutative, and the
+                // order `Repeat` defines is the step order.
+                if !head.is_qualified()
+                    && id.name == "Repeat"
+                    && args.len() == 3
+                    && self.lookup("Repeat").is_none()
+                    && !self.defs.contains_key("Repeat")
+                {
+                    let [op, count, start] = args.as_slice() else {
+                        return Err(LowerError::unsupported(
+                            "`Repeat`",
+                            "internal: wrong argument count",
+                            span,
+                        ));
+                    };
+                    let Some(Binding::Op { params, body }) = self.as_operator(op) else {
+                        return Err(LowerError::unsupported(
+                            "`Repeat`",
+                            "its first argument must be an operator: pass a defined \
+                             operator name or a `LAMBDA`",
+                            op.span,
+                        ));
+                    };
+                    if params.len() != 2 {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: "Repeat's operator".into(),
+                                expected: 2,
+                                found: params.len(),
+                            },
+                            op.span,
+                        ));
+                    }
+                    let Some(n_big) = self.ground_int_expr(count) else {
+                        return Err(LowerError::unsupported(
+                            "`Repeat`",
+                            "its count must be a literal (a symbolic count has no finite \
+                             unfolding, and Apalache errors on it too)",
+                            count.span,
+                        ));
+                    };
+                    let Some(n) = self.int_of(&n_big) else {
+                        return Err(LowerError::unsupported(
+                            "`Repeat`",
+                            "a count outside the unfolding budget",
+                            count.span,
+                        ));
+                    };
+                    if !(0..=64).contains(&n) {
+                        return Err(LowerError::unsupported(
+                            "`Repeat`",
+                            "a count outside 0..=64 (the unfolding budget)",
+                            count.span,
+                        ));
+                    }
+                    let acc = self.fresh_name("rep_acc");
+                    let elem = self.fresh_name("rep_i");
+                    let items: Vec<KeraRef> =
+                        (1..=n).map(|k| Kera::Int(k.to_string()).rc()).collect();
+                    let mut scope = HashMap::new();
+                    scope.insert(
+                        params[0].0.clone(),
+                        Binding::Value(Kera::Var(acc.clone()).rc()),
+                    );
+                    scope.insert(
+                        params[1].0.clone(),
+                        Binding::Value(Kera::Var(elem.clone()).rc()),
+                    );
+                    self.binder_names
+                        .insert(e.span.start.offset, vec![acc.clone(), elem.clone()]);
+                    stack.push(Frame::BuildFold {
+                        over: FoldOver::SeqLeft,
+                        acc,
+                        elem,
+                    });
+                    stack.push(Frame::PopScope);
+                    stack.push(Frame::Expand(body));
+                    stack.push(Frame::PushScope(scope));
+                    stack.push(Frame::Kera(Kera::Tuple(items).rc()));
+                    stack.push(Frame::Expand(start));
+                    return Ok(());
+                }
+                // `MkSeq(N, F)`: `[i \\in 1..N |-> F(i)]`, literal N only,
+                // the operator intercepted here so `as_operator` can bind it
+                // while it is still an `Expr`.
+                if !head.is_qualified()
+                    && id.name == "MkSeq"
+                    && args.len() == 2
+                    && self.lookup("MkSeq").is_none()
+                    && !self.defs.contains_key("MkSeq")
+                {
+                    let [count, op] = args.as_slice() else {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "internal: wrong argument count",
+                            span,
+                        ));
+                    };
+                    let Some(Binding::Op { params, body }) = self.as_operator(op) else {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "its second argument must be an operator: pass a defined \
+                             operator name or a `LAMBDA`",
+                            op.span,
+                        ));
+                    };
+                    if params.len() != 1 {
+                        return Err(LowerError::new(
+                            LowerErrorKind::Arity {
+                                name: "MkSeq's operator".into(),
+                                expected: 1,
+                                found: params.len(),
+                            },
+                            op.span,
+                        ));
+                    }
+                    let Some(n_big) = self.ground_int_expr(count) else {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "its length must be a literal (a symbolic length has no enumerable \
+                             domain)",
+                            count.span,
+                        ));
+                    };
+                    let Some(n) = self.int_of(&n_big) else {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "a length outside the budget",
+                            count.span,
+                        ));
+                    };
+                    if !(0..=4096).contains(&n) {
+                        return Err(LowerError::unsupported(
+                            "`MkSeq`",
+                            "a length outside 0..=4096 (the budget)",
+                            count.span,
+                        ));
+                    }
+                    let var = self.fresh_name("apa_i");
+                    let mut scope = HashMap::new();
+                    scope.insert(
+                        params[0].0.clone(),
+                        Binding::Value(Kera::Var(var.clone()).rc()),
+                    );
+                    stack.push(Frame::BuildMkSeq { var, n });
+                    stack.push(Frame::PopScope);
+                    stack.push(Frame::Expand(body));
+                    stack.push(Frame::PushScope(scope));
+                    return Ok(());
+                }
                 if !head.is_qualified()
                     && id.name == "BagOfAll"
                     && args.len() == 2
@@ -2831,9 +3154,19 @@ impl<'a> Lowerer<'a> {
                 let Some(id) = head.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
                 };
+                // The Apalache standard-library operators, in Apalache's own
+                // order: `StandardLibrary` maps (module, name) to built-ins
+                // *before* user definitions are consulted, but a user's own
+                // definition of the same name still wins — checked by the
+                // caller's `lookup`/`defs` resolution having failed to reach
+                // here, and by `apalache_op` refusing shadowed names below
+                // at the sites that need it.
+                if let Some(k) = self.apalache_op(&id.name, &kids, e.span)? {
+                    k
+                }
                 // The `Bags` standard-module vocabulary desugars to the
                 // module's own definitions before anything else sees it.
-                if let Some(k) = self.bag_desugar(&id.name, &kids) {
+                else if let Some(k) = self.bag_desugar(&id.name, &kids) {
                     k
                 } else {
                     Kera::Opaque(Name(id.name.clone()), kids).rc()
@@ -2872,7 +3205,7 @@ impl<'a> Lowerer<'a> {
                 if let Some(k) = self.bag_desugar(op, &[Rc::clone(&a), Rc::clone(&b)]) {
                     k
                 } else {
-                    build_infix(op, a, b, span)?
+                    build_infix(op, a, b, span, &mut self.fresh)?
                 }
             }
             ExprKind::Quant { kind, .. } => {
@@ -3126,7 +3459,12 @@ fn unchanged(e: KeraRef) -> KeraRef {
     Kera::Eq(Kera::Prime(Rc::clone(&e)).rc(), e).rc()
 }
 
-fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span) -> Result<KeraRef> {
+fn mk_fresh(counter: &mut usize, base: &str) -> Name {
+    *counter += 1;
+    Name(format!("{base}#{counter}"))
+}
+
+fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span, fresh: &mut usize) -> Result<KeraRef> {
     let k = match op {
         "=" => Kera::Eq(a, b),
         "/=" => Kera::Not(Kera::Eq(a, b).rc()),
@@ -3169,10 +3507,44 @@ fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span) -> Result<KeraRef> 
                 span,
             ));
         }
+        // Apalache's function constructors, exact at the kernel: `:>`/`:=`
+        // build a one-entry function, `@@` merges with the right side
+        // winning. Both are value-level, so the already-lowered operands are
+        // exactly what the constructors want. A local definition of the same
+        // name cannot exist (these are operators, not names a module can
+        // rebind in scope).
+        ":>" | ":=" => Kera::FunDef {
+            var: mk_fresh(fresh, "apa_dom"),
+            set: Kera::SetEnum(vec![a]).rc(),
+            body: b,
+        },
+        "@@" => {
+            let var = mk_fresh(fresh, "apa_e");
+            let e = Kera::Var(var.clone()).rc();
+            let dom = Kera::SetBin(
+                SetOp::Union,
+                Kera::Domain(a.clone()).rc(),
+                Kera::Domain(b.clone()).rc(),
+            )
+            .rc();
+            // LEFT wins on a shared key: Apalache's own rewire tests
+            // `x \in DOMAIN f1` first (`__rewire_tlc_in_apalache.tla:38`),
+            // and TLC's module agrees — the first test of this change had
+            // it backwards.
+            let in_f = Kera::In(Rc::clone(&e), Kera::Domain(a.clone()).rc()).rc();
+            let read_f = Kera::FunApp(a, Rc::clone(&e)).rc();
+            let read_g = Kera::FunApp(b, Rc::clone(&e)).rc();
+            let body = Kera::Ite(in_f, read_f, read_g).rc();
+            Kera::FunDef {
+                var,
+                set: dom,
+                body,
+            }
+        }
         // An infix operator from a standard module -- `\o` from `Sequences`,
-        // `:>` and `@@` from `TLC`, `\oplus` from a user's own module. Carried
-        // through by name for the encoder to implement or decline. See the
-        // note in `build_prefix`.
+        // `\oplus` from a user's own module. Carried through by name for
+        // the encoder to implement or decline. See the note in
+        // `build_prefix`.
         other => Kera::Opaque(Name(other.to_string()), vec![a, b]),
     };
     Ok(k.rc())

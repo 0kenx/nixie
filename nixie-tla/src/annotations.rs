@@ -44,6 +44,14 @@ pub fn parse_type1(src: &str) -> Result<ParsedType, AnnotationError> {
     let toks = tokenize(src)?;
     let mut p = Parser { toks, at: 0 };
     let ty = p.parse_fun()?;
+    // `A => B` at the top level is an operator signature (the paren form
+    // lands here too, its group already parsed): named-refused below at the
+    // seeding side, which skips signatures with a note.
+    if p.toks.get(p.at) == Some(&Tok::BigArrow) {
+        return Err(AnnotationError::Unsupported {
+            what: "an operator signature (`(a, b) => c`)",
+        });
+    }
     // Everything after the type is trailing junk — except that the caller
     // strips the `;` Apalache's annotations often end with.
     if p.at < p.toks.len() && !matches!(&p.toks[p.at], Tok::Semi) {
@@ -236,14 +244,23 @@ impl Parser {
                 })
             }
             Tok::LParen => {
-                let inner = self.parse_fun()?;
+                let mut inner = self.parse_fun()?;
+                while self.peek() == Some(&Tok::Comma) {
+                    // A parameter list: `(A, B) => C`. The parameters are
+                    // parsed (so the message can quote the real shape) and
+                    // the whole annotation is an operator signature.
+                    self.at += 1;
+                    inner = self.parse_fun()?;
+                }
                 if self.peek() == Some(&Tok::BigArrow) {
-                    // An operator type: `(a) => b`. This checker has no
-                    // first-class operator types; the *signature* use is
-                    // handled by the seeding side's error, and a bare
-                    // grouping is the only thing accepted here.
+                    // An operator signature. This checker does not yet
+                    // check operator instantiations against annotated
+                    // signatures (the remaining piece of the annotations
+                    // issue), so the *seeding* side skips it with a note
+                    // rather than failing the spec — a wrong annotation on
+                    // an operator body is caught by ordinary inference.
                     return Err(AnnotationError::Unsupported {
-                        what: "an operator type (`(a) => b`)",
+                        what: "an operator signature (`(a, b) => c`)",
                     });
                 }
                 self.expect(&Tok::RParen, "to close the group")?;

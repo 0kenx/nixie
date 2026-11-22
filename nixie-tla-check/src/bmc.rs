@@ -608,6 +608,28 @@ impl Bmc {
         for ann in &spec.annotations {
             let parsed = match nixie_tla::annotations::parse_type1(&ann.text) {
                 Ok(p) => p,
+                Err(nixie_tla::annotations::AnnotationError::Unsupported { what }) => {
+                    // An operator signature, or another construct this
+                    // checker has no type for. Operator *signatures* are
+                    // skipped with a note — the remaining piece of the
+                    // annotations issue — because a wrong one is still
+                    // caught by ordinary inference over the body. Anything
+                    // else unsupported is an error: silently ignoring an
+                    // annotation the author wrote is the silent-gap pattern.
+                    if what.contains("signature") {
+                        eprintln!(
+                            "note: the operator-signature annotation on `{}` is not checked \
+                             yet; the body is inferred as usual",
+                            ann.name
+                        );
+                        continue;
+                    }
+                    return Err(SetupError::Types(format!(
+                        "the @type: annotation on `{}` uses {what}, which this checker has no \
+                         type for yet",
+                        ann.name
+                    )));
+                }
                 Err(e) => {
                     return Err(SetupError::Types(format!(
                         "the @type: annotation on `{}` does not parse: {e}",
