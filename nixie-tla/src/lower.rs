@@ -586,6 +586,13 @@ pub struct Lowerer<'a> {
     /// Higher-order arguments resolved by `expand`, keyed by the application's
     /// start offset, waiting for the matching `Inline` frame.
     pending_ops: HashMap<u32, Vec<(String, Binding<'a>)>>,
+    /// Names declared `RECURSIVE`, plus definitions that mention
+    /// themselves — the inline limit on either is a recursion diagnostic,
+    /// not a depth one.
+    recursive_names: std::collections::HashSet<String>,
+    /// `INSTANCE` targets that could not be resolved, with their spans —
+    /// reported once, after `add_spec`, rather than silently dropped.
+    missing_instances: Vec<(String, Span)>,
     fresh: usize,
     inline_depth: usize,
     max_inline_depth: usize,
@@ -740,6 +747,8 @@ impl<'a> Lowerer<'a> {
             cache: HashMap::new(),
             modules: HashMap::new(),
             pending_ops: HashMap::new(),
+            missing_instances: Vec::new(),
+            recursive_names: std::collections::HashSet::new(),
             fresh: 0,
             inline_depth: 0,
             max_inline_depth: DEFAULT_MAX_INLINE_DEPTH,
@@ -828,6 +837,20 @@ impl<'a> Lowerer<'a> {
     /// body — reading the wrong module's variables.
     pub fn index_module(&mut self, module: &'a Module) {
         self.modules.insert(module.name.name.clone(), module);
+        // Nested modules are registered in their own right, and FIRST:
+        // `I == INSTANCE inner` names one, and an `INSTANCE` unit in this
+        // module resolves its target while `add_instance_unit` walks the
+        // units below. Before this they were silently invisible — the
+        // instance target was never found and `add_instance_unit` returned
+        // quietly, the exact silent-gap shape this codebase refuses
+        // elsewhere. Registering is safe because an instance target
+        // resolves *only* through the instance machinery: a nested module's
+        // definitions never join the flat name space.
+        for unit in &module.units {
+            if let UnitKind::Submodule(sub) = &unit.kind {
+                self.index_module(sub);
+            }
+        }
         for unit in &module.units {
             self.add_instance_unit(module, unit);
         }
@@ -871,8 +894,14 @@ impl<'a> Lowerer<'a> {
             _ => return,
         };
         let Some(target) = self.modules.get(&instance.module.name).copied() else {
-            // The instantiated module was not loaded; a use of it will report
-            // that by name rather than silently resolving to something else.
+            // The instantiated module was not loaded. That is an error to
+            // report *now*, at registration, with the instance's own span —
+            // a use of it would fail much later with a name error that
+            // points at the use, not at the cause. (The previous behaviour
+            // — return quietly and let a use fail — is exactly the
+            // silent-fallthrough class AGENTS.md opens with.)
+            self.missing_instances
+                .push((instance.module.name.clone(), unit.span));
             return;
         };
         let inst = Instantiation {
@@ -939,6 +968,39 @@ impl<'a> Lowerer<'a> {
     /// order matters: `LoadedSpec::modules` is dependency-first, so the root's
     /// own definitions are registered last and shadow anything it extends —
     /// which is what TLA+ means by overriding.
+    /// The \`INSTANCE\` targets that could not be resolved, with their
+    /// spans. Empty is the good case; a non-empty list is the caller's to
+    /// report, because it names a defect in the specification (a module
+    /// that was never defined), not a limitation of the checker.
+    #[must_use]
+    pub fn missing_instances(&self) -> &[(String, Span)] {
+        &self.missing_instances
+    }
+
+    /// Note every `RECURSIVE`-declared name and every self-referential
+    /// definition, so the inline limit can name recursion as the cause.
+    fn collect_recursive(&mut self, module: &'a Module) {
+        for unit in &module.units {
+            if let UnitKind::Recursive(decls) = &unit.kind {
+                for d in decls {
+                    self.recursive_names.insert(d.name.name.clone());
+                }
+            }
+            if let UnitKind::OpDef { name, body, .. } = &unit.kind
+                && mentions_name(body, &name.name)
+            {
+                self.recursive_names.insert(name.name.clone());
+            }
+            if let UnitKind::Submodule(sub) = &unit.kind {
+                self.collect_recursive(sub);
+            }
+        }
+    }
+
+    /// Index every module of a loaded specification: modules first, then
+    /// instances, then the recursion census. Called once per
+    /// []; a second call would re-register the same names, which
+    /// is harmless but wasted.
     pub fn add_spec(&mut self, spec: &'a nixie_tla_syntax::LoadedSpec) {
         // Two passes: every module must be findable before any `INSTANCE` is
         // resolved, since a module may instantiate one that appears later.
@@ -947,6 +1009,7 @@ impl<'a> Lowerer<'a> {
         }
         for (_, module) in &spec.modules {
             self.index_module(module);
+            self.collect_recursive(module);
         }
         // Only the root and what it *extends* contribute visible names.
         // `EXTENDS` re-exports, so the closure is taken transitively; an
@@ -1527,6 +1590,19 @@ impl<'a> Lowerer<'a> {
                     cache_as,
                 } => {
                     if self.inline_depth >= self.max_inline_depth {
+                        // A RECURSIVE-declared (or self-referential)
+                        // definition hitting the limit is not "too deep",
+                        // it is *infinite*: the named diagnostic says what
+                        // to do instead, in Apalache's own terms.
+                        if self.recursive_names.contains(&name) {
+                            return Err(LowerError::unsupported(
+                                &format!("the recursive operator `{name}`"),
+                                "recursive operators have no finite inlining; Apalache \
+                                 dropped them too — spell the recursion as ApaFoldSet / \
+                                 ApaFoldSeqLeft, or as a recursive function",
+                                span,
+                            ));
+                        }
                         return Err(LowerError::new(
                             LowerErrorKind::InlineLimit {
                                 name,

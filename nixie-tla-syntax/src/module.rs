@@ -198,6 +198,9 @@ impl Loader {
         // Breadth-first over EXTENDS, iteratively: the import graph is
         // user-controlled and may be deep.
         let mut comments_by_module: BTreeMap<String, Vec<crate::token::Comment>> = BTreeMap::new();
+        // Names wanted by INSTANCE that no file supplied; nested submodules
+        // may satisfy them.
+        let mut submodule_wanted: BTreeSet<String> = BTreeSet::new();
         comments_by_module.insert(root_name.clone(), parsed.comments);
         let mut queue: Vec<(String, Module)> = vec![(root_name.clone(), parsed.module)];
         while let Some((name, module)) = queue.pop() {
@@ -226,6 +229,11 @@ impl Loader {
                 if BUILTIN_MODULES.contains(&dep.as_str()) {
                     continue;
                 }
+                // A nested `---- MODULE dep ----` inside an already-loaded
+                // module satisfies the dependency without any file: Rec12's
+                // `I == INSTANCE inner` is exactly this. Collected after
+                // the whole queue drains, so a submodule declared *later*
+                // in the same file is found too.
                 match self.find_and_parse(&dep, &dirs) {
                     Some(m) => {
                         // `@type:` annotations travel with the module they
@@ -235,9 +243,49 @@ impl Loader {
                         queue.push((dep, m))
                     }
                     None => {
-                        missing.insert(dep);
+                        submodule_wanted.insert(dep);
                     }
                 }
+            }
+        }
+
+        // Nested modules: registered under their own names so `INSTANCE`
+        // can find them, and their own `EXTENDS` become dependencies. A
+        // submodule's definitions do NOT join any visible name space — the
+        // loader only registers the module; visibility is the lowerer's
+        // instance machinery, which substitutes rather than imports.
+        loop {
+            // Collect this round's additions first (submodules are cheap
+            // clones of already-parsed ASTs), then insert — no borrow of
+            // `loaded` may survive the mutation.
+            let mut round: Vec<(String, Module, Vec<String>)> = Vec::new();
+            for module in loaded.values() {
+                for unit in &module.units {
+                    if let crate::ast::UnitKind::Submodule(sub) = &unit.kind {
+                        let sub_name = sub.name.name.clone();
+                        if loaded.contains_key(&sub_name)
+                            || round.iter().any(|(n, _, _)| *n == sub_name)
+                        {
+                            continue;
+                        }
+                        let sub_extends: Vec<String> =
+                            sub.extends().into_iter().map(|i| i.name.clone()).collect();
+                        round.push((sub_name, (**sub).clone(), sub_extends));
+                    }
+                }
+            }
+            if round.is_empty() {
+                break;
+            }
+            for (sub_name, sub, sub_extends) in round {
+                comments_by_module.insert(sub_name.clone(), sub.comments.clone());
+                deps.insert(sub_name.clone(), sub_extends);
+                loaded.insert(sub_name, sub);
+            }
+        }
+        for name in &submodule_wanted {
+            if !loaded.contains_key(name) {
+                missing.insert(name.clone());
             }
         }
 

@@ -453,6 +453,18 @@ impl Bmc {
         // false. The check is deliberately one-sided: `trusted_level_of`
         // returns `None` when a level depends on a name it could not resolve,
         // and an unproven level is not grounds for rejection.
+        // An `INSTANCE` target that never resolved is a defect in the
+        // specification, reported by name with the instance's span — not a
+        // silent drop that surfaces much later as a name error at some use.
+        if let Some((name, _)) = low.missing_instances().first() {
+            return Err(SetupError::Lower {
+                name: format!("INSTANCE {name}"),
+                why: format!(
+                    "the instantiated module `{name}` is neither defined in this file nor \
+                     loaded from the search path"
+                ),
+            });
+        }
         let levels = nixie_tla_syntax::check_module(module);
         let require = |name: &str, role: &'static str, max: nixie_tla_syntax::Level| match levels
             .trusted_level_of(name)

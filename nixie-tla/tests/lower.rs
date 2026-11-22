@@ -452,3 +452,91 @@ B == FooBar(6, *)
     assert!(has_op(&a, "+"), "A lowers through `+`");
     assert!(has_op(&b, "*"), "B lowers through `*`");
 }
+
+/// A nested module is registered and instantiable (issue #19): `Rec12`'s
+/// `I == INSTANCE inner` with `inner` declared inside the same file.
+#[test]
+fn a_nested_module_is_instantiable() {
+    let src = r#"
+---- MODULE Nest ----
+EXTENDS Integers
+---- MODULE inner ----
+Double(x) == x * 2
+====
+I == INSTANCE inner
+A == I!Double(21)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    let a = low.lower_named(module, "A").expect("lowers");
+    // 21 * 2, not an opaque instance reference.
+    use nixie_tla::kera::Kera;
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![&a];
+    let mut found = false;
+    while let Some(x) = stack.pop() {
+        if !seen.insert(std::rc::Rc::as_ptr(x)) {
+            continue;
+        }
+        if let Kera::Arith(nixie_tla::kera::ArithOp::Mul, _, _) = x.as_ref() {
+            found = true;
+        }
+        stack.extend(x.as_ref().children());
+    }
+    assert!(found, "I!Double(21) lowers through the module body");
+}
+
+/// An unresolvable `INSTANCE` target is reported by name, never silently
+/// dropped (issue #19: "a missing INSTANCE target is an error"). The
+/// lowerer records it in `missing_instances()` — which `Bmc::prepare`
+/// turns into a hard error — and a use of the instance fails by name
+/// rather than resolving to something else.
+#[test]
+fn a_missing_instance_target_is_an_error() {
+    let src = r#"
+---- MODULE NoInst ----
+EXTENDS Integers
+I == INSTANCE nowhere_at_all
+A == I!F(1)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    let missing = low.missing_instances();
+    assert_eq!(missing.len(), 1, "exactly the one unresolvable instance");
+    assert_eq!(missing[0].0, "nowhere_at_all", "named by module");
+    // And the use fails by name, not by resolving to something else.
+    let err = low
+        .lower_named(module, "A")
+        .expect_err("the use cannot lower");
+    assert!(err.to_string().contains("I!F"), "{err}");
+}
+
+/// A recursive operator's depth-limit hit is a **recursion** diagnostic
+/// (issue #19), not a depth one — Apalache dropped recursive operators, and
+/// the message says what to do instead.
+#[test]
+#[should_panic(expected = "recursive operator")]
+fn a_recursive_operator_names_recursion() {
+    let src = r#"
+---- MODULE Rec ----
+EXTENDS Integers
+RECURSIVE F(_)
+F(x) == IF x < 1 THEN x ELSE 1 + F(x - 1)
+A == F(10)
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut low = nixie_tla::Lowerer::new();
+    low.add_spec(&spec);
+    let _ = low.lower_named(module, "A").expect("must not lower");
+}
