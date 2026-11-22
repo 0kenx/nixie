@@ -119,6 +119,13 @@ pub struct TermManager {
     /// path and the bottom-up/ctx pair re-solves each other's output —
     /// the interning flood that hung the large nec-smt members' walks.
     pub(super) eq_solve_cache: FxHashMap<(TermId, TermId), Option<TermId>>,
+    /// Memo for [`crate::ast::manager::builder`]'s `bvmul` AC
+    /// canonicalization: the canonical chain id of a (canonical-pair
+    /// ordered) input pair.  A pure function of immutable terms (valid
+    /// for the manager's lifetime, ids never reused), so shared meganode
+    /// chains pay the flatten+sort+fold once — the substitution fixpoints
+    /// rebuild the same chains millions of times.
+    pub(super) ac_mul_cache: std::cell::RefCell<FxHashMap<(TermId, TermId), TermId>>,
     /// Memo for [`crate::tactic::quantifier::predicates::contains_quantifier`]:
     /// the ids of terms *proven* quantifier-free by a completed traversal.
     /// Term content is immutable and ids are never reused (append-only
@@ -255,6 +262,7 @@ impl TermManager {
             visit_epoch: std::cell::Cell::new(0),
             visit_marks: std::cell::RefCell::new(Vec::new()),
             eq_solve_cache: FxHashMap::default(),
+            ac_mul_cache: std::cell::RefCell::new(FxHashMap::default()),
         };
 
         // Pre-allocate true and false

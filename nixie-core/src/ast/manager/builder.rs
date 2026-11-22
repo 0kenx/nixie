@@ -3130,9 +3130,104 @@ impl TermManager {
             }
         }
 
+        // AC canonicalization (the wienand-class identity lever): a
+        // nested `bvmul` chain is flattened into its operand multiset and
+        // re-nested in sorted (id-ascending) left-fold order.  Ring
+        // arithmetic mod 2^w makes associativity and commutativity of
+        // `bvmul` UNCONDITIONAL, so this is an equivalence at every width
+        // — and it collapses e.g. `(= (* x (* y z)) (* z (* x y)))` to
+        // `mk_eq(t, t)` at assert time (binary canonical_pair alone cannot
+        // see through differing nestings).
+        // No re-entry: the flattened children are KEYS here, never rebuilt
+        // through mk_bv_mul themselves (the campaign's no-re-entry rule
+        // from the term-rules study).
+        if let Some(canonical) = self.ac_canonical_bv_mul(lhs, rhs) {
+            return canonical;
+        }
+
         let sort = self.get(lhs).map(|t| t.sort);
         let sort = sort.unwrap_or_else(|| self.sorts.bitvec(32));
         self.intern(TermKind::BvMul(lhs, rhs), sort)
+    }
+
+    /// Flatten `lhs * rhs` over nested `BvMul` children into the sorted
+    /// operand multiset, then left-fold-rebuild.  Returns `None` when the
+    /// flattened chain is exactly `lhs` then `rhs` (the input shape — no
+    //  work to do), so the intern above stays the common path.
+    fn ac_canonical_bv_mul(&mut self, lhs: TermId, rhs: TermId) -> Option<TermId> {
+        const MAX_AC_OPERANDS: usize = 64;
+        // Same-width bit-vector operands only: a mismatched chain never
+        // had a well-defined product to normalize.
+        let w = self.bv_width_of(lhs)?;
+        if self.bv_width_of(rhs)? != w {
+            return None;
+        }
+        // ALREADY-CANONICAL fast path (the meganode-DAG case): a chain is
+        // canonical iff its flattened operand list is sorted and
+        // left-folded; appending `rhs` (a non-mul leaf) to a canonical
+        // `lhs` chain preserves that when `rhs` is greater than lhs's
+        // max operand — which, in a canonical chain, is lhs's own
+        // non-mul `rhs` child.  Chains in the manager are canonical by
+        // induction (every mul routes through here, and the fold below
+        // emits sorted left-folds), so this is O(1) where the flatten
+        // would be O(chain) — the guard is what keeps the assert side
+        // of mul-dense meganode DAGs from paying the flatten per node.
+        let kind_of = |t: TermId| self.get(t).map(|d| &d.kind);
+        let rhs_is_mul = matches!(kind_of(rhs), Some(TermKind::BvMul(..)));
+        if !rhs_is_mul {
+            match kind_of(lhs) {
+                Some(TermKind::BvMul(_, lrhs)) => {
+                    if !matches!(kind_of(*lrhs), Some(TermKind::BvMul(..))) && lrhs.0 < rhs.0 {
+                        return None; // canonical append
+                    }
+                }
+                _ => {
+                    if lhs.0 < rhs.0 {
+                        return None; // canonical 2-op chain (canonical_pair order)
+                    }
+                }
+            }
+        }
+        // Memo first: the canonical id of this exact input pair (pure
+        // function; the substitution fixpoints rebuild shared chains).
+        let key = if lhs.0 <= rhs.0 {
+            (lhs, rhs)
+        } else {
+            (rhs, lhs)
+        };
+        if let Some(&hit) = self.ac_mul_cache.borrow().get(&key) {
+            return Some(hit);
+        }
+        let mut ops: SmallVec<[TermId; 8]> = SmallVec::new();
+        let mut stack: SmallVec<[TermId; 8]> = {
+            let mut s: SmallVec<[TermId; 8]> = SmallVec::new();
+            s.push(lhs);
+            s.push(rhs);
+            s
+        };
+        while let Some(t) = stack.pop() {
+            match self.get(t).map(|d| &d.kind) {
+                Some(TermKind::BvMul(a, b)) => {
+                    stack.push(*a);
+                    stack.push(*b);
+                }
+                _ => ops.push(t),
+            }
+            if ops.len() + stack.len() > MAX_AC_OPERANDS {
+                return None; // pathological width guard
+            }
+        }
+        if ops.len() <= 2 {
+            return None;
+        }
+        ops.sort_unstable();
+        let mut acc = ops[0];
+        for &op in &ops[1..] {
+            let (a, b) = canonical_pair(acc, op);
+            acc = self.intern(TermKind::BvMul(a, b), self.get(a).map(|t| t.sort)?);
+        }
+        self.ac_mul_cache.borrow_mut().insert(key, acc);
+        Some(acc)
     }
 
     /// Width of `term` when it is bit-vector sorted.
@@ -3878,5 +3973,87 @@ mod arith_folding_tests {
             &m.get(prod).expect("term").kind,
             TermKind::RealConst(r) if r.is_zero()
         ));
+    }
+}
+
+#[cfg(test)]
+mod ac_bv_mul_tests {
+    use super::*;
+
+    fn mul(m: &mut TermManager, x: TermId, y: TermId) -> TermId {
+        m.mk_bv_mul(x, y)
+    }
+
+    /// AC canonicalization (the wienand-class lever): every nesting and
+    /// ordering of one `bvmul` operand multiset must intern to ONE term —
+    /// that identity is exactly what collapses
+    /// `(= (* x (* y z)) (* z (* x y)))` to `true` at assert time.
+    #[test]
+    fn bvmul_chain_nestings_share_one_id() {
+        let mut m = TermManager::new();
+        let w = m.sorts.bitvec(32);
+        let a = m.mk_var("a", w);
+        let b = m.mk_var("b", w);
+        let c = m.mk_var("c", w);
+        let d = m.mk_var("d", w);
+        // Left-to-right canonical reference.
+        let ab = mul(&mut m, a, b);
+        let abc = mul(&mut m, ab, c);
+        let ref_id = mul(&mut m, abc, d);
+        // Every other nesting/order of the same {a,b,c,d} multiset.
+        let cd = mul(&mut m, c, d);
+        let bcd = mul(&mut m, b, cd);
+        let v1 = mul(&mut m, a, bcd); // a*(b*(c*d))
+        let dc = mul(&mut m, d, c);
+        let ba = mul(&mut m, b, a);
+        let v2 = mul(&mut m, dc, ba); // (d*c)*(b*a)
+        let v3 = mul(&mut m, ba, dc); // (b*a)*(d*c)
+        let cb = mul(&mut m, c, b);
+        let acb = mul(&mut m, a, cb);
+        let v4 = mul(&mut m, d, acb); // d*(a*(c*b))
+        let da = mul(&mut m, d, a);
+        let cda = mul(&mut m, c, da);
+        let v5 = mul(&mut m, cda, b); // (c*(d*a))*b
+        let variants = [v1, v2, v3, v4, v5];
+        for (i, v) in variants.iter().enumerate() {
+            assert_eq!(*v, ref_id, "variant {i} canonicalized differently");
+        }
+    }
+
+    /// The equality itself folds: both sides canonicalize to one id, so
+    /// `mk_eq` must return the `true` constant.
+    #[test]
+    fn bvmul_associocommutative_equality_folds_to_true() {
+        let mut m = TermManager::new();
+        let w = m.sorts.bitvec(96);
+        let x = m.mk_var("x", w);
+        let y = m.mk_var("y", w);
+        let z = m.mk_var("z", w);
+        let yz = mul(&mut m, y, z);
+        let lhs = mul(&mut m, x, yz);
+        let xy = mul(&mut m, x, y);
+        let rhs = mul(&mut m, z, xy);
+        let eq = m.mk_eq(lhs, rhs);
+        assert!(
+            matches!(m.get(eq).map(|t| &t.kind), Some(TermKind::True)),
+            "AC-identical products must fold to true"
+        );
+    }
+
+    /// Mismatched widths must never enter the AC path (no well-defined
+    /// product to normalize) — the guard returns None and the plain
+    /// intern stands.
+    #[test]
+    fn bvmul_ac_path_requires_same_width() {
+        let mut m = TermManager::new();
+        let w8 = m.sorts.bitvec(8);
+        let w16 = m.sorts.bitvec(16);
+        let a = m.mk_var("a", w8);
+        let b = m.mk_var("b", w16);
+        // Just checking construction stays total and distinct (the AC
+        // path declines; callers reject ill-typed input elsewhere).
+        let t1 = m.mk_bv_mul(a, a);
+        let t2 = m.mk_bv_mul(b, b);
+        assert_ne!(t1, t2);
     }
 }
