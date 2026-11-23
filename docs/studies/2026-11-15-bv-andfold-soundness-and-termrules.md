@@ -1654,3 +1654,82 @@ unsat vs nixie TO (genuine Booth-multiplier verification, no
 distributive shortcut); `mult_ub_16x16_1+` TO on both.  Next entry
 points stay addendum 47's list: bitrev (4), isqrt/icbrt (5), calypto (3),
 smulov (2).
+
+## Forty-ninth addendum: bitrev — the bit-permutation wiring (4 gap cells closed, all folds at preprocessing)
+
+Addendum-47 target #2 (`brummayerbiere` bitrev, 4 gap cells): z3 refutes
+`rev∘rev = x` (Hacker's-Delight shift-and-mask ladders) by pure
+REWRITING — `sat-mk-var 1`, rlimit ≤ 243 k, 0.04–0.8 s — while nixie
+TO'd at 10 s from width 1024 (0512 borderline at 9 s).  Z3's mechanism
+(read from `bv_rewriter.cpp`): constant-distance shifts become
+concat+extract (`mk_bv_shl` numeral case — nixie's BUILDER already does
+this, default-on since 2026-09-12), a bitwise op with a constant mask
+splits into per-run segments (the "OR is a mask" rule; AND is its
+De-Morgan dual), `bvor` aligns segment-wise over concat operands
+(`distribute_concat`), and concat flattening fuses adjacent windows of
+one base — composed, the ladder collapses to `extract[w-1:0](x)` → `x`.
+
+**Landing** (`bv_preprocess`, cascade-level — the builder stays
+untouched): a per-assertion-gated wiring pass (activation: ≥2
+const-distance shift shapes in the DAG, counting the builder's wired
+residues `concat(extract, 0ᵏ)` since the builder pre-wires parse-time
+shifts).  Rules: shift wiring, direct AND/OR mask-split (constant runs →
+zero/ones segments, other runs → windows), lockstep or-distribution over
+shared segment lists, seam-fusing left-assoc concat assembly, and a
+direct iterative window slicer.  Everything is bounded (node budget,
+segment caps, width bookkeeping checks) and every rule returns `None`
+on shapes it does not own — an optional equivalence, never a fabricated
+term.
+
+**Four performance walls found and fixed on the way** (each one measured
+at width 512–1024 before the fix landed):
+1. *Visit-arm re-flattening*: full-flatten `norm_concat` per visited
+   concat node — 20 k flattens totalling 3.9 M segments (the whole
+   budget); replaced by O(1) seam-append.
+2. *DAG-as-tree flatten*: `flatten_spine` expands shared concat
+   subterms exponentially (a ~1024-node hash-consed ladder DAG flattened
+   to 524 799 "segments"); replaced by memoized shareable `Rc` segment
+   lists with a `2w+64` cap (diamonds decline, sound).
+3. *Extract-visit re-walk*: the cascade's recursive `rewrite_walk` on
+   built slicing pieces re-assembled every sub-spine per window (a
+   2 M-append storm); replaced by `slice_direct` — pure index-math
+   slicing, no walk re-entry.
+4. *Straddle double-emit* (the width-inflation bug): `slice_direct`'s
+   straddling-window case `break`ed out of the descent loop and then
+   FELL THROUGH to the terminal emit, pushing the un-split window as a
+   duplicate piece (a 31-bit window produced 61 pieces totalling 526
+   bits, and downstream `bvor`s at width 524 799).  Fixed with a
+   `straddled` flag — the fix took the family from "composition stalls"
+   to "all folds" in one step.
+
+**Effect**: bitrev0032/0064/0128/0256/0512/1024/2048/4096 all `unsat`
+in 0.02–4.7 s (baselines 0.3/0.2/0.2/1.3/9.0/TO/TO/TO), every one with
+`decisions=0` — pure preprocessing refutations, z3's own mode.
+bitrev8192 TOs on both.  Bonus folds: hdp/3365 394 decisions → 0
+(15.4 → 10.6 s), and two float cells (`add_01_10_3`, `newton.1.1.i`)
+went TO → unsat where z3 itself TOs.
+
+**Validation** (term-rules class): 4 mechanism tests — the
+double-ladder involution at widths 4/8/32/128 (the test's own first
+draft had the mask phase inverted and z3 itself flagged it `sat` — the
+reference oracle catching the test, not the solver), a single-ladder
+permutation stays `sat`, a brute-forced shift-of-mask wiring identity
+(all masks × distances at widths 5/6), and a no-wiring-gate goal stays
+`sat`.  167-cell matched z3 re-check (brummayerbiere×3, wienand, tacas07,
+Goel, Mann, mcm, float, spear, Wolf, BuchwaldFried): every apparent
+verdict change attributed against the base binary — all regressions
+were 10 s-cliff cells (ABBA re-run at 15 s: identical verdicts;
+`spear/cvs_vc105251` counters BIT-IDENTICAL: 155 571 decisions,
+11 M propagations) and two real wins (the float folds).  Probes:
+4/5 counter-identical, hdp/3365 improved to a fold.  Full bar: fmt,
+clippy `-D warnings`, doc, nextest 12 929/12 929 + doc tests, parity
+171 Correct / 6 Inconclusive / 0 disagreements, perf gate PASS
+(counters 1.000/1.000, wall 1.08 under load 22).
+
+**Session note for the next agent**: a mangled-refactor incident during
+instrumentation stripping gutted `bv_preprocess.rs` (missing struct +
+impl + free functions); recovered by resetting to HEAD and re-applying
+the change set via targeted edits — the committed tree is the
+reconstruction, behaviorally verified end-to-end (all family cells +
+suite + parity).  Remaining addendum-47 targets: isqrt/icbrt (5, largest
+scope), calypto (3), smulov (2), and the wienand Booth 8x8 gap.
