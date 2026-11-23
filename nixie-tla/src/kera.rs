@@ -316,6 +316,40 @@ pub enum Kera {
     /// `[a : S, b : T]`, fields sorted like [`Kera::Record`].
     RecordSet(Vec<(String, KeraRef)>),
 
+    // ---- variants (issue #17) ----
+    /// `Variant("Tag", v)`: the value wrapped in a tagged union. The tag is
+    /// a string literal at the kernel — a non-literal tag is refused at
+    /// lowering, exactly as Apalache's type system refuses it.
+    Variant {
+        /// The tag, a string literal.
+        tag: String,
+        /// The wrapped value.
+        value: KeraRef,
+    },
+    /// `VariantTag(v)`: the tag a variant carries, as a string.
+    VariantTag(KeraRef),
+    /// `VariantGetUnsafe("Tag", v)` / `VariantGetOrElse("Tag", v, e)`: the
+    /// payload when `v` carries `Tag`. Unsafe on the wrong tag leaves the
+    /// value **unconstrained** — an SMT datatype selector off its own
+    /// constructor, which is underspecified by the theory and never a
+    /// default someone invented; `or_else` makes it the given value instead.
+    VariantGet {
+        /// The tag whose payload is read.
+        tag: String,
+        /// The variant.
+        value: KeraRef,
+        /// The `VariantGetOrElse` default, when there is one.
+        or_else: Option<KeraRef>,
+    },
+    /// `VariantFilter("Tag", S)`: the payloads of `S`'s members that
+    /// carry `Tag`.
+    VariantFilter {
+        /// The tag to keep.
+        tag: String,
+        /// The set of variants.
+        set: KeraRef,
+    },
+
     // ---- arithmetic ----
     /// Binary arithmetic.
     Arith(ArithOp, KeraRef, KeraRef),
@@ -421,6 +455,12 @@ impl Kera {
             Self::Except { fun, index, value } => vec![fun, index, value],
             Self::FunSet { set, cod } => vec![set, cod],
             Self::Record(fs) | Self::RecordSet(fs) => fs.iter().map(|(_, v)| v).collect(),
+            Self::Variant { value, .. } | Self::VariantTag(value) => vec![value],
+            Self::VariantGet { value, or_else, .. } => match or_else {
+                Some(e) => vec![value, e],
+                None => vec![value],
+            },
+            Self::VariantFilter { set, .. } => vec![set],
             Self::Fold {
                 base,
                 collection,

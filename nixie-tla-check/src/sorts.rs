@@ -135,6 +135,21 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
         Type::Rec { open: true, .. } => Err(NoSort(
             "a record whose full set of fields is not known".into(),
         )),
+        // A variant is a **multi-constructor datatype**: one constructor per
+        // tag, each with one payload selector (issue #17). An open row is
+        // closed at the tags inference found — sound here because inference
+        // walks every term, so a value of a tag outside the row could only
+        // come from a `Variant` node the row would then have absorbed; the
+        // row *is* the connected component. What an open row still costs is
+        // precision in the diagnostic, not soundness in the encoding.
+        Type::Variant { tags, .. } => {
+            let mut ctors = Vec::with_capacity(tags.len());
+            for (tag, payload) in tags {
+                let ps = sort_of(payload, tm)?;
+                ctors.push((tag.clone(), ps));
+            }
+            Ok(declare_variant(&ctors, tm))
+        }
         Type::Rec {
             fields: known,
             open: false,
@@ -240,6 +255,82 @@ pub(crate) fn declare_struct(fields: &[(String, SortId)], tm: &mut TermManager) 
     };
     tm.declare_datatype(&name, vec![ctor]);
     sort
+}
+
+/// Declare the datatype of a **variant row**: one constructor per tag, each
+/// with one selector for its payload.
+///
+/// Named by the tags and their payload sorts like every struct here, so two
+/// variants of the same tags are one sort wherever they are built. The
+/// constructor names are the tags themselves, prefixed to keep them out of
+/// the user's constructor namespace — the payload selector carries the
+/// `@vp` marker.
+#[must_use]
+pub(crate) fn declare_variant(ctors: &[(String, SortId)], tm: &mut TermManager) -> SortId {
+    let name = variant_name(ctors, tm);
+    if let Some(def) = tm.sorts.get_datatype(&name) {
+        return def.sort_id;
+    }
+    let sort = tm.sorts.mk_datatype_sort(&name);
+    let declarations: Vec<nixie_core::sort::DataTypeConstructor> = ctors
+        .iter()
+        .map(|(tag, ps)| nixie_core::sort::DataTypeConstructor {
+            name: tm.intern_str(&format!("@v_{tag}")),
+            selectors: std::iter::once((tm.intern_str("@vp"), *ps)).collect(),
+        })
+        .collect();
+    tm.declare_datatype(&name, declarations);
+    sort
+}
+
+/// The tags of a **declared** variant datatype sort, in declaration order;
+/// `None` when the sort is not a multi-constructor variant.
+#[must_use]
+pub(crate) fn variant_ctor_tags(sort: SortId, tm: &TermManager) -> Option<Vec<String>> {
+    let name = tm.sorts.datatype_name(sort)?;
+    let def = tm.sorts.get_datatype(name)?;
+    let tags: Vec<String> = def
+        .constructors
+        .iter()
+        .filter_map(|c| {
+            tm.sorts
+                .resolve_spur(c.name)
+                .strip_prefix("@v_")
+                .map(str::to_string)
+        })
+        .collect();
+    (tags.len() == def.constructors.len()).then_some(tags)
+}
+
+/// The payload sort of one tag of a **declared** variant datatype.
+#[must_use]
+pub(crate) fn variant_ctor_payload(sort: SortId, tag: &str, tm: &TermManager) -> Option<SortId> {
+    let name = tm.sorts.datatype_name(sort)?;
+    let def = tm.sorts.get_datatype(name)?;
+    let ctor = def
+        .constructors
+        .iter()
+        .find(|c| tm.sorts.resolve_spur(c.name) == format!("@v_{tag}"))?;
+    let [(_, ps)] = ctor.selectors.as_slice() else {
+        return None;
+    };
+    Some(*ps)
+}
+
+/// The canonical name of a variant datatype over these tags.
+#[must_use]
+pub(crate) fn variant_name(ctors: &[(String, SortId)], tm: &TermManager) -> String {
+    let mut out = String::from("@tlav{");
+    for (i, (tag, ps)) in ctors.iter().enumerate() {
+        if i > 0 {
+            out.push('|');
+        }
+        out.push_str(tag);
+        out.push(':');
+        out.push_str(&render_sort(*ps, tm));
+    }
+    out.push('}');
+    out
 }
 
 /// The selectors of a single-constructor datatype sort, in declaration order.

@@ -658,6 +658,41 @@ pub fn subst_term(t: &KeraRef, from: &Name, to: &KeraRef) -> KeraRef {
     values.pop().unwrap_or_else(|| Rc::clone(t))
 }
 
+/// Which `Variants` operator an application is, when it looks like one.
+enum VariantCall {
+    /// `Variant("Tag", v)`.
+    Variant,
+    /// `VariantTag(v)`.
+    Tag,
+    /// `VariantGetUnsafe("Tag", v)`.
+    GetUnsafe,
+    /// `VariantGetOrElse("Tag", v, e)`.
+    GetOrElse,
+    /// `VariantFilter("Tag", S)`.
+    Filter,
+}
+
+/// The `Variants` operator an application names, when the arity matches and
+/// the tag argument is a **string literal** — the shape the typed operators
+/// require. `None` otherwise, and a local definition of the same name keeps
+/// its own meaning (the `folds_here` rule).
+fn variant_kind(name: &str, args: &[Expr]) -> Option<VariantCall> {
+    let tag_is_literal = |args: &[Expr]| {
+        args.first().is_some_and(|a| {
+            matches!(&a.kind, ExprKind::Str(_))
+                || matches!(&a.kind, ExprKind::Paren(inner) if matches!(inner.kind, ExprKind::Str(_)))
+        })
+    };
+    match (name, args.len()) {
+        ("Variant", 2) if tag_is_literal(args) => Some(VariantCall::Variant),
+        ("VariantTag", 1) => Some(VariantCall::Tag),
+        ("VariantGetUnsafe", 2) if tag_is_literal(args) => Some(VariantCall::GetUnsafe),
+        ("VariantGetOrElse", 3) if tag_is_literal(args) => Some(VariantCall::GetOrElse),
+        ("VariantFilter", 2) if tag_is_literal(args) => Some(VariantCall::Filter),
+        _ => None,
+    }
+}
+
 /// The standard infinite sets, as membership domains a skolem can be
 /// constrained by. `Real` is excluded: the front end has no reals.
 fn infinite_set_of(set: &KeraRef) -> Option<&'static str> {
@@ -758,6 +793,24 @@ fn rebuild(t: &KeraRef, _pos: bool, kids: &[KeraRef]) -> KeraRef {
             var: var.clone(),
             set: k(0),
             expr: k(1),
+        },
+        Kera::Variant { tag, .. } => Kera::Variant {
+            tag: tag.clone(),
+            value: k(0),
+        },
+        Kera::VariantTag(_) => Kera::VariantTag(k(0)),
+        Kera::VariantGet { tag, or_else, .. } => {
+            // Two children with an `or_else`, one without: the child order
+            // is [`Kera::children`]'s — `value` then `or_else`.
+            Kera::VariantGet {
+                tag: tag.clone(),
+                value: k(0),
+                or_else: or_else.as_ref().map(|_| k(1)),
+            }
+        }
+        Kera::VariantFilter { tag, .. } => Kera::VariantFilter {
+            tag: tag.clone(),
+            set: k(0),
         },
         Kera::Eq(_, _) => Kera::Eq(k(0), k(1)),
         Kera::In(_, _) => Kera::In(k(0), k(1)),
@@ -1045,6 +1098,26 @@ enum Frame<'a> {
     /// (top): `Opaque("FunAsSeq", [f, len])`, for the encoder's window
     /// construction.
     BuildFunAsSeq,
+    /// Build `Variant(tag, v)` from the lowered payload.
+    BuildVariant {
+        /// The literal tag.
+        tag: String,
+    },
+    /// Build `VariantTag(v)` from the lowered variant.
+    BuildVariantTag,
+    /// Build `VariantGet(tag, v[, e])`: `v` (bottom), then `e` (top) when
+    /// there is one.
+    BuildVariantGet {
+        /// The literal tag.
+        tag: String,
+        /// Whether an `or_else` default follows the variant.
+        has_else: bool,
+    },
+    /// Build `VariantFilter(tag, S)` from the lowered set.
+    BuildVariantFilter {
+        /// The literal tag.
+        tag: String,
+    },
     /// Build `MkSeq` from the mapped body: the `[i \\in 1..n |-> body]`
     /// function constructor over the literal range.
     BuildMkSeq {
@@ -1799,6 +1872,11 @@ impl<'a> Lowerer<'a> {
         match name {
             "TRUE" => Some(Kera::Bool(true).rc()),
             "FALSE" => Some(Kera::Bool(false).rc()),
+            // `Variants!UNIT` — the unit value, per the module's own
+            // annotation `@type: UNIT;`. The uninterpreted `UNIT` type and
+            // the string that represents it are the module's design, kept
+            // verbatim.
+            "UNIT" => Some(Kera::Str("U_OF_UNIT".into()).rc()),
             "BOOLEAN" => {
                 Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc())
             }
@@ -1849,10 +1927,25 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// The string a **ground surface** expression denotes, spot-lowered in
+    /// a throwaway lowerer like [`Self::ground_int_expr`]. For `Variant`
+    /// tags, whose constructor the literal names.
+    fn ground_str_expr(&mut self, e: &'a Expr) -> Option<String> {
+        let mut probe = Lowerer::new();
+        probe.scopes = self.scopes.clone();
+        probe.defs = self.defs.clone();
+        probe.funs = self.funs.clone();
+        let k = probe.lower(e).ok()?;
+        match crate::eval::Evaluator::new().eval(&k) {
+            Ok(crate::value::Value::Str(s)) => Some(s),
+            _ => None,
+        }
+    }
+
     /// Whether [`Self::builtin_constant`] would produce a value for `name`,
     /// without borrowing the lowerer mutably for the common no case.
     fn builtin_constant_probe(&self, name: &str) -> bool {
-        matches!(name, "TRUE" | "FALSE" | "BOOLEAN" | "EmptyBag")
+        matches!(name, "TRUE" | "FALSE" | "BOOLEAN" | "EmptyBag" | "UNIT")
     }
 
     fn fresh_name(&mut self, base: &str) -> Name {
@@ -2386,6 +2479,61 @@ impl<'a> Lowerer<'a> {
                         ));
                     };
                     values.push(Kera::Opaque(Name("FunAsSeq".into()), vec![f, len]).rc());
+                }
+                Frame::BuildVariant { tag } => {
+                    let Some(value) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "`Variant`",
+                            "internal: missing children",
+                            root_span,
+                        ));
+                    };
+                    values.push(Kera::Variant { tag, value }.rc());
+                }
+                Frame::BuildVariantTag => {
+                    let Some(v) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "`VariantTag`",
+                            "internal: missing children",
+                            root_span,
+                        ));
+                    };
+                    values.push(Kera::VariantTag(v).rc());
+                }
+                Frame::BuildVariantGet { tag, has_else } => {
+                    let else_v = if has_else { values.pop() } else { None };
+                    let Some(v) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "`VariantGet*`",
+                            "internal: missing children",
+                            root_span,
+                        ));
+                    };
+                    if has_else && else_v.is_none() {
+                        return Err(LowerError::unsupported(
+                            "`VariantGetOrElse`",
+                            "internal: missing the default",
+                            root_span,
+                        ));
+                    }
+                    values.push(
+                        Kera::VariantGet {
+                            tag,
+                            value: v,
+                            or_else: else_v,
+                        }
+                        .rc(),
+                    );
+                }
+                Frame::BuildVariantFilter { tag } => {
+                    let Some(set) = values.pop() else {
+                        return Err(LowerError::unsupported(
+                            "`VariantFilter`",
+                            "internal: missing children",
+                            root_span,
+                        ));
+                    };
+                    values.push(Kera::VariantFilter { tag, set }.rc());
                 }
                 Frame::BuildMkSeq { var, n } => {
                     let Some(body) = values.pop() else {
@@ -3512,6 +3660,100 @@ impl<'a> Lowerer<'a> {
                     stack.push(Frame::Expand(body));
                     stack.push(Frame::PushScope(scope));
                     return Ok(());
+                }
+                // The `Variants` module's operators (issue #17), intercepted
+                // where the application **looks like** the typed operator:
+                // a string-literal tag and the matching arity. The module's
+                // own untyped definitions still win otherwise — a local
+                // definition of the same name that does not look like the
+                // builtin keeps its meaning, the same rule `folds_here`
+                // applies.
+                if !head.is_qualified()
+                    && let Some(vk) = variant_kind(&id.name, args)
+                {
+                    match vk {
+                        VariantCall::Variant => {
+                            let [tag, value] = args.as_slice() else {
+                                return Err(LowerError::unsupported(
+                                    "`Variant`",
+                                    "internal: wrong argument count",
+                                    span,
+                                ));
+                            };
+                            let Some(tag_lit) = self.ground_str_expr(tag) else {
+                                return Err(LowerError::unsupported(
+                                    "`Variant`",
+                                    "its tag must be a string literal — a computed tag names \\
+                                     no constructor",
+                                    tag.span,
+                                ));
+                            };
+                            stack.push(Frame::BuildVariant { tag: tag_lit });
+                            stack.push(Frame::Expand(value));
+                            return Ok(());
+                        }
+                        VariantCall::Tag => {
+                            let [v] = args.as_slice() else {
+                                return Err(LowerError::unsupported(
+                                    "`VariantTag`",
+                                    "internal: wrong argument count",
+                                    span,
+                                ));
+                            };
+                            stack.push(Frame::BuildVariantTag);
+                            stack.push(Frame::Expand(v));
+                            return Ok(());
+                        }
+                        VariantCall::GetUnsafe | VariantCall::GetOrElse => {
+                            let get_else = matches!(vk, VariantCall::GetOrElse);
+                            let (tag, v, default) = match args.as_slice() {
+                                [tag, v] => (tag, v, None),
+                                [tag, v, d] => (tag, v, Some(d)),
+                                _ => {
+                                    return Err(LowerError::unsupported(
+                                        "`VariantGet*`",
+                                        "internal: wrong argument count",
+                                        span,
+                                    ));
+                                }
+                            };
+                            let Some(tag_lit) = self.ground_str_expr(tag) else {
+                                return Err(LowerError::unsupported(
+                                    "`VariantGet*`",
+                                    "its tag must be a string literal",
+                                    tag.span,
+                                ));
+                            };
+                            stack.push(Frame::BuildVariantGet {
+                                tag: tag_lit,
+                                has_else: get_else,
+                            });
+                            if let Some(d) = default {
+                                stack.push(Frame::Expand(d));
+                            }
+                            stack.push(Frame::Expand(v));
+                            return Ok(());
+                        }
+                        VariantCall::Filter => {
+                            let [tag, set] = args.as_slice() else {
+                                return Err(LowerError::unsupported(
+                                    "`VariantFilter`",
+                                    "internal: wrong argument count",
+                                    span,
+                                ));
+                            };
+                            let Some(tag_lit) = self.ground_str_expr(tag) else {
+                                return Err(LowerError::unsupported(
+                                    "`VariantFilter`",
+                                    "its tag must be a string literal",
+                                    tag.span,
+                                ));
+                            };
+                            stack.push(Frame::BuildVariantFilter { tag: tag_lit });
+                            stack.push(Frame::Expand(set));
+                            return Ok(());
+                        }
+                    }
                 }
                 // `FunAsSeq(f, len[, capacity])` — Apalache's cast of a
                 // function's `1..len` prefix to a sequence. Lowered as one

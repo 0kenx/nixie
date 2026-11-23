@@ -110,6 +110,25 @@ pub enum Ty {
         /// The row variable standing for the fields not yet known.
         tail: Option<TyId>,
     },
+    /// A variant row (issue #17): `Tag(a) | b`. The tags are the row's
+    /// fields and the tail is the rest of the disjunction — the record row
+    /// machinery serves unchanged, because the algebra is the same.
+    Variant {
+        /// The tags known to be present, each with its payload type.
+        tags: BTreeMap<String, TyId>,
+        /// The row variable standing for the tags not yet known.
+        tail: Option<TyId>,
+    },
+}
+
+/// Which row algebra a row belongs to — records or variants. The unification
+/// is shared; the constructor it rebuilds merged rows with is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowKind {
+    /// A record row: fields and a tail.
+    Rec,
+    /// A variant row: tags and a tail.
+    Variant,
 }
 
 /// One slot of the union-find arena.
@@ -147,6 +166,14 @@ pub enum Type {
         /// The known fields.
         fields: BTreeMap<String, Type>,
         /// Whether the record may have more fields than these.
+        open: bool,
+    },
+    /// A variant row (issue #17): one payload type per tag, and a tail when
+    /// the row is still open — the same row discipline a record uses.
+    Variant {
+        /// The known tags and their payload types.
+        tags: BTreeMap<String, Type>,
+        /// Whether further tags may exist.
         open: bool,
     },
     /// A type variable that inference never constrained. Named by its
@@ -191,6 +218,18 @@ impl fmt::Display for Type {
                     f.write_str(if fields.is_empty() { " | .." } else { ", .." })?;
                 }
                 f.write_str("]")
+            }
+            Self::Variant { tags, open } => {
+                for (i, (k, v)) in tags.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str(" | ")?;
+                    }
+                    write!(f, "{k}({v})")?;
+                }
+                if *open {
+                    f.write_str(" | ..")?;
+                }
+                Ok(())
             }
             Self::Var(n) => write!(f, "'{n}"),
             Self::Uninterpreted(name) => write!(f, "{name}"),
@@ -668,6 +707,26 @@ impl Inference {
                 },
             ) => self.unify_rows(rx, f1, *t1, ry, f2, *t2, work),
 
+            // ---- variants (issue #17) ----
+            // Two variant rows unify exactly as two record rows do — the
+            // tags are the fields and the tails are the rows — so the union
+            // of `Tag(A) | r` and `Tag(B) | r'` merges to
+            // `Tag(A) | Tag(B) | r''`, which is the point of the construct.
+            (Ty::Variant { tags: g1, tail: t1 }, Ty::Variant { tags: g2, tail: t2 }) => {
+                self.unify_rows_as(rx, g1, *t1, ry, g2, *t2, work, RowKind::Variant)
+            }
+            // A variant never unifies with a record, a function, a tuple or
+            // a sequence: the issue's soundness note. The record↔function
+            // meeting above is TLA+'s own identification of records with
+            // functions; variants are *not* functions on their tags (the
+            // tags are not a domain — `DOMAIN` of a variant is undefined),
+            // and guessing the merge would equate `[tag |-> ..]` with
+            // `Tag(..)`, which differ on every field access.
+            (Ty::Variant { .. }, _) | (_, Ty::Variant { .. }) => Err(TypeError::Mismatch {
+                left: self.render(rx),
+                right: self.render(ry),
+            }),
+
             _ => Err(TypeError::Mismatch {
                 left: self.render(rx),
                 right: self.render(ry),
@@ -721,6 +780,7 @@ impl Inference {
 
     /// Rémy-style row unification.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn unify_rows(
         &mut self,
         rx: TyId,
@@ -731,6 +791,30 @@ impl Inference {
         t2: Option<TyId>,
         work: &mut Vec<(TyId, TyId)>,
     ) -> Result<()> {
+        self.unify_rows_as(rx, f1, t1, ry, f2, t2, work, RowKind::Rec)
+    }
+
+    /// [`Self::unify_rows`] for one row kind — records or variants (issue
+    /// #17), whose algebra is the same and whose merged rows must stay the
+    /// kind they came in as: a merged variant row that came back as a record
+    /// would unify with records, which is exactly what the issue's
+    /// soundness note forbids.
+    #[allow(clippy::too_many_arguments)]
+    fn unify_rows_as(
+        &mut self,
+        rx: TyId,
+        f1: &BTreeMap<String, TyId>,
+        t1: Option<TyId>,
+        ry: TyId,
+        f2: &BTreeMap<String, TyId>,
+        t2: Option<TyId>,
+        work: &mut Vec<(TyId, TyId)>,
+        kind: RowKind,
+    ) -> Result<()> {
+        let row = |fields: BTreeMap<String, TyId>, tail: Option<TyId>| match kind {
+            RowKind::Rec => Ty::Rec { fields, tail },
+            RowKind::Variant => Ty::Variant { tags: fields, tail },
+        };
         for (k, v1) in f1 {
             if let Some(v2) = f2.get(k) {
                 work.push((*v1, *v2));
@@ -772,10 +856,7 @@ impl Inference {
                         have: f2.keys().cloned().collect::<Vec<_>>().join(", "),
                     });
                 }
-                let rest = self.mk(Ty::Rec {
-                    fields: only2,
-                    tail: None,
-                })?;
+                let rest = self.mk(row(only2, None))?;
                 work.push((v1, rest));
                 self.set_slot(rx, Slot::Link(ry));
                 Ok(())
@@ -787,10 +868,7 @@ impl Inference {
                         have: f1.keys().cloned().collect::<Vec<_>>().join(", "),
                     });
                 }
-                let rest = self.mk(Ty::Rec {
-                    fields: only1,
-                    tail: None,
-                })?;
+                let rest = self.mk(row(only1, None))?;
                 work.push((v2, rest));
                 self.set_slot(ry, Slot::Link(rx));
                 Ok(())
@@ -802,14 +880,8 @@ impl Inference {
                     return Ok(());
                 }
                 let shared = self.fresh()?;
-                let r2 = self.mk(Ty::Rec {
-                    fields: only2,
-                    tail: Some(shared),
-                })?;
-                let r1 = self.mk(Ty::Rec {
-                    fields: only1,
-                    tail: Some(shared),
-                })?;
+                let r2 = self.mk(row(only2, Some(shared)))?;
+                let r1 = self.mk(row(only1, Some(shared)))?;
                 work.push((v1, r2));
                 work.push((v2, r1));
                 // Both sides grow to the union of the fields; keep one.
@@ -818,13 +890,7 @@ impl Inference {
                     .chain(f2.iter())
                     .map(|(k, v)| (k.clone(), *v))
                     .collect();
-                self.set_slot(
-                    ry,
-                    Slot::Ty(Ty::Rec {
-                        fields: merged,
-                        tail: Some(shared),
-                    }),
-                );
+                self.set_slot(ry, Slot::Ty(row(merged, Some(shared))));
                 self.set_slot(rx, Slot::Link(ry));
                 Ok(())
             }
@@ -940,6 +1006,7 @@ fn child_count(t: &Ty) -> usize {
         Ty::Fun(_, _) => 2,
         Ty::Tuple(xs) => xs.len(),
         Ty::Rec { fields, .. } => fields.len(),
+        Ty::Variant { tags, .. } => tags.len(),
     }
 }
 
@@ -955,6 +1022,8 @@ fn push_children(t: &Ty, out: &mut Vec<TyId>) {
         // The row tail is deliberately not a child: it stands for fields we
         // cannot name, so materialising it would invent field names.
         Ty::Rec { fields, .. } => out.extend(fields.values().copied()),
+        // As with records: the tail is not materialised, the payloads are.
+        Ty::Variant { tags, .. } => out.extend(tags.values().copied()),
     }
 }
 
@@ -979,6 +1048,10 @@ fn rebuild(t: &Ty, kids: Vec<Type>) -> Type {
         Ty::Tuple(_) => Type::Tuple(it.collect()),
         Ty::Rec { fields, tail } => Type::Rec {
             fields: fields.keys().cloned().zip(it).collect(),
+            open: tail.is_some(),
+        },
+        Ty::Variant { tags, tail } => Type::Variant {
+            tags: tags.keys().cloned().zip(it).collect(),
             open: tail.is_some(),
         },
     }
@@ -1331,6 +1404,72 @@ impl Inference {
                     fields.insert(k.clone(), self.child(v)?);
                 }
                 Ok(self.mk(Ty::Rec { fields, tail: None })?)
+            }
+            // `Variant("Tag", v)` — one tag, and an **open** row: the value
+            // can flow into a bigger union, exactly as Apalache's
+            // `(Str, a) => Tag(a) | b` signature says.
+            Kera::Variant { tag, value } => {
+                let payload = self.child(value)?;
+                let tail = self.fresh()?;
+                let mut tags = BTreeMap::new();
+                tags.insert(tag.clone(), payload);
+                Ok(self.mk(Ty::Variant {
+                    tags,
+                    tail: Some(tail),
+                })?)
+            }
+            // `VariantTag(v)`: the variant can be any row — a fresh one —
+            // and the result is the tag string.
+            Kera::VariantTag(v) => {
+                let got = self.child(v)?;
+                let tail = self.fresh()?;
+                let row = self.mk(Ty::Variant {
+                    tags: BTreeMap::new(),
+                    tail: Some(tail),
+                })?;
+                self.unify(got, row)?;
+                self.str_ty()
+            }
+            // `VariantGet{tag, ..}`: the variant carries `tag` with a
+            // payload of the result type; the row stays open.
+            Kera::VariantGet {
+                tag,
+                value,
+                or_else,
+                ..
+            } => {
+                let out = self.fresh()?;
+                let got = self.child(value)?;
+                let tail = self.fresh()?;
+                let mut tags = BTreeMap::new();
+                tags.insert(tag.clone(), out);
+                let row = self.mk(Ty::Variant {
+                    tags,
+                    tail: Some(tail),
+                })?;
+                self.unify(got, row)?;
+                if let Some(e) = or_else {
+                    let got_else = self.child(e)?;
+                    self.unify(got_else, out)?;
+                }
+                Ok(out)
+            }
+            // `VariantFilter{tag, S}`: `S`'s elements carry `tag` with a
+            // payload of the result's element type; the result is the set
+            // of payloads.
+            Kera::VariantFilter { tag, set } => {
+                let payload = self.fresh()?;
+                let got = self.child(set)?;
+                let tail = self.fresh()?;
+                let mut tags = BTreeMap::new();
+                tags.insert(tag.clone(), payload);
+                let row = self.mk(Ty::Variant {
+                    tags,
+                    tail: Some(tail),
+                })?;
+                let want = self.set_of(row)?;
+                self.unify(got, want)?;
+                Ok(self.set_of(payload)?)
             }
             Kera::RecordSet(fs) => {
                 let mut fields = BTreeMap::new();
@@ -1802,6 +1941,12 @@ impl Inference {
             Ty::Rec { .. } => Err(TypeError::Mismatch {
                 left: self.render(d.subject),
                 right: format!("indexable by {index}, in `{}`", d.what),
+            }),
+            // A variant is not indexable: the tags are not a domain, and
+            // reading the payload is `VariantGet`'s job, not `f[i]`'s.
+            Ty::Variant { .. } => Err(TypeError::Mismatch {
+                left: self.render(d.subject),
+                right: format!("a function, in `{}`", d.what),
             }),
             Ty::Bool | Ty::Int | Ty::Str | Ty::Set(_) => Err(TypeError::Mismatch {
                 left: self.render(d.subject),

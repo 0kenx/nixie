@@ -657,6 +657,54 @@ impl Evaluator {
                 }
                 Ok(Value::Record(out))
             }
+            Kera::Variant { tag, value } => {
+                Ok(Value::Variant(tag.clone(), Box::new(self.go(value, env)?)))
+            }
+            Kera::VariantTag(v) => match self.go(v, env)? {
+                Value::Variant(tag, _) => Ok(Value::Str(tag)),
+                other => Err(EvalErrorKind::Type {
+                    expected: "a variant".into(),
+                    found: other.kind().into(),
+                }),
+            },
+            Kera::VariantGet {
+                tag,
+                value,
+                or_else,
+            } => match self.go(value, env)? {
+                Value::Variant(t, payload) => {
+                    if &t == tag {
+                        Ok(*payload)
+                    } else if let Some(e) = or_else {
+                        self.go(e, env)
+                    } else {
+                        // The unsafe read on the wrong tag: TLA+ leaves the
+                        // value unspecified and Apalache returns "some value"
+                        // of the payload type. The evaluator refuses rather
+                        // than inventing one — a replay that hinges on an
+                        // invented value is not a replay.
+                        Err(EvalErrorKind::Unsupported(
+                            "`VariantGetUnsafe` on the wrong tag (the value is unspecified)".into(),
+                        ))
+                    }
+                }
+                other => Err(EvalErrorKind::Type {
+                    expected: "a variant".into(),
+                    found: other.kind().into(),
+                }),
+            },
+            Kera::VariantFilter { tag, set } => {
+                let members = self.set_of(set, env)?;
+                let mut out = BTreeSet::new();
+                for m in members {
+                    if let Value::Variant(t, payload) = m
+                        && &t == tag
+                    {
+                        out.insert(*payload);
+                    }
+                }
+                Ok(Value::Set(out))
+            }
             Kera::RecordSet(fs) => {
                 let mut acc: Vec<BTreeMap<String, Value>> = vec![BTreeMap::new()];
                 for (k, v) in fs {

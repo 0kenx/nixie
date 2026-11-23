@@ -99,6 +99,10 @@ pub struct LoadedSpec {
     /// with the module they belong to. The text is raw: the Type1 grammar
     /// lives one layer up, where the type system does.
     pub annotations: Vec<Annotation>,
+    /// `@typeAlias: NAME = TYPE;` definitions (issue #17), module-name-agnostic
+    /// and in source order. A `@type:` annotation naming `NAME` resolves to
+    /// the aliased type at seeding time.
+    pub type_aliases: Vec<(String, String)>,
 }
 
 /// One `@type:` annotation, bound to the declaration that follows it.
@@ -130,12 +134,14 @@ impl LoadedSpec {
     pub fn single(parsed: crate::ParsedFile) -> Self {
         let name = parsed.module.name.name.clone();
         let annotations = attach_annotations(&name, &parsed.module, &parsed.comments);
+        let type_aliases = collect_type_aliases(&parsed.comments);
         Self {
             root: name.clone(),
             modules: vec![(name, parsed.module)],
             missing: Vec::new(),
             cycles: Vec::new(),
             annotations,
+            type_aliases,
         }
     }
 
@@ -308,12 +314,18 @@ impl Loader {
             })
             .collect();
 
+        let type_aliases: Vec<(String, String)> = comments_by_module
+            .values()
+            .flat_map(|cs| collect_type_aliases(cs).into_iter())
+            .collect();
+
         Ok(LoadedSpec {
             root: root_name,
             modules,
             missing: missing.into_iter().collect(),
             cycles,
             annotations,
+            type_aliases,
         })
     }
 
@@ -398,6 +410,33 @@ pub fn operator_at<'m>(
     None
 }
 
+/// Collect `@typeAlias: NAME = TYPE;` comments as `(name, type-text)`
+/// pairs. The alias body is the raw text after `=` (the trailing `;` is
+/// stripped here, matching how `@type:` treats one); parsing it is the
+/// annotation layer's business, where the Type1 grammar lives.
+fn collect_type_aliases(comments: &[crate::token::Comment]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for c in comments {
+        let body = c.text.trim();
+        let Some(rest) = body.strip_prefix("@typeAlias:") else {
+            continue;
+        };
+        let rest = rest.trim();
+        let Some(eq) = rest.find('=') else {
+            continue;
+        };
+        let name = rest[..eq].trim().to_string();
+        let mut ty = rest[eq + 1..].trim().to_string();
+        if let Some(semi) = ty.rfind(';') {
+            ty.truncate(semi);
+        }
+        if !name.is_empty() && !ty.is_empty() {
+            out.push((name, ty));
+        }
+    }
+    out
+}
+
 fn attach_annotations(
     module: &str,
     m: &Module,
@@ -415,6 +454,7 @@ fn attach_annotations(
     if named.is_empty() {
         return Vec::new();
     }
+
     // Declaration anchors — the **name's** position, not the unit's: a
     // `CONSTANT`/`VARIABLE` unit's span starts at the keyword, which is
     // *before* the annotation comment that precedes the name inside it —

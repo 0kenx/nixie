@@ -44,6 +44,7 @@ fn literal_of(
             }
             EV::Record(fields)
         }
+        nixie_tla::Value::Variant(..) => return None,
         nixie_tla::Value::Set(xs) => {
             let yes = tm.mk_bool(true);
             let mut members = Vec::with_capacity(xs.len());

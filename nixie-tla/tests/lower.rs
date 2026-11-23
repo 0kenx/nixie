@@ -121,6 +121,10 @@ fn show(k: &Kera) -> String {
         Kera::Cmp(op, a, b) => format!("{} {} {}", show(a), op.as_str(), show(b)),
         Kera::Opaque(n, args) if args.is_empty() => format!("{n}"),
         Kera::Opaque(n, args) => format!("{n}({})", join(args, ", ")),
+        Kera::Variant { tag, value } => format!("{tag}({})", show(value)),
+        Kera::VariantTag(v) => format!("tag({})", show(v)),
+        Kera::VariantGet { tag, value, .. } => format!("get[{tag}]({})", show(value)),
+        Kera::VariantFilter { tag, set } => format!("filter[{tag}]({})", show(set)),
     }
 }
 

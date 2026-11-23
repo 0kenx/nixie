@@ -298,11 +298,9 @@ pub struct Bmc {
     /// The completed sampled runs' traces, when `simulate` was asked to keep
     /// them (`--output-traces`): `(run, trace)`, run counting from 1.
     sampled: Vec<(usize, Trace)>,
-    /// The set-valued state variables, by name — the frame analysis's
-    /// subject list, collected at prepare time from the inference.
-    set_vars: Vec<String>,
     /// Whether the frame analysis has run and its universes were handed to
-    /// the encoder. Once per `Bmc`, before the first depth query.
+    /// the encoder. Once per `Bmc`, at prepare time (the elements need the
+    /// node-sort collection, which also runs there).
     frames_done: bool,
     /// Which of the named invariants the last counterexample broke, by name.
     ///
@@ -698,9 +696,24 @@ impl Bmc {
                     )));
                 }
             };
-            if let Err(e) =
-                nixie_tla::annotations::assume(&mut inf, &ann.name, &parsed, &mut uninterpreted)
-            {
+            // The alias table resolves `@type: Set(MESSAGE)` against the
+            // spec's `@typeAlias: MESSAGE = ...` definitions (issue #17).
+            let aliases: Vec<(String, nixie_tla::annotations::ParsedType)> = spec
+                .type_aliases
+                .iter()
+                .filter_map(|(k, text)| {
+                    nixie_tla::annotations::parse_type1(text)
+                        .ok()
+                        .map(|p| (k.clone(), p))
+                })
+                .collect();
+            if let Err(e) = nixie_tla::annotations::assume_with_aliases(
+                &mut inf,
+                &ann.name,
+                &parsed.0,
+                &aliases,
+                &mut uninterpreted,
+            ) {
                 return Err(SetupError::Types(format!(
                     "the @type: annotation on `{}` conflicts: {e}",
                     ann.name
@@ -931,6 +944,17 @@ impl Bmc {
         // itself. `{}` is the case that matters: an empty set literal has no
         // element to take an element sort from, and an empty set at the wrong
         // element sort is a different value — so it is supplied, not guessed.
+        // The frame analysis (issue #20) runs **here**, before the node-sort
+        // collection: a universe's elements are kernel terms the roles never
+        // mention by pointer — an instantiated `Variant` constructor is a
+        // new `Rc` — so their nodes must join the collection as roots, or
+        // the first member encoding poisons the frame for want of a sort.
+        let frames = crate::frames::analyze(&crate::frames::Input {
+            init: &init_k,
+            next: &next_k,
+            set_vars: set_vars.clone(),
+            max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
+        });
         let mut nodes: Vec<KeraRef> = Vec::new();
         for root in [&init_k, &next_k]
             .into_iter()
@@ -941,6 +965,17 @@ impl Bmc {
         {
             collect_unsortable(root, &mut nodes);
         }
+        for universe in frames.universe.values() {
+            for elem in universe {
+                // Inferred **and** collected: an element is a fresh `Rc` the
+                // roles never mention, so without this its `Variant` node
+                // has neither an inferred type nor a declared sort, and the
+                // first member encoding poisons the frame.
+                let _ = inf.infer(elem);
+                collect_unsortable(elem, &mut nodes);
+            }
+        }
+        encoder.set_frames(frames);
         for node in nodes {
             if let Some(id) = inf.node_ty(&node)
                 && let Ok(ty) = inf.to_type(id)
@@ -951,8 +986,7 @@ impl Bmc {
         }
 
         Ok(Self {
-            set_vars,
-            frames_done: false,
+            frames_done: true,
             assumptions: typed_assumptions,
             dropped_setup: dropped,
             dropped_assumptions: dropped,
@@ -999,21 +1033,9 @@ impl Bmc {
             why: e.to_string(),
         };
 
-        // The frame analysis (issue #20): candidate universes for the
-        // set-valued state variables, derived from `Init`'s and `Next`'s
-        // assignments and installed in the encoder once. A variable whose
-        // universe cannot be derived simply keeps its opaque variable and
-        // the decline it always had.
-        if !self.frames_done {
-            let frames = crate::frames::analyze(&crate::frames::Input {
-                init: &self.init,
-                next: &self.next,
-                set_vars: self.set_vars.clone(),
-                max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
-            });
-            self.encoder.set_frames(frames);
-            self.frames_done = true;
-        }
+        // Frames were computed and installed at prepare time (the elements
+        // need the node-sort collection, which also runs there).
+        let _ = self.frames_done;
 
         // Encoded once: the terms are hash-consed, so re-encoding the same
         // step yields the same `TermId` and the solver sees one formula.
@@ -2205,6 +2227,15 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         // empty filter does: its element sort comes from the inferred
         // `Seq(a)` of the cast, not from anything the encoding can read off
         // the function value.
+        // A variant node joins them: its datatype sort is the row's, which
+        // only inference knows — a one-tag constructor does not know the
+        // union it flows into.
+        if matches!(
+            t.as_ref(),
+            Kera::Variant { .. } | Kera::VariantGet { .. } | Kera::VariantTag(_)
+        ) {
+            out.push(t.clone());
+        }
         if matches!(t.as_ref(), Kera::Opaque(n, _) if n.as_str() == "FunAsSeq") {
             out.push(t.clone());
         }

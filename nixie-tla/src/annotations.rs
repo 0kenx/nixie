@@ -108,6 +108,41 @@ pub fn parse_type1(src: &str) -> Result<ParsedType, AnnotationError> {
     let toks = tokenize(src)?;
     let mut p = Parser { toks, at: 0 };
     let ty = p.parse_fun()?;
+    let ty = if p.toks.get(p.at) == Some(&Tok::Pipe) {
+        // A top-level `|` alternation continues a **variant row** whose
+        // first arm `parse_atom` already read (issue #17):
+        // `Tag(a) | Tag2(b) | ...` — the `@typeAlias` spelling.
+        let mut tags = match &ty {
+            Type::Variant { tags, open: false } => tags.clone(),
+            _ => {
+                return Err(AnnotationError::Parse {
+                    why: "a `|` alternation must join `Tag(payload)` arms".to_string(),
+                });
+            }
+        };
+        while p.toks.get(p.at) == Some(&Tok::Pipe) {
+            p.at += 1;
+            let arm = p.parse_fun()?;
+            match arm {
+                Type::Variant {
+                    tags: more,
+                    open: false,
+                } if more.len() == 1 => {
+                    for (k, v) in more {
+                        tags.insert(k, v);
+                    }
+                }
+                _ => {
+                    return Err(AnnotationError::Parse {
+                        why: "a `|` alternation must join `Tag(payload)` arms".to_string(),
+                    });
+                }
+            }
+        }
+        Type::Variant { tags, open: false }
+    } else {
+        ty
+    };
     // `A => B` at the top level is an operator signature (the paren form
     // lands here too, its group already parsed): named-refused below at the
     // seeding side, which skips signatures with a note.
@@ -141,6 +176,7 @@ enum Tok {
     Comma,
     Colon,
     Semi,
+    Pipe,
 }
 
 fn tokenize(src: &str) -> Result<Vec<Tok>, AnnotationError> {
@@ -177,6 +213,10 @@ fn tokenize(src: &str) -> Result<Vec<Tok>, AnnotationError> {
             }
             '{' => {
                 out.push(Tok::LBrace);
+                i += 1;
+            }
+            '|' => {
+                out.push(Tok::Pipe);
                 i += 1;
             }
             '}' => {
@@ -264,6 +304,21 @@ impl Parser {
                 other if other.chars().next().is_some_and(char::is_lowercase) => {
                     Ok(Type::Var(u32::MAX))
                 }
+                // A **tag arm** of a variant row (issue #17):
+                // `RequestVote({ term: Int, from: Str })` — an uppercase
+                // identifier applied to one type. The one-tag row it builds
+                // is open until the `|` chain at the top level closes it.
+                other
+                    if self.peek() == Some(&Tok::LParen)
+                        && other.chars().next().is_some_and(char::is_uppercase) =>
+                {
+                    self.at += 1;
+                    let payload = self.parse_fun()?;
+                    self.expect(&Tok::RParen, "after the tag's payload")?;
+                    let mut tags = std::collections::BTreeMap::new();
+                    tags.insert(name, payload);
+                    Ok(Type::Variant { tags, open: false })
+                }
                 // Uppercase: an uninterpreted type, its own base. There is
                 // no `Type` constructor for it, so it is carried as a
                 // zero-field *open record is wrong* — see the seeding side:
@@ -287,14 +342,23 @@ impl Parser {
             }
             Tok::LBrace => {
                 let mut fields = std::collections::BTreeMap::new();
-                while matches!(self.peek(), Some(Tok::Ident(_))) {
-                    let Some(Tok::Ident(field)) = self.toks.get(self.at).cloned() else {
-                        break;
-                    };
+                // A trailing **bare identifier** is a row variable:
+                // `{ from: Str, term: Int, a }` names a record that has
+                // these fields and maybe more — Apalache's annotation
+                // spelling for an open row (Bug1682's `IsOk` writes it).
+                let mut row_tail: Option<String> = None;
+                while let Some(Tok::Ident(field)) = self.peek().cloned() {
                     self.at += 1;
-                    self.expect(&Tok::Colon, "after the field name")?;
-                    let ty = self.parse_fun()?;
-                    fields.insert(field, ty);
+                    if self.peek() == Some(&Tok::Colon) {
+                        self.at += 1;
+                        let ty = self.parse_fun()?;
+                        fields.insert(field, ty);
+                    } else {
+                        // No `:` follows: the row variable, which must be
+                        // last.
+                        row_tail = Some(field);
+                        break;
+                    }
                     if self.peek() == Some(&Tok::Comma) {
                         self.at += 1;
                     } else {
@@ -304,7 +368,7 @@ impl Parser {
                 self.expect(&Tok::RBrace, "to close the record")?;
                 Ok(Type::Rec {
                     fields,
-                    open: false,
+                    open: row_tail.is_some(),
                 })
             }
             Tok::LParen => {
@@ -368,9 +432,70 @@ pub fn assume(
     ty: &ParsedType,
     uninterpreted: &mut std::collections::HashMap<String, TyId>,
 ) -> crate::types::Result<()> {
+    assume_with_aliases(inf, name, &ty.0, &[], uninterpreted)
+}
+
+/// [`assume`] with a `@typeAlias` table (issue #17): an uppercase name that
+/// an alias defines resolves to the aliased type, so
+/// `@typeAlias: M = R({x: Int});` followed by `@type: Set(M);` seeds the
+/// variant row. Aliases resolve recursively, with a depth bound in place of
+/// a cycle check — a self-referential alias is a defect in the
+/// specification, reported as the parse error it effectively is.
+pub fn assume_with_aliases(
+    inf: &mut Inference,
+    name: &str,
+    ty: &Type,
+    aliases: &[(String, ParsedType)],
+    uninterpreted: &mut std::collections::HashMap<String, TyId>,
+) -> crate::types::Result<()> {
+    let resolved = resolve_aliases(ty, aliases, 0)?;
     let mut vars: std::collections::HashMap<String, TyId> = std::collections::HashMap::new();
-    let tid = intern(inf, &ty.0, &mut vars, uninterpreted)?;
+    let tid = intern(inf, &resolved, &mut vars, uninterpreted)?;
     inf.assume(name, tid)
+}
+
+/// Substitute alias references throughout a type.
+fn resolve_aliases(
+    ty: &Type,
+    aliases: &[(String, ParsedType)],
+    depth: usize,
+) -> crate::types::Result<Type> {
+    use crate::types::TypeError;
+    if depth > 8 {
+        return Err(TypeError::ArenaFull { limit: 0 });
+    }
+    let r = |t: &Type| resolve_aliases(t, aliases, depth + 1);
+    Ok(match ty {
+        Type::Bool | Type::Int | Type::Str | Type::Var(_) => ty.clone(),
+        Type::Uninterpreted(n) => match aliases.iter().find(|(k, _)| k == n) {
+            Some((_, parsed)) => r(&parsed.0)?,
+            None => ty.clone(),
+        },
+        Type::Set(e) => Type::Set(Box::new(r(e)?)),
+        Type::Seq(e) => Type::Seq(Box::new(r(e)?)),
+        Type::Fun(a, b) => Type::Fun(Box::new(r(a)?), Box::new(r(b)?)),
+        Type::Tuple(xs) => Type::Tuple(xs.iter().map(r).collect::<crate::types::Result<_>>()?),
+        Type::Rec { fields, open } => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in fields {
+                out.insert(k.clone(), r(v)?);
+            }
+            Type::Rec {
+                fields: out,
+                open: *open,
+            }
+        }
+        Type::Variant { tags, open } => {
+            let mut out = std::collections::BTreeMap::new();
+            for (k, v) in tags {
+                out.insert(k.clone(), r(v)?);
+            }
+            Type::Variant {
+                tags: out,
+                open: *open,
+            }
+        }
+    })
 }
 
 /// Intern one parsed type for the signature check — the same interning
@@ -428,6 +553,18 @@ fn intern(
             // about exactly these fields.
             inf.mk(Ty::Rec {
                 fields: ids,
+                tail: None,
+            })?
+        }
+        Type::Variant { tags, .. } => {
+            let mut ids = std::collections::BTreeMap::new();
+            for (t, p) in tags {
+                ids.insert(t.clone(), intern(inf, p, vars, uninterpreted)?);
+            }
+            // An annotation's variant row is closed: exactly these tags,
+            // the author's claim, the same rule a record annotation follows.
+            inf.mk(Ty::Variant {
+                tags: ids,
                 tail: None,
             })?
         }

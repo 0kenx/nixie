@@ -54,11 +54,12 @@ fn a_map_comprehension_over_a_literal() {
     holds(r"{y % 2 : y \in {1, 2, 3, 4}} = {0, 1}");
 }
 
-/// A comprehension whose base is *not* enumerable is declined by name, never
-/// approximated — that half of the old refusal is still the right answer for
-/// a symbolic base (the frames work is what unblocks those).
+/// A comprehension over a **framed** set variable now checks (issue #20's
+/// candidate universes): `{y \in s : y > 0} = s` has a real answer. A base
+/// with no derivable universe — the pre-frames condition — is still declined
+/// by name, never approximated.
 #[test]
-fn a_comprehension_over_a_symbolic_base_declines() {
+fn a_comprehension_over_a_framed_base_checks() {
     let src = r#"
 ---- MODULE Sym ----
 EXTENDS Integers
@@ -73,8 +74,11 @@ Inv  == {y \in s : y > 0} = s
     let module = spec.root_module().expect("has a root module");
     let mut tm = TermManager::new();
     let mut bmc = Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm)
-        .expect("a symbolic state set has no candidate list, so this declines at encode");
-    assert!(bmc.check(0, &mut tm).is_err());
+        .expect("the framed set has a candidate universe, so this encodes");
+    assert_eq!(
+        bmc.check(0, &mut tm).expect("checks"),
+        nixie_tla_check::bmc::Outcome::NoViolationWithin(0)
+    );
 }
 
 // ---- SUBSET ----

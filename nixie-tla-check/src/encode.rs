@@ -652,29 +652,64 @@ impl Encoder {
         let saved = std::mem::replace(&mut self.step, step);
         let mut members = Vec::with_capacity(elems.len());
         let mut ok = true;
-        for e in &elems {
-            match self.value(e, tm) {
-                Ok(v) => {
-                    let present = match &*v {
-                        Value::Scalar(e_term) => tm.mk_set_member(*e_term, var_term),
-                        structural => {
-                            let v = Rc::new(structural.clone());
-                            match self.reify(&v, tm) {
-                                Ok(r) => tm.mk_set_member(r, var_term),
-                                Err(_) => {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                    };
-                    members.push(Member { value: v, present });
-                }
-                Err(_) => {
-                    ok = false;
-                    break;
-                }
+        // The variable's element sort — the merged row's datatype, which has
+        // every tag the universe's elements carry. A one-tag `Variant`
+        // element is built **at this sort**: left at its own, the universe
+        // would hold members of several one-tag datatypes that the set's
+        // element sort cannot hold.
+        let elem_sort = self.sort_of(var_term, tm).ok().and_then(|sort| {
+            match tm.sorts.get(sort).map(|s| s.kind.clone()) {
+                Some(nixie_core::SortKind::Set(e)) => Some(e),
+                _ => None,
             }
+        });
+        for e in &elems {
+            let v = match (e.as_ref(), elem_sort) {
+                (Kera::Variant { tag, value }, Some(target)) => {
+                    let Ok(payload) = self.value(value, tm) else {
+                        ok = false;
+                        break;
+                    };
+                    let Some(payload_sort) = variant_payload_sort(target, tag, tm) else {
+                        ok = false;
+                        break;
+                    };
+                    let Ok(reified) = self.reify(&payload, tm) else {
+                        ok = false;
+                        break;
+                    };
+                    if self.sort_of(reified, tm).ok() != Some(payload_sort) {
+                        ok = false;
+                        break;
+                    }
+                    Rc::new(Value::Scalar(tm.mk_dt_constructor(
+                        &format!("@v_{tag}"),
+                        [reified],
+                        target,
+                    )))
+                }
+                _ => match self.value(e, tm) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        ok = false;
+                        break;
+                    }
+                },
+            };
+            let present = match &*v {
+                Value::Scalar(e_term) => tm.mk_set_member(*e_term, var_term),
+                structural => {
+                    let v = Rc::new(structural.clone());
+                    match self.reify(&v, tm) {
+                        Ok(r) => tm.mk_set_member(r, var_term),
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+            };
+            members.push(Member { value: v, present });
         }
         self.step = saved;
         self.framing.remove(name);
@@ -1806,6 +1841,134 @@ impl Encoder {
                     fields.insert(k.clone(), self.value(v, tm)?);
                 }
                 Ok(Rc::new(Value::Record(fields)))
+            }
+            // ---- variants (issue #17) ----
+            // `Variant("Tag", v)`: the datatype constructor application.
+            // The sort is the row's datatype, supplied by inference (the
+            // node cannot sort itself: a one-tag node does not know the
+            // union it flows into), and the payload is reified to the
+            // constructor's payload sort — a structural payload (a record)
+            // becomes the datatype term it is.
+            Kera::Variant { tag, value } => {
+                let v = self.value(value, tm)?;
+                let sort = self
+                    .node_sorts
+                    .get(&Rc::as_ptr(term))
+                    .copied()
+                    .ok_or_else(|| {
+                        EncodeError::Unsupported(
+                            "`Variant` whose variant row has no sort yet".into(),
+                        )
+                    })?;
+                let payload_sort = variant_payload_sort(sort, tag, tm).ok_or_else(|| {
+                    EncodeError::Unsupported(format!(
+                        "`Variant(\"{tag}\")` on a row that has no such tag"
+                    ))
+                })?;
+                let payload = self.reify(&v, tm)?;
+                if self.sort_of(payload, tm)? != payload_sort {
+                    return Err(EncodeError::Unsupported(format!(
+                        "`Variant(\"{tag}\")` whose payload is not at the tag's sort"
+                    )));
+                }
+                scalar(tm.mk_dt_constructor(&format!("@v_{tag}"), [payload], sort))
+            }
+            // `VariantTag(v)`: a chain of testers, one per constructor of the
+            // row's datatype. The final arm is the last tag — the chain
+            // covers every constructor, so the solver never reaches it.
+            Kera::VariantTag(v) => {
+                let target = self.value(v, tm)?;
+                let Value::Scalar(t) = &*target else {
+                    return Err(EncodeError::Unsupported(
+                        "`VariantTag` of a value that is not a variant".into(),
+                    ));
+                };
+                let t = *t;
+                let sort = self.sort_of(t, tm)?;
+                let tags = variant_tags(sort, tm).ok_or_else(|| {
+                    EncodeError::Unsupported(
+                        "`VariantTag` of a value whose sort is not a variant row".into(),
+                    )
+                })?;
+                let [first, rest @ ..] = tags.as_slice() else {
+                    return Err(EncodeError::Unsupported(
+                        "`VariantTag` of an empty variant row".into(),
+                    ));
+                };
+                let mut out = tm.mk_string_lit(first);
+                for tag in rest {
+                    let tester = tm.mk_dt_tester(&format!("@v_{tag}"), t);
+                    let lit = tm.mk_string_lit(tag);
+                    out = tm.mk_ite(tester, lit, out);
+                }
+                scalar(out)
+            }
+            // `VariantGet{tag, v, or_else}`: the payload selector. On the
+            // wrong tag, the selector is an SMT datatype accessor off its
+            // own constructor — underspecified by the theory, which is
+            // exactly the "fresh unconstrained value, never a fixed
+            // default" the issue asks for. `or_else` turns it into the
+            // given value under a tester.
+            Kera::VariantGet {
+                tag,
+                value,
+                or_else,
+            } => {
+                let target = self.value(value, tm)?;
+                let Value::Scalar(t) = &*target else {
+                    return Err(EncodeError::Unsupported(
+                        "`VariantGet` of a value that is not a variant".into(),
+                    ));
+                };
+                let t = *t;
+                let sort = self.sort_of(t, tm)?;
+                let payload_sort = variant_payload_sort(sort, tag, tm).ok_or_else(|| {
+                    EncodeError::Unsupported(format!(
+                        "`VariantGet` on a variant row without the tag `{tag}`"
+                    ))
+                })?;
+                let selected = tm.mk_dt_selector("@vp", t, payload_sort);
+                let Some(e) = or_else else {
+                    return scalar(selected);
+                };
+                let ev = self.value(e, tm)?;
+                let eterm = self.reify(&ev, tm)?;
+                if self.sort_of(eterm, tm)? != payload_sort {
+                    return Err(EncodeError::Unsupported(
+                        "`VariantGetOrElse` whose default is not at the tag's sort".into(),
+                    ));
+                }
+                let tester = tm.mk_dt_tester(&format!("@v_{tag}"), t);
+                scalar(tm.mk_ite(tester, selected, eterm))
+            }
+            // `VariantFilter("Tag", S)`: the candidates of `S`, kept under
+            // the tag's tester and mapped to their payloads. A filter and a
+            // map in one pass — exact, because the tester decides and the
+            // payload selector reads the same constructor.
+            Kera::VariantFilter { tag, set } => {
+                let cell = self.set(set, tm)?;
+                let mut members = Vec::with_capacity(cell.members.len());
+                for m in &cell.members {
+                    let Value::Scalar(t) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "`VariantFilter` over a non-variant member".into(),
+                        ));
+                    };
+                    let t = *t;
+                    let sort = self.sort_of(t, tm)?;
+                    let payload_sort = variant_payload_sort(sort, tag, tm).ok_or_else(|| {
+                        EncodeError::Unsupported(format!(
+                            "`VariantFilter` on a variant row without the tag `{tag}`"
+                        ))
+                    })?;
+                    let tester = tm.mk_dt_tester(&format!("@v_{tag}"), t);
+                    let present = tm.mk_and([m.present, tester]);
+                    members.push(Member {
+                        value: scalar_clone(tm.mk_dt_selector("@vp", t, payload_sort)),
+                        present,
+                    });
+                }
+                self.mk_set(members)
             }
             // `[a : S, b : T]` is the set of records with one field drawn from
             // each set — a cartesian product over the field sets.
@@ -3399,6 +3562,40 @@ fn ground_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
 }
 
 /// Name a kernel construct for a diagnostic.
+/// The payload sort of one tag of a variant datatype.
+fn variant_payload_sort(sort: SortId, tag: &str, tm: &TermManager) -> Option<SortId> {
+    let name = tm.sorts.datatype_name(sort)?;
+    let def = tm.sorts.get_datatype(name)?;
+    let ctor = def
+        .constructors
+        .iter()
+        .find(|c| tm.sorts.resolve_spur(c.name) == format!("@v_{tag}"))?;
+    let [(_, ps)] = ctor.selectors.as_slice() else {
+        return None;
+    };
+    Some(*ps)
+}
+
+/// The tags of a variant datatype, in declaration order.
+fn variant_tags(sort: SortId, tm: &TermManager) -> Option<Vec<String>> {
+    let name = tm.sorts.datatype_name(sort)?;
+    let def = tm.sorts.get_datatype(name)?;
+    def.constructors
+        .iter()
+        .map(|c| {
+            tm.sorts
+                .resolve_spur(c.name)
+                .strip_prefix("@v_")
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// A scalar `Value` for one term.
+fn scalar_clone(t: TermId) -> Rc<Value> {
+    Rc::new(Value::Scalar(t))
+}
+
 fn describe(k: &Kera) -> String {
     let s = match k {
         Kera::Str(_) => "a string literal",

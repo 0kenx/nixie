@@ -36,6 +36,10 @@ pub enum Value {
     Tuple(Vec<Value>),
     /// A record, which is a function on a set of field-name strings.
     Record(BTreeMap<String, Value>),
+    /// A variant value (issue #17): a tag and the payload it wraps. Ordered
+    /// by tag then payload, so set membership and the evaluator's
+    /// deterministic `CHOOSE` see one order.
+    Variant(String, Box<Value>),
     /// A finite function.
     Fun(BTreeMap<Value, Value>),
 }
@@ -118,6 +122,7 @@ impl Value {
             Self::Set(_) => "a set",
             Self::Tuple(_) => "a tuple",
             Self::Record(_) => "a record",
+            Self::Variant(..) => "a variant",
             Self::Fun(_) => "a function",
         }
     }
@@ -140,6 +145,7 @@ impl fmt::Display for Value {
                 }
                 f.write_str("}")
             }
+            Self::Variant(tag, payload) => write!(f, "{tag}({payload})"),
             Self::Tuple(xs) => {
                 f.write_str("<<")?;
                 for (i, x) in xs.iter().enumerate() {

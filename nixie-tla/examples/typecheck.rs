@@ -171,6 +171,12 @@ fn shape_name(t: &nixie_tla::Type) -> String {
             "[record]"
         }
         .into(),
+        T::Variant { open, .. } => if *open {
+            "[.. open variant]"
+        } else {
+            "[variant]"
+        }
+        .into(),
         T::Var(_) => "'unconstrained".into(),
         T::Uninterpreted(_) => "uninterpreted".into(),
     }

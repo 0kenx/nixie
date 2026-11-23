@@ -120,6 +120,11 @@ pub fn value_to_itf(v: &Value) -> Json {
         Value::Str(s) => json!(s),
         Value::Set(xs) => json!({ "#set": xs.iter().map(value_to_itf).collect::<Vec<_>>() }),
         Value::Tuple(xs) => json!({ "#tup": xs.iter().map(value_to_itf).collect::<Vec<_>>() }),
+        // A variant, per the issue: the `{"tag": .., "value": ..}` shape the
+        // trace viewers and `tla-connect` read.
+        Value::Variant(tag, payload) => {
+            json!({ "tag": tag, "value": value_to_itf(payload) })
+        }
         Value::Record(fs) => {
             let mut obj = Map::new();
             for (k, x) in fs {

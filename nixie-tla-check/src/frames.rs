@@ -360,6 +360,30 @@ fn elements(
             // A filter keeps a subset of its base; the base's candidates
             // cover it.
             Kera::Filter { set, .. } => work.push(set),
+            // A variant filter (issue #17) keeps the payloads of one tag.
+            // The binder it feeds ranges over **payloads**, so each base
+            // candidate is wrapped in the tag's getter — the kernel term for
+            // `VariantGetUnsafe(tag, candidate)`, which the encoder reads
+            // through the datatype selector exactly as a filtered member
+            // would be. Over-approximate in the candidates (tags the tester
+            // would reject stay, presence is solver-mediated), exact in the
+            // shape.
+            Kera::VariantFilter { tag, set } => {
+                let base = elements(set, state, max_candidates)?;
+                if base.len() > max_candidates {
+                    return None;
+                }
+                for b in base {
+                    out.push(
+                        Kera::VariantGet {
+                            tag: tag.clone(),
+                            value: b,
+                            or_else: None,
+                        }
+                        .rc(),
+                    );
+                }
+            }
             // A map's elements are the mapped body per candidate of the
             // domain — instantiated, so the body's reads become concrete
             // where the binder made them symbolic.

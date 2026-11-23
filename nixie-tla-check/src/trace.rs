@@ -226,6 +226,81 @@ fn decode_at(
         // A tuple or a record. Which one is told by the selector names, not by
         // the sort: `crate::sorts` prefixes a tuple component `@t` and a record
         // field `@f` precisely so the two cannot be confused.
+        // A **variant** datatype (issue #17): multiple constructors, one per
+        // tag. Which one the model chose is asked of the model itself — the
+        // constructor term it evaluates to names the tag — and the payload
+        // is the constructor's argument (or the `@vp` selector's, for a
+        // value the query never applied a selector to).
+        SortKind::Datatype(_) if crate::sorts::variant_ctor_tags(sort, tm).is_some() => {
+            let tags = crate::sorts::variant_ctor_tags(sort, tm)
+                .ok_or_else(|| DecodeError::Unsupported("a variant with no tags".into()))?;
+            let built = model.eval(term, tm);
+            let (tag, args) =
+                match tm.get(built).map(|t| t.kind.clone()) {
+                    Some(TermKind::DtConstructor { constructor, args }) => {
+                        let ctor = tm.resolve_str(constructor).to_string();
+                        let Some(tag) = ctor.strip_prefix("@v_") else {
+                            return Err(DecodeError::Unsupported(format!(
+                                "a variant constructor named `{ctor}`"
+                            )));
+                        };
+                        (tag.to_string(), args)
+                    }
+                    _ => {
+                        // No constructor term: ask each tester, and read the
+                        // payload through the shared `@vp` selector.
+                        let mut found: Option<(String, TermId)> = None;
+                        for tag in &tags {
+                            let tester = tm.mk_dt_tester(&format!("@v_{tag}"), term);
+                            let v = model.eval(tester, tm);
+                            let truth = match tm.get(v).map(|t| t.kind.clone()) {
+                                Some(TermKind::True) => true,
+                                Some(TermKind::False) => false,
+                                _ => false,
+                            };
+                            if truth {
+                                found = Some((
+                                    tag.clone(),
+                                    tm.mk_dt_selector(
+                                        "@vp",
+                                        term,
+                                        crate::sorts::variant_ctor_payload(sort, tag, tm)
+                                            .ok_or_else(|| {
+                                                DecodeError::Unsupported(
+                                                    "a variant payload sort".to_string(),
+                                                )
+                                            })?,
+                                    ),
+                                ));
+                                break;
+                            }
+                        }
+                        let Some((tag, payload)) = found else {
+                            return Err(DecodeError::Undecided(
+                                "a variant value whose tag no tester claims".into(),
+                            ));
+                        };
+                        let ps = crate::sorts::variant_ctor_payload(sort, &tag, tm).ok_or_else(
+                            || DecodeError::Unsupported("a variant payload sort".to_string()),
+                        )?;
+                        return Ok(Value::Variant(
+                            tag,
+                            Box::new(decode_at(payload, ps, None, model, tm, depth + 1)?),
+                        ));
+                    }
+                };
+            let ps = crate::sorts::variant_ctor_payload(sort, &tag, tm)
+                .ok_or_else(|| DecodeError::Unsupported("a variant payload sort".to_string()))?;
+            let [arg] = args.as_slice() else {
+                return Err(DecodeError::Unsupported(
+                    "a variant constructor with the wrong arity".into(),
+                ));
+            };
+            Ok(Value::Variant(
+                tag,
+                Box::new(decode_at(*arg, ps, None, model, tm, depth + 1)?),
+            ))
+        }
         SortKind::Datatype(_) => {
             let fields = struct_fields(sort, tm)
                 .ok_or_else(|| DecodeError::Unsupported("a datatype with no constructor".into()))?;
