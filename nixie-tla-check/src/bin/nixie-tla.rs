@@ -86,6 +86,13 @@ struct Args {
     /// `--no-deadlock`: do not look for deadlocks. Apalache's default is to
     /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
     no_deadlock: bool,
+    /// `--seed=N`: the simulation PRNG's seed. Deterministic by design —
+    /// the same seed gives byte-identical sampled behaviour, where
+    /// Apalache's is not reproducible.
+    seed: u64,
+    /// `--output-traces`: write `example<k>.itf.json` for each sampled run
+    /// (simulate), as Apalache does.
+    output_traces: bool,
     /// `--run-dir=DIR`: Apalache's flat mirror of the run output. Nixie has
     /// no timestamped run directories, so this is simply where the files go
     /// when `--out-dir` does not say otherwise.
@@ -107,8 +114,10 @@ OPTIONS:
     --max-run=N         number of simulation runs (simulate only)
     --cinit=NAME        a definition constraining the CONSTANTs
     --config=FILE       a TLC .cfg supplying roles and constants
-    --view=NAME         accepted, not used (reported on stderr)
+    --view=NAME         what makes two counterexamples `the same` one
     --out-dir=DIR       where to write violation<N>.itf.json
+    --seed=N            the simulation PRNG seed         [default: 0]
+    --output-traces     write example<k>.itf.json (simulate)
     --no-cfg            accepted, no effect (a .cfg is not read by default)
     -h, --help          this text
 
@@ -169,6 +178,8 @@ fn parse_args() -> Result<Args, String> {
         length: 10,
         max_errors: 1,
         max_runs: None,
+        seed: 0,
+        output_traces: false,
         out_dir: None,
         config: None,
         no_deadlock: false,
@@ -209,6 +220,12 @@ fn parse_args() -> Result<Args, String> {
                 "next" => a.next = Some(need(value)?),
                 "cinit" => a.cinit = Some(need(value)?),
                 "view" => a.view = Some(need(value)?),
+                "seed" => {
+                    a.seed = need(value)?
+                        .parse()
+                        .map_err(|_| "`--seed` needs a whole number".to_string())?;
+                }
+                "output-traces" => a.output_traces = true,
                 "out-dir" => a.out_dir = Some(PathBuf::from(need(value)?)),
                 "config" => a.config = Some(PathBuf::from(need(value)?)),
                 "no-deadlock" => a.no_deadlock = true,
@@ -430,6 +447,80 @@ fn main() -> ExitCode {
 }
 
 #[allow(clippy::too_many_lines)]
+/// The `simulate` arm: sampled behaviours (issue #28), not a search. The
+/// exit codes are Apalache's, and the "no error" message says what it is
+/// about — the sampled runs, never an exhaustive claim.
+fn run_simulate(args: &Args, bmc: &mut Bmc, tm: &mut TermManager) -> u8 {
+    let runs = args.max_runs.unwrap_or(100);
+    let outcome = match bmc.simulate(runs, args.length, args.seed, args.output_traces, tm) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("{e}");
+            return exit_for(&e);
+        }
+    };
+    use nixie_tla_check::bmc::SimOutcome;
+    match outcome {
+        SimOutcome::NoErrorInSampledRuns { runs, dead_ends } => {
+            if args.output_traces
+                && let Some(dir) = args.out_dir.as_ref().or(args.run_dir.as_ref())
+            {
+                let name = args
+                    .spec
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("spec");
+                for (run, trace) in bmc.sampled_traces() {
+                    if let Some(doc) = bmc.trace_itf(trace, name)
+                        && let Ok(text) = serde_json::to_string_pretty(&doc)
+                        && std::fs::create_dir_all(dir).is_ok()
+                        && std::fs::write(dir.join(format!("example{run}.itf.json")), text).is_ok()
+                    {
+                        println!(
+                            "  wrote {}",
+                            dir.join(format!("example{run}.itf.json")).display()
+                        );
+                    }
+                }
+            }
+            println!(
+                "The outcome is: NoError in {runs} sampled run(s) ({dead_ends} dead-ended \
+                 early); this is a sample, not an exhaustive search"
+            );
+            println!("EXITCODE: OK");
+            EXIT_OK
+        }
+        SimOutcome::Violation { run, step } => {
+            println!("counterexample in run {run}: {step} step(s)");
+            if let Some(v) = bmc.verification() {
+                println!("  independently replayed: {}", describe(v));
+            }
+            if args.output_traces
+                && let Some(dir) = args.out_dir.as_ref().or(args.run_dir.as_ref())
+            {
+                let name = args
+                    .spec
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("spec");
+                match write_itf_as("example", bmc, dir, name, run) {
+                    Ok(path) => println!("  wrote {path}"),
+                    Err(code) => return code,
+                }
+            }
+            println!("The outcome is: Error");
+            println!("EXITCODE: ERROR (12)");
+            EXIT_COUNTEREXAMPLE
+        }
+        SimOutcome::Unknown(why) => {
+            eprintln!("undecided: {why}");
+            println!("The outcome is: Unknown");
+            println!("EXITCODE: ERROR (255)");
+            EXIT_SYSTEM
+        }
+    }
+}
+
 fn run(args: &Args) -> u8 {
     // `simulate` is accepted because it is `tla-connect`'s default mode, and
     // it does **not** do what Apalache's does. Apalache simulates: it walks
@@ -440,23 +531,10 @@ fn run(args: &Args) -> u8 {
     // because a caller that asked for cheap sampling and got exhaustive
     // search deserves to know why it is slow.
     if args.simulate {
-        eprintln!(
-            "note: `simulate` runs a bounded exhaustive check here, not random \
-             simulation; it is stronger within --length and slower"
-        );
-        // `--max-run` counts simulation runs, and only makes sense where
-        // there are runs to count. Under `check` it is refused rather than
-        // reinterpreted — the old alias made `--max-run=5` mean `--max-error=5`,
-        // which is a different number of *answers*, not a different pace.
-        if let Some(runs) = args.max_runs
-            && runs != 100
-        {
-            eprintln!(
-                "note: `--max-run={runs}` counts sampled runs in Apalache's \
-                 simulation; this checker is exhaustive within --length, so \
-                 the run count does not bound anything here"
-            );
-        }
+        // `--max-run` counts simulation runs. Under `check` it is refused
+        // rather than reinterpreted — the old alias made `--max-run=5`
+        // mean `--max-error=5`, which is a different number of *answers*,
+        // not a different pace.
     } else if let Some(runs) = args.max_runs {
         eprintln!(
             "error: `--max-run={runs}` is a `simulate` option (the number of \
@@ -465,8 +543,19 @@ fn run(args: &Args) -> u8 {
         );
         return EXIT_SYSTEM;
     }
-    if let Some(v) = &args.view {
-        eprintln!("note: `--view={v}` is not used: this checker has no trace-diversity view");
+    // `--view=V` decides what makes two counterexamples *the same one*:
+    // with it, `--max-error=N` returns N traces distinct under the view;
+    // without it, more than one counterexample cannot be made distinct and
+    // Apalache refuses the combination (`ApalacheConfigResolver`: "when
+    // maxError > 1, a view is required").
+    if args.max_errors > 1 && args.view.is_none() {
+        eprintln!(
+            "error: --max-error={} requires --view: without a view every further \
+             counterexample is near-duplicate of the first, and Apalache refuses the \
+             combination",
+            args.max_errors
+        );
+        return EXIT_SYSTEM;
     }
     // Apalache's stdout contract: the output directory line up front, the
     // outcome line at the end, the exit code restated last. Scripts grep
@@ -660,12 +749,30 @@ fn run(args: &Args) -> u8 {
     };
     // Every name in the list must resolve, or none of them is checked: a
     // subset would answer a narrower question than the caller asked, which is
-    // the same silent narrowing a dropped assumption is.
+    // the same silent narrowing a dropped assumption is. A member of an
+    // **unnamed** instance counts (`--inv=Safety` with `INSTANCE y2k WITH …`):
+    // it is visible unprefixed, which is what a role names.
+    let open_member = |name: &str| -> bool {
+        module.units.iter().any(|u| {
+            matches!(&u.kind, nixie_tla_syntax::UnitKind::Instance { instance, .. }
+            if spec
+                .modules
+                .iter()
+                .find(|(n, _)| *n == instance.module.name)
+                .is_some_and(|(_, m)| {
+                    m.units.iter().any(|u| {
+                        matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
+                            if params.is_empty() && n.name == name)
+                    })
+                }))
+        })
+    };
     for name in &inv {
         if !module.units.iter().any(|u| {
             matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
                 if params.is_empty() && n.name == *name)
-        }) {
+        }) && !open_member(name)
+        {
             eprintln!("error: the module has no zero-argument definition named `{name}`");
             return EXIT_EVAL;
         }
@@ -689,6 +796,38 @@ fn run(args: &Args) -> u8 {
         }
     };
     bmc.set_check_deadlocks(check_deadlocks);
+
+    // The view: a state-level definition whose value at a step is what the
+    // author considers "the same" counterexample. Anything above state
+    // level (an action or temporal view) cannot be evaluated per step and
+    // is refused by name.
+    if let Some(v) = &args.view {
+        let levels = nixie_tla_syntax::check_module(module);
+        match levels.trusted_level_of(v) {
+            Some(lev) if lev <= nixie_tla_syntax::Level::State => {}
+            Some(_) => {
+                eprintln!("error: --view={v} is above state level; a view is evaluated per state");
+                return EXIT_SYSTEM;
+            }
+            None => {
+                eprintln!("error: --view={v} could not be level-checked; refusing it");
+                return EXIT_SYSTEM;
+            }
+        }
+        let mut low = nixie_tla::Lowerer::new();
+        low.add_spec(&spec);
+        match low.lower_named(module, v) {
+            Ok(body) => bmc.set_view(body),
+            Err(e) => {
+                eprintln!("error: --view={v} could not be lowered: {e}");
+                return EXIT_SYSTEM;
+            }
+        }
+    }
+
+    if args.simulate {
+        return run_simulate(args, &mut bmc, &mut tm);
+    }
 
     // Up to `--max-error` counterexamples. A bounded query has one *shortest*
     // counterexample, so asking again without ruling that one out returns it
@@ -768,7 +907,7 @@ fn run(args: &Args) -> u8 {
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("spec");
-                    match write_itf(&bmc, dir, name, found) {
+                    match write_itf_as("violation", &bmc, dir, name, found) {
                         Ok(path) => println!("  wrote {path}"),
                         Err(code) => return code,
                     }
@@ -815,8 +954,9 @@ fn run(args: &Args) -> u8 {
     EXIT_OK
 }
 
-/// Write one counterexample as `violation<n>.itf.json`.
-fn write_itf(bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> {
+/// Write one counterexample as `violation<n>.itf.json` (check) or one
+/// sampled trace as `example<k>.itf.json` (simulate — Apalache's naming).
+fn write_itf_as(prefix: &str, bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> {
     let Some(doc) = bmc.counterexample_itf(spec) else {
         eprintln!("the counterexample could not be read back, so no ITF was written");
         return Err(EXIT_COUNTEREXAMPLE);
@@ -832,7 +972,7 @@ fn write_itf(bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> 
         eprintln!("could not create {}: {e}", dir.display());
         return Err(EXIT_SYSTEM);
     }
-    let out = dir.join(format!("violation{n}.itf.json"));
+    let out = dir.join(format!("{prefix}{n}.itf.json"));
     if let Err(e) = std::fs::write(&out, text) {
         eprintln!("could not write {}: {e}", out.display());
         return Err(EXIT_SYSTEM);

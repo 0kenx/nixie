@@ -49,6 +49,7 @@ VARIABLE x
 Init == x = 0
 Next == x' = x + 1
 Inv  == x < 3
+View == <<x>>
 ====
 ";
 
@@ -176,8 +177,9 @@ fn an_unknown_option_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// What this checker cannot do is said out loud rather than silently ignored:
-/// `simulate` is a bounded exhaustive check here and `--view` is not used.
+/// `simulate` samples behaviours (issue #28): even a deterministic
+/// specification's violation is found by the first run, as a replayed
+/// counterexample with Apalache's exit code.
 #[test]
 fn the_differences_from_apalache_are_reported() {
     let dir = scratch("notes");
@@ -187,12 +189,11 @@ fn the_differences_from_apalache_are_reported() {
         "--inv=Inv",
         "--max-run=10",
         "--length=6",
-        "--view=V",
         spec.to_str().expect("a path"),
     ]);
     assert_eq!(r.code, 12, "stderr: {}", r.err);
-    assert!(r.err.contains("not random simulation"), "{}", r.err);
-    assert!(r.err.contains("--view=V` is not used"), "{}", r.err);
+    assert!(r.out.contains("counterexample in run 1"), "{}", r.out);
+    assert!(r.out.contains("independently replayed: yes"), "{}", r.out);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -205,12 +206,14 @@ VARIABLE x
 Init == x \in 0 .. 5
 Next == UNCHANGED x
 Inv  == x < 3
+View == <<x>>
 ====
 ";
 
-/// `--max-error=N` means N *different* counterexamples. A bounded query has
-/// one shortest counterexample, so each is ruled out before the next is asked
-/// for; without that the same trace comes back forever.
+/// `--max-error=N` means N counterexamples distinct **under the view** —
+/// Apalache's semantics, including its refusal of `--max-error > 1` without
+/// one (`ApalacheConfigResolver`). Each reported trace is ruled out at its
+/// view's value, so the next must differ where the author looks.
 #[test]
 fn max_error_yields_distinct_counterexamples() {
     let dir = scratch("many");
@@ -221,6 +224,7 @@ fn max_error_yields_distinct_counterexamples() {
         "--inv=Inv",
         "--length=1",
         "--max-error=5",
+        "--view=View",
         &format!("--out-dir={}", out.display()),
         spec.to_str().expect("a path"),
     ]);
@@ -252,6 +256,95 @@ fn max_error_yields_distinct_counterexamples() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A view that names no definition is refused with exit 255 — an honest
+/// refusal rather than a note that would silently mean "no view".
+#[test]
+fn a_view_that_names_nothing_is_refused() {
+    let dir = scratch("badview");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=6",
+        "--view=Nope",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("--view=Nope"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--max-error > 1` without `--view` is refused with exit 255, exactly as
+/// Apalache refuses it: without a view, further counterexamples are
+/// near-duplicates of the first, and the combination promises a diversity
+/// no one can deliver.
+#[test]
+fn max_error_without_a_view_is_refused() {
+    let dir = scratch("noview");
+    let spec = write_spec(&dir, "Choice", CHOICE);
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=1",
+        "--max-error=2",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("requires --view"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A view blocks at the view's *value*, not the whole state: two traces the
+/// view cannot tell apart count as one, so asking for several returns
+/// traces that differ in the viewed component. `y` varies where `x` does
+/// not, and the view is `<<x>>`.
+#[test]
+fn view_blocking_blocks_the_views_value() {
+    let spec = r"
+---- MODULE Viewed ----
+EXTENDS Integers
+VARIABLE x, y
+Init == /\ x = 0 /\ y = 0
+Next == /\/ /\ x' = x + 1 /\ y' = y
+        \/ /\ x' = x /\ y' = y + 1
+Inv  == x + y < 3
+View == <<x>>
+====
+";
+    let dir = scratch("view");
+    let p = write_spec(&dir, "Viewed", spec);
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=5",
+        "--max-error=3",
+        "--view=View",
+        &format!("--out-dir={}", out.display()),
+        p.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    // Three traces, pairwise distinct in their `x` histories (the view),
+    // however their `y`s scatter.
+    let mut xs: Vec<String> = Vec::new();
+    for n in 1..=3 {
+        let text = std::fs::read_to_string(out.join(format!("violation{n}.itf.json")))
+            .unwrap_or_else(|e| panic!("violation{n}.itf.json: {e}"));
+        let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        let seq: Vec<String> = doc["states"]
+            .as_array()
+            .expect("states")
+            .iter()
+            .map(|s| s["x"]["#bigint"].as_str().expect("an x").to_string())
+            .collect();
+        xs.push(seq.join(","));
+    }
+    xs.sort();
+    xs.dedup();
+    assert_eq!(xs.len(), 3, "the three traces are distinct under the view");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A deterministic specification has one behaviour, so one counterexample is
 /// the whole answer however many are asked for.
 #[test]
@@ -264,6 +357,7 @@ fn a_deterministic_spec_has_one_counterexample() {
         "--inv=Inv",
         "--length=8",
         "--max-error=5",
+        "--view=View",
         &format!("--out-dir={}", out.display()),
         spec.to_str().expect("a path"),
     ]);
@@ -681,5 +775,159 @@ fn unsupported_subcommands_refuse_with_reasons() {
         assert_eq!(r.code, 255, "{mode}: stdout: {}\nstderr: {}", r.out, r.err);
         assert!(r.err.contains(needle), "{mode}: {}", r.err);
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- simulate: sampled behaviours (issue #28) ----
+
+const WALK: &str = r"
+---- MODULE Walk ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == \/ /\ x < 6 /\ x' = x + 1
+        \/ /\ x > 2 /\ x' = x - 2
+Inv == x < 6
+View == <<x>>
+====
+";
+
+/// `simulate` samples: at each step one *enabled* disjunct is taken, and a
+/// violation found in a run is a real counterexample — exit 12, replayed,
+/// with its `example<r>.itf.json` when `--output-traces` says so.
+#[test]
+fn simulate_reports_a_sampled_violation() {
+    let dir = scratch("simviol");
+    let spec = write_spec(&dir, "Walk", WALK);
+    let out = dir.join("out");
+    let r = run(&[
+        "simulate",
+        "--inv=Inv",
+        "--length=10",
+        "--max-run=5",
+        "--seed=0",
+        "--output-traces",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    assert!(r.out.contains("counterexample in run"), "{}", r.out);
+    assert!(r.out.contains("independently replayed: yes"), "{}", r.out);
+    // Whichever run found it, its example file is there (a run that never
+    // violates writes no file of its own unless it completes the length).
+    let wrote_one = std::fs::read_dir(&out)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .any(|e| e.file_name().to_string_lossy().starts_with("example"))
+        })
+        .unwrap_or(false);
+    assert!(wrote_one, "an example file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A sampler never claims absence of errors beyond its runs, and its "no
+/// error" message says exactly that.
+#[test]
+fn simulate_no_error_is_about_the_sampled_runs() {
+    let dir = scratch("simok");
+    let spec = write_spec(&dir, "Walk", WALK);
+    let r = run(&[
+        "simulate",
+        "--inv=Inv",
+        "--length=4",
+        "--max-run=3",
+        "--seed=1",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stderr: {}", r.err);
+    assert!(r.out.contains("NoError in 3 sampled run(s)"), "{}", r.out);
+    assert!(r.out.contains("not an exhaustive search"), "{}", r.out);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The same seed gives byte-identical sampled behaviour — where Apalache's
+/// simulation is not reproducible, this one is a deterministic function of
+/// `--seed`, and a reported bug must replay from the seed alone.
+#[test]
+fn simulate_is_seed_deterministic() {
+    let dir = scratch("simseed");
+    let spec = write_spec(&dir, "Walk", WALK);
+    let mut outs = Vec::new();
+    for _ in 0..2 {
+        let out = dir.join(format!("o{}", outs.len()));
+        let r = run(&[
+            "simulate",
+            "--inv=Inv",
+            "--length=4",
+            "--max-run=5",
+            "--seed=7",
+            "--output-traces",
+            &format!("--out-dir={}", out.display()),
+            spec.to_str().expect("a path"),
+        ]);
+        assert_eq!(r.code, 0, "stderr: {}", r.err);
+        let mut files: Vec<(String, String)> = Vec::new();
+        for e in std::fs::read_dir(&out).expect("the output dir") {
+            let p = e.expect("entry").path();
+            if p.extension().and_then(|e| e.to_str()) == Some("json") {
+                files.push((
+                    p.file_name().unwrap().to_string_lossy().into_owned(),
+                    std::fs::read_to_string(&p).expect("the trace"),
+                ));
+            }
+        }
+        files.sort();
+        outs.push(files);
+    }
+    assert_eq!(outs[0], outs[1], "byte-identical across identical seeds");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A role may name a member of an **unnamed** instance — `INSTANCE y2k
+/// WITH …` makes `Init`, `Next` and `Safety` visible unprefixed — which is
+/// the y2k simulate cell's very shape.
+#[test]
+fn a_role_may_name_an_open_instance_member() {
+    let dir = scratch("siminst");
+    let spec = write_spec(
+        &dir,
+        "y2k_instance",
+        r"
+---------------------------- MODULE y2k_instance ----------------------------
+VARIABLE
+    \* @type: Int;
+    year,
+    \* @type: Bool;
+    hasLicense
+
+INSTANCE y2k WITH BIRTH_YEAR <- 80, LICENSE_AGE <- 18
+=============================================================================
+",
+    );
+    write_spec(
+        &dir,
+        "y2k",
+        r"
+---- MODULE y2k ----
+EXTENDS Integers
+CONSTANT BIRTH_YEAR, LICENSE_AGE
+VARIABLE year, hasLicense
+Init == year = 0 /\ hasLicense = FALSE
+Next == year' = year + 1 /\ hasLicense' = hasLicense
+Safety == year < 100
+====
+",
+    );
+    let r = run(&[
+        "simulate",
+        "--inv=Safety",
+        "--length=10",
+        "--max-run=2",
+        "--seed=0",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stderr: {}", r.err);
+    assert!(r.out.contains("NoError in 2 sampled run(s)"), "{}", r.out);
     let _ = std::fs::remove_dir_all(&dir);
 }

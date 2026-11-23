@@ -43,6 +43,33 @@ use crate::encode::{EncodeError, Encoder, SetEncoding};
 use crate::sorts::sort_of;
 use crate::trace::{State, Trace};
 
+/// The result of one **simulation** pass (issue #28): sampled behaviours,
+/// not an exhaustive search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SimOutcome {
+    /// Every sampled run reached the full length (or dead-ended) without an
+    /// invariant breaking. **Not** a claim that no error exists — only that
+    /// none appeared in the runs taken; the caller's message must say so.
+    NoErrorInSampledRuns {
+        /// How many runs were sampled.
+        runs: usize,
+        /// How many of them dead-ended before the full length.
+        dead_ends: usize,
+    },
+    /// An invariant broke in a sampled run. The trace is behind
+    /// [`Bmc::counterexample_itf`], independently replayed exactly as a
+    /// `check` counterexample is.
+    Violation {
+        /// Which run, counting from 1.
+        run: usize,
+        /// The number of `Next` steps taken before the violating state.
+        step: u32,
+    },
+    /// The sampler could not proceed honestly: an undecided query whose
+    /// answer would have been the verdict.
+    Unknown(String),
+}
+
 /// What a bounded check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -260,6 +287,17 @@ pub struct Bmc {
     /// counterexample is found. They only ever narrow the search, so they can
     /// hide a behaviour and never invent one.
     blocked: Vec<TermId>,
+    /// The `--view` body: what makes two counterexamples *the same* one.
+    ///
+    /// When set, a reported trace is blocked **under the view** — the view's
+    /// value at each step is ruled out, not the whole state — so
+    /// `--max-error=N` returns traces that differ where the author looks.
+    /// Apalache's `ViewFinder`/`--view` semantics, and like Apalache's the
+    /// view must be a **state-level** definition.
+    view: Option<KeraRef>,
+    /// The completed sampled runs' traces, when `simulate` was asked to keep
+    /// them (`--output-traces`): `(run, trace)`, run counting from 1.
+    sampled: Vec<(usize, Trace)>,
     /// Which of the named invariants the last counterexample broke, by name.
     ///
     /// A list, because `--inv=A,B` asks about several at once and a caller
@@ -908,6 +946,8 @@ impl Bmc {
             unapplied_config: unapplied,
             conflict_limit: None,
             counterexample: None,
+            view: None,
+            sampled: Vec::new(),
             verification: None,
             check_deadlocks: true,
             deadlock_step: None,
@@ -1404,6 +1444,18 @@ impl Bmc {
         self.check_deadlocks = on;
     }
 
+    /// Set the `--view` body for counterexample diversity; see [`Bmc::view`].
+    pub fn set_view(&mut self, body: KeraRef) {
+        self.view = Some(body);
+    }
+
+    /// The completed sampled runs' traces, in run order; empty unless
+    /// `simulate` ran with `keep_traces`.
+    #[must_use]
+    pub fn sampled_traces(&self) -> &[(usize, Trace)] {
+        &self.sampled
+    }
+
     /// The step of the last reported [`Outcome::Deadlock`].
     #[must_use]
     pub fn deadlock_step(&self) -> Option<u32> {
@@ -1504,10 +1556,282 @@ impl Bmc {
     /// the encoded formula, and is still replayed before it is reported. The
     /// alternative — dropping the block and asking again — returns the same
     /// trace and never terminates.
-    pub fn block_counterexample(&mut self, tm: &mut TermManager) -> bool {
-        let Some(trace) = self.counterexample.as_ref() else {
+    /// Sample behaviours: `runs` random walks of at most `depth` steps
+    /// (issue #28).
+    ///
+    /// This is Apalache's `simulate` semantics, not an exhaustive search: at
+    /// each step the transition's top-level disjuncts are tried in a
+    /// **seeded** random order and the first *enabled* one is taken
+    /// (enabled = the prefix plus that disjunct is satisfiable), the
+    /// invariants are checked in the state reached, and a run that finds no
+    /// enabled disjunct dead-ends. A run is a sampler: `NoErrorInSampledRuns`
+    /// is a statement about the runs taken, never a proof, and a violation
+    /// found is decoded and **replayed** before it is reported — a sampled
+    /// trace that does not replay is [`SimOutcome::Unknown`], not a
+    /// counterexample.
+    ///
+    /// The PRNG is SplitMix64, seeded from `seed`: the same seed gives
+    /// byte-identical behaviour, which the determinism test pins. No clock,
+    /// no OS entropy — anything else makes the sampler unreproducible.
+    ///
+    /// # Errors
+    ///
+    /// [`SetupError::Encode`] when a role formula cannot be encoded at some
+    /// step.
+    pub fn simulate(
+        &mut self,
+        runs: usize,
+        depth: u32,
+        seed: u64,
+        keep_traces: bool,
+        tm: &mut TermManager,
+    ) -> core::result::Result<SimOutcome, SetupError> {
+        let named = |name: &str, e: &EncodeError| SetupError::Encode {
+            name: name.to_string(),
+            why: e.to_string(),
+        };
+        // The disjuncts of `Next`, and every one's term at every step, built
+        // up front so a run only ever asserts.
+        let disjuncts = disjuncts_of(&self.next);
+        let mut at_step: Vec<Vec<TermId>> = Vec::with_capacity(depth as usize);
+        for k in 0..depth {
+            let mut row = Vec::with_capacity(disjuncts.len());
+            for d in &disjuncts {
+                let t = self
+                    .encoder
+                    .encode_at(d, k, tm)
+                    .map_err(|e| named("Next", &e))?;
+                row.push(t);
+            }
+            at_step.push(row);
+        }
+        let mut assumed = Vec::new();
+        for a in &self.assumptions {
+            if let Ok(t) = self.encoder.encode_at(a, 0, tm) {
+                assumed.push(t);
+            }
+        }
+        let init = self
+            .encoder
+            .encode_at(&self.init, 0, tm)
+            .map_err(|e| named("Init", &e))?;
+        let mut inv_terms: Vec<(String, TermId, u32)> = Vec::new();
+        for j in 0..=depth {
+            for (name, inv) in &self.invs {
+                if self.action_invariant_names.contains(name) {
+                    continue;
+                }
+                let t = self
+                    .encoder
+                    .encode_at(inv, j, tm)
+                    .map_err(|e| named(name, &e))?;
+                inv_terms.push((name.clone(), t, j));
+            }
+        }
+
+        let mut solver = Solver::new();
+        if let Some(limit) = self.conflict_limit {
+            solver.set_conflict_limit(limit);
+        }
+        for a in &assumed {
+            solver.assert(*a, tm);
+        }
+        solver.assert(init, tm);
+        for c in self.encoder.side_constraints().to_vec() {
+            solver.assert(c, tm);
+        }
+        let mut rng = seed;
+        let mut step = splitmix64(&mut rng);
+        let _ = &mut step;
+        let mut dead_ends = 0usize;
+        for run in 1..=runs {
+            solver.push();
+            let mut outcome: Option<SimOutcome> = None;
+            for k in 0..depth {
+                // A seeded shuffle of the disjunct order for this (run,
+                // step): Fisher-Yates over the indices, drawing from the
+                // one SplitMix64 stream so the whole pass is one
+                // deterministic function of the seed.
+                let n = disjuncts.len();
+                let mut order: Vec<usize> = (0..n).collect();
+                for i in (1..n).rev() {
+                    let j = (next_rand(&mut rng) % (i as u64 + 1)) as usize;
+                    order.swap(i, j);
+                }
+                let mut chosen: Option<TermId> = None;
+                for &ix in &order {
+                    solver.push();
+                    solver.assert(at_step[k as usize][ix], tm);
+                    let enabled = solver.check(tm);
+                    match enabled {
+                        SolverResult::Sat => {
+                            solver.pop();
+                            chosen = Some(at_step[k as usize][ix]);
+                            break;
+                        }
+                        SolverResult::Unsat => {
+                            solver.pop();
+                        }
+                        SolverResult::Unknown => {
+                            solver.pop();
+                            // An undecided disjunct is neither enabled nor
+                            // disabled; skipping it samples around it, and
+                            // if the run then finds another enabled
+                            // disjunct that is a walk the sampler took.
+                            continue;
+                        }
+                    }
+                }
+                let Some(d) = chosen else {
+                    // No disjunct enabled: the sampled path ends here.
+                    dead_ends += 1;
+                    break;
+                };
+                solver.assert(d, tm);
+                // The state invariants of the state just reached.
+                let mut violated: Vec<TermId> = Vec::new();
+                for (_, t, jj) in &inv_terms {
+                    if *jj == k + 1 {
+                        violated.push(tm.mk_not(*t));
+                    }
+                }
+                if !violated.is_empty() {
+                    let query = if violated.len() == 1 {
+                        violated[0]
+                    } else {
+                        tm.mk_or(violated)
+                    };
+                    solver.push();
+                    solver.assert(query, tm);
+                    let answer = solver.check(tm);
+                    if answer == SolverResult::Sat {
+                        let (trace, verdict) = match solver.model() {
+                            None => (
+                                None,
+                                Verification::NotDecoded(
+                                    "the solver produced no model".to_string(),
+                                ),
+                            ),
+                            Some(model) => match self.extract(model, k + 1, tm) {
+                                Err(why) => (None, Verification::NotDecoded(why)),
+                                Ok(t) => match self.replay(&t) {
+                                    Err(why) => (Some(t), Verification::NotReplayed(why)),
+                                    Ok(()) => (Some(t), Verification::Replayed),
+                                },
+                            },
+                        };
+                        solver.pop();
+                        self.counterexample = trace;
+                        self.verification = Some(verdict.clone());
+                        outcome = Some(match &verdict {
+                            Verification::Replayed => SimOutcome::Violation { run, step: k + 1 },
+                            Verification::NotDecoded(why) => SimOutcome::Unknown(format!(
+                                "a sampled counterexample was found but could not be read \
+                                 back as TLA+ values: {why}"
+                            )),
+                            Verification::NotReplayed(why) => SimOutcome::Unknown(format!(
+                                "a sampled counterexample was read back but does not replay \
+                                 — the encoding and the evaluator disagree: {why}"
+                            )),
+                        });
+                        break;
+                    }
+                    solver.pop();
+                    if answer == SolverResult::Unknown {
+                        outcome = Some(SimOutcome::Unknown(format!(
+                            "the solver could not decide the invariant at step {} of run {run}",
+                            k + 1
+                        )));
+                        break;
+                    }
+                }
+            }
+            if keep_traces && outcome.is_none() {
+                // The run's path is satisfiable by construction (every step
+                // was taken from a `Sat`), so this check is a formality that
+                // hands back the model to read the trace from.
+                // The run's path is satisfiable by construction (every step
+                // was taken from a `Sat`), so this check hands back the
+                // model the trace is read from. A trace that cannot be read
+                // is simply not kept — `--output-traces` is reporting, not
+                // a claim, and a half-invented trace would be worse than a
+                // missing file.
+                if solver.check(tm) == SolverResult::Sat
+                    && let Some(model) = solver.model()
+                    && let Ok(t) = self.extract(model, depth, tm)
+                {
+                    self.sampled.push((run, t));
+                }
+            }
+            solver.pop();
+            if let Some(o) = outcome {
+                return Ok(o);
+            }
+        }
+        Ok(SimOutcome::NoErrorInSampledRuns { runs, dead_ends })
+    }
+
+    /// Block a reported trace **under the view**: at each step, rule out the
+    /// view's *value* rather than the whole state.
+    ///
+    /// The value is computed by the evaluator over the decoded state — the
+    /// semantic truth the trace carries — and ruled out against the view's
+    /// own term at that step, so the next query must differ somewhere the
+    /// author looks. A step whose view value has no term form (a set- or
+    /// function-valued view) falls back to the full-state block, which is
+    /// *stronger* and therefore safe: it can only rule out more behaviours,
+    /// never admit one.
+    fn block_under_view(&mut self, trace: &Trace, tm: &mut TermManager) -> bool {
+        let Some(view) = self.view.clone() else {
             return false;
         };
+        let mut conj: Vec<TermId> = Vec::new();
+        for (step, state) in trace.states.iter().enumerate() {
+            let Ok(step) = u32::try_from(step) else {
+                return false;
+            };
+            // A decoded state *is* a map of evaluator values: binding the
+            // names is all the environment needs.
+            let env: std::collections::HashMap<String, nixie_tla::Value> = state.clone();
+            let Ok(observed) = nixie_tla::Evaluator::new().eval_state(&view, &env) else {
+                return false;
+            };
+            let Ok(term) = self.encoder.encode_at(&view, step, tm) else {
+                return false;
+            };
+            let Some(sort) = tm.get(term).map(|d| d.sort) else {
+                return false;
+            };
+            let Some(lit) = crate::trace::encode_value(&observed, sort, tm) else {
+                // A view value with no term form at this step: the whole
+                // state is ruled out instead (stronger, still sound).
+                return false;
+            };
+            conj.push(tm.mk_eq(term, lit));
+        }
+        if conj.is_empty() {
+            return false;
+        }
+        let same = tm.mk_and(conj);
+        let clause = tm.mk_not(same);
+        self.blocked.push(clause);
+        true
+    }
+
+    /// Rule out the last reported counterexample, so the next query returns
+    /// a **different** one: under the view's value at each step when a view
+    /// is set, and otherwise the whole state. See [`Bmc::view`] and
+    /// [`Bmc::block_under_view`].
+    ///
+    /// Returns `false` when the trace could not be expressed as a
+    /// constraint at all — the signal to stop rather than loop forever.
+    pub fn block_counterexample(&mut self, tm: &mut TermManager) -> bool {
+        let Some(trace) = self.counterexample.clone() else {
+            return false;
+        };
+        if self.view.is_some() && self.block_under_view(&trace, tm) {
+            return true;
+        }
         let mut conj: Vec<TermId> = Vec::new();
         for (step, state) in trace.states.iter().enumerate() {
             let Ok(step) = u32::try_from(step) else {
@@ -1551,6 +1875,17 @@ impl Bmc {
     #[must_use]
     pub fn counterexample_itf(&self, source: &str) -> Option<serde_json::Value> {
         let trace = self.counterexample.as_ref()?;
+        Some(self.render_itf(trace, source))
+    }
+
+    /// Render one trace as an ITF document — the shared body of a
+    /// counterexample and a sampled run's `example<k>.itf.json`.
+    #[must_use]
+    pub fn trace_itf(&self, trace: &Trace, source: &str) -> Option<serde_json::Value> {
+        Some(self.render_itf(trace, source))
+    }
+
+    fn render_itf(&self, trace: &Trace, source: &str) -> serde_json::Value {
         let mut vars: Vec<String> = self
             .encoder
             .state_names()
@@ -1567,7 +1902,7 @@ impl Bmc {
         // useless to diff and useless to check in.
         vars.sort();
         params.sort();
-        Some(crate::itf::to_itf(
+        crate::itf::to_itf(
             trace,
             &vars,
             &params,
@@ -1576,7 +1911,7 @@ impl Bmc {
                 source: source.to_string(),
                 violated: self.violated_invariants.clone(),
             },
-        ))
+        )
     }
 
     /// Whether the last counterexample was confirmed independently.
@@ -1800,7 +2135,7 @@ fn lower_one<'a>(
     module: &'a Module,
     name: &str,
 ) -> core::result::Result<KeraRef, SetupError> {
-    if !has_definition(module, name) {
+    if !has_definition(module, name) && !open_instance_member(low, name) {
         return Err(SetupError::NoSuchDefinition(name.to_string()));
     }
     low.lower_named(module, name)
@@ -1855,6 +2190,13 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         }
         stack.extend(t.as_ref().children().into_iter().cloned());
     }
+}
+
+/// Whether `name` is a member of an **unnamed** instance the lowerer
+/// registered — visible unprefixed, which is what a role names
+/// (`--init=Init` with `INSTANCE y2k WITH …`).
+fn open_instance_member(low: &Lowerer<'_>, name: &str) -> bool {
+    low.open_instances_visible(name)
 }
 
 /// Whether the module defines `name` with no parameters.
@@ -1989,5 +2331,39 @@ fn ground_bindings(
             _ => {}
         }
     }
+    out
+}
+
+/// SplitMix64: one step of the stream.
+fn next_rand(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = *state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// SplitMix64's generator step, unused-stream form (kept for the seed's
+/// first draw in `simulate`'s initialisation).
+fn splitmix64(state: &mut u64) -> u64 {
+    next_rand(state)
+}
+
+/// The top-level disjuncts of a transition: `\/ A \/ B` flattens to
+/// `[A, B]`, and anything else is the one disjunct it is. A *sampled* step
+/// takes exactly one, so the split is what makes "which one" a question the
+/// PRNG can answer.
+fn disjuncts_of(next: &KeraRef) -> Vec<KeraRef> {
+    let mut out = Vec::new();
+    let mut work = vec![Rc::clone(next)];
+    while let Some(t) = work.pop() {
+        if let Kera::Or(xs) = t.as_ref() {
+            work.extend(xs.iter().map(Rc::clone));
+        } else {
+            out.push(t);
+        }
+    }
+    // Reverse the worklist order so the disjuncts come out in source order.
+    out.reverse();
     out
 }

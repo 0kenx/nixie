@@ -1360,20 +1360,63 @@ impl<'a> Lowerer<'a> {
     ///
     /// Returns [`LowerErrorKind::Unsupported`] if there is no such definition,
     /// or the first lowering error.
+    /// Whether `name` is a nullary member of some **unnamed** instance —
+    /// visible unprefixed, which is what a role names.
+    #[must_use]
+    pub fn open_instances_visible(&self, name: &str) -> bool {
+        self.open_instances.iter().any(|i| {
+            self.module_defs
+                .get(&i.module.name.name)
+                .is_some_and(|m| m.get(name).is_some_and(|d| d.params.is_empty()))
+        })
+    }
+
+    /// Lower the body of the named top-level definition — a unit of this
+    /// module, or a member of one of its **unnamed** instances (visible
+    /// unprefixed, which is what a role names).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LowerErrorKind::Unsupported`] if there is no such definition,
+    /// or the first lowering error.
     pub fn lower_named(&mut self, module: &'a Module, name: &str) -> Result<KeraRef> {
         self.lower_module = Some(module);
         let found = module.units.iter().find_map(|u| match &u.kind {
             UnitKind::OpDef { name: n, body, .. } if n.name == name => Some(body),
             _ => None,
         });
-        let Some(body) = found else {
-            return Err(LowerError::unsupported(
-                &format!("`{name}`"),
-                "no operator definition with that name in this module",
+        if let Some(body) = found {
+            return self.lower(body);
+        }
+        // A member of an **unnamed** instance is visible unprefixed, so a
+        // role may name it (`--inv=Safety` with `INSTANCE y2k WITH …`):
+        // lower it through the instance machinery, substitution and all —
+        // exactly what a bare use of the name inside a body does.
+        let inst = self
+            .open_instances
+            .iter()
+            .position(|i| {
+                self.module_defs
+                    .get(&i.module.name.name)
+                    .is_some_and(|m| m.contains_key(name))
+            })
+            .map(|ix| self.open_instances[ix].clone());
+        if let Some(inst) = inst {
+            let mut stack: Vec<Frame<'a>> = Vec::new();
+            self.push_instance_body(
+                &inst,
+                name,
+                &[],
                 nixie_tla_syntax::Span::default(),
-            ));
-        };
-        self.lower(body)
+                &mut stack,
+            )?;
+            return self.run_frames(stack, nixie_tla_syntax::Span::default());
+        }
+        Err(LowerError::unsupported(
+            &format!("`{name}`"),
+            "no operator definition with that name in this module (or its open instances)",
+            nixie_tla_syntax::Span::default(),
+        ))
     }
 
     /// Override the inlining depth budget.
@@ -1800,7 +1843,15 @@ impl<'a> Lowerer<'a> {
     ///
     /// Returns the first [`LowerError`] encountered.
     pub fn lower(&mut self, expr: &'a Expr) -> Result<KeraRef> {
-        let mut stack: Vec<Frame<'a>> = vec![Frame::Expand(expr)];
+        let stack: Vec<Frame<'a>> = vec![Frame::Expand(expr)];
+        self.run_frames(stack, expr.span)
+    }
+
+    /// The lowering walk over a pre-seeded frame stack; [`Self::lower`] with
+    /// one `Expand` frame, and [`Self::lower_named`]'s open-instance path
+    /// with the instance frames an unprefixed member needs.
+    fn run_frames(&mut self, stack: Vec<Frame<'a>>, root_span: Span) -> Result<KeraRef> {
+        let mut stack = stack;
         let mut values: Vec<KeraRef> = Vec::new();
         let mut steps = 0usize;
 
@@ -1815,7 +1866,7 @@ impl<'a> Lowerer<'a> {
                     LowerErrorKind::BudgetExhausted {
                         limit: self.step_budget,
                     },
-                    expr.span,
+                    root_span,
                 ));
             }
             match frame {
@@ -1835,7 +1886,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "a fold over a function",
                             "internal: missing the function to fold over",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     let read = Kera::FunApp(Rc::clone(&fun), Kera::Var(elem).rc()).rc();
@@ -1884,14 +1935,14 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "an `EXCEPT` update",
                             "internal: the function being updated was not on the stack",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     let Some(mut acc) = values.get(base_at).cloned() else {
                         return Err(LowerError::unsupported(
                             "an `EXCEPT` update",
                             "internal: the function being updated was not on the stack",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     // Replay the earlier updates, exactly as `build_except`
@@ -1905,7 +1956,7 @@ impl<'a> Lowerer<'a> {
                         let Some(value) = values.get(cursor + pl).cloned() else {
                             break;
                         };
-                        acc = nest_except(acc, &path, value, expr.span)?;
+                        acc = nest_except(acc, &path, value, root_span)?;
                         cursor += pl + 1;
                     }
                     let mut at = acc;
@@ -1994,7 +2045,7 @@ impl<'a> Lowerer<'a> {
                         LowerError::unsupported(
                             "an `EXCEPT` index",
                             "internal: missing index expressions",
-                            expr.span,
+                            root_span,
                         )
                     })?;
                     let parts: Vec<KeraRef> = values.split_off(at);
@@ -2015,7 +2066,7 @@ impl<'a> Lowerer<'a> {
                             return Err(LowerError::unsupported(
                                 "an instance member application",
                                 "internal: missing argument",
-                                expr.span,
+                                root_span,
                             ));
                         };
                         scope.insert(p.clone(), Binding::Value(v));
@@ -2026,7 +2077,7 @@ impl<'a> Lowerer<'a> {
                             return Err(LowerError::unsupported(
                                 "an `INSTANCE` substitution",
                                 "internal: missing replacement",
-                                expr.span,
+                                root_span,
                             ));
                         };
                         subst.insert(n.clone(), v);
@@ -2108,7 +2159,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "a function definition with no bound variable",
                             "internal",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     // The recursive name is a binder like any other, so it
@@ -2146,7 +2197,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "a function definition",
                             "internal: missing body",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     let mut doms = Vec::with_capacity(domains);
@@ -2155,7 +2206,7 @@ impl<'a> Lowerer<'a> {
                             return Err(LowerError::unsupported(
                                 "a function definition",
                                 "internal: missing domain",
-                                expr.span,
+                                root_span,
                             ));
                         };
                         doms.push(d);
@@ -2182,7 +2233,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "`BagOfAll`",
                             "internal: missing children",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     // `B[elem]`: the copies carried over for this element.
@@ -2203,7 +2254,7 @@ impl<'a> Lowerer<'a> {
                             LowerError::unsupported(
                                 "`BagOfAll`",
                                 "internal: bag addition has no lowering",
-                                expr.span,
+                                root_span,
                             )
                         })?;
                     values.push(
@@ -2215,7 +2266,7 @@ impl<'a> Lowerer<'a> {
                                 LowerError::unsupported(
                                     "`BagOfAll`",
                                     "internal: EmptyBag has no lowering",
-                                    expr.span,
+                                    root_span,
                                 )
                             })?,
                             collection: Kera::Domain(bag).rc(),
@@ -2229,7 +2280,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "`SelectSeq`",
                             "internal: missing children",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     let keep = Kera::Ite(
@@ -2271,7 +2322,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "`FunAsSeq`",
                             "internal: missing children",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     values.push(Kera::Opaque(Name("FunAsSeq".into()), vec![f, len]).rc());
@@ -2281,7 +2332,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "`MkSeq`",
                             "internal: missing children",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     let lo = Kera::Int("1".into()).rc();
@@ -2302,7 +2353,7 @@ impl<'a> Lowerer<'a> {
                         return Err(LowerError::unsupported(
                             "a fold",
                             "internal: missing children",
-                            expr.span,
+                            root_span,
                         ));
                     };
                     values.push(
@@ -2329,7 +2380,7 @@ impl<'a> Lowerer<'a> {
             LowerError::unsupported(
                 "this expression",
                 "internal: lowering produced no value",
-                expr.span,
+                root_span,
             )
         })
     }
