@@ -598,6 +598,66 @@ fn rebuild_renamed(
     }
 }
 
+/// Substitute every occurrence of the free variable `from` in `t` by `to`.
+///
+/// The frame-analysis instantiation step: an assignment collected under an
+/// existential binder is written per candidate of the binder's domain, and
+/// this writes the candidate in. Capture-free for the same reason
+/// the α-rename pass is — lowering's binder names are globally unique, so no
+/// occurrence of `from` can be under a binder that shadows it.
+///
+/// Memoised by pointer and unchanged-preserving, so the shared-DAG shape of
+/// a lowered term survives instantiation.
+pub fn subst_term(t: &KeraRef, from: &Name, to: &KeraRef) -> KeraRef {
+    enum Frame<'a> {
+        Visit(&'a KeraRef),
+        Rebuild(&'a KeraRef, usize),
+    }
+    let mut memo: std::collections::HashMap<*const Kera, KeraRef> =
+        std::collections::HashMap::new();
+    let mut stack: Vec<Frame> = vec![Frame::Visit(t)];
+    let mut values: Vec<KeraRef> = Vec::new();
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Visit(x) => {
+                if let Some(hit) = memo.get(&Rc::as_ptr(x)) {
+                    values.push(Rc::clone(hit));
+                    continue;
+                }
+                if matches!(x.as_ref(), Kera::Var(n) if n == from) {
+                    values.push(Rc::clone(to));
+                    continue;
+                }
+                let n = x.as_ref().children().len();
+                if n == 0 {
+                    values.push(Rc::clone(x));
+                    continue;
+                }
+                stack.push(Frame::Rebuild(x, n));
+                for c in x.as_ref().children().into_iter().rev() {
+                    stack.push(Frame::Visit(c));
+                }
+            }
+            Frame::Rebuild(x, n) => {
+                let kids: Vec<KeraRef> = values.split_off(values.len() - n);
+                let old_kids = x.as_ref().children();
+                let out = if old_kids
+                    .iter()
+                    .zip(kids.iter())
+                    .all(|(o, k)| Rc::ptr_eq(o, k))
+                {
+                    Rc::clone(x)
+                } else {
+                    rebuild(x, true, &kids)
+                };
+                memo.insert(Rc::as_ptr(x), Rc::clone(&out));
+                values.push(out);
+            }
+        }
+    }
+    values.pop().unwrap_or_else(|| Rc::clone(t))
+}
+
 /// The standard infinite sets, as membership domains a skolem can be
 /// constrained by. `Real` is excluded: the front end has no reals.
 fn infinite_set_of(set: &KeraRef) -> Option<&'static str> {

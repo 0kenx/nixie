@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bmc;
 pub mod encode;
+pub mod frames;
 pub mod itf;
 pub mod sorts;
 pub mod trace;
@@ -15,4 +16,5 @@ pub mod trace;
 pub use arena::{Member, SetCell, Value};
 pub use bmc::{Bmc, Outcome, SetupError};
 pub use encode::{EncodeError, Encoder, SetEncoding};
+pub use frames::Frames;
 pub use sorts::{NoSort, sort_of};

@@ -298,6 +298,12 @@ pub struct Bmc {
     /// The completed sampled runs' traces, when `simulate` was asked to keep
     /// them (`--output-traces`): `(run, trace)`, run counting from 1.
     sampled: Vec<(usize, Trace)>,
+    /// The set-valued state variables, by name — the frame analysis's
+    /// subject list, collected at prepare time from the inference.
+    set_vars: Vec<String>,
+    /// Whether the frame analysis has run and its universes were handed to
+    /// the encoder. Once per `Bmc`, before the first depth query.
+    frames_done: bool,
     /// Which of the named invariants the last counterexample broke, by name.
     ///
     /// A list, because `--inv=A,B` asks about several at once and a caller
@@ -874,6 +880,7 @@ impl Bmc {
         // at all. The solver's finite-set sort can, which is the whole reason
         // the theory was built.
         let mut encoder = Encoder::new().with_set_encoding(SetEncoding::Native);
+        let mut set_vars: Vec<String> = Vec::new();
         let mut names: Vec<(String, nixie_tla::TyId)> = inf
             .free_names()
             .map(|(n, id)| (n.to_string(), id))
@@ -904,7 +911,17 @@ impl Bmc {
                 }
             };
             if state.iter().any(|v| v == &name) {
-                encoder.declare_state(name, sort);
+                encoder.declare_state(name.clone(), sort);
+                // A set-sorted state variable is a frame subject (issue #20):
+                // the candidate-universe derivation runs before the first
+                // query and hands the encoder what it needs to instantiate a
+                // bounded quantifier over the variable.
+                if matches!(
+                    tm.sorts.get(sort).map(|s| s.kind.clone()),
+                    Some(nixie_core::SortKind::Set(_))
+                ) {
+                    set_vars.push(name.clone());
+                }
             } else {
                 encoder.declare(name, sort);
             }
@@ -934,6 +951,8 @@ impl Bmc {
         }
 
         Ok(Self {
+            set_vars,
+            frames_done: false,
             assumptions: typed_assumptions,
             dropped_setup: dropped,
             dropped_assumptions: dropped,
@@ -979,6 +998,22 @@ impl Bmc {
             name: name.to_string(),
             why: e.to_string(),
         };
+
+        // The frame analysis (issue #20): candidate universes for the
+        // set-valued state variables, derived from `Init`'s and `Next`'s
+        // assignments and installed in the encoder once. A variable whose
+        // universe cannot be derived simply keeps its opaque variable and
+        // the decline it always had.
+        if !self.frames_done {
+            let frames = crate::frames::analyze(&crate::frames::Input {
+                init: &self.init,
+                next: &self.next,
+                set_vars: self.set_vars.clone(),
+                max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
+            });
+            self.encoder.set_frames(frames);
+            self.frames_done = true;
+        }
 
         // Encoded once: the terms are hash-consed, so re-encoding the same
         // step yields the same `TermId` and the solver sees one formula.
@@ -1444,7 +1479,7 @@ impl Bmc {
         self.check_deadlocks = on;
     }
 
-    /// Set the `--view` body for counterexample diversity; see [`Bmc::view`].
+    /// Set the `--view` body for counterexample diversity.
     pub fn set_view(&mut self, body: KeraRef) {
         self.view = Some(body);
     }
@@ -1820,8 +1855,8 @@ impl Bmc {
 
     /// Rule out the last reported counterexample, so the next query returns
     /// a **different** one: under the view's value at each step when a view
-    /// is set, and otherwise the whole state. See [`Bmc::view`] and
-    /// [`Bmc::block_under_view`].
+    /// is set, and otherwise the whole state (see the private view fields
+    /// and their blocking helpers).
     ///
     /// Returns `false` when the trace could not be expressed as a
     /// constraint at all — the signal to stop rather than loop forever.

@@ -131,7 +131,7 @@ enum SetRepr {
 /// The encoding's size is driven by candidate counts, and they multiply:
 /// `A \X B` is `|A| * |B|`, `SUBSET A` is `2^|A|`. A ceiling turns a blow-up
 /// into a reported refusal rather than an out-of-memory kill.
-pub const DEFAULT_MAX_CANDIDATES: usize = 4_096;
+pub(crate) const DEFAULT_MAX_CANDIDATES: usize = 4_096;
 
 /// Encodes kernel terms into a [`TermManager`].
 pub struct Encoder {
@@ -205,6 +205,17 @@ pub struct Encoder {
     /// `TestHash2.tla` shape (`ConstInit` pins `hash` with `[S -> T]`, and
     /// `IsInjective` quantifies over `DOMAIN hash`).
     known_domains: HashMap<TermId, Vec<Member>>,
+    /// Candidate universes for set-valued state variables (issue #20), by
+    /// variable name: the frame analysis's derivation, consulted when an
+    /// opaque set-sorted variable needs a candidate list.
+    frames: crate::frames::Frames,
+    /// The variables whose frames failed to materialise at encode time: an
+    /// element that will not encode poisons the frame, which is removed, and
+    /// the variable declines exactly as it did before frames existed.
+    framing: std::collections::HashSet<String>,
+    /// Reverse of [`Encoder::vars`]: the variable a set-sorted term is, and
+    /// the step it was read at — what the frame lookup needs.
+    var_of: HashMap<TermId, (String, u32)>,
 }
 
 impl Encoder {
@@ -226,6 +237,9 @@ impl Encoder {
             recfuns: HashMap::new(),
             unbounded_chooses: HashMap::new(),
             known_domains: HashMap::new(),
+            frames: crate::frames::Frames::default(),
+            framing: std::collections::HashSet::new(),
+            var_of: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -251,6 +265,14 @@ impl Encoder {
     #[must_use]
     pub fn side_constraints(&self) -> &[TermId] {
         &self.side
+    }
+
+    /// Install the frame analysis's candidate universes (issue #20).
+    ///
+    /// Called once per [`crate::bmc::Bmc`] before the depth loop; the frames
+    /// are kernel terms, so they encode per step on demand.
+    pub fn set_frames(&mut self, frames: crate::frames::Frames) {
+        self.frames = frames;
     }
 
     /// Tell the encoder the sort of one kernel node.
@@ -583,6 +605,16 @@ impl Encoder {
                         members: members.clone(),
                     });
                 }
+                // A framed set-valued variable (issue #20): its candidate
+                // universe, encoded at this step, guarded by membership in
+                // the **real** variable — the frame never decides presence,
+                // the set theory does.
+                if let Some((name, step)) = self.var_of.get(&t).cloned()
+                    && self.frames.universe.contains_key(&name)
+                    && let Some(members) = self.frame_members(&name, step, t, tm)
+                {
+                    return Ok(SetCell { members });
+                }
                 match self.candidates_of(t, 0, tm) {
                     Some(members) => Ok(SetCell { members }),
                     None => Err(EncodeError::NotEnumerable(
@@ -594,6 +626,59 @@ impl Encoder {
                 EncodeError::NotEnumerable("a value used as a set".to_string()),
             ),
         }
+    }
+
+    /// The arena cell of a framed set-valued variable at one step: the
+    /// universe's elements, encoded at that step, each guarded by
+    /// membership in the real variable term.
+    ///
+    /// `None` poisons the frame (see [`Encoder::framing`]) — an element that
+    /// will not encode, or a re-entrant request for the same variable, means
+    /// the universe cannot be materialised here, and the variable declines
+    /// exactly as it did before frames existed. Never a partial list: a
+    /// missing candidate could hide a member, which is the unsound
+    /// direction.
+    fn frame_members(
+        &mut self,
+        name: &str,
+        step: u32,
+        var_term: TermId,
+        tm: &mut TermManager,
+    ) -> Option<Vec<Member>> {
+        if !self.framing.insert(name.to_string()) {
+            return None;
+        }
+        let elems = self.frames.universe.get(name)?.clone();
+        let saved = std::mem::replace(&mut self.step, step);
+        let mut members = Vec::with_capacity(elems.len());
+        let mut ok = true;
+        for e in &elems {
+            match self.value(e, tm) {
+                Ok(v) => {
+                    let present = match &*v {
+                        Value::Scalar(e_term) => tm.mk_set_member(*e_term, var_term),
+                        structural => {
+                            let v = Rc::new(structural.clone());
+                            match self.reify(&v, tm) {
+                                Ok(r) => tm.mk_set_member(r, var_term),
+                                Err(_) => {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                    };
+                    members.push(Member { value: v, present });
+                }
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        self.step = saved;
+        self.framing.remove(name);
+        ok.then_some(members)
     }
 
     /// Read an arena candidate list back off a set-sorted term.
@@ -1071,6 +1156,7 @@ impl Encoder {
                 };
                 let t = tm.mk_var(&smt_name, sort);
                 self.vars.insert(key.clone(), t);
+                self.var_of.insert(t, (n.0.clone(), step));
                 // A function-sorted name gets its domain as a second variable.
                 // Without it the name would be a bare graph, and `f = g`, and
                 // `DOMAIN f`, would both be answered by the array alone — the
