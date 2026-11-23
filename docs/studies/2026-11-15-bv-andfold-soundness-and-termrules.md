@@ -1733,3 +1733,52 @@ the change set via targeted edits — the committed tree is the
 reconstruction, behaviorally verified end-to-end (all family cells +
 suite + parity).  Remaining addendum-47 targets: isqrt/icbrt (5, largest
 scope), calypto (3), smulov (2), and the wienand Booth 8x8 gap.
+
+## Fiftieth addendum: calypto/smulov scoping — two negatives recorded, a wiring force-switch landed
+
+Post-bitrev scoping of the remaining addendum-47 targets:
+
+**calypto (gap = `problem_14`, `problem_19`; `problem_24` is a nixie
+LEAD at sat-4s vs z3 TO).**  z3 refutes both gap cells in ≤ 0.12 s
+(rlimit 852 / 560 k).  nixie's post-cascade residual for `problem_14`
+(111 kB, `NIXIE_BV_DUMP_PRE`) is a miter over 17×17-bit products of
+replication-chain sign extensions plus a bit-level reconstruction.
+Hypotheses tested, all NEGATIVE:
+1. *mul-AC over sext-chains*: a minimal repro
+   (`(= mul(sext a, sext b) mul(sext b, sext a))`, one side written as
+   explicit per-bit concat chains) already folds in nixie — the parser's
+   `sign_extend` expansion hash-conses with the explicit chains.
+2. *per-bit chain fusion*: the bitrev wiring's `fuse_pair` works (a
+   `distinct(concat(concat(bit7, bit6), extract(5,0,x)), x)` probe folds
+   to `(assert false)` under forced wiring), but on `problem_14` every
+   wiring rule declines (budget untouched): the residual's chains are
+   REPPLICATIONS of one bit (sign extensions), which correctly do NOT
+   fuse — they are not contiguous windows.
+3. *forced wiring* (`NIXIE_BV_WIRING_FORCE=1`, landed below): residual
+   unchanged, verdicts unchanged.
+   Remaining hypothesis (unverified): z3's fold runs through
+   constant-ite selection — `(and (not b) b)` → `false` folds the
+   `ite(?, 131071, ?)` selectors so both sides reduce to the same
+   product; pinning it needs a correct `(apply (then simplify)
+   :print true)` trace on the verbatim residual (my first extraction
+   had a paren bug and briefly mis-led the investigation — z3 answered
+   a vacuous `unsat` after a parse error; always check for `(error` in
+   z3 output before trusting a verdict).
+
+**smulov (gap = `smulov1bw12/16`)**: a SEARCH gap, not rewriting — z3
+needs 31 k–73 k SAT conflicts (0.7–2.2 s, rlimit 3.8–11.7 M, sat-mk-var
+1360/2452) on the ite-heavy conditional-sign-extension multiplier
+miter.  Same class as the wienand Booth 8×8 gap: blast/search quality
+on multiplier verification, not a term-rules lever.
+
+**Landed**: `NIXIE_BV_WIRING_FORCE=1` — an opt-in override that forces
+the bit-permutation wiring on regardless of the ladder smell (the A/B
+switch this scoping needed; default path bit-identical, `false ||` on
+the gate).  Bar: fmt, clippy `-D warnings`, nixie-solver 3120/3122
+(only the two pre-existing-at-HEAD sets failures), probes unchanged.
+
+**isqrt/icbrt (5 cells)** remain unexamined this session — still the
+largest-scope entry (mul-to-algebra bridge).  Ranked next steps: (a)
+the calypto constant-ite hypothesis via a correct z3 simplify trace;
+(b) smulov/Booth as one search-side slice (conditional-sign-extension
+blast sharing); (c) isqrt/icbrt.

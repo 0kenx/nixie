@@ -213,7 +213,8 @@ impl BvPreprocessor {
         // experiment behind `NIXIE_BV_SHIFT_WIRING` defaulted off for
         // exactly that), so the cascade keeps non-ladder goals
         // bit-identical to the old path.
-        self.wiring = self.const_shift_count(root, manager) >= WIRING_MIN_CONST_SHIFTS;
+        self.wiring = std::env::var("NIXIE_BV_WIRING_FORCE").is_ok()
+            || self.const_shift_count(root, manager) >= WIRING_MIN_CONST_SHIFTS;
         self.wiring_budget = WIRING_NODE_BUDGET;
         let out = self.rewrite_walk(root, manager);
         if self.wiring && std::env::var("NIXIE_PRE_TRACE").is_ok() {
