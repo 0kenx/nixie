@@ -256,6 +256,11 @@ pub struct ArithSolver {
     /// invalidated when the slack's row was pivoted out of the tableau
     /// (`row_defines_var`) and cleared on `reset`.
     atom_rows: FxHashMap<(RowKey, TermId), VarId>,
+    /// Content-validated per-atom memo behind the inequality `assert_*` fast
+    /// path: `(reason term, bound kind)` → the row slack plus the exact
+    /// `(lhs, rhs)` and single-term bound it was resolved for. See
+    /// [`ArithSolver::atom_slack_hit`]. Cleared with `atom_rows` in `reset`.
+    atom_slack: FxHashMap<(TermId, AssertKind), AtomSlack>,
     /// Reverse of the row cache's slack allocation: slack var → the
     /// (lhs, rhs, equality, reason) form that interned it.  The stranded-
     /// bound re-homing sweep (`rehome_stranded_row_bounds`) uses it to
@@ -432,6 +437,156 @@ fn trace_twrites_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var_os("NIXIE_TRACE_TWRITES").is_some())
 }
 
+/// Debug/A-B probe for the `assert_*` fast path (`NIXIE_ATOM_SLACK_MEMO`):
+/// unset/`1`/`all` — every kind replays (the default); `nonstrict` — only
+/// `Le`/`Ge`; `strict` — only the δ rows; `0`/`off` — never (the historical
+/// slow path on every assertion). Read once per process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MemoMode {
+    Off,
+    NonStrict,
+    Strict,
+    All,
+}
+
+fn atom_slack_memo_mode() -> MemoMode {
+    static FLAG: std::sync::OnceLock<MemoMode> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| match std::env::var("NIXIE_ATOM_SLACK_MEMO").as_deref() {
+        Ok("0") | Ok("off") | Ok("false") => MemoMode::Off,
+        Ok("nonstrict") => MemoMode::NonStrict,
+        Ok("strict") => MemoMode::Strict,
+        _ => MemoMode::All,
+    })
+}
+
+/// Which zero-bound an inequality atom puts on its row slack — the kind
+/// half of the [`ArithSolver::atom_slack`] memo key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AssertKind {
+    /// `lhs <= rhs`: `slack <= 0` on the non-strict row (shared with `Ge`).
+    Le,
+    /// `lhs >= rhs`: `slack >= 0` on the non-strict row.
+    Ge,
+    /// `lhs < rhs` on a non-integral row: strict `slack < 0` on the strict row.
+    StrictUpper,
+    /// `lhs > rhs` on a non-integral row: strict `slack > 0` on the strict row.
+    StrictLower,
+}
+
+/// One inequality atom's resolved row, as interned by the slow path of
+/// `assert_{le,ge,lt,gt}`: the slack, the exact request it answers, and the
+/// single-term propagation bound the slow path derived for it.
+#[derive(Debug, Clone)]
+struct AtomSlack {
+    slack: VarId,
+    /// The `(lhs, rhs)` the slack was interned for. A hit is replayed only
+    /// for a request equal to it term by term, so the memo can never answer
+    /// for a different linear form that merely shares a reason term.
+    lhs: Box<[(TermId, Rational64)]>,
+    rhs: Rational64,
+    /// `None` for zero- and multi-term atoms; otherwise the single nonzero
+    /// term's `(variable, coefficient)` (replayed by `record_prop_bound`).
+    single: Option<(VarId, Rational64)>,
+}
+
+impl ArithSolver {
+    /// The memoized row for an inequality atom, if this search already
+    /// resolved exactly this `(kind, lhs, rhs, reason)` and the row is still
+    /// live. The validation mirrors `cached_row_slack`'s own liveness probe
+    /// (`row_defines_var`), so a hit is precisely the case where that cache
+    /// would have hit too — minus the canonical-key rebuild it pays to find
+    /// out. `None` sends the caller down the unchanged slow path, which then
+    /// (re)records the entry.
+    fn atom_slack_hit(
+        &self,
+        kind: AssertKind,
+        lhs: &[(TermId, Rational64)],
+        rhs: Rational64,
+        reason: TermId,
+    ) -> Option<(VarId, Option<(VarId, Rational64)>)> {
+        if !matches!(atom_slack_memo_mode(), MemoMode::All)
+            && !matches!(
+                (atom_slack_memo_mode(), kind),
+                (MemoMode::NonStrict, AssertKind::Le | AssertKind::Ge)
+                    | (
+                        MemoMode::Strict,
+                        AssertKind::StrictUpper | AssertKind::StrictLower
+                    )
+            )
+        {
+            return None;
+        }
+        let hit = self.atom_slack.get(&(reason, kind))?;
+        if hit.rhs != rhs || hit.lhs.as_ref() != lhs || !self.simplex.row_defines_var(hit.slack) {
+            return None;
+        }
+        // Dev oracle: a hit is exactly the slow path's own `atom_rows` hit
+        // (same slack, same liveness verdict) — the two caches are kept in
+        // lockstep by `atom_slack_record` / `atom_slack_drop_reason`.
+        #[cfg(debug_assertions)]
+        {
+            let key = match kind {
+                AssertKind::Le | AssertKind::Ge => (self.row_key(lhs, rhs, false), reason),
+                AssertKind::StrictUpper | AssertKind::StrictLower => {
+                    (self.row_key_strict(lhs, rhs), reason)
+                }
+            };
+            match self.atom_rows.get(&key) {
+                Some(&slow) => debug_assert!(
+                    slow == hit.slack && self.simplex.row_defines_var(slow),
+                    "atom_slack memo diverged from atom_rows: memo={:?} slow={slow}",
+                    hit.slack
+                ),
+                None => debug_assert!(false, "atom_slack memo hit with no atom_rows entry"),
+            }
+        }
+        Some((hit.slack, hit.single))
+    }
+
+    /// Forget every memoized resolution that cites `reason`: called at each
+    /// `(re-)intern` that rewrites an `atom_rows` entry. The stranded-bound
+    /// re-homing sweep re-interns recorded forms *through `cached_row_slack`
+    /// directly* (never via `assert_*`), moving `atom_rows` to the fresh
+    /// slack while a stale memo entry would still name the consumed one —
+    /// and a consumed slack can return to the basis later, at which point
+    /// the memo would hit where the slow path resolves to the fresh row
+    /// (two valid, different LP states: the trajectory fork measured on the
+    /// wisa cells). Dropping the whole reason keeps the memo in lockstep
+    /// with `atom_rows`, which is what makes a hit exactly the slow path's
+    /// own cache hit.
+    fn atom_slack_drop_reason(&mut self, reason: TermId) {
+        for kind in [
+            AssertKind::Le,
+            AssertKind::Ge,
+            AssertKind::StrictUpper,
+            AssertKind::StrictLower,
+        ] {
+            self.atom_slack.remove(&(reason, kind));
+        }
+    }
+
+    /// Record the slow path's resolution of one inequality atom.
+    fn atom_slack_record(
+        &mut self,
+        kind: AssertKind,
+        lhs: &[(TermId, Rational64)],
+        rhs: Rational64,
+        reason: TermId,
+        slack: VarId,
+        single: Option<(VarId, Rational64)>,
+    ) {
+        self.atom_slack.insert(
+            (reason, kind),
+            AtomSlack {
+                slack,
+                lhs: lhs.to_vec().into_boxed_slice(),
+                rhs,
+                single,
+            },
+        );
+    }
+}
+
 /// What branch-and-bound may do with one integer variable (see
 /// `ArithSolver::find_fractional_int_var`): exact branch bounds, or a value
 /// that is neither readable nor branch-bounded (decline).
@@ -525,6 +680,7 @@ impl ArithSolver {
             lia_branch_requests: Vec::new(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
+            atom_slack: FxHashMap::default(),
             slack_forms: FxHashMap::default(),
         }
     }
@@ -755,6 +911,7 @@ impl ArithSolver {
             },
         );
         self.atom_rows.insert(cache_key, slack);
+        self.atom_slack_drop_reason(reason);
         slack
     }
 
@@ -1028,6 +1185,7 @@ impl ArithSolver {
             },
         );
         self.atom_rows.insert(cache_key, slack);
+        self.atom_slack_drop_reason(reason);
         slack
     }
 
@@ -1487,6 +1645,19 @@ impl ArithSolver {
             self.simplex.set_upper(slack, Rational64::zero(), reason_id);
             return;
         }
+        // Re-assertion of an atom this search already resolved: replay the
+        // memoized row (no key rebuild, no canonical-form pass).
+        if let Some((slack, single)) = self.atom_slack_hit(AssertKind::Le, lhs, rhs, reason) {
+            let reason_id = self.add_reason(reason);
+            self.simplex.set_upper(slack, Rational64::zero(), reason_id);
+            if let Some((var, coef)) = single {
+                if trace_twrites_enabled() {
+                    eprintln!("[asrt] Le n_terms={} reason={reason:?}", lhs.len());
+                }
+                self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason);
+            }
+            return;
+        }
         // Single-term detection must be a COUNT, not a two-state latch:
         // the previous `None => Some, Some(_) => None` form re-armed on the
         // THIRD term (state `None` again after the second), so any 3+-term
@@ -1512,6 +1683,7 @@ impl ArithSolver {
         // just the bound `slack <= 0` on it.
         let key = self.row_key(lhs, rhs, false);
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Le, reason);
+        self.atom_slack_record(AssertKind::Le, lhs, rhs, reason, slack, single);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             if trace_twrites_enabled() {
@@ -1528,6 +1700,18 @@ impl ArithSolver {
             let slack = self.intern_exact_row(lhs, rhs, SlackDir::Ge, reason);
             let reason_id = self.add_reason(reason);
             self.simplex.set_lower(slack, Rational64::zero(), reason_id);
+            return;
+        }
+        // Re-assertion fast path (see `assert_le`).
+        if let Some((slack, single)) = self.atom_slack_hit(AssertKind::Ge, lhs, rhs, reason) {
+            let reason_id = self.add_reason(reason);
+            self.simplex.set_lower(slack, Rational64::zero(), reason_id);
+            if let Some((var, coef)) = single {
+                if trace_twrites_enabled() {
+                    eprintln!("[asrt] Ge n_terms={} reason={reason:?}", lhs.len());
+                }
+                self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason);
+            }
             return;
         }
         // Single-term detection must be a COUNT, not a two-state latch:
@@ -1553,6 +1737,7 @@ impl ArithSolver {
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Ge, reason);
+        self.atom_slack_record(AssertKind::Ge, lhs, rhs, reason, slack, single);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             if trace_twrites_enabled() {
@@ -1852,6 +2037,22 @@ impl ArithSolver {
             return;
         }
 
+        // Re-assertion fast path (see `assert_le`; the strict row).
+        if let Some((slack, single)) =
+            self.atom_slack_hit(AssertKind::StrictUpper, lhs, rhs, reason)
+        {
+            let reason_id = self.add_reason(reason);
+            self.simplex
+                .set_strict_upper(slack, Rational64::zero(), reason_id);
+            if let Some((var, coef)) = single {
+                if trace_twrites_enabled() {
+                    eprintln!("[asrt] Lt n_terms={} reason={reason:?}", lhs.len());
+                }
+                self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason);
+            }
+            return;
+        }
+
         // For reals, use delta-rationals: `lhs < rhs` is the strict upper
         // bound `slack < 0` on the interned row for `lhs - rhs`.
         //
@@ -1883,6 +2084,7 @@ impl ArithSolver {
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
         let slack = self.cached_row_slack_strict(&key, lhs, rhs, SlackDir::Lt, reason);
+        self.atom_slack_record(AssertKind::StrictUpper, lhs, rhs, reason, slack, single);
         self.simplex
             .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
@@ -1918,6 +2120,22 @@ impl ArithSolver {
             return;
         }
 
+        // Re-assertion fast path (see `assert_le`; the strict row).
+        if let Some((slack, single)) =
+            self.atom_slack_hit(AssertKind::StrictLower, lhs, rhs, reason)
+        {
+            let reason_id = self.add_reason(reason);
+            self.simplex
+                .set_strict_lower(slack, Rational64::zero(), reason_id);
+            if let Some((var, coef)) = single {
+                if trace_twrites_enabled() {
+                    eprintln!("[asrt] Gt n_terms={} reason={reason:?}", lhs.len());
+                }
+                self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason);
+            }
+            return;
+        }
+
         // For reals, use delta-rationals: `lhs > rhs` is the strict lower
         // bound `slack > 0` on the interned row for `lhs - rhs` (the SAME
         // row `assert_le` interns, so both polarities share it).
@@ -1945,6 +2163,7 @@ impl ArithSolver {
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
         let slack = self.cached_row_slack_strict(&key, lhs, rhs, SlackDir::Gt, reason);
+        self.atom_slack_record(AssertKind::StrictLower, lhs, rhs, reason, slack, single);
         self.simplex
             .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
@@ -4202,6 +4421,7 @@ impl Theory for ArithSolver {
         self.simplex.reset();
         self.term_to_var.clear();
         self.atom_rows.clear();
+        self.atom_slack.clear();
         self.slack_forms.clear();
         self.int_vars.clear();
         // `int_terms` is deliberately KEPT: a term's integer-valuedness is a

@@ -3153,8 +3153,10 @@ impl<'a> TheoryManager<'a> {
     /// polarity (the shared body of the `process_constraint` assert arms and
     /// the [`Self::break_dl_purity`] replay).
     fn arith_assert_parsed(&mut self, var: Var, parsed: &ParsedArithConstraint, is_positive: bool) {
-        let terms: Vec<(TermId, Rational64)> = parsed.terms.iter().copied().collect();
-        self.pin_big_const_columns(&terms);
+        // Borrow the parsed terms: the writers take slices, and the former
+        // per-assertion `Vec` copy was pure churn on this hot path.
+        let terms: &[(TermId, Rational64)] = parsed.terms.as_slice();
+        self.pin_big_const_columns(terms);
         let reason = parsed.reason_term;
         let constant = parsed.constant;
         use super::types::ArithConstraintType::{Ge, Gt, Le, Lt};
