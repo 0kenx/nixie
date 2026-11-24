@@ -86,3 +86,33 @@ investigation away — the failure is named, reproduced
 Bug20190118, which the previous session left declining at
 "`Variant` has no encoding yet", now declines *later* — the variant
 encodes, and the remaining gap is the trace-side interaction above.
+
+## Addendum: the frame-element remainder, closed (same day, second worktree)
+
+The Bug1682 decline was the frames' `VariantFilter` element reading
+over-approximating: it wrapped **every** base candidate in the tag's
+getter, including wrong-tag ones. A `VariantGet{RequestVote,
+Variant{AppendEntries, …}}` types the getter's payload as a fresh **open
+record** (the string-index `apply` rule), the merged row then carries a
+payload `sort_of` refuses, and the frame died at its own
+over-approximation — after first ballooning the universe to 240 candidates
+through the fixpoint's feedback.
+
+**The fix**: wrap only **same-tag** candidates. The tag a `Variant`
+candidate carries is exactly the tag the filter keeps, so selecting on it
+is exact, not a guess. The universe drops to **15 candidates**, and:
+
+- **Bug1682** now **encodes** — from `blocked: no candidate list` to an
+  honest `undecided` at the 20 000-conflict budget (and at 200 000: the
+  query is genuinely hard — the function-store chains over `currentTerm`
+  plus the set unions — which is the corpus's existing undecided class,
+  never a wrong answer).
+- **Paxos** advances to a *different* named gap (`a set where a single
+  value is needed`) — no longer at variants or candidates.
+- **Bug20190118** (the other `Variant`-gapped spec) now reaches a
+  **deadlock** verdict.
+- Corpus A/B vs the pre-variants baseline: no-violation 70→70, violation
+  20→20, undecided 30→31 (Bug1682), blocked 196→194. Zero verdict
+  regressions.
+
+All tla crates: 380/380; clippy/fmt/doc clean.

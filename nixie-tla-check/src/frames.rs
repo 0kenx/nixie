@@ -361,27 +361,34 @@ fn elements(
             // cover it.
             Kera::Filter { set, .. } => work.push(set),
             // A variant filter (issue #17) keeps the payloads of one tag.
-            // The binder it feeds ranges over **payloads**, so each base
-            // candidate is wrapped in the tag's getter — the kernel term for
-            // `VariantGetUnsafe(tag, candidate)`, which the encoder reads
-            // through the datatype selector exactly as a filtered member
-            // would be. Over-approximate in the candidates (tags the tester
-            // would reject stay, presence is solver-mediated), exact in the
-            // shape.
+            // The binder it feeds ranges over **payloads**, so each
+            // **same-tag** base candidate is wrapped in the tag's getter —
+            // the kernel term for `VariantGetUnsafe(tag, candidate)`, which
+            // the encoder reads through the datatype selector exactly as a
+            // filtered member would be. Wrapping a wrong-tag candidate
+            // instead would type the getter's payload as a fresh open
+            // record — the merged row then carries a payload `sort_of`
+            // refuses, and the frame dies at its own over-approximation.
+            // The tag a `Variant` candidate carries is exactly the tag the
+            // filter keeps, so selecting on it is exact, not a guess.
             Kera::VariantFilter { tag, set } => {
                 let base = elements(set, state, max_candidates)?;
                 if base.len() > max_candidates {
                     return None;
                 }
                 for b in base {
-                    out.push(
-                        Kera::VariantGet {
-                            tag: tag.clone(),
-                            value: b,
-                            or_else: None,
-                        }
-                        .rc(),
-                    );
+                    if let Kera::Variant { tag: t, .. } = b.as_ref()
+                        && t == tag
+                    {
+                        out.push(
+                            Kera::VariantGet {
+                                tag: tag.clone(),
+                                value: b,
+                                or_else: None,
+                            }
+                            .rc(),
+                        );
+                    }
                 }
             }
             // A map's elements are the mapped body per candidate of the
