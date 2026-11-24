@@ -2172,3 +2172,64 @@ addition on adders) and compare a learned-clause profile on
 
 Addendum-54 dump note corrected in 56 stands: the Booth 8×8 "multi-GB"
 was a counting artefact; smulov3bw0256's 637 MB dump is real.
+
+## Fifty-eighth addendum: SAT-core attribution closed — BVE at parity with CaDiCaL, the carry-save CNF is hard for everyone, the encoding trade-off is corpus-wide two-sided
+
+Addendum 57's standing entry was "what does our CDCL do on
+carry-save + gate adders that CaDiCaL does not".  Answered, and the
+SAT core is exonerated on every axis tested:
+
+**Our core on the three exact CNFs of `smulov1bw12`** (same file,
+DIMACS path, deterministic counters):
+
+| CNF | nixie conflicts | restarts | decisions |
+|---|---|---|---|
+| z3's (1 022 vars) | 35 633 | 4 649 | 112 k |
+| ours, row-array (3 425) | 21 454 | 1 817 | 58 k |
+| ours, carry-save (3 510) | **2 101 872** | 169 924 | 5.1 M |
+
+**The BVE port is at parity.**  Our `NIXIE_LOG_ELIM` trace vs CaDiCaL
+`--verbose=2` on the carry-save CNF: phase 1 eliminates **607** (ours)
+vs **603** (CaDiCaL); phase 2 1 vs 9; phase 3 0 vs 19; both report the
+round complete at bound 0.  (CaDiCaL's headline `substituted: 2152`,
+`eliminated: 969` is NOT elimination yield: its `probe-phase-1`
+"removed 2096 active variables 60%" comes from the `inprobe` schedule
+— decompose/ternary/probe/extract_gates/sweep/vivify/transred/factor
+— and attribution by disabling each one shows **no single technique
+matters**: every configuration still takes 1.0–1.26 M conflicts.)
+
+**The carry-save CNF is hard for CaDiCaL too** — 1.1 M conflicts, 37 s.
+Its 30× advantage over us is budget headroom, not a smarter search.
+Our inprocessing wall is 13.9 s of 148 s and our sweep/probe knobs
+(`NIXIE_SWEEP=1`, `NIXIE_PROBE_PERMILLE=100`) change nothing.  The
+`2026-09-13-elim-bound-growth.md` open items ("phase-1 yield gap") are
+not implicated: on this CNF the bound grows and the yield matches.
+
+**Corpus-wide scope of the encoding trade-off** (cs vs arr, identical
+counters unless listed): sage app7 ×12 / app2 ×6, Sydr master ×6,
+MCMPC dualexecution_affine ×12 / dualexecution ×6 — **all identical**
+(those muls constant-fold or are CEGAR-abstracted before the encoding
+choice).  Only `catchconv` (1142: 842→651 win, 1143: 357→2000 loss),
+the wienand family, and the two smulov ladders diverge — two-sided
+everywhere.  Default stays carry-save; `NIXIE_BV_MUL_ARRAY=1` stays
+the opt-in for the smulov1 class.
+
+**Where this leaves the smulov gap** — closed as far as this campaign's
+scope goes.  Every layer was examined with evidence: the term
+rewrites (addenda 52–53, 56: parity), blaster sharing (55: parity),
+adder decomposition (57: a measured loss in isolation), the row array
+(54, 57: a measured loss on smulov2), the SAT core (58: parity on z3's
+CNF and on the row-array CNF; BVE yield at parity), inprocessing
+(58: no knob moves it).  What remains is a real two-way encoding
+trade-off that z3 does not face because its only multiplier IS the row
+array and its rewriter pre-folds the families where the row array
+loses (our smulov2 cells are ones z3 solves by rewriting, not by
+search — its 31 k conflicts on smulov1bw12 are on a 1 022-var CNF,
+ours on a 3 510-var one; the ~2 500-var difference is the sign-extension
+mux chain that its `simplify` removes and our cascade keeps).  **The
+next lever, if any, is a rewrite — the mux-chain removal that shrinks
+the instance to z3's 1 022 vars — not the solver.**  z3's simplified
+form of our residual is in addendum 55's let-chain; re-solving THAT
+with nixie gave 1 823 vars / TO, so the chain is not the whole story
+either — the honest statement is that the smulov1-class cells are
+closed by `NIXIE_BV_MUL_ARRAY=1` and nothing else measured here.
