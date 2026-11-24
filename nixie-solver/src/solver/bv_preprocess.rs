@@ -563,6 +563,36 @@ impl BvPreprocessor {
                 if rt == re {
                     return rt;
                 }
+                // Broadcast ite: `ite((= t #b1), ones, zeros)` is the
+                // width-`w` REPLICATION of the bit `t` (Z3's simplify does
+                // this on the way into the blaster — `smulov`'s conditional
+                // sign extensions `concat(ite(bit, 0xFFF, 0), v)` become
+                // literal `concat(bit…bit, v)` chains, sharing terms with
+                // every other sign extension of `v` and killing one mux
+                // per bit).  The mirrored form selects the inverted
+                // replication.
+                if let Some(w) = bv_width_opt(manager, &rt).filter(|w| *w > 1)
+                    && bv_width_opt(manager, &re) == Some(w)
+                    && let (Some(tv), Some(ev)) =
+                        (const_bits(&rt, manager), const_bits(&re, manager))
+                {
+                    let all_ones = (BigInt::one() << w as usize) - BigInt::one();
+                    let bit = match (
+                        tv == all_ones && ev.is_zero(),
+                        tv.is_zero() && ev == all_ones,
+                    ) {
+                        (true, _) => self.ite_condition_bit(rc, manager),
+                        (_, true) => self.ite_condition_bit_negated(rc, manager),
+                        _ => None,
+                    };
+                    if let Some(bit) = bit {
+                        let mut acc = bit;
+                        for _ in 1..w {
+                            acc = manager.mk_bv_concat(acc, bit);
+                        }
+                        return acc;
+                    }
+                }
                 manager.mk_ite(rc, rt, re)
             }
             TermKind::Distinct(ref args) => {
@@ -930,6 +960,51 @@ impl BvPreprocessor {
             }
         }
         self.spine_cache.get(&t).cloned().flatten()
+    }
+
+    /// The 1-bit term behind an `ite` condition of the form `(= t #b1)`
+    /// (either orientation), when `t` is itself width 1 — the condition
+    /// IS the bit.  `None` for any other shape.
+    fn ite_condition_bit(&self, cond: TermId, manager: &TermManager) -> Option<TermId> {
+        let (a, b) = match manager.get(cond).map(|d| d.kind.clone()) {
+            Some(TermKind::Eq(a, b)) => (a, b),
+            _ => return None,
+        };
+        let is_one = |t: TermId| {
+            const_bits(&t, manager).is_some_and(|v| v == BigInt::one())
+                && bv_width_opt(manager, &t) == Some(1)
+        };
+        let side = |x: TermId, y: TermId| -> Option<TermId> {
+            if is_one(x) && bv_width_opt(manager, &y) == Some(1) {
+                Some(y)
+            } else {
+                None
+            }
+        };
+        side(a, b).or_else(|| side(b, a))
+    }
+
+    /// The NEGATED bit for the mirrored condition `(= t #b0)`: the
+    /// selected branch implies the inverted replication.
+    fn ite_condition_bit_negated(&self, cond: TermId, manager: &mut TermManager) -> Option<TermId> {
+        let (a, b) = match manager.get(cond).map(|d| d.kind.clone()) {
+            Some(TermKind::Eq(a, b)) => (a, b),
+            _ => return None,
+        };
+        let is_zero = |t: TermId| {
+            const_bits(&t, manager).is_some_and(|v| v.is_zero())
+                && bv_width_opt(manager, &t) == Some(1)
+        };
+        let side = |x: TermId, y: TermId| -> Option<TermId> {
+            if is_zero(x) && bv_width_opt(manager, &y) == Some(1) {
+                Some(y)
+            } else {
+                None
+            }
+        };
+        side(a, b)
+            .or_else(|| side(b, a))
+            .map(|bit| manager.mk_bv_not(bit))
     }
 
     /// Z3 `mk_bv_shl`/`mk_bv_lshr` numeral case: `t << k =
@@ -4389,6 +4464,32 @@ mod tests {
         let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (not (= (bvand x #x0f) (bvand x #xf0))))\n(check-sat)\n";
         // No const shifts: the wiring gate is OFF for this goal, and the
         // answer must be the honest one.
+        assert_eq!(solve_str(script), "sat");
+    }
+
+    /// The broadcast-ite rule: `ite((= t #b1), all-ones, zeros)` is the
+    /// replication of the bit `t` (Z3's simplify form for conditional
+    /// sign extensions — the `smulov` family's `concat(ite(bit, 0xFFF, 0),
+    /// v)` becomes a literal sign extension, sharing terms with every
+    /// other sext of `v`).
+    #[test]
+    fn broadcast_ite_replicates_the_bit() {
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (not (= (ite (= ((_ extract 3 3) x) #b1) #xff #x00) ((_ repeat 8) ((_ extract 3 3) x)))))\n(check-sat)\n";
+        assert_eq!(solve_str(script), "unsat");
+        // Mirrored condition: `(= t #b0)` selects the inverted replication.
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (not (= (ite (= ((_ extract 3 3) x) #b0) #xff #x00) (bvnot ((_ repeat 8) ((_ extract 3 3) x))))))\n(check-sat)\n";
+        assert_eq!(solve_str(script), "unsat");
+        // Swapped operand order in the condition.
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 12))\n(assert (not (= (ite (= #b1 ((_ extract 5 5) x)) #xfff #x000) ((_ repeat 12) ((_ extract 5 5) x)))))\n(check-sat)\n";
+        assert_eq!(solve_str(script), "unsat");
+    }
+
+    /// A NON-broadcast ite must not fold: a mask that is not all-ones
+    /// differs from the replication on the true branch — a false fold
+    /// here would be a false `unsat` on every smulov-shaped goal.
+    #[test]
+    fn partial_mask_ite_does_not_fold() {
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (distinct (ite (= ((_ extract 3 3) x) #b1) #x0f #x00) ((_ repeat 8) ((_ extract 3 3) x))))\n(check-sat)\n";
         assert_eq!(solve_str(script), "sat");
     }
 }
