@@ -333,6 +333,16 @@ impl crate::solver::Solver {
         let mut terminal: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
         let mut value_rounds: rustc_hash::FxHashMap<TermId, u32> = rustc_hash::FxHashMap::default();
         let mut round = 0usize;
+        // Diagnostic split (`NIXIE_DUMP_CNF=<path>`): the instance as the
+        // search sees it before the first check — run an external SAT
+        // solver on it to attribute a gap to the blast or to the search.
+        #[cfg(feature = "std")]
+        if round == 0
+            && let Ok(path) = std::env::var("NIXIE_DUMP_CNF")
+            && !path.is_empty()
+        {
+            self.bv.debug_dump_cnf(&path);
+        }
         loop {
             match self.bv.check() {
                 // Relaxation unsat: every abstraction clause is a logical

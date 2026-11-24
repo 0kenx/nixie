@@ -2084,3 +2084,91 @@ schedule), NOT another rewrite.
 
 Not landed as a solver pass: it would be pure overhead on every goal
 for zero measured benefit.  The lifter stays as a profiling tool.
+
+## Fifty-seventh addendum: the smulov root cause found by the same-CNF three-solver test — and the two candidate fixes measured to a stand-off
+
+Addendum 56 ended with "z3's CNF is solved by our core in 1.4 s, our
+CNF takes >36 M conflicts" — so the gap is in OUR CNF, not our search.
+This addendum closes the causal chain to the bottom.
+
+**The tool** (landed): `NIXIE_DUMP_CNF=<path>` on the pure-BV dispatch
+dumps the embedded SAT instance exactly as the search sees it before
+the first check (the existing `NIXIE_DUMP_CNF_AT_SAT` hook fires only
+at a `sat` return).  `SatSolver::debug_dump_cnf` widened to `pub`, a
+`BvSolver::debug_dump_cnf` forwarder, one env-gated call site.  Default
+behaviour is bit-identical (counters verified identical to `810a9b02`
+on smulov2bw032, smulov1bw08, BBB-32, distrib08).
+
+**The same CNF in three solvers** (`smulov1bw12`, z3 4.16.0 CNF via
+`(apply (then bit-blast tseitin-cnf))`, CaDiCaL at `../temp/cadical`):
+
+| CNF | vars / clauses | clause lengths | CaDiCaL conflicts | nixie core |
+|---|---|---|---|---|
+| z3's | 1 022 / 7 247 | 2:528 3:2512 **4:4171** 5:12 6:23 | 35 277 (0.9 s) | 1.4 s |
+| ours, carry-save | 3 510 / 10 411 | **2:5324** 3:5080 | 1 145 014 (40 s) | >36 M |
+| ours, row-array | 3 425 / 10 178 | 2:5110 3:5061 | 20 044 (0.4 s) | 0.6 s |
+
+Two facts, independent of our solver: (a) our carry-save CNF is 30×
+harder for CaDiCaL than z3's; (b) z3's CNF is 3.4× smaller.  Its 4-
+literal clauses are the signature of **native full adders** — verified
+structurally: every adder in z3's CNF is one 8-clause XOR3 block on
+one var plus one 6-clause majority block on another, zero
+intermediates.  Ours decompose `mk_full_adder` into five two-input
+gates (`a⊕b`, sum, `a∧b`, `cin∧(a⊕b)`, cout) = 5 vars / 15 clauses.
+z3's blaster source has the SAME decomposition
+(`bit_blaster_rewriter.cpp::mk_xor3` nests two xors) — the collapse
+happens in its CNF conversion.
+
+**Fix candidate 1 — native full adders** (2 vars, 8-clause XOR3 +
+6-clause majority, structural-hashed, constants keep the gate path).
+Built and verified sound (every clause set brute-forced against its
+truth table FROM THE FILE TEXT — the first hand transcription had an
+inverted XOR polarity and a regex-mangled majority; both produced a
+`SAT` CNF on an unsat goal, which the model checker caught as
+`unknown`, the safety net holding).  Result on the CNF: carry-save
+3 510 → 2 347 vars, clause profile now z3-shaped (4-lit: 3 192),
+CaDiCaL **still 1.08 M conflicts**.  Row-array + native adders: 2 423
+vars, CaDiCaL **27 k** — at z3's count.  So native adders are
+*necessary* for z3's conflict count but do nothing alone on carry-save.
+
+**Both candidates measured under the protocol (10 seeds, conflicts):**
+
+native adder in isolation (carry-save, new vs `810a9b02`):
+
+| cell | gate adders | native adders | |
+|---|---|---|---|
+| smulov2bw016 | 464 | 766 | **1.65× loss**, no overlap |
+| smulov2bw032 | 1 809 | 2 324 | **1.28× loss**, no overlap |
+| smulov2bw064 | 5 875 | 8 075 | **1.37× loss** |
+| smulov2bw112 | 12 266 | 21 499 | **1.75× loss** |
+| smulov1bw08 | 15 052 | 15 525 | tie |
+| smulov3bw0128 | 15 | 15 | tie |
+
+row-array with native adders vs carry-save with native adders: same
+verdict as addendum 54 — smulov2 16/32 1.9–2.3× loss, 64 tie,
+smulov1bw08 1.8× win.
+
+**Verdict: NEITHER lands.**  Our CDCL prefers the gate-decomposed
+adders (the intermediate `a⊕b` variables are useful branching and
+learning structure) even though CaDiCaL prefers native ones — "fewer
+vars is better" is a false intuition here, and the protocol caught it
+three separate times (addenda 54, 56, 57).  The only combination that
+matches z3's conflict count, row-array + native adders = z3's own
+blaster, loses on smulov2 under our core by the same margin it did
+with gate adders.  Reverted; the diagnostic hook stays.
+
+**What this establishes for the next agent**: the smulov gap is NOT
+a rewrite, NOT a 1-bit lifting, NOT blaster sharing, NOT native
+adders, NOT the row array, and NOT our search on z3's CNF.  It is
+that our CDCL's performance on multiplier carry chains is sensitive to
+an encoding axis (adder decomposition) on which CaDiCaL is not, in the
+opposite direction.  The standing entry is therefore in the SAT core:
+what does our branching/learning do on carry-save + gate adders that
+CaDiCaL does not — read CaDiCaL/Kissat's treatment of XOR-ish
+structure (their `xor` detection / `cardinality` / blocked-clause
+addition on adders) and compare a learned-clause profile on
+`ours_cs.cnf` vs `ours_arr.cnf`.  The CNFs to reproduce: z3's via the
+`apply` above; ours via `NIXIE_DUMP_CNF`.
+
+Addendum-54 dump note corrected in 56 stands: the Booth 8×8 "multi-GB"
+was a counting artefact; smulov3bw0256's 637 MB dump is real.

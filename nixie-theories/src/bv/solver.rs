@@ -1886,6 +1886,14 @@ impl BvSolver {
         false
     }
 
+    /// Env-gated diagnostic (`NIXIE_DUMP_CNF`): write the embedded SAT
+    /// instance as DIMACS so an external solver can be run on EXACTLY the
+    /// clauses this solver's search sees — the blast-vs-search split.
+    #[cfg(feature = "std")]
+    pub fn debug_dump_cnf(&self, path: &str) {
+        self.sat.debug_dump_cnf(path);
+    }
+
     /// Multiplication: result = a * b (using shift-and-add)
     ///
     /// Returns `false` – encoding nothing – when an operand has not been
