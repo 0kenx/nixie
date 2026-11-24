@@ -130,21 +130,25 @@ fn ground_difference_keeps_the_positive_part() {
     );
 }
 
-// ---- the honest decline ----
+// ---- updates (issue #20, step 5) ----
 
+/// `token (-) SetToBag({e})` lowers to a function definition over
+/// `DOMAIN token` — a symbolic domain whose **key universe** the
+/// function-frame analysis now derives (from the bag's assignment sites),
+/// so the update instantiates per candidate instead of declining. The
+/// honest-refusal wall this test used to pin is closed; what stays honest
+/// is the presence guard: each key enters only through `k \in DOMAIN
+/// token@step`, decided by the set theory.
 #[test]
-fn state_bag_update_declines_rather_than_guessing() {
-    // `token (-) SetToBag({e})` is a function definition over
-    // `DOMAIN token` — a symbolic domain with no candidate list. The
-    // encoding must say so, never approximate the update.
+fn state_bag_update_checks_over_the_key_universe() {
     let src = r"
----- MODULE Decline ----
+---- MODULE Update ----
 EXTENDS Integers, Bags
 VARIABLE token
 Init == token = SetToBag({1, 2})
 Next == \E e \in {1, 2} :
         token' = token (-) SetToBag({e})
-Inv == TRUE
+Inv == BagCardinality(token) <= 2
 ====
 ";
     let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
@@ -153,11 +157,41 @@ Inv == TRUE
     let mut tm = TermManager::new();
     let mut bmc =
         Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
-    let err = bmc.check(1, &mut tm).expect_err("the update must decline");
+    let out = bmc.check(1, &mut tm).expect("the update checks");
     assert!(
-        err.to_string().contains("enumerable"),
-        "the decline names the enumerable-domain wall: {err}"
+        matches!(out, Outcome::NoViolationWithin(_)),
+        "checked to a clean verdict, not a guess: {out:?}"
     );
+}
+
+/// The update's arithmetic is live, not decorative: writing `0` at a key
+/// through a `[n \in DOMAIN token |-> …]` update must reach the invariant
+/// reading that key. (The `Bags` module's own `(-)` chain still meets the
+/// inference limitation its vocabulary has always had — recorded in
+/// `METHODOLOGY.md` — so this pins the *kernel* update shape the chain
+/// lowers to.)
+#[test]
+fn state_bag_update_breaks_an_invariant_when_it_should() {
+    let src = r"
+---- MODULE Update2 ----
+EXTENDS Integers
+VARIABLE token
+Init == token = [n \in {1} |-> 1]
+Next == \E e \in {1} :
+        token' = [n \in DOMAIN token |-> IF n = e THEN 0 ELSE token[n]]
+Inv == token[1] >= 1
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    match bmc.check(1, &mut tm) {
+        Ok(Outcome::Violation { .. }) => {}
+        other => panic!("expected a violation through the update, got {other:?}"),
+    }
 }
 
 // ---- issue #18: the EmptyBag binder and BagOfAll ----

@@ -59,6 +59,14 @@ pub struct Frames {
     /// One universe per variable name, in derivation order (deduplicated by
     /// term identity).
     pub universe: HashMap<String, Vec<KeraRef>>,
+    /// Candidate **key** universes for the `DOMAIN` of function-valued state
+    /// variables (issue #20, step 5): `b' = [x \in S |-> e]` contributes
+    /// `elements(S)`, `b' = [b EXCEPT ![k] = v]` contributes the inherited
+    /// keys plus `k`, `b' \in [S -> T]` contributes `elements(S)`. A
+    /// bounded quantifier over `DOMAIN b` then instantiates over these,
+    /// guarded by membership in the **real** domain term — the same
+    /// solver-mediated presence the set frames use.
+    pub fun_universe: HashMap<String, Vec<KeraRef>>,
 }
 
 /// Why a variable could not be framed. Not an error — an unframed variable
@@ -77,6 +85,9 @@ pub struct Input<'a> {
     pub next: &'a KeraRef,
     /// The set-valued state variables, by name.
     pub set_vars: Vec<String>,
+    /// The function-valued state variables, by name — the subjects of the
+    /// domain-key universes.
+    pub fun_vars: Vec<String>,
     /// The candidate budget, the same ceiling the arena respects.
     pub max_candidates: usize,
 }
@@ -88,30 +99,68 @@ pub fn analyze(input: &Input<'_>) -> Frames {
     for v in &input.set_vars {
         state.insert(v.clone(), Ok(Vec::new()));
     }
+    for v in &input.fun_vars {
+        state.entry(v.clone()).or_insert_with(|| Ok(Vec::new()));
+    }
+    // Which extractor an assignment's right-hand side gets: a set variable
+    // contributes its elements, a function variable the keys of its domain.
+    let fun_set: std::collections::HashSet<String> = input.fun_vars.iter().cloned().collect();
+    let kinds = |v: &str| {
+        if fun_set.contains(v) {
+            VarKind::Fun
+        } else {
+            VarKind::Set
+        }
+    };
     // The initial assignment's elements seed every universe — into the same
     // map the element walk reads, so a transition's `v' = v \cup {..}`
     // inherits them. An `Init` that never mentions a set variable leaves it
     // at the empty universe, which is a frame — a weak one, grown by the
     // transition's assignments.
     let mut seeded = HashMap::new();
-    collect_assignments(input.init, false, &state, &mut seeded, input.max_candidates);
+    collect_assignments(
+        input.init,
+        false,
+        &state,
+        &kinds,
+        &mut seeded,
+        input.max_candidates,
+    );
     merge_into(&mut state, seeded, input.max_candidates);
     // Iterate the transition's assignments to a fixpoint. Termination: each
     // round only adds candidates, and a universe past the budget poisons its
     // variable for good.
-    for _ in 0..input.set_vars.len().saturating_mul(2) + 2 {
+    let rounds = input
+        .set_vars
+        .len()
+        .saturating_mul(2)
+        .saturating_add(input.fun_vars.len().saturating_mul(2))
+        .saturating_add(2);
+    for _ in 0..rounds {
         let mut grown = HashMap::new();
-        collect_assignments(input.next, true, &state, &mut grown, input.max_candidates);
+        collect_assignments(
+            input.next,
+            true,
+            &state,
+            &kinds,
+            &mut grown,
+            input.max_candidates,
+        );
         if !merge_into(&mut state, grown, input.max_candidates) {
             break;
         }
     }
     let mut universes: HashMap<String, Vec<KeraRef>> = HashMap::new();
+    let mut fun_universes: HashMap<String, Vec<KeraRef>> = HashMap::new();
     for (v, u) in state {
         if let Ok(elems) = u
             && !elems.is_empty()
         {
-            universes.insert(v, elems);
+            if fun_set.contains(v.as_str()) {
+                fun_universes.insert(v, elems);
+            } else {
+                universes.insert(v, elems);
+            }
         }
     }
     // An empty universe is dropped: the walk cannot distinguish "empty" from
@@ -119,7 +168,16 @@ pub fn analyze(input: &Input<'_>) -> Frames {
     // unframed, declining as before.
     Frames {
         universe: universes,
+        fun_universe: fun_universes,
     }
+}
+
+/// How a variable's assignment sites are read: the elements of the assigned
+/// set, or the keys of the assigned function's domain.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VarKind {
+    Set,
+    Fun,
 }
 
 /// Merge one round's collected candidates into the fixpoint state. `false`
@@ -173,6 +231,7 @@ fn collect_assignments(
     t: &KeraRef,
     next_state: bool,
     state: &HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
+    kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
 ) {
@@ -196,6 +255,7 @@ fn collect_assignments(
                                 &instantiated,
                                 next_state,
                                 state,
+                                kinds,
                                 out,
                                 max_candidates,
                             );
@@ -212,15 +272,21 @@ fn collect_assignments(
                 work.push(b);
             }
             Kera::Eq(lhs, rhs) => {
-                collect_eq(lhs, rhs, next_state, state, out, max_candidates);
-                collect_eq(rhs, lhs, next_state, state, out, max_candidates);
+                collect_eq(lhs, rhs, next_state, state, kinds, out, max_candidates);
+                collect_eq(rhs, lhs, next_state, state, kinds, out, max_candidates);
             }
             Kera::In(member, set) => {
                 // The nondeterministic assignment shape `v' \in S` (in an
                 // action) or `v \in S` (in `Init`): the candidates are the
-                // domain's elements.
+                // domain's elements — for a function variable over
+                // `[S -> T]`, the keys are `S`'s elements (the `\in`
+                // `[S -> T]` encoding pins the domain to exactly `S`).
                 if let Some(v) = primed_or_plain_var(member, next_state) {
-                    offer(&v, set, state, out, max_candidates);
+                    let rhs = match (kinds(&v), set.as_ref()) {
+                        (VarKind::Fun, Kera::FunSet { set: inner, .. }) => inner,
+                        _ => set,
+                    };
+                    offer(&v, rhs, state, kinds, out, max_candidates);
                 }
             }
             _ => {}
@@ -235,6 +301,7 @@ fn collect_eq(
     rhs: &KeraRef,
     next_state: bool,
     state: &HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
+    kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
 ) {
@@ -242,7 +309,7 @@ fn collect_eq(
         return;
     };
     match vs.as_slice() {
-        [(v, None)] => offer(v, rhs, state, out, max_candidates),
+        [(v, None)] => offer(v, rhs, state, kinds, out, max_candidates),
         // A tuple assignment `<<a', b'>> = <<e1, e2>>`: elementwise, when
         // the right side is a tuple of the same arity.
         _ => {
@@ -250,7 +317,7 @@ fn collect_eq(
                 && items.len() == vs.len()
             {
                 for ((v, _), item) in vs.iter().zip(items.iter()) {
-                    offer(v, item, state, out, max_candidates);
+                    offer(v, item, state, kinds, out, max_candidates);
                 }
             }
         }
@@ -303,14 +370,19 @@ fn offer(
     v: &str,
     rhs: &KeraRef,
     state: &HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
+    kinds: &dyn Fn(&str) -> VarKind,
     out: &mut HashMap<String, Vec<KeraRef>>,
     max_candidates: usize,
 ) {
-    // Only set-valued state variables have frames.
+    // Only framed state variables have universes.
     if !state.contains_key(v) {
         return;
     }
-    if let Some(elems) = elements(rhs, state, max_candidates) {
+    let elems = match kinds(v) {
+        VarKind::Set => elements(rhs, state, max_candidates),
+        VarKind::Fun => dom_keys(rhs, state, max_candidates),
+    };
+    if let Some(elems) = elems {
         let cur = out.entry(v.to_string()).or_default();
         for e in elems {
             if !cur.iter().any(|c| Rc::ptr_eq(c, &e)) {
@@ -357,6 +429,14 @@ fn elements(
                 Some(Ok(u)) => out.extend(u.iter().map(Rc::clone)),
                 _ => return None,
             },
+            // `DOMAIN f` in a set position: the function's domain keys —
+            // the same extractor a function variable's assignment uses, so
+            // `v' = v \cup DOMAIN b` and `b' = [x \in DOMAIN b |-> ..]`
+            // read one table.
+            Kera::Domain(f) => {
+                let keys = dom_keys(f, state, max_candidates)?;
+                out.extend(keys);
+            }
             // A filter keeps a subset of its base; the base's candidates
             // cover it.
             Kera::Filter { set, .. } => work.push(set),
@@ -481,4 +561,73 @@ pub fn framed_vars(frames: &Frames) -> Vec<String> {
     let mut out: Vec<String> = frames.universe.keys().cloned().collect();
     out.sort();
     out
+}
+
+/// The candidate **domain keys** of a function-valued kernel term, or `None`
+/// when the term's domain has no enumerable reading (issue #20, step 5).
+///
+/// The same one-directional contract as [`elements`]: the keys offered may
+/// over-approximate the true domain (presence is solver-mediated, guarded by
+/// membership in the real domain term), but may never miss one — which is
+/// why an unreadable shape is `None` and the variable stays unframed.
+fn dom_keys(
+    t: &KeraRef,
+    state: &HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
+    max_candidates: usize,
+) -> Option<Vec<KeraRef>> {
+    let mut out: Vec<KeraRef> = Vec::new();
+    let mut work: Vec<&KeraRef> = vec![t];
+    while let Some(cur) = work.pop() {
+        match cur.as_ref() {
+            // `[x \in S |-> e]` (and a recursive function over `S`): the
+            // domain is exactly `S`.
+            Kera::FunDef { set, .. } | Kera::RecFun { set, .. } => {
+                let dom = elements(set, state, max_candidates)?;
+                out.extend(dom);
+            }
+            // `f \in [S -> T]` pins the domain to exactly `S`.
+            Kera::FunSet { set, .. } => {
+                let dom = elements(set, state, max_candidates)?;
+                out.extend(dom);
+            }
+            // `[f EXCEPT ![k] = v]`: the domain inherits `f`'s keys and adds
+            // `k` (a store extends, never shrinks).
+            Kera::Except { fun, index, .. } => {
+                let base = dom_keys(fun, state, max_candidates)?;
+                out.extend(base);
+                out.push(Rc::clone(index));
+            }
+            // A function-valued variable read: its own key universe.
+            Kera::Var(n) => match state.get(n.as_str()) {
+                Some(Ok(u)) => out.extend(u.iter().map(Rc::clone)),
+                _ => return None,
+            },
+            // `DOMAIN (DOMAIN f)` is not a TLA+ shape a function value has;
+            // reading the inner function's keys directly would be wrong in
+            // the missing-key direction. Refused.
+            Kera::Domain(_) => return None,
+            // A record literal: its domain is its field names.
+            Kera::Record(fields) => {
+                for (k, _) in fields {
+                    out.push(Kera::Str(k.clone()).rc());
+                }
+            }
+            // A tuple literal: its domain is `1..n`.
+            Kera::Tuple(xs) => {
+                for i in 1..=xs.len() {
+                    out.push(Kera::Int(i.to_string()).rc());
+                }
+            }
+            // Both branches of a conditional function.
+            Kera::Ite(_, a, b) => {
+                work.push(a);
+                work.push(b);
+            }
+            _ => return None,
+        }
+        if out.len() > max_candidates {
+            return None;
+        }
+    }
+    Some(out)
 }

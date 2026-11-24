@@ -33,6 +33,7 @@ fn removal_only_keeps_the_initial_universe() {
     let init = lower(&src, "Init");
     let next = lower(&src, "Next");
     let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
         init: &init,
         next: &next,
         set_vars: vec!["s".into()],
@@ -53,6 +54,7 @@ fn extension_under_self_binder_reaches_a_fixpoint() {
     let init = lower(&src, "Init");
     let next = lower(&src, "Next");
     let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
         init: &init,
         next: &next,
         set_vars: vec!["s".into()],
@@ -73,6 +75,7 @@ fn arithmetic_elements_collapse_to_values() {
     let init = lower(&src, "Init");
     let next = lower(&src, "Next");
     let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
         init: &init,
         next: &next,
         set_vars: vec!["s".into()],
@@ -98,6 +101,7 @@ fn a_function_set_assignment_adds_nothing_to_the_universe() {
     let init = lower(&src, "Init");
     let next = lower(&src, "Next");
     let frames = frames::analyze(&Input {
+        fun_vars: Vec::new(),
         init: &init,
         next: &next,
         set_vars: vec!["s".into()],
@@ -261,4 +265,74 @@ Inv == x \notin Data
         ),
         other => panic!("expected Unknown, got {other:?}"),
     }
+}
+
+/// Issue #20 step 5: a function constructor over `DOMAIN` of a state
+/// function — the bag-update shape — instantiates over the domain's key
+/// universe instead of declining. `token' = [n \in DOMAIN token |-> …]` was
+/// "a set-valued term with no candidate list".
+#[test]
+fn fundef_over_domain_of_a_state_function_checks() {
+    let src = r#"
+---- MODULE BagUpd ----
+EXTENDS Naturals
+VARIABLE token
+Init == token = [n \in {"e1", "e2"} |-> 2]
+Next == token' = [n \in DOMAIN token |-> IF n = "e1" THEN 0 ELSE token[n]]
+Inv == token["e1"] >= 0
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(2));
+}
+
+/// The update must be *able* to break the invariant — the key universe may
+/// over-approximate presence (solver-mediated) but never over-constrain the
+/// transition: `token["e1"]` must reach 0.
+#[test]
+fn bag_update_reaches_its_violation() {
+    let src = r#"
+---- MODULE BagUpd2 ----
+EXTENDS Naturals
+VARIABLE token
+Init == token = [n \in {"e1", "e2"} |-> 2]
+Next == token' = [n \in DOMAIN token |-> IF n = "e1" THEN 0 ELSE token[n]]
+Inv == token["e1"] > 0
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 1 });
+}
+
+/// An `EXCEPT` at an **in-domain** key: the value the update writes is
+/// visible to a quantifier over `DOMAIN` (instantiated over the key
+/// universe), so the violation is found and replays.
+#[test]
+fn except_update_is_visible_to_domain_quantifiers() {
+    let src = r#"
+---- MODULE BagUpd3 ----
+EXTENDS Naturals
+VARIABLE token
+Init == token = [n \in {"e1"} |-> 2]
+Next == token' = [token EXCEPT !["e1"] = 0]
+Inv == \A n \in DOMAIN token : token[n] > 0
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 1 });
+}
+
+/// An `EXCEPT` at a **fresh** key keeps the domain — Apalache's both
+/// `FunExcept` rules copy `dom(f)` unchanged and TLC errors on the shape,
+/// so no checkable specification relies on the result. The invisible write
+/// must not invent a domain member (which would be a spurious violation).
+#[test]
+fn except_at_a_fresh_key_keeps_the_domain() {
+    let src = r#"
+---- MODULE BagUpd4 ----
+EXTENDS Naturals
+VARIABLE token
+Init == token = [n \in {"e1"} |-> 2]
+Next == token' = [token EXCEPT !["e9"] = 0]
+Inv == \A n \in DOMAIN token : token[n] > 0
+====
+"#;
+    assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(2));
 }

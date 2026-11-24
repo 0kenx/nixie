@@ -566,6 +566,7 @@ impl Bmc {
             init: &init_k,
             next: &next_k,
             set_vars: state_now,
+            fun_vars: Vec::new(),
             max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
         });
         let framed_now = coarse.universe.keys().cloned().collect::<Vec<_>>();
@@ -921,6 +922,7 @@ impl Bmc {
         // the theory was built.
         let mut encoder = Encoder::new().with_set_encoding(SetEncoding::Native);
         let mut set_vars: Vec<String> = Vec::new();
+        let mut fun_vars: Vec<String> = Vec::new();
         let mut names: Vec<(String, nixie_tla::TyId)> = inf
             .free_names()
             .map(|(n, id)| (n.to_string(), id))
@@ -956,11 +958,20 @@ impl Bmc {
                 // the candidate-universe derivation runs before the first
                 // query and hands the encoder what it needs to instantiate a
                 // bounded quantifier over the variable.
-                if matches!(
-                    tm.sorts.get(sort).map(|s| s.kind.clone()),
-                    Some(nixie_core::SortKind::Set(_))
-                ) {
-                    set_vars.push(name.clone());
+                match tm.sorts.get(sort).map(|s| s.kind.clone()) {
+                    // A set-sorted state variable is a set-frame subject
+                    // (issue #20): the candidate-universe derivation runs
+                    // before the first query and hands the encoder what it
+                    // needs to instantiate a bounded quantifier over the
+                    // variable.
+                    Some(nixie_core::SortKind::Set(_)) => set_vars.push(name.clone()),
+                    // An array-sorted state variable is a **function-frame**
+                    // subject (issue #20, step 5): its `DOMAIN` gets a
+                    // candidate key universe, so a bounded quantifier or a
+                    // function constructor over `DOMAIN b` instantiates
+                    // instead of declining.
+                    Some(nixie_core::SortKind::Array { .. }) => fun_vars.push(name.clone()),
+                    _ => {}
                 }
             } else {
                 encoder.declare(name, sort);
@@ -980,6 +991,7 @@ impl Bmc {
             init: &init_k,
             next: &next_k,
             set_vars: set_vars.clone(),
+            fun_vars: fun_vars.clone(),
             max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
         });
         let mut nodes: Vec<KeraRef> = Vec::new();

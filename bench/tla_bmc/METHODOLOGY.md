@@ -133,15 +133,18 @@ evaluator and TLC represent one. What that means for BMC:
 | ground construction (`SetToBag({1,2})`, `EmptyBag` in `Init`) | encodes |
 | symbolic reads (`CopiesIn(e, token)`, `BagIn(e, token)`, `token[e]`) | encodes |
 | ground algebra in invariants (`(+)`, `(-)`, `\sqsubseteq` over ground bags) | encodes |
-| **updates** of a state bag (`token' = token (-) SetToBag({e})`) | **declines** — a function definition over `DOMAIN token`, a symbolic domain with no candidate list |
-| quantifiers over `DOMAIN` of a symbolic bag | **declines** — same wall |
+| **updates** of a state bag (`token' = token (-) SetToBag({e})`) | **encodes** (issue #20 step 5) — the function definition over `DOMAIN token` instantiates over the domain's **key universe**, each candidate guarded by `k \in DOMAIN token@step`; see `frames.rs` `fun_universe` |
+| quantifiers over `DOMAIN` of a symbolic bag | **encodes** — same key universe, same guard |
 
-Both declines name the enumerable-domain wall and are counted, never
-approximated. Closing them needs a lambda-shaped function encoding (or a
-native bridge onto the solver's `Bag` sort, which is the cross-layer design
-the front-end document reserves for later): the update writes a function
-whose domain is itself symbolic, which the enumeration-based `FunDef`
-encoding cannot serve.
+Both former declines are closed (issue #20 step 5): a function-valued state
+variable now gets a **domain-key universe** from its assignment sites
+(`b' = [x \in S |-> e]` contributes `elements(S)`;
+`b' = [b EXCEPT ![k] = v]` inherits the keys; `b' \in [S -> T]` pins them
+to `elements(S)`), iterated to a fixpoint exactly as the set frames are,
+and a `DOMAIN b` in a quantifier or constructor position instantiates over
+it, presence solver-mediated. The `Bags` module's own operator chains
+(`(-)` through `LET`, `CopiesIn`) still meet the type-inference limitation
+recorded above them; the *kernel* shape the chains lower to is closed.
 
 The remaining vocabulary (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`,
 `BagOfAll`) is TLC-exact in the *evaluator* (semantic parity covers it) and

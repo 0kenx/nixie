@@ -216,6 +216,11 @@ pub struct Encoder {
     /// Reverse of [`Encoder::vars`]: the variable a set-sorted term is, and
     /// the step it was read at — what the frame lookup needs.
     var_of: HashMap<TermId, (String, u32)>,
+    /// The **domain** side of a function-sorted state variable: its
+    /// `name$dom` set term back to `(name, step)` (issue #20, step 5). A
+    /// bounded quantifier over `DOMAIN b` meets exactly this term, and the
+    /// function-frame key universe instantiates it.
+    dom_of: HashMap<TermId, (String, u32)>,
 }
 
 impl Encoder {
@@ -240,6 +245,7 @@ impl Encoder {
             frames: crate::frames::Frames::default(),
             framing: std::collections::HashSet::new(),
             var_of: HashMap::new(),
+            dom_of: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -615,6 +621,16 @@ impl Encoder {
                 {
                     return Ok(SetCell { members });
                 }
+                // A function-sorted state variable's domain term: its
+                // **key** universe (issue #20, step 5), guarded by
+                // membership in the real domain variable — the same
+                // solver-mediated presence the set frames use.
+                if let Some((name, step)) = self.dom_of.get(&t).cloned()
+                    && self.frames.fun_universe.contains_key(&name)
+                    && let Some(members) = self.fun_frame_members(&name, step, t, tm)
+                {
+                    return Ok(SetCell { members });
+                }
                 match self.candidates_of(t, 0, tm) {
                     Some(members) => Ok(SetCell { members }),
                     None => Err(EncodeError::NotEnumerable(
@@ -713,6 +729,55 @@ impl Encoder {
         }
         self.step = saved;
         self.framing.remove(name);
+        ok.then_some(members)
+    }
+
+    /// The arena cell of a function-sorted state variable's domain at one
+    /// step: the key universe's elements, encoded at that step, each guarded
+    /// by membership in the **real** domain term (issue #20, step 5).
+    ///
+    /// `None` poisons the frame, exactly as [`Encoder::frame_members`] does:
+    /// never a partial list — a missing key could hide a member, which is
+    /// the unsound direction.
+    fn fun_frame_members(
+        &mut self,
+        name: &str,
+        step: u32,
+        dom_term: TermId,
+        tm: &mut TermManager,
+    ) -> Option<Vec<Member>> {
+        if !self.framing.insert(format!("{name}$dom")) {
+            return None;
+        }
+        let elems = self.frames.fun_universe.get(name)?.clone();
+        let saved = std::mem::replace(&mut self.step, step);
+        let mut members = Vec::with_capacity(elems.len());
+        let mut ok = true;
+        for e in &elems {
+            let v = match self.value(e, tm) {
+                Ok(v) => v,
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            };
+            let present = match &*v {
+                Value::Scalar(e_term) => tm.mk_set_member(*e_term, dom_term),
+                structural => {
+                    let v = Rc::new(structural.clone());
+                    match self.reify(&v, tm) {
+                        Ok(r) => tm.mk_set_member(r, dom_term),
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+            };
+            members.push(Member { value: v, present });
+        }
+        self.step = saved;
+        self.framing.remove(&format!("{name}$dom"));
         ok.then_some(members)
     }
 
@@ -1203,6 +1268,7 @@ impl Encoder {
                     let set_sort = tm.sorts.set(domain);
                     let d = tm.mk_var(&format!("{smt_name}$dom"), set_sort);
                     self.var_domains.insert(key, d);
+                    self.dom_of.insert(d, (n.0.clone(), step));
                     return Ok(Rc::new(Value::Fun {
                         domain: d,
                         array: t,
@@ -2387,11 +2453,13 @@ impl Encoder {
                         fields.insert(name.clone(), self.value(value, tm)?);
                         Ok(Rc::new(Value::Record(fields)))
                     }
-                    // `[f EXCEPT ![i] = v]` has the *same domain* as `f` —
-                    // `EXCEPT` never extends a function. An `i` outside that
-                    // domain leaves the result unspecified in TLA+; storing it
-                    // anyway writes at a point domain-relative equality does
-                    // not look at, so it changes no answer.
+                    // `[f EXCEPT ![i] = v]` keeps the domain: Apalache's
+                    // both `FunExcept` rules copy `dom(f)` over unchanged
+                    // ("the domain, as it does not change"), and TLC errors
+                    // on an out-of-domain key, so no checkable specification
+                    // relies on the result at one. The stored point at such
+                    // a key is invisible to `DOMAIN g` and to domain-relative
+                    // equality — checked here exactly as the ecosystem does.
                     Value::Fun { domain, array } => {
                         let idx = self.go(index, tm)?;
                         let val = self.go(value, tm)?;
