@@ -189,3 +189,76 @@ Inv == ~\E x \in s : x = 2
 "#;
     assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 0 });
 }
+
+/// Issue #20 step 4: a positive existential over an **unconstrained
+/// `CONSTANT`** — no frame, no arena — skolemizes instead of declining:
+/// `\E d \in Data : Send(d)` becomes `c \in Data /\ Send(c)`, the
+/// membership kept as a set-theory constraint. `Channel.tla` is the corpus
+/// cell this shape comes from.
+#[test]
+fn existential_over_symbolic_constant_encodes() {
+    let src = r#"
+---- MODULE Sk ----
+CONSTANT Data
+VARIABLE x
+Init == x = "e0"
+Send(d) == x' = d
+Next == (\E d \in Data : Send(d)) \/ (x' = x)
+Inv == x # "bad"
+====
+"#;
+    // `Data` is unpinned, and a `CONSTANT` is universally quantified: the
+    // instance `Data = {"bad"}` is legal, `\E d \in Data` may pick "bad",
+    // and the invariant genuinely breaks. The negated invariant forces
+    // `x' = "bad"`, so the witness reads back and the violation is reported.
+    // Before the skolemization this was a decline: "a set-valued term with
+    // no candidate list".
+    assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 1 });
+}
+
+/// The skolem's membership constraint is not decoration: `c \in Data`
+/// participates, so an invariant contradicting membership *fails* through
+/// the witness — the rewrite is satisfiability-exact, not a free choice.
+#[test]
+fn skolem_membership_constrains_the_witness() {
+    let src = r#"
+---- MODULE Sk2 ----
+CONSTANT Data
+ASSUME Data = {"e1", "e2"}
+VARIABLE x
+Init == x = "e0"
+Next == \E d \in Data : x' = d
+Inv == x \notin Data
+====
+"#;
+    // Step 0 has x = "e0" and Inv says x \notin Data — fine (e0 is not
+    // asserted to be in Data... and also not asserted out). Step 1 takes
+    // the witness c with c \in Data and x' = c — the `ASSUME` pins Data to
+    // two strings, so c reads back — and x' \in Data breaks the invariant.
+    assert_eq!(claim(src, "Inv"), Outcome::Violation { step: 1 });
+}
+
+/// The honest refusal: with `Data` **completely** unconstrained, the
+/// counterexample exists but the solver leaves the witness string
+/// undecided, and the readback refuses to fabricate a value — the
+/// independent replay could not verify a made-up witness. `Unknown`,
+/// naming the shape, is the correct verdict.
+#[test]
+fn unconstrained_witness_refuses_rather_than_fabricates() {
+    let src = r#"
+---- MODULE Sk3 ----
+CONSTANT Data
+VARIABLE x
+Init == x = "e0"
+Next == \E d \in Data : x' = d
+Inv == x \notin Data
+====
+"#;
+    match claim(src, "Inv") {
+        Outcome::Unknown(msg) => assert!(
+            msg.contains("did not decide"),
+            "the refusal names the undecided shape: {msg}"
+        ),
+        other => panic!("expected Unknown, got {other:?}"),
+    }
+}

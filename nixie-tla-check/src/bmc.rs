@@ -544,14 +544,41 @@ impl Bmc {
         for inv in roles.inv {
             invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
         }
-        // Positive existentials over the standard infinite sets are
-        // skolemized before anything else sees them (`\E no \in Nat : …` is
-        // the idiom `HandshakeWithTypes` and the message-passing corpus use).
-        // The rewrite is polarity-tracked — see the pass — and runs on every
-        // role formula plus the constraint definitions, so a skolem in `Init`
-        // and one in `Next` over the same set are still distinct witnesses.
-        let init_k = nixie_tla::lower::skolemize_infinite_existentials(&init_k);
-        let next_k = nixie_tla::lower::skolemize_infinite_existentials(&next_k);
+        // Positive existentials over the standard infinite sets — and, per
+        // issue #20 step 4, over **symbolic set names the frame analysis
+        // could not derive a universe for** — are skolemized before anything
+        // else sees them (`\E no \in Nat : …` is the idiom
+        // `HandshakeWithTypes` and the message-passing corpus use;
+        // `\E d \in Data : …` with an unpinned `Data` is the corpus's
+        // remaining `no candidate list` class). The rewrite is
+        // polarity-tracked — see the pass — and runs on every role formula
+        // plus the constraint definitions, so a skolem in `Init` and one in
+        // `Next` over the same set are still distinct witnesses.
+        //
+        // The coarse frames pass here runs over **all** state variables:
+        // the element walk declines non-set assignments harmlessly, and
+        // the precise set-typed subject list needs the inference that runs
+        // after this. A variable this pass frames keeps its enumeration;
+        // one it cannot is a skolem subject below, and the precise frames
+        // pass after inference re-derives on the rewritten terms.
+        let state_now = all_state_variables(spec);
+        let coarse = crate::frames::analyze(&crate::frames::Input {
+            init: &init_k,
+            next: &next_k,
+            set_vars: state_now,
+            max_candidates: crate::encode::DEFAULT_MAX_CANDIDATES,
+        });
+        let framed_now = coarse.universe.keys().cloned().collect::<Vec<_>>();
+        let syms = nixie_tla::lower::Syms::from_names(
+            quantifier_domain_names(&[&init_k, &next_k])
+                .into_iter()
+                .filter(|n| {
+                    !framed_now.iter().any(|f| f == n)
+                        && !matches!(n.as_str(), "Nat" | "Int" | "STRING" | "BOOLEAN")
+                }),
+        );
+        let init_k = nixie_tla::lower::skolemize_with_syms_at(&init_k, true, &syms);
+        let next_k = nixie_tla::lower::skolemize_with_syms_at(&next_k, true, &syms);
         let invs: Vec<(String, KeraRef)> = invs
             .into_iter()
             .map(|(n, t)| {
@@ -559,7 +586,7 @@ impl Bmc {
                 // is inverted from the start — see the pass's doc.
                 (
                     n,
-                    nixie_tla::lower::skolemize_infinite_existentials_at(&t, false),
+                    nixie_tla::lower::skolemize_with_syms_at(&t, false, &syms),
                 )
             })
             .collect();
@@ -2282,6 +2309,27 @@ fn has_definition(module: &Module, name: &str) -> bool {
 /// self-loop, `Init /\ Next` is contradictory, and the deadlock check
 /// (correctly, given that formula!) reported a step-0 deadlock — the first
 /// wrong verdict of the pass, found by the corpus on the day it landed.
+/// The free names used as a bounded quantifier's domain in the given terms
+/// (issue #20 step 4): the candidate skolem subjects. Walked with an
+/// explicit stack, pointer-deduplicated — a lowered term is a shared DAG.
+fn quantifier_domain_names(roots: &[&KeraRef]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+    let mut out: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stack: Vec<&KeraRef> = roots.to_vec();
+    while let Some(t) = stack.pop() {
+        if !seen.insert(Rc::as_ptr(t)) {
+            continue;
+        }
+        if let Kera::Exists { set, .. } | Kera::Forall { set, .. } = t.as_ref()
+            && let Kera::Var(n) = set.as_ref()
+        {
+            out.insert(n.to_string());
+        }
+        stack.extend(t.as_ref().children());
+    }
+    out.into_iter().collect()
+}
+
 fn all_state_variables(spec: &LoadedSpec) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (_, module) in &spec.modules {

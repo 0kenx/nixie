@@ -166,7 +166,47 @@ struct Def<'a> {
 /// are.
 pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -> KeraRef {
     let counter = std::cell::RefCell::new(0usize);
-    skolemize_walk(root, root_positive, &counter)
+    skolemize_walk(root, root_positive, &counter, &Syms::new())
+}
+
+/// Which **symbolic set names** a positive existential may be skolemized
+/// over (issue #20, step 4): `\E d \in Data : P(d)` becomes
+/// `c \in Data /\ P(c)` — satisfiability-exact, the membership kept as a
+/// constraint the set theory reasons about. The caller supplies the names
+/// the frame analysis could NOT derive a universe for; everything else
+/// keeps the arena's enumeration, which is stronger per witness.
+#[derive(Default)]
+pub struct Syms {
+    /// The names, sorted.
+    names: Vec<String>,
+}
+
+impl Syms {
+    /// The empty set: only the standard infinite sets skolemize (the
+    /// pre-step-4 behaviour).
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+    /// Build from an iterator of names, any order.
+    #[must_use]
+    pub fn from_names<I: IntoIterator<Item = String>>(names: I) -> Self {
+        let mut names: Vec<String> = names.into_iter().collect();
+        names.sort();
+        names.dedup();
+        Self { names }
+    }
+    fn contains(&self, n: &str) -> bool {
+        self.names.binary_search(&n.to_string()).is_ok()
+    }
+}
+
+/// [`skolemize_infinite_existentials_at`] with symbolic set names: a
+/// positive existential over a **named** set in `syms` skolemizes exactly
+/// as one over the infinite sets does.
+pub fn skolemize_with_syms_at(root: &KeraRef, root_positive: bool, syms: &Syms) -> KeraRef {
+    let counter = std::cell::RefCell::new(0usize);
+    skolemize_walk(root, root_positive, &counter, syms)
 }
 
 /// The walk proper, sharing one name counter with everything it spawns.
@@ -180,6 +220,7 @@ fn skolemize_walk(
     root: &KeraRef,
     root_positive: bool,
     counter: &std::cell::RefCell<usize>,
+    syms: &Syms,
 ) -> KeraRef {
     /// What a frame still owes.
     enum Frame<'a> {
@@ -216,7 +257,7 @@ fn skolemize_walk(
                 // `\\A`) with `S` a standard infinite set.
                 if pos
                     && let Kera::Exists { var, set, body } = t.as_ref()
-                    && infinite_set_of(set).is_some()
+                    && skolemizable_domain(set, syms)
                 {
                     let mut c = counter.borrow_mut();
                     *c += 1;
@@ -224,8 +265,9 @@ fn skolemize_walk(
                     drop(c);
                     let member = Kera::In(Kera::Var(fresh.clone()).rc(), Rc::clone(set)).rc();
                     let renamed = alpha_refresh_binders(&rename_var(body, var, &fresh), counter);
-                    let body =
-                        skolemize_infinite_existentials_cached(&renamed, &mut seen, counter, true);
+                    let body = skolemize_infinite_existentials_cached(
+                        &renamed, &mut seen, counter, syms, true,
+                    );
                     let out = Kera::And(vec![member, body]).rc();
                     seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
                     values.push(out);
@@ -233,7 +275,7 @@ fn skolemize_walk(
                 }
                 if !pos
                     && let Kera::Forall { var, set, body } = t.as_ref()
-                    && infinite_set_of(set).is_some()
+                    && skolemizable_domain(set, syms)
                 {
                     // `~\\A x \\in S : P` is `\\E x \\in S : ~P`.
                     let mut c = counter.borrow_mut();
@@ -244,8 +286,9 @@ fn skolemize_walk(
                     let neg_body = Kera::Not(Rc::clone(body)).rc();
                     let renamed =
                         alpha_refresh_binders(&rename_var(&neg_body, var, &fresh), counter);
-                    let body =
-                        skolemize_infinite_existentials_cached(&renamed, &mut seen, counter, true);
+                    let body = skolemize_infinite_existentials_cached(
+                        &renamed, &mut seen, counter, syms, true,
+                    );
                     let out = Kera::Not(Kera::And(vec![member, body]).rc()).rc();
                     seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
                     values.push(out);
@@ -307,6 +350,7 @@ fn skolemize_infinite_existentials_cached(
     t: &KeraRef,
     seen: &mut std::collections::HashMap<(*const Kera, bool), KeraRef>,
     counter: &std::cell::RefCell<usize>,
+    syms: &Syms,
     pos: bool,
 ) -> KeraRef {
     // Cheap outer reuse: a body already rewritten at this polarity is the
@@ -315,7 +359,7 @@ fn skolemize_infinite_existentials_cached(
         return Rc::clone(hit);
     }
     let _ = pos;
-    let out = skolemize_walk(t, true, counter);
+    let out = skolemize_walk(t, true, counter, syms);
     seen.insert((Rc::as_ptr(t), pos), Rc::clone(&out));
     out
 }
@@ -690,6 +734,22 @@ fn variant_kind(name: &str, args: &[Expr]) -> Option<VariantCall> {
         ("VariantGetOrElse", 3) if tag_is_literal(args) => Some(VariantCall::GetOrElse),
         ("VariantFilter", 2) if tag_is_literal(args) => Some(VariantCall::Filter),
         _ => None,
+    }
+}
+
+/// Whether a quantifier's domain may be skolemized at this position: the
+/// standard infinite sets always (enumerating them is impossible), and a
+/// **named symbolic set** the caller marked (issue #20 step 4 — a set the
+/// frame analysis could not derive a universe for, whose enumeration the
+/// arena would decline). Everything else keeps its enumeration, which is
+/// stronger per witness.
+fn skolemizable_domain(set: &KeraRef, syms: &Syms) -> bool {
+    if infinite_set_of(set).is_some() {
+        return true;
+    }
+    match set.as_ref() {
+        Kera::Var(n) => syms.contains(n.as_str()),
+        _ => false,
     }
 }
 
