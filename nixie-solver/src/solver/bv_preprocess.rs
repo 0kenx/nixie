@@ -570,8 +570,12 @@ impl BvPreprocessor {
                 // literal `concat(bit…bit, v)` chains, sharing terms with
                 // every other sign extension of `v` and killing one mux
                 // per bit).  The mirrored form selects the inverted
-                // replication.
-                if let Some(w) = bv_width_opt(manager, &rt).filter(|w| *w > 1)
+                // replication.  Width 1 included: `ite((= t #b1), #b1, #b0)`
+                // IS `t` (a 1-bit mux selecting the bit's own value) — the
+                // literal form `smulov`'s low-bit selectors are written
+                // in, and the blocker that kept two otherwise-equal sign
+                // extensions from hash-consing into one multiplier.
+                if let Some(w) = bv_width_opt(manager, &rt)
                     && bv_width_opt(manager, &re) == Some(w)
                     && let (Some(tv), Some(ev)) =
                         (const_bits(&rt, manager), const_bits(&re, manager))
@@ -4491,5 +4495,19 @@ mod tests {
     fn partial_mask_ite_does_not_fold() {
         let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (distinct (ite (= ((_ extract 3 3) x) #b1) #x0f #x00) ((_ repeat 8) ((_ extract 3 3) x))))\n(check-sat)\n";
         assert_eq!(solve_str(script), "sat");
+    }
+
+    /// The width-1 broadcast: `ite((= t #b1), #b1, #b0)` IS `t` — the
+    /// 1-bit mux selecting the bit's own value.  This is the literal
+    /// form `smulov`'s low-bit selectors are written in, and the blocker
+    /// that kept two otherwise-equal sign extensions from hash-consing
+    /// into one multiplier (`concat(ite(=bit,1,0), v)` vs `concat(bit, v)`).
+    #[test]
+    fn width_one_broadcast_ite_is_the_bit() {
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (distinct (ite (= ((_ extract 3 3) x) #b1) #b1 #b0) ((_ extract 3 3) x)))\n(check-sat)\n";
+        assert_eq!(solve_str(script), "unsat");
+        // Consequence: the two sign-extension spellings share one product.
+        let script = "(set-logic QF_BV)\n(declare-fun x () (_ BitVec 8))\n(assert (distinct (bvmul (concat (ite (= ((_ extract 7 7) x) #b1) #b1 #b0) x) (concat (ite (= ((_ extract 7 7) x) #b1) #b1 #b0) x)) (bvmul (concat ((_ extract 7 7) x) x) (concat ((_ extract 7 7) x) x))))\n(check-sat)\n";
+        assert_eq!(solve_str(script), "unsat");
     }
 }
