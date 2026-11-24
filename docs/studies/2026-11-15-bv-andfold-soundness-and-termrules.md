@@ -1840,3 +1840,83 @@ wiring, calypto canonicalization) — 11 gap cells closed, plus the
 hdp/float bonus folds.  Remaining: smulov1bw12/16 + calypto 19/3 +
 Booth 8×8 (one search-side slice over conditional-sign-extension
 multipliers) and isqrt/icbrt (largest scope).
+
+## Fifty-second addendum: broadcast-ite replication — smulov infrastructure; the search-class boundary sharpened
+
+Post-8c531bbe profiling of the remaining search-family cells
+(smulov1bw12/16, calypto 19/3) located the gap precisely: nixie's
+blasted instance is 2 347 SAT vars vs z3's 1 359, and nixie's search
+thrashes (36.8 M conflicts vs z3's 31 k on the same residual — z3
+solves NIXIE'S OWN dumped residual, so it is not a rewriting gap but an
+instance-size + search-quality gap).  z3's simplify trace on the
+residual shows what shrinks it: ites 146 → 7, concats 142 → 6, muls
+7 → 1 — the conditional sign extensions
+`concat(ite(= v[11], 1, ones, zeros), v)` fold to literal bit
+replications (making every sext of `v` the same shared term), the
+truncated products narrow, and the carry chains become plain
+or-of-literal clauses.
+
+**Landed**: the first and most mechanical of those rules — the
+broadcast ite.  `ite((= t #b1), all-ones, zeros)` (either operand
+order, plus the `(= t #b0)` mirror through `bvnot`) rewrites to the
+width-`w` replication of the 1-bit term `t`.  This is Z3-faithful,
+kills one mux per bit per conditional sign extension, and is required
+infrastructure for the eventual smulov closure.  Measured effect on
+the four search-family cells: none yet (z3's remaining edge needs the
+product narrowing + sharing chain — `extract(10,0, ite-sext)` →
+`sext(extract)` and the 7→1 mul collapse), and Booth 8×8 (which the
+calypto canonicalization had already pushed over the 10 s line at
+~14 s) is unchanged within load noise.
+
+**Negative recorded**: the hand-transformed smulov1bw12 (the four
+broadcast ites replaced by literal replications at the source level)
+still TOs in nixie AND takes z3 through exactly the same 31 863
+conflicts as the original — confirming the fold is equivalence-only
+and the remaining gap is the deeper narrowing chain, not this rule.
+
+Validation: 37 bv_preprocess tests (2 new: the replication identity in
+three operand orientations, and a partial-mask ite that must NOT fold
+— each false positive there is a false unsat); guards unchanged
+(bitrev folds, wienand, mcm/float leads, calypto 14/24); probes 5/5
+counter-identical; bar: fmt, clippy `-D warnings`, nixie-solver
+3 122/3 124 (the two known sets failures), parity 171-0-6, perf gate
+PASS (counters 1.000/1.000, wall 0.97).
+
+## Fifty-third addendum: smulov — the width-1 broadcast identity landed; the narrowing chain scoped to its real shape
+
+Follow-up on addendum 52's scoping, with the broadcast rule now live.
+Findings, in causal order:
+
+1. **A width-1 blocker**: `smulov` writes its low-bit selectors as
+   `ite((= bit #b1), #b1, #b0)` — a 1-bit mux that IS the bit.  The
+   broadcast rule's `w > 1` guard excluded it, so one sign extension
+   stayed a mux while its twin folded to `concat(bit, v)`: two
+   spellings, no hash-consing.  LANDED: width 1 included (the identity
+   `ite(= t 1, 1, 0) ≡ t`), with a unit test pinning both the identity
+   and its consequence (the two spellings share one product).
+2. **Canonicalization verified sound and sufficient** on the family's
+   real shapes: 17-segment sext chains in any association fold to one
+   term (probe), and the extract-sharing lemma
+   `extract(22,0,P_24) = extract(22,0,P_23)` (top factor bits cannot
+   influence lower product bits) folds to `(assert false)` in nixie
+   exactly as in z3 (rlimit 106).  So the remaining distinct products
+   in the residual are NOT a sharing failure: they are a 24-bit and a
+   23-bit product used only through `extract(23,23)` — genuinely
+   different bit positions, which z3 ALSO keeps apart (its residual
+   has two `bvmul`s: 12-bit and 11-bit sext forms).
+3. **Therefore the remaining gap is the blast itself**, not the
+   preprocessor: z3's instance is 1 359 vars vs nixie's 2 347 on the
+   SAME residual (z3 solves nixie's dumped residual in 23 k conflicts;
+   nixie takes 36 M).  The multiplier encoding is the suspect: z3's
+   `bv1_blaster` builds a Wallace-style partial-product tree with
+   structural sharing across the shared factor chains; nixie's
+   per-product blast re-derives each product's partial products even
+   when the factors are the same terms.  This is a blaster project
+   (blast-level structural sharing), i.e. the 2026-09 IR study's
+   "blast-sharing path" — out of the preprocess campaign's scope, and
+   recorded as the next search-side entry with its evidence chain.
+
+Cells: smulov1bw12/16 and calypto 19/3 stay TO (same class).  Guards
+unchanged (bitrev, wienand, calypto 14/24/9, mcm, BBB, float).  Bar:
+fmt, clippy `-D warnings`, nixie-solver 3 123/3 125 (the two known
+sets failures), parity 171-0-6, perf gate PASS.
