@@ -2036,3 +2036,51 @@ Correction to addendum 54's dump note: the Booth 8×8 "multi-GB" dump
 was a `grep -c` artefact of counting over a dump that was still being
 written; smulov3bw0256's 637 MB is real (DAG printed as tree) and the
 warning stands.
+
+## Fifty-sixth addendum: 1-bit Boolean lifting — hypothesis REFUTED as the smulov search lever
+
+Addendum 55 inferred from z3's `simplify` output (Bool-sorted
+`or`/`not`/`=` over 1-bit operands) that routing width-1
+`bvand`/`bvor`/`bvnot`/`ite`/`=` through nixie's BV gate encoder
+instead of the SAT core's clause structure was the 464-var / search
+gap.  Tested by construction: `bench/profile/lift1_bool_layer.py`
+lifts the whole width-1 boolean layer of a QF_BV instance to Bool
+sort (z3-faithful: `bvnot/bvand/bvor/bvxor/ite/=` → `not/and/or/xor/
+ite/=`, single-bit extracts of wide terms → Bool atoms `(= x #b1)`,
+and Bool refs from surviving BV terms re-materialised as
+`(ite b #b1 #b0)`).  It refuses to emit a partial lift — a partial
+lift is a different formula (one produced a false `sat` mid-dev;
+z3 caught it via the `:status unsat` annotation, which is why every
+lifted file is checked for `(error` first).
+
+Result, lifted files, z3 4.16.0 vs nixie `810a9b02` (25 s):
+
+| cell | z3 | nixie lifted | nixie original |
+|---|---|---|---|
+| smulov1bw08 | unsat | 0.44 s | 1.38 s |
+| smulov1bw12 | unsat | **TO** | TO |
+| smulov1bw16 | unsat | **TO** | TO |
+| smulov2bw032 | unsat | 0.13 s | 0.10 s |
+| smulov2bw048 | unsat | 0.85 s | 0.54 s |
+| smulov2bw064 | unsat | 1.6 s | 1.3 s |
+| calypto problem_19 | unsat | **TO** | TO |
+
+The lifted form is verdict-identical everywhere and changes nothing
+that matters: nixie's 1-bit boolean layer was never the bottleneck.
+(smulov2bw016 was not lifted — its `=` on 1-bit operands appears only
+inside wider terms — and behaves the same.)
+
+**Therefore the smulov1/calypto-19 gap is in the SAT search on a
+correct, parity-sized CNF**, not in any encoding layer: addendum 54
+showed the row-array CNF of the same problem is solved in 27 k
+conflicts where carry-save takes >36 M — the two encodings are both
+exact and both parity-sized with z3's, yet one is 1000× easier for
+*our* CDCL.  z3 solves the carry-save CNF too (23 k conflicts), so
+our SAT core is missing something z3's (sat/tactic) has on
+multiplier carry chains — the next entry is a **search-side**
+comparison on the carry-save CNF (VSIDS/phase/restart schedule,
+inprocessing — read CaDiCaL/Kissat for the carry-chain-friendly
+schedule), NOT another rewrite.
+
+Not landed as a solver pass: it would be pure overhead on every goal
+for zero measured benefit.  The lifter stays as a profiling tool.
