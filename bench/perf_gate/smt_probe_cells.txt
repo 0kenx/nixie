@@ -1,0 +1,17 @@
+QF_AUFLIA/storecomm/storecomm_t1_np_nf_ni_00050_001.cvc.smt2	
+QF_AUFLIA/20170829-Rodin/smt101358492275879472.smt2	
+QF_LIA/CAV_2009_benchmarks/smt/25-vars/problem__001.smt2	
+QF_LIA/CAV_2009_benchmarks/smt/40-vars/problem__002.smt2	
+QF_LIA/slacks/10-13.slack.smt2	
+QF_LIA/slacks/30-17.slack.smt2	
+QF_LIA/dillig/10-15.smt2	
+QF_NIA/20170427-VeryMax/ITS/From_AProVE_2014__juHashMapCreate.jar-obl-10__p4418_safety_0.smt2	
+QF_UF/PEQ/PEQ020_size5.smt2	
+QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg20_true-unreach-call.i_0.smt2	
+QF_UFLIA/wisas/xs_8_13.smt2	
+QF_UFLIA/mathsat/Wisa/xs-10-18-2-2-5-3.smt2	
+QF_UFLIA/wisas/xs_10_20.smt2	
+QF_UFIDL/20210312-Bouvier/vlsat3_f30.smt2	--conflict-limit 3000
+QF_AUFLIA/cvc/dlx-pc.smt2	--conflict-limit 2000
+QF_IDL/20210312-Bouvier/vlsat3_c60.smt2	--conflict-limit 3000
+QF_ANIA/20211213-GrandProduct-Ozdemir/sound/diff/8.smt2	--conflict-limit 2000
