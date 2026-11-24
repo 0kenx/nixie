@@ -2233,3 +2233,86 @@ form of our residual is in addendum 55's let-chain; re-solving THAT
 with nixie gave 1 823 vars / TO, so the chain is not the whole story
 either — the honest statement is that the smulov1-class cells are
 closed by `NIXIE_BV_MUL_ARRAY=1` and nothing else measured here.
+
+## Fifty-ninth addendum: isqrt/icbrt (the last addendum-47 target) — characterized, no verdict gap, z3's lever is blast-time simplification and our IR mode reproduces it
+
+The family's first clean baseline (30 s budget, load ~20, verdicts are
+load-immune):
+
+| cell | nixie | z3 | |
+|---|---|---|---|
+| isqrt, isqrteqcheck, isqrtnoif, isqrtadd, isqrtaddeqcheck, isqrtaddnoif | TO | TO | no gap (both TO) |
+| icbrt | unsat 10.0 s | unsat 2.2 s | wall 4.5× |
+| icbrteqcheck | unsat 19.3 s | unsat 4.7 s | wall 4.1× |
+| icbrtor | unsat 7.7 s | unsat 2.3 s | wall 3.3× |
+| icbrtorinvalidvc | sat 9.8 s | sat 2.3 s | wall 4.2× |
+| icbrtinvalidvc | sat 5.9 s | sat 2.0 s | wall 3× |
+| isqrtnoifinvalidvc | sat 8.5 s | sat 2.5 s | wall 3.4× |
+| isqrtaddinvalidvc | sat 19.4 s | sat 8.3 s | wall 2.3× |
+| isqrtinvalidvc | **sat 4.5 s** | sat 8.3 s | nixie wins |
+| isqrtaddnoifinvalidvc | **sat 14.8 s** | sat 21.4 s | nixie wins |
+
+**No verdict gap at 30 s** (the "5 gap cells" of addendum 47 were a
+10 s-budget artefact: at 10 s nixie TOs `icbrteqcheck`,
+`icbrtorinvalidvc`, `isqrtaddnoifinvalidvc`, `isqrtaddinvalidvc`, z3
+solves three of them).  The real gap is a 2–4.5× wall on the icbrt
+cells, and it is **instance size**: `icbrteqcheck` blasts to 126 542
+vars in nixie vs 11 729 in z3, with comparable conflicts (99 k vs 67 k).
+
+**z3's lever, isolated by tactic**: `(apply simplify)` alone leaves a
+goal (107 aux vars); `(apply bit-blast)` alone reduces the whole file
+to `(not true)` — z3's blaster, building both algorithm variants over
+one hash-consed DAG with its `bool_rewriter` inside every gate
+constructor, folds the equivalence check to false at build time with
+no CNF and no search.  That is the entire 4.7 s.
+
+**Ruled out for our side, with evidence** (per-op probes with a
+tautology-free harness, nixie vs z3 var deltas): per-op encoding cost
+(×3 − ×2 = 152 = one adder; variable shift = 249; ×4 = ×2 = wire perm
+— parity); sharing (a DAG probe with each level consumed twice is
+bit-identical to the single-use chain); depth (linear, 472 vars/level,
+parity); constants (traced: every literal takes the RESERVED foldable
+path, `define_const_big` branch 2 — a registration-site change to
+force it was a verified no-op and was reverted); CEGAR (never fires —
+`has_bv_wide_mul` is only set for top-level `bvmul`, muls inside
+comparisons route to the unified path with abstraction off; forcing
+the dispatch is slower anyway: icbrteqcheck TO at 60 s); row-array
+(25 s vs 18 s); SAT core (addendum 58: parity on z3's CNFs).
+
+**Our IR mode reproduces most of the size effect** — `NIXIE_BV_IR=1`
+(deferred boolean IR, hash-consed with input-complement parity folded,
+Tseitin-encoded at solve time — z3's architecture): `icbrteqcheck`
+126 542 → **19 877 vars** (6.4×; z3 11.7 k) and 18.2 → 13.6 s;
+`icbrt` 77 k → 16 k, 8.4 → 5.5 s.  But it is a **known corpus-level
+negative** (2026-09-12 study: 285 vs 301 of 509; `uclid` 16 → 2;
+handoff: "do not re-screen without a per-class gate") and it is
+two-way *even inside this family*: `isqrtnoifinvalidvc` 8.5 → 1.4 s
+and `isqrtinvalidvc` 4.5 → 0.7 s, but `isqrtaddnoifinvalidvc` **sat
+14.8 s → TO**.  No landing.
+
+**For the next agent** — the per-class gate the handoff asks for has a
+new constraint from this family: the IR layer's wins here are
+*let-structured digit recurrences* (120 `let`s, 7.8 KB, no meganodes)
+where its losses (`uclid`, and `isqrtaddnoifinvalidvc`) are search-
+side: the smaller instance is harder for our CDCL on sat-directed
+goals.  A gate would have to predict search difficulty, not blast
+size — the meganode-skip counter separates the uclid loss but not
+this family's internal split.  The standing candidate remains
+"IR on, gate on parse-time features", un-validated.
+
+**Methodology notes recorded**: (1) a generator that inlines a
+subterm k times per level produces a k^d-size FILE — `chain12.smt2`
+was 373 MB of text (depth 16 ≈ 30 GB); the "memleak" was parsers
+reading it, not a solver leak; cap probes with `ulimit -v` and keep
+depth small on a shared box.  (2) Harness tautologies (`bvand(t,x) ≤
+bvor(t,x)`) fold in z3's rewriter and not in ours — probe var counts
+must be taken as deltas against an identical harness.  (3) Operator
+ablation (`ablate.py`, kept under `bench/profile/`) orphans the
+ablated node's operand subtrees, so its var delta is "everything
+under the node", not the node.
+
+This closes the addendum-47 target list: every family is now
+characterized with evidence; remaining nixie-vs-z3 verdict gaps on
+this corpus are `smulov1`/`calypto 19·3` (closed by
+`NIXIE_BV_MUL_ARRAY=1`, addenda 54/57/58) and the two-way trade-offs
+recorded above.
