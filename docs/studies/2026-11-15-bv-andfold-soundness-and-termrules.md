@@ -1920,3 +1920,73 @@ Cells: smulov1bw12/16 and calypto 19/3 stay TO (same class).  Guards
 unchanged (bitrev, wienand, calypto 14/24/9, mcm, BBB, float).  Bar:
 fmt, clippy `-D warnings`, nixie-solver 3 123/3 125 (the two known
 sets failures), parity 171-0-6, perf gate PASS.
+
+## Fifty-fourth addendum: the row-array multiplier — a real class win on `smulov1`, a real loss on `smulov2`, no default flip
+
+Addendum 53 pinned the smulov gap to the blaster.  The blaster
+already contains a second multiplier — the row-array
+(`encode_mul_array`, Z3 `bit_blaster_tpl_def.h::mk_multiplier`),
+parked behind `NIXIE_BV_MUL_ARRAY=1` "pending a default-on gate
+screen" because of a recorded wide-multiplier regression.  This
+addendum IS that screen, run under the protocol.
+
+**Verdict: do NOT flip the default.**  The row-array is a genuine
+*class* win on one family and a genuine loss on another, with no
+structural discriminator found between them.
+
+Evidence (deterministic conflict counters, 10 seeds each, treatment =
+array, matched null = carry-save at the other nine seeds):
+
+| cell | cs mean conflicts | arr mean conflicts | verdict |
+|---|---|---|---|
+| smulov2bw016 | 464 (370–703) | 1 519 (1 238–1 718) | array **3.3× loss**, no seed overlap |
+| smulov2bw032 | 1 809 (1 351–2 605) | 5 048 (2 783–6 501) | array **2.8× loss**, no seed overlap |
+| smulov2bw064 | 5 875 (2 154–7 990) | 5 917 (2 230–8 257) | tie — the single-seed "win" (6 196 → 2 116) was a trajectory reshuffle, exactly as the protocol predicts |
+
+Class win (smulov1 — the hard sign-extension family, 3 of the 4
+remaining gap cells; all verdicts agree with z3 4.16.0):
+
+| cell | carry-save | array |
+|---|---|---|
+| smulov1bw08 | 1.38 s | 0.10 s |
+| smulov1bw12 | TO (30 s) | **0.77 s** |
+| smulov1bw16 | TO | **2.4 s** |
+| smulov1bw24 | TO | **23 s** |
+| calypto problem_19 | TO | **2.2 s** |
+| calypto problem_3 | TO | TO |
+
+Other mul-bearing cells, both verdict-identical throughout (same CNF
+semantics — soundness is structural, the encodings are both exact):
+Booth 8×8 14.8 → 9.3 s (array wins), Commute 16/48/64 array wins
+1.4–2.8× (Commute 04/32 loses ≤1.2×; the family folds in
+preprocessing — residual 47 bytes, 0 muls — so the difference is
+blast-time only), tcas 0.20 → 0.24 s (loses), smulov3 (wide, under
+CEGAR ≥32 so the flag reaches only the refinement circuits) 32–128
+array wins 1.3–3×, 256 loses 2×, 384–768 within noise.
+
+**Structural search for a discriminator — negative.**  The residual
+shapes are the same (both read single top bits `extract(k,k)(bvmul…)`
+of sign-extended products; counts differ 7 vs 34 but mul-count does
+not separate the outcome: smulov2bw064 with 130 muls is a tie while
+bw016 with 34 muls loses).  The CEGAR width (32) bounds the flag's
+reach to muls under 32 bits plus refinement circuits, so the code
+comment's `≤64` gate is dead above 32 and the recorded
+"4 s → >25 s at 1024 bits" did not reproduce at 768 (6.9 vs 7.5 s).
+
+**A second finding, for the next agent — the dump explosion.**
+`NIXIE_BV_DUMP_PRE` on `smulov3bw0256` wrote a **637 MB** residual and
+on Booth 8×8 a multi-GB one (4.5 M `bvmul` tokens in the *text*).
+These are dump-side printing explosions of DAG-shared terms as trees,
+not real instances (smulov3bw0256 solves in 16 conflicts).  The same
+tree-printing walk is a latent hazard for any consumer that prints
+shared structure; noted, not fixed here.
+
+**What would actually close smulov2 + smulov1 together**: not a
+choice between the two encodings but the thing z3's blaster has that
+neither of ours does — the carry chain that makes "top bits equal the
+sign bit" propagate as a unit.  Recorded as the standing search-side
+entry.  The flag stays opt-in; `NIXIE_BV_MUL_ARRAY=1` is the
+documented way to get the three smulov1-class cells.
+
+Bar for this addendum: documentation-only (no code change); the
+flag's existing tests cover both encodings' exactness.
