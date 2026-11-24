@@ -1990,3 +1990,49 @@ documented way to get the three smulov1-class cells.
 
 Bar for this addendum: documentation-only (no code change); the
 flag's existing tests cover both encodings' exactness.
+
+## Fifty-fifth addendum: blast parity verified — addendum 53's "blaster sharing" hypothesis is WRONG; the residual gap is the boolean/mux layer
+
+Addendum 53 inferred from "z3: 1 359 vars, nixie: 2 347 on the same
+residual" that nixie's blaster fails to share partial products across
+products with a common factor.  Tested directly, it does not:
+
+| probe | nixie vars | z3 vars |
+|---|---|---|
+| one 23-bit product over sext factors, bit 22 read | 1 278 | 1 294 |
+| two products sharing `sext(v1)`, 24-bit sibling | 2 738 | 2 767 |
+| `(bvmul v1 v2)` read at two bits (sharing across occurrences) | 417 | 417 (swapped-operand twin: identical) |
+| 24-bit product, bit 23 read | 1 300 | 1 288 |
+
+Per-product gate counts and cross-product sharing are at parity (the
+`gate_sh` structural-hash on and/or/xor is on by default and carries
+the sharing).  z3's `mk_multiplier` was re-read: it has no width
+narrowing for `extract`-of-product and one extra special case
+(`mk_const_case_multiplier`, for operands with very few non-constant
+bits — irrelevant here).  The encodings are the same.
+
+**The decisive experiment**: z3's own `simplify` output on nixie's
+residual (`(apply simplify)`, a 10 KB let-chain with 3 distinct
+products), re-solved by both: z3 1 359 vars / instant; nixie **1 823
+vars / TO at 30 s**.  Same terms, same products, so the 464-var
+delta and the search gap live in the **boolean layer above the
+products** — the 22 `bvnot(bvor(bvnot x, bvnot y))` NAND terms and
+the nested `bvor` chains that encode "every bit equals the sign bit",
+plus the `(or (= …) …)`/`ite` mux structure that z3 keeps as
+*propositional* structure (its `=` on 1-bit operands becomes literal
+equality clauses) where nixie routes 1-bit `=`/`ite`/`bvor` through
+the BV gate encoder (2 vars per `bvor`, a Tseitin var per `bvnot`).
+
+What z3's simplify does that nixie's cascade does NOT (visible in the
+let-chain):  it lifts the whole 1-bit boolean layer to Bool sort —
+`(or (not (= …)) (bvule …))` stays a Bool `or`, `ite(c, #b1, #b0)`
+becomes the Bool `c`, `bvult` becomes `bvule` on the plain 12-bit
+product.  That is the next entry: a **1-bit Boolean lifting pass** in
+the cascade (width-1 `bvor`/`bvand`/`bvnot`/`ite`/`=` over Bool-typed
+bits → Bool connectives), so the SAT core sees the mux structure as
+clauses instead of as gates.  Scoped, not implemented here.
+
+Correction to addendum 54's dump note: the Booth 8×8 "multi-GB" dump
+was a `grep -c` artefact of counting over a dump that was still being
+written; smulov3bw0256's 637 MB is real (DAG printed as tree) and the
+warning stands.
