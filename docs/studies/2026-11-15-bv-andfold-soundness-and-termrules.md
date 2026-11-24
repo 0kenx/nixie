@@ -1782,3 +1782,61 @@ largest-scope entry (mul-to-algebra bridge).  Ranked next steps: (a)
 the calypto constant-ite hypothesis via a correct z3 simplify trace;
 (b) smulov/Booth as one search-side slice (conditional-sign-extension
 blast sharing); (c) isqrt/icbrt.
+
+## Fifty-first addendum: calypto problem_14 — replication canonicalization + and-complement, ungated concat fusion
+
+The addendum-50 hypothesis was right in its mechanism but wrong in its
+target: the fold is not constant-ite selection — it is **replication
+canonicalization**.  The correct z3 simplify trace on the verbatim
+residual (the paren-bug extraction that mis-led the scoping is now
+scripted correctly) shows z3 reducing the miter to
+`(= M (concat (M[31:31]) (M[30:1]) (bvmul (P2[0:0]) (P3[0:0]))))` and
+closing at rlimit 216–676; nixie already solves THAT shape instantly —
+the entire gap was the simplification getting there.
+
+Three rules landed (all Z3-faithful, all in the cascade):
+1. **`X & ~X = 0`** — the AND dual of the OR complement rule, gated with
+   the simcascade like its twin.  This folds the selector conditions so
+   the replication chains carry bits of the *actual* muls (residual:
+   111 kB → 8 kB, ites 96 → 6).
+2. **Ungated concat seam fusion** — the `BvConcat` visit arm now always
+   seam-merges (adjacent windows of one base fuse; Z3 does this
+   unconditionally in `mk_concat`; it only ever shrinks terms).  Was
+   wiring-gated.
+3. **Canonical replication rebuild** — `append_segment` flattens both
+   sides within `CONCAT_CANON_MAX = 64` segments and rebuilds
+   left-associated, so any two groupings of the same ≤64-segment
+   content hash-cons EQUAL.  That is what makes `bvmul`'s AC see equal
+   operands through differently-nested `sext` chains (per-bit chain vs
+   grouped subchains).  Gated OFF under the wiring (the first version
+   ran it unconditionally and hdp/3365 lost its preprocessing fold —
+   the rebuild pre-empted the shapes the wiring rules match; with the
+   `!self.wiring` guard the fold returned and its counters are
+   bit-identical to base).  Wider spines skip the flatten (cap) and
+   keep the O(1) seam merge.
+
+**Effect**: `calypto/problem_14` TO(10 s) → **0.072 s unsat** (a 6 220-decision
+mini-search after the 8 kB residual — z3's own rlimit-852 fold is even
+purer, but this crosses the gap).  `problem_19`/`problem_3` remain
+(z3's small-SAT class, rlimit 560 k with 3 853 sat vars — the
+smulov/Booth search family).  `problem_24` stays a nixie LEAD (sat
+where z3 TOs).
+
+**Validation**: bitrev folds intact (decisions=0 at every width);
+wienand commute/distrib unchanged; hdp/3365 fold intact with counters
+bit-identical to base (the 21 s reading was load drift — the base
+measured 17.8 s in the same window); mcm/float/BBB guards same-or-better
+than z3; 80-cell matched re-check across wienand/brummayerbiere/Mann/
+BuchwaldFried/mcm/float/Goel/Wolf/spear: ZERO changes vs base.  Bar:
+fmt, clippy `-D warnings`, nixie-solver 3 120/3 122 (the two known
+pre-existing sets failures), full workspace suite with one NEW
+pre-existing-at-HEAD failure excluded (`nixie-tla-check an_opaque_set_
+has_no_candidate_list` — reproduced at clean HEAD 86ae0ffd in a
+throwaway worktree, tla-merge-owned, NOT this change), parity 171-0-6,
+perf gate PASS (counters 1.000/1.000, wall 1.00).
+
+**Session tally**: three landings today (distrib delivery, bitrev
+wiring, calypto canonicalization) — 11 gap cells closed, plus the
+hdp/float bonus folds.  Remaining: smulov1bw12/16 + calypto 19/3 +
+Booth 8×8 (one search-side slice over conditional-sign-extension
+multipliers) and isqrt/icbrt (largest scope).

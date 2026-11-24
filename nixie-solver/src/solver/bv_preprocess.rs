@@ -74,6 +74,13 @@ const WIRING_MIN_CONST_SHIFTS: u32 = 2;
 /// this leaves an order of magnitude of slack.
 const WIRING_NODE_BUDGET: usize = 4_000_000;
 
+/// Segment bound of the canonical concat rebuild in
+/// [`BvPreprocessor::append_segment`]: spines flattening within it are
+/// rebuilt left-associated so any two groupings of the same content
+/// hash-cons equal; wider spines (the wiring ladders) keep the O(1)
+/// seam merge.
+const CONCAT_CANON_MAX: usize = 64;
+
 /// One summand of a normalized bit-vector sum: `coeff · f₁·f₂·…·fₖ` with all
 /// arithmetic in ℤ/2ʷ.
 ///
@@ -598,16 +605,16 @@ impl BvPreprocessor {
             TermKind::BvSrem(a, b) => manager.mk_bv_srem(kid(&a), kid(&b)),
             TermKind::BvConcat(a, b) => {
                 let (ra, rb) = (kid(&a), kid(&b));
-                // Wiring: seam-merge incrementally (O(1) amortized for the
-                // left-associated spines every wiring rule builds).  A
-                // full flatten per visited node measured QUADRATIC on wide
-                // ladders (`bitrev0512`: 20 k flattens totalling 3.9 M
-                // segments — the whole node budget) because each spine
-                // node re-walks the entire prefix.
-                if self.wiring {
-                    return self.append_segment(ra, rb, manager);
-                }
-                manager.mk_bv_concat(ra, rb)
+                // Seam-merge incrementally (O(1) amortized for the
+                // left-associated spines): adjacent windows of one base
+                // fuse, constants splice.  Z3 runs this UNCONDITIONALLY
+                // in `mk_concat` — it is the canonicalization that turns
+                // per-bit reconstruction chains (`calypto`) back into
+                // windows, and it only ever shrinks terms.  (A full
+                // flatten per visited node instead measured quadratic on
+                // wide ladders — `bitrev0512`: 20 k flattens totalling
+                // 3.9 M segments.)
+                self.append_segment(ra, rb, manager)
             }
             TermKind::BvExtract { high, low, arg } => {
                 let ra = kid(&arg);
@@ -1036,12 +1043,46 @@ impl BvPreprocessor {
         acc
     }
 
-    /// Append one low-side segment to a growing left-associated concat
-    /// spine in O(1) amortized time: fuse only across the seam — the
-    /// spine's lowest segment against the appended term's highest.
-    /// Adjacent windows of one base merge; two constants splice
-    /// (`mk_bv_concat` does that itself).
+    /// Append one low-side segment to a concat, CANONICALLY — but only
+    /// on NON-wired goals: the wiring owns concat normalization on its
+    /// ladders, and rebuilding its spines pre-empts the shapes its rules
+    /// match (hdp/3365 lost its preprocessing fold when the rebuild ran
+    /// under the wiring).  When both sides flatten within
+    /// [`CONCAT_CANON_MAX`] segments, the flattened linear content is
+    /// merged (adjacent constants splice, adjacent windows of one base
+    /// fuse) and rebuilt left-associated — so any two groupings of the
+    /// same ≤64-segment content produce the SAME term.  That
+    /// canonical-form property is what lets `bvmul`'s AC fold see equal
+    /// operands through differently-nested replication chains
+    /// (`calypto`: `sext` as a per-bit chain vs as grouped subchains).
+    /// Wider spines (the wiring ladders) skip the flatten and keep the
+    /// O(1) seam-only merge below (a full flatten per visited node
+    /// measured quadratic at width 512+).
     fn append_segment(&mut self, acc: TermId, seg: TermId, manager: &mut TermManager) -> TermId {
+        if self.wiring_budget < 4 {
+            return manager.mk_bv_concat(acc, seg);
+        }
+        if !self.wiring
+            && let (Some(mut segments), Some(mut tail)) = (
+                flatten_spine_capped(acc, CONCAT_CANON_MAX, manager),
+                flatten_spine_capped(seg, CONCAT_CANON_MAX, manager),
+            )
+        {
+            self.wiring_budget -= 4 + segments.len() + tail.len();
+            segments.append(&mut tail);
+            // Direct left-associated rebuild with pairwise seam fusion
+            // (no re-entry into `append_segment`: the flat list is already
+            // canonical, re-flattening the growing accumulator per append
+            // would be quadratic).
+            let Some((first, rest)) = segments.split_first() else {
+                return manager.mk_bv_concat(acc, seg);
+            };
+            let mut out = *first;
+            for s in rest {
+                out = self.fuse_pair(out, *s, manager);
+            }
+            return out;
+        }
         self.append_segment_depth(acc, seg, manager, 0)
     }
 
@@ -1397,6 +1438,28 @@ fn modulus(width: u32) -> BigInt {
 fn bv_width_opt(manager: &TermManager, term: &TermId) -> Option<u32> {
     let sort = manager.get(*term)?.sort;
     manager.sorts.get(sort)?.bitvec_width()
+}
+
+/// Flatten a concat spine into its segment list, high bit first.  A
+/// non-concat term is its own single-element list.  The flatten is a
+/// TREE view of a hash-consed DAG (a shared subtree contributes its
+/// segments per occurrence), so `cap` bounds the expansion — over the
+/// cap the flatten fails and callers fall back (`None`, sound).
+fn flatten_spine_capped(t: TermId, cap: usize, manager: &TermManager) -> Option<Vec<TermId>> {
+    let mut out = Vec::new();
+    let mut work = vec![t];
+    while let Some(x) = work.pop() {
+        if out.len() > cap {
+            return None;
+        }
+        if let Some(TermKind::BvConcat(l, r)) = manager.get(x).map(|d| d.kind.clone()) {
+            work.push(r);
+            work.push(l);
+        } else {
+            out.push(x);
+        }
+    }
+    Some(out)
 }
 
 /// The absolute window `(base, hi, lo)` of `t`, composing through nested
@@ -2129,6 +2192,28 @@ fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseO
                 }
                 if v != all_ones {
                     signals.insert(0, manager.mk_bitvec(v, width));
+                }
+            }
+            // Complement pairs, the AND dual of the OR rule below:
+            // `X & ~X = 0`.  Z3 gets this from `mk_bv_and`'s De-Morgan
+            // into `~(~X | X)`; the cascade keeps the direct form so the
+            // standalone-AND normal form is preserved.  This is what
+            // folds the constant selectors in `calypto`'s replication
+            // chains (`(and (not b) b)` selects nothing).
+            if simcascade_enabled() {
+                let mut atoms: Vec<(TermId, bool)> = Vec::with_capacity(signals.len());
+                for s in signals.iter() {
+                    match manager.get(*s).map(|d| d.kind.clone()) {
+                        Some(TermKind::BvNot(x)) => atoms.push((x, false)),
+                        _ => atoms.push((*s, true)),
+                    }
+                }
+                atoms.sort_unstable();
+                if atoms
+                    .windows(2)
+                    .any(|w| w[0].0 == w[1].0 && w[0].1 != w[1].1)
+                {
+                    return manager.mk_bitvec(0, width);
                 }
             }
             signals.sort_unstable();
