@@ -417,6 +417,21 @@ impl Default for ArithSolver {
     }
 }
 
+/// `NIXIE_TRACE_TWRITES` — the bound-write trace (`[asrt]`/`[rpb]`/`[twrite]`
+/// lines), read **once per process**.
+///
+/// Every trace site is a bound writer (`assert_*`, `record_prop_bound`,
+/// `prop_set_*`), i.e. a per-assertion hot path: an unarmed raw probe there
+/// pays a `getenv` walk per assertion (the 2026-09-15 env-probe regression
+/// measured that shape at ~2/3 of a run's cycles on the SAT side — see
+/// `nixie_sat::env_flags`). The unarmed common case is one atomic load here.
+/// No test or caller sets the variable mid-process, so caching cannot change
+/// observable behaviour beyond the cost.
+fn trace_twrites_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var_os("NIXIE_TRACE_TWRITES").is_some())
+}
+
 /// What branch-and-bound may do with one integer variable (see
 /// `ArithSolver::find_fractional_int_var`): exact branch bounds, or a value
 /// that is neither readable nor branch-bounded (decline).
@@ -1252,7 +1267,7 @@ impl ArithSolver {
     /// Record a propagation lower bound `var ≥ value` (with `reason`), keeping
     /// the tightest (monotonic).  Sound: a valid consequence of one atom.
     fn prop_set_lower(&mut self, var: VarId, value: DeltaRational, reason: TermId) {
-        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+        if trace_twrites_enabled() {
             eprintln!("[twrite] lo var={var} v={value:?} r={reason:?}");
         }
         self.prop_ensure(var);
@@ -1272,7 +1287,7 @@ impl ArithSolver {
     /// Record a propagation upper bound `var ≤ value` (with `reason`), keeping
     /// the tightest (monotonic).  Sound: a valid consequence of one atom.
     fn prop_set_upper(&mut self, var: VarId, value: DeltaRational, reason: TermId) {
-        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+        if trace_twrites_enabled() {
             eprintln!("[twrite] hi var={var} v={value:?} r={reason:?}");
         }
         self.prop_ensure(var);
@@ -1323,7 +1338,7 @@ impl ArithSolver {
         // OPTIMIZATION: declining to record a bound that does not fit
         // costs completeness only, never soundness.  Unchecked, it wrapped
         // in release and propagated a fabricated bound.
-        if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+        if trace_twrites_enabled() {
             eprintln!("[rpb] var={var} coef={coef} rhs={rhs} kind={kind:?} reason={reason:?}");
         }
         use num_traits::CheckedDiv;
@@ -1499,7 +1514,7 @@ impl ArithSolver {
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Le, reason);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            if trace_twrites_enabled() {
                 eprintln!("[asrt] Le n_terms={} reason={reason:?}", lhs.len());
             }
             self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason);
@@ -1540,7 +1555,7 @@ impl ArithSolver {
         let slack = self.cached_row_slack(&key, lhs, rhs, SlackDir::Ge, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            if trace_twrites_enabled() {
                 eprintln!("[asrt] Ge n_terms={} reason={reason:?}", lhs.len());
             }
             self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason);
@@ -1871,7 +1886,7 @@ impl ArithSolver {
         self.simplex
             .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            if trace_twrites_enabled() {
                 eprintln!("[asrt] Lt n_terms={} reason={reason:?}", lhs.len());
             }
             self.record_prop_bound(var, coef, rhs, PropCmp::Lt, reason);
@@ -1933,7 +1948,7 @@ impl ArithSolver {
         self.simplex
             .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
-            if std::env::var_os("NIXIE_TRACE_TWRITES").is_some() {
+            if trace_twrites_enabled() {
                 eprintln!("[asrt] Gt n_terms={} reason={reason:?}", lhs.len());
             }
             self.record_prop_bound(var, coef, rhs, PropCmp::Gt, reason);

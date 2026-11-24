@@ -8,6 +8,21 @@ fn bound_tripwire_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("NIXIE_BOUND_TRIPWIRE").is_ok())
 }
 
+/// `NIXIE_S6_NDIR2=1` — the general narrow direction-2 derivation in
+/// [`Simplex::propagate_bounds_in`] (read once per process like
+/// `bound_tripwire_enabled`; that pass runs per final-check fixpoint round).
+fn slice6_ndir2_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1"))
+}
+
+/// `NIXIE_S6_PINNED=0` — opts OUT of the pinned-basic direction-2
+/// derivation (default on; read once per process).
+fn slice6_pinned_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0"))
+}
+
 use super::delta::{BigDeltaRational, BoundValue, DeltaRational};
 use crate::config::SimplexConfig;
 #[allow(unused_imports)]
@@ -5971,7 +5986,7 @@ impl Simplex {
         // variable is exactly the pin-hiding case (`s = var` rows) the
         // atom-bound encoding needs unhidden. Restricted so the general
         // deflection does not apply.
-        let ndir2_all = std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1");
+        let ndir2_all = slice6_ndir2_enabled();
         let pinned_basic = |v: &VarId| -> bool {
             let i = *v as usize;
             match (
@@ -5994,8 +6009,7 @@ impl Simplex {
         // same test is bit-identical to the gate-off binary.  The gate's
         // wins (mixed-magnitude LRA unsat twin, chain-sat twin, f1) are
         // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
-        let pinned_dir2 = !self.wide_rows.is_empty()
-            && std::env::var("NIXIE_S6_PINNED").map_or(true, |v| v != "0");
+        let pinned_dir2 = !self.wide_rows.is_empty() && slice6_pinned_enabled();
         let narrow_keys: Vec<VarId> = self
             .tableau
             .iter()

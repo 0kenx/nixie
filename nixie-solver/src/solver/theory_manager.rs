@@ -32,6 +32,16 @@ fn theory_trace_enabled() -> bool {
     })
 }
 
+/// `NIXIE_NO_RESTART_RESYNC` — opts out of the restart theory rebuild
+/// (`TheoryManager::on_backtrack`'s root-level `resync_theory_state`; an A/B
+/// and emergency switch). Read once per process: the probe site is every
+/// backtrack to level 0, i.e. every restart.
+fn restart_resync_disabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_NO_RESTART_RESYNC").is_ok())
+}
+
 /// Incremental arithmetic bound-propagation mode, set from `NIXIE_BOUND_PROP`
 /// (read once and cached).  The z3 `:arith-bound-prop` analogue – see
 /// [`TheoryManager::derive_arith_bound_propagations`].
@@ -5110,7 +5120,7 @@ impl TheoryCallback for TheoryManager<'_> {
         if level == 0
             && self.theory_mode != TheoryMode::Lazy
             && self.euf.has_app_nodes()
-            && std::env::var("NIXIE_NO_RESTART_RESYNC").is_err()
+            && !restart_resync_disabled()
         {
             let arith_bearing = !self.var_to_parsed_arith.is_empty()
                 || !self.array_theory.is_empty()
