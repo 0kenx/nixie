@@ -97,6 +97,14 @@ struct Args {
     /// no timestamped run directories, so this is simply where the files go
     /// when `--out-dir` does not say otherwise.
     run_dir: Option<PathBuf>,
+    /// `--max-conflicts=N`: a deterministic per-query budget, in conflicts.
+    /// A query that exhausts it reports `Unknown` — the same honest answer
+    /// the corpus harness gets from `NIXIE_BMC_CONFLICTS`. Unset: no budget.
+    max_conflicts: Option<u64>,
+    /// `--temporal=NAME`: check the temporal property `NAME` with the lasso
+    /// encoding (issue #29). Exactly one name; mutually exclusive with
+    /// `--inv`. Apalache's `check --temporal=P`.
+    temporal: Option<String>,
     /// `--paranoid` (issue #20, step 6): probe every frame's containment
     /// obligation at every step – `Init /\ Trans_{<k} /\ ~(v@k \subseteq
     /// U_k)` must be `Unsat` – and refuse the check (exit 255, cause named)
@@ -113,6 +121,9 @@ USAGE:
     nixie-tla <check|simulate> [OPTIONS] --out-dir=DIR SPEC.tla
 
 OPTIONS:
+    --temporal=NAME     check the temporal property NAME (lasso encoding;
+                        a counterexample is a lasso; no lasso within the
+                        bound is NOT a proof) -- exclusive with --inv
     --inv=NAMES         the invariant(s) to check, comma-separated
     --init=NAME         the initial-state predicate        [default: Init]
     --next=NAME         the next-state action              [default: Next]
@@ -124,6 +135,7 @@ OPTIONS:
     --view=NAME         what makes two counterexamples `the same` one
     --out-dir=DIR       where to write violation<N>.itf.json
     --seed=N            the simulation PRNG seed         [default: 0]
+    --max-conflicts=N   per-query solver budget; exhausted = Unknown (deterministic)
     --output-traces     write example<k>.itf.json (simulate)
     --no-cfg            accepted, no effect (a .cfg is not read by default)
     -h, --help          this text
@@ -191,6 +203,8 @@ fn parse_args() -> Result<Args, String> {
         config: None,
         no_deadlock: false,
         run_dir: None,
+        temporal: None,
+        max_conflicts: None,
         paranoid: false,
     };
     let mut spec: Option<PathBuf> = None;
@@ -223,6 +237,14 @@ fn parse_args() -> Result<Args, String> {
                         return Err("`--inv` needs at least one name".to_string());
                     }
                     a.inv = Some(parts);
+                }
+                "temporal" => a.temporal = Some(need(value)?),
+                "max-conflicts" | "max-conflict" => {
+                    a.max_conflicts = Some(
+                        need(value)?
+                            .parse()
+                            .map_err(|_| "`--max-conflicts` needs a whole number".to_string())?,
+                    )
                 }
                 "init" => a.init = Some(need(value)?),
                 "next" => a.next = Some(need(value)?),
@@ -732,6 +754,24 @@ fn run(args: &Args) -> u8 {
     } else {
         true
     };
+    // `--temporal` is its own role: exactly one property, and never
+    // together with an invariant list (the two ask different questions of
+    // the same trace length; Apalache refuses the mix).
+    if let Some(t) = &args.temporal {
+        if args.inv.is_some() || !cfg_invariants.is_empty() {
+            eprintln!(
+                "error: --temporal={t} cannot be combined with --inv (or INVARIANT in the config)"
+            );
+            return EXIT_SYSTEM;
+        }
+        if !module.units.iter().any(|u| {
+            matches!(&u.kind, nixie_tla_syntax::UnitKind::OpDef { name: n, params, .. }
+                if params.is_empty() && n.name == *t)
+        }) {
+            eprintln!("error: the module has no zero-argument definition named `{t}`");
+            return EXIT_EVAL;
+        }
+    }
     let inv: Vec<String> = match (&args.inv, cfg_invariants.is_empty()) {
         (Some(cli), false) => {
             eprintln!(
@@ -797,7 +837,11 @@ fn run(args: &Args) -> u8 {
     };
 
     let mut tm = TermManager::new();
-    let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, &config, &mut tm) {
+    let prepared = match &args.temporal {
+        Some(t) => Bmc::prepare_temporal(&spec, module, &init, &next, t, &config, &mut tm),
+        None => Bmc::prepare_with_config(&spec, module, roles, &config, &mut tm),
+    };
+    let mut bmc = match prepared {
         Ok(b) => b,
         Err(e) => {
             eprintln!("{e}");
@@ -806,6 +850,9 @@ fn run(args: &Args) -> u8 {
     };
     bmc.set_check_deadlocks(check_deadlocks);
     bmc.set_paranoid(args.paranoid);
+    if let Some(n) = args.max_conflicts {
+        bmc.set_conflict_limit(n);
+    }
 
     // The view: a state-level definition whose value at a step is what the
     // author considers "the same" counterexample. Anything above state
@@ -857,7 +904,16 @@ fn run(args: &Args) -> u8 {
         match outcome {
             Outcome::NoViolationWithin(k) => {
                 if found == 0 {
-                    println!("no counterexample of {k} step(s) or fewer");
+                    match &args.temporal {
+                        // A lasso search's bound: no lasso of k steps or
+                        // fewer violates the property. Not a proof — a
+                        // longer lasso may.
+                        Some(t) => println!(
+                            "no lasso of {k} step(s) or fewer violates `{t}`; this is a \
+                             bound, not a proof that the property holds"
+                        ),
+                        None => println!("no counterexample of {k} step(s) or fewer"),
+                    }
                 }
                 break;
             }
@@ -906,7 +962,13 @@ fn run(args: &Args) -> u8 {
                 } else {
                     format!("[{}]", broken.join(", "))
                 };
-                println!("counterexample {found}: {step} step(s), invariant {which}");
+                match bmc.loop_start() {
+                    Some(l) => println!(
+                        "counterexample {found}: a lasso of {step} step(s) whose last state \
+                         returns to state {l}, violating `{which}`"
+                    ),
+                    None => println!("counterexample {found}: {step} step(s), invariant {which}"),
+                }
                 if let Some(v) = bmc.verification() {
                     println!("  independently replayed: {}", describe(v));
                 }
@@ -945,7 +1007,13 @@ fn run(args: &Args) -> u8 {
             println!("EXITCODE: ERROR (255)");
             return EXIT_SYSTEM;
         }
-        println!("The outcome is: NoError");
+        if args.temporal.is_some() {
+            // Apalache's exit code for a passing `--temporal` check is OK
+            // too; the outcome line says what was actually established.
+            println!("The outcome is: NoError (no violating lasso within the bound)");
+        } else {
+            println!("The outcome is: NoError");
+        }
         println!("EXITCODE: OK");
     } else {
         if let Some(why) = undecided {
@@ -1003,6 +1071,12 @@ fn exit_for(e: &SetupError) -> u8 {
         // counterexample: the 255 bucket, with the named cause in the
         // message.
         SetupError::FrameEscaped { .. } => EXIT_SYSTEM,
+        // `--inv=P` where `P` is a temporal formula: Apalache's integration
+        // corpus has this exact cell at **255** (`check --inv=FalseLiveness
+        // LongPrefix.tla` → EXITCODE: ERROR (255)), unlike a merely
+        // malformed role, which is 75. The property is fine; the *question*
+        // was asked with the wrong flag, and that is a usage error.
+        SetupError::Level { found, .. } if found == "a temporal formula" => EXIT_SYSTEM,
         SetupError::NoSuchDefinition(_)
         | SetupError::Lower { .. }
         | SetupError::Encode { .. }

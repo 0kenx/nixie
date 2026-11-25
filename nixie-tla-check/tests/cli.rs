@@ -931,3 +931,123 @@ Safety == year < 100
     assert!(r.out.contains("NoError in 2 sampled run(s)"), "{}", r.out);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---- issue #29: `--temporal` ----
+
+const CYCLE: &str = r"
+---- MODULE Cycle ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = IF x = 0 THEN 1 ELSE 0
+Never == [](x = 1)
+Always == [](x < 2)
+Fair == WF_x(x' # x)
+====
+";
+
+/// A violating lasso is exit **12** with a `violation1.itf.json` whose
+/// `loop` field names the loop's start state (ADR-015), and the outcome
+/// line says it is a lasso.
+#[test]
+fn a_violating_lasso_is_exit_12_with_a_loop_field() {
+    let dir = scratch("lasso");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    let r = run(&[
+        "check",
+        "--temporal=Never",
+        "--length=6",
+        &format!("--out-dir={}", dir.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    assert!(r.out.contains("a lasso of"), "{}", r.out);
+    let file = std::fs::read_to_string(dir.join("violation1.itf.json")).expect("the ITF file");
+    let doc: serde_json::Value = serde_json::from_str(&file).expect("JSON");
+    assert_eq!(doc["loop"], serde_json::json!(2), "{doc}");
+    // The spec's variables and `__InLoop` are shown; the tableau's
+    // bookkeeping is not.
+    let vars: Vec<&str> = doc["vars"]
+        .as_array()
+        .expect("vars")
+        .iter()
+        .map(|v| v.as_str().expect("a name"))
+        .collect();
+    assert!(
+        vars.contains(&"x") && vars.contains(&"__InLoop"),
+        "{vars:?}"
+    );
+    assert!(
+        vars.iter().all(|v| !v.starts_with("__temporal_")),
+        "{vars:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// No violating lasso within the bound is exit **0**, and the message says
+/// it is a bound — never that the property holds.
+#[test]
+fn no_violating_lasso_is_exit_0_and_says_bound() {
+    let dir = scratch("lasso-ok");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    let r = run(&[
+        "check",
+        "--temporal=Always",
+        "--length=6",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 0, "stderr: {}", r.err);
+    assert!(r.out.contains("this is a bound, not a proof"), "{}", r.out);
+    // And never the affirmative: every mention of "the property holds"
+    // is inside the disclaimer.
+    for line in r.out.lines().filter(|l| l.contains("the property holds")) {
+        assert!(line.contains("not a proof"), "an unqualified claim: {line}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `--inv=<a temporal formula>` is exit **255** — Apalache's integration
+/// corpus has this exact cell (`check --inv=FalseLiveness LongPrefix.tla`
+/// → `EXITCODE: ERROR (255)`). And `--temporal` together with `--inv` is a
+/// usage error, 255 too.
+#[test]
+fn inv_naming_a_temporal_formula_is_exit_255() {
+    let dir = scratch("inv-temporal");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    let r = run(&[
+        "check",
+        "--inv=Never",
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("temporal"), "{}", r.err);
+    let r = run(&[
+        "check",
+        "--temporal=Never",
+        "--inv=Always",
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 255, "stderr: {}", r.err);
+    assert!(r.err.contains("cannot be combined"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A fairness construct is **declined by name** (exit 75, the lowering
+/// bucket), never dropped: a dropped fairness conjunct invents
+/// counterexamples.
+#[test]
+fn fairness_in_a_temporal_property_is_declined_by_name() {
+    let dir = scratch("lasso-fair");
+    let spec = write_spec(&dir, "Cycle", CYCLE);
+    let r = run(&[
+        "check",
+        "--temporal=Fair",
+        "--length=4",
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 75, "stderr: {}", r.err);
+    assert!(r.err.contains("fairness"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}

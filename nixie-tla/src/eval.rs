@@ -458,12 +458,38 @@ impl Evaluator {
                 Ok(Value::Set(out))
             }
             Kera::Filter { var, set, pred } => {
+                // A filter over a **standard infinite set** has a finite
+                // value exactly when its predicate bounds the binder by
+                // ground literals — `{v \in Int : v >= 0 /\ v <= 50}`,
+                // Apalache's `Range` idiom. That ground range is enumerated
+                // and every element is still tested by the predicate, so a
+                // bound read wrongly could only ever offer a non-member
+                // (which the test then drops), never lose one. Without a
+                // two-sided bound the base really is infinite, and the
+                // refusal stands.
+                let members: Vec<Value> = if let Some(which) = standard_infinite_set(set) {
+                    let Some((lo, hi)) = crate::kera::bounded_int_range(var, pred, which == "Nat")
+                    else {
+                        return Err(EvalErrorKind::Unsupported(
+                            "a filter over an infinite set without two-sided ground bounds".into(),
+                        ));
+                    };
+                    if hi - lo > self.max_set as i128 {
+                        return Err(EvalErrorKind::SetTooLarge {
+                            limit: self.max_set,
+                        });
+                    }
+                    (lo..=hi).map(Value::Int).collect()
+                } else {
+                    self.set_of(set, env)?.into_iter().collect()
+                };
                 let mut out = BTreeSet::new();
-                for v in self.set_of(set, env)? {
+                for v in members {
                     if self.with_bound(var, v.clone(), env, |e, en| e.boolean(pred, en))? {
                         out.insert(v);
                     }
                 }
+                self.check_set(&out)?;
                 Ok(Value::Set(out))
             }
             Kera::Map { var, set, expr } => {

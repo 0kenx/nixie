@@ -43,7 +43,7 @@ pub mod value;
 
 pub use error::{LowerError, LowerErrorKind};
 pub use eval::{EvalErrorKind, Evaluator};
-pub use kera::{Kera, KeraRef, Name};
+pub use kera::{Kera, KeraRef, Name, Temporal};
 pub use lower::{Lowerer, ReplaceError};
 pub use types::{Inference, Ty, TyId, Type, TypeError};
 pub use value::Value;

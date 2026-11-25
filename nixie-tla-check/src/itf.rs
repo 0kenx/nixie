@@ -58,6 +58,9 @@ pub struct Meta {
     /// counterexample answers "which one?", and a consumer reading `#meta`
     /// gets the answer in the file rather than only on the checker's stdout.
     pub violated: Vec<String>,
+    /// The index of the state a **lasso** counterexample loops back to
+    /// (ADR-015's `loop` field; issue #29). `None` for an ordinary trace.
+    pub loop_start: Option<usize>,
 }
 
 /// Render a counterexample as an ITF trace object.
@@ -104,6 +107,12 @@ pub fn to_itf(trace: &Trace, vars: &[String], params: &[String], meta: &Meta) ->
         root.insert("params".to_string(), json!(params));
     }
     root.insert("vars".to_string(), json!(vars));
+    // ADR-015: a lasso's loop, as the index of the state the last state
+    // returns to. Only present on a lasso — an ordinary trace has no loop,
+    // and a `loop: null` would read as "looked for one and found none".
+    if let Some(l) = meta.loop_start {
+        root.insert("loop".to_string(), json!(l));
+    }
     root.insert("states".to_string(), Json::Array(states));
     Json::Object(root)
 }

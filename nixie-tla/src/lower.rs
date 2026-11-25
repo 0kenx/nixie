@@ -27,7 +27,7 @@
 //! reports [`crate::LowerErrorKind::InlineLimit`] rather than looping.
 
 use crate::error::{LowerError, LowerErrorKind, Result};
-use crate::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
+use crate::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp, Temporal};
 use nixie_tla_syntax::Span;
 use nixie_tla_syntax::ast::{
     Bound, CaseArm, ExceptSel, Expr, ExprKind, Module, Pattern, QuantKind, Unit, UnitKind,
@@ -1617,6 +1617,288 @@ impl<'a> Lowerer<'a> {
     pub fn with_max_inline_depth(mut self, n: usize) -> Self {
         self.max_inline_depth = n;
         self
+    }
+
+    /// Lower a **temporal-level** formula to its structure (issue #29).
+    ///
+    /// The kernel has no temporal operators — by design — so this does not
+    /// return a kernel term. It returns the formula's temporal skeleton
+    /// ([`Temporal`]): the propositional connectives over `[]`/`<>`, with
+    /// every **state-level leaf** lowered by the ordinary [`Self::lower`]
+    /// (full inlining, instance substitution and typing).
+    ///
+    /// A name that names a temporal-level definition is expanded here, so a
+    /// `[]` hidden behind a definition (`Liveness == [](…)`) is seen; a
+    /// state-level name is a leaf and is lowered as one. `levels` is the
+    /// module's level report; an unresolved level for a referenced name is
+    /// refused, not guessed. `module` is the module the names resolve in.
+    ///
+    /// Refused by name: primes inside a leaf, `WF_`/`SF_`, `\AA`/`\EE`,
+    /// `-+->`, `\cdot`, and `[A]_v` / `<<A>>_v` (action-level leaves).
+    /// Each is a construct the lasso encoding has no tableau rule for;
+    /// declining is the honest answer, where dropping one would check a
+    /// different property.
+    pub fn lower_temporal(
+        &mut self,
+        module: &'a Module,
+        expr: &'a Expr,
+        levels: &nixie_tla_syntax::LevelReport,
+    ) -> Result<Temporal> {
+        self.lower_module = Some(module);
+        let before = self.step_budget;
+        let out = self.temporal_walk(expr, levels, expr.span);
+        self.step_budget = before;
+        out
+    }
+
+    /// One node of the temporal walk. The nesting is the formula's own
+    /// depth — bounded by the step budget's sibling, since a deep `[]…[]`
+    /// chain is legal TLA+ — but the walk is structural and each leaf goes
+    /// through the ordinary, stack-based lowering, so only the *skeleton*
+    /// recurses, and its depth is the syntax's.
+    fn temporal_walk(
+        &mut self,
+        expr: &'a Expr,
+        levels: &nixie_tla_syntax::LevelReport,
+        span: nixie_tla_syntax::Span,
+    ) -> Result<Temporal> {
+        use nixie_tla_syntax::ExprKind;
+        let refuse = |what: &str, why: &str| Err(LowerError::unsupported(what, why, span));
+        // The skeleton's recursion is the formula's own depth; a deep
+        // `[]…[]` chain is legal TLA+, so it is bounded by the budget the
+        // lowering loop uses, and refuses past it rather than overflowing
+        // the stack.
+        if self.step_budget == 0 {
+            return refuse(
+                "a temporal formula",
+                "its temporal nesting exceeds the lowering budget",
+            );
+        }
+        self.step_budget -= 1;
+        // Parentheses and labels are transparent: `[](P => Q)`'s operand
+        // is a `Paren`, and a leaf under a label is the same leaf.
+        if let ExprKind::Paren(inner) | ExprKind::Label { body: inner, .. } = &expr.kind {
+            return self.temporal_walk(inner, levels, span);
+        }
+        match &expr.kind {
+            ExprKind::Prefix { op, operand, .. } if op == "[]" => Ok(Temporal::Always(Box::new(
+                self.temporal_walk(operand, levels, span)?,
+            ))),
+            ExprKind::Prefix { op, operand, .. } if op == "<>" => Ok(Temporal::Eventually(
+                Box::new(self.temporal_walk(operand, levels, span)?),
+            )),
+            ExprKind::Prefix { op, operand, .. } if op == "~" => {
+                // `~` is propositional only if its operand is temporal; a
+                // state-level `~P` is a leaf.
+                if self.is_temporal(operand, levels) {
+                    Ok(Temporal::Not(Box::new(
+                        self.temporal_walk(operand, levels, span)?,
+                    )))
+                } else {
+                    Ok(Temporal::Node(self.lower(expr)?))
+                }
+            }
+            ExprKind::Prefix { op, .. } if op == "ENABLED" => refuse(
+                "`ENABLED`",
+                "it is action-level; the lasso encoding has no tableau rule for it",
+            ),
+            ExprKind::Infix { op, lhs, rhs, .. }
+                if matches!(op.as_str(), "~>" | "-+->" | "\\cdot") =>
+            {
+                let what = match op.as_str() {
+                    "~>" => "`~>`",
+                    "-+->" => "`-+->`",
+                    _ => "`\\cdot`",
+                };
+                refuse(
+                    what,
+                    "it relates behaviours or actions; rewrite `F ~> G` as `[](F => <> G)`, \
+                     which the tableau encodes",
+                )
+            }
+            ExprKind::Infix { op, lhs, rhs, .. }
+                if matches!(op.as_str(), "=>" | "<=>")
+                    && (self.is_temporal(lhs, levels) || self.is_temporal(rhs, levels)) =>
+            {
+                let l = Box::new(self.temporal_walk(lhs, levels, span)?);
+                let r = Box::new(self.temporal_walk(rhs, levels, span)?);
+                Ok(if op == "=>" {
+                    Temporal::Implies(l, r)
+                } else {
+                    Temporal::Equiv(l, r)
+                })
+            }
+            ExprKind::Junction { kind, items }
+                if items.iter().any(|i| self.is_temporal(i, levels)) =>
+            {
+                use nixie_tla_syntax::ast::Junct;
+                let fold = |a: Temporal, b: Temporal, and: bool| {
+                    if and {
+                        Temporal::And(Box::new(a), Box::new(b))
+                    } else {
+                        Temporal::Or(Box::new(a), Box::new(b))
+                    }
+                };
+                let and = matches!(kind, Junct::And);
+                let mut it = items.iter();
+                let first = it.next().expect("a junction has at least one item");
+                let mut acc = self.temporal_walk(first, levels, span)?;
+                for item in it {
+                    acc = fold(acc, self.temporal_walk(item, levels, span)?, and);
+                }
+                Ok(acc)
+            }
+            ExprKind::If {
+                cond,
+                then_branch,
+                else_branch,
+            } if [cond, then_branch, else_branch]
+                .iter()
+                .any(|e| self.is_temporal(e, levels)) =>
+            {
+                Ok(Temporal::Ite(
+                    Box::new(self.temporal_walk(cond, levels, span)?),
+                    Box::new(self.temporal_walk(then_branch, levels, span)?),
+                    Box::new(self.temporal_walk(else_branch, levels, span)?),
+                ))
+            }
+            ExprKind::Name(_) if self.is_temporal(expr, levels) => {
+                // A temporal-level definition: expand its body right here,
+                // so the tableau sees the `[]`/`<>` it hides.
+                let nixie_tla_syntax::ExprKind::Name(q) = &expr.kind else {
+                    unreachable!("matched Name above");
+                };
+                let name = q.path.last().map_or(String::new(), |i| i.name.clone());
+                let body = self
+                    .lower_module
+                    .ok_or_else(|| {
+                        LowerError::unsupported(
+                            &format!("`{name}`"),
+                            "a temporal-level name with no module to resolve against",
+                            span,
+                        )
+                    })?
+                    .units
+                    .iter()
+                    .find_map(|u| match &u.kind {
+                        nixie_tla_syntax::UnitKind::OpDef { name: n, body, .. }
+                            if n.name == name =>
+                        {
+                            Some(body)
+                        }
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        LowerError::unsupported(
+                            &format!("`{name}`"),
+                            "a temporal-level name with no operator definition in this module",
+                            span,
+                        )
+                    })?;
+                self.temporal_walk(body, levels, span)
+            }
+            ExprKind::Fairness { .. } => refuse(
+                "a fairness condition (`WF_` / `SF_`)",
+                "the lasso encoding has no fairness rule; Apalache refuses it too. \
+                 Dropping it would invent counterexamples, so it is declined",
+            ),
+            // `\AA x : P` / `\EE x : P` — an **unbounded** quantifier is
+            // how the parser delivers the temporal kinds.
+            ExprKind::UnboundedQuant { .. } => refuse(
+                "a temporal quantifier (`\\AA` / `\\EE`)",
+                "the lasso encoding has no tableau rule for it",
+            ),
+            ExprKind::Action { .. } => refuse(
+                "a subscripted action (`[A]_v` / `<<A>>_v`)",
+                "it is action-level; the lasso encoding has no tableau rule for it",
+            ),
+            ExprKind::Postfix { op, .. } if op == "'" => refuse(
+                "a primed expression",
+                "temporal properties here take state predicates as leaves; an action-level \
+                 leaf has no tableau rule",
+            ),
+            _ => {
+                // A state-level leaf: it must not contain a prime anywhere
+                // below (an action-level leaf has no tableau rule). The
+                // check is explicit-stack over the leaf's own syntax.
+                if Self::has_prime_or_action(expr) {
+                    return refuse(
+                        "a primed or action-level expression",
+                        "temporal properties here take state predicates as leaves; an \
+                         action-level leaf has no tableau rule",
+                    );
+                }
+                Ok(Temporal::Node(self.lower(expr)?))
+            }
+        }
+    }
+
+    /// Whether a state-level leaf hides a prime, an `ENABLED`, a
+    /// subscripted action or a fairness construct below an ordinary
+    /// operator — `~(x' = x)`, `x' + 1 > y`, `ENABLED A`. Explicit-stack.
+    fn has_prime_or_action(expr: &Expr) -> bool {
+        let mut work = vec![expr];
+        while let Some(e) = work.pop() {
+            match &e.kind {
+                ExprKind::Postfix { op, .. } if op == "'" => return true,
+                ExprKind::Prefix { op, .. } if op == "ENABLED" => return true,
+                ExprKind::Action { .. } | ExprKind::Fairness { .. } => return true,
+                _ => work.extend(e.subexprs()),
+            }
+        }
+        false
+    }
+
+    /// Whether an expression is temporal-level: by its own operator, or by
+    /// the level of the (sole) name it is. A level that could not be
+    /// resolved is **not** temporal — the leaf then lowers, and the lowering
+    /// refuses what it cannot do, by name.
+    ///
+    /// Explicit-stack: the expression is user-written and arbitrarily deep.
+    fn is_temporal(&self, expr: &Expr, levels: &nixie_tla_syntax::LevelReport) -> bool {
+        use nixie_tla_syntax::{ExprKind, Level};
+        let mut work = vec![expr];
+        while let Some(e) = work.pop() {
+            match &e.kind {
+                ExprKind::Prefix { op, operand, .. } => {
+                    if matches!(op.as_str(), "[]" | "<>") {
+                        return true;
+                    }
+                    work.push(operand);
+                }
+                ExprKind::Infix { op, lhs, rhs, .. } => {
+                    if matches!(op.as_str(), "~>" | "-+->" | "\\cdot") {
+                        return true;
+                    }
+                    work.push(lhs);
+                    work.push(rhs);
+                }
+                ExprKind::Fairness { .. }
+                | ExprKind::Action { .. }
+                | ExprKind::UnboundedQuant { .. } => {
+                    return true;
+                }
+                ExprKind::Name(q) => {
+                    let name = q.path.last().map_or(String::new(), |i| i.name.clone());
+                    if levels.level_of(&name) == Some(Level::Temporal) {
+                        return true;
+                    }
+                }
+                ExprKind::Junction { items, .. } => work.extend(items.iter()),
+                ExprKind::If {
+                    cond,
+                    then_branch,
+                    else_branch,
+                } => {
+                    work.push(cond);
+                    work.push(then_branch);
+                    work.push(else_branch);
+                }
+                ExprKind::Paren(inner) | ExprKind::Label { body: inner, .. } => work.push(inner),
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The `Bags` standard-module vocabulary, desugared to the module's own

@@ -182,7 +182,7 @@ pub enum SetupError {
     /// and reporting a `Violation` for it would answer a question nobody
     /// asked. `UnchangedAsInv1663.tla` in Apalache's test suite is exactly
     /// that, and is why this variant exists.
-    #[error("`{name}` is a {found} formula, but {role} must be a {wanted} formula")]
+    #[error("`{name}` is {found}, but {role} must be {wanted}")]
     Level {
         /// The definition.
         name: String,
@@ -258,6 +258,16 @@ pub struct Roles<'r> {
     pub constraints: &'r [&'r str],
 }
 
+/// What the `--inv` names are: ordinary invariants, or a temporal property
+/// to encode as a lasso.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InvKind {
+    /// `--inv`: a state or action invariant.
+    State,
+    /// `--temporal`: exactly one name, a temporal-level formula.
+    Temporal,
+}
+
 /// A specification prepared for checking.
 pub struct Bmc {
     /// The module's `ASSUME`s, which constrain the `CONSTANT`s.
@@ -319,6 +329,9 @@ pub struct Bmc {
     /// the encoder. Once per `Bmc`, at prepare time (the elements need the
     /// node-sort collection, which also runs there).
     frames_done: bool,
+    /// The lasso encoding, when the check is a temporal one (issue #29):
+    /// the trace's `loop` field is read off `__InLoop` from it.
+    lasso: Option<crate::temporal::Lasso>,
     /// `--paranoid` (issue #20, step 6): probe every frame's containment
     /// obligation `Init /\ Trans_{<k} /\ ~(v@k \subseteq U_k)` at every
     /// step, and fail closed on `Sat` or `Unknown`. Off by default – the
@@ -398,6 +411,52 @@ impl Bmc {
         )
     }
 
+    /// Prepare a specification for a **temporal** property (issue #29):
+    /// the liveness-to-safety lasso encoding.
+    ///
+    /// `temporal` names a temporal-level definition (`[]P`, `<>P`, `F ~>
+    /// G` desugared). The specification's `Init`/`Next` are rewritten with
+    /// the lasso variables (`__InLoop`, `__saved_<v>`) and the property's
+    /// tableau, and the checked invariant becomes `__LoopOK => __<prop>_init`
+    /// — an ordinary state predicate of the rewritten specification, which
+    /// the rest of the pipeline (inference, frames, encoding, replay) handles
+    /// unchanged. A counterexample is a **lasso**: a finite trace whose last
+    /// state equals its loop-entry state, and the trace's `loop` field names
+    /// the entry.
+    ///
+    /// "No counterexample within k" means no lasso of k steps or fewer
+    /// violates the property — not that the property holds.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bmc::prepare_with_config`], plus [`SetupError::Lower`] when the
+    /// property uses a construct the lasso encoding has no tableau rule for
+    /// (`WF_`/`SF_`, `\AA`/`\EE`, `-+->`, `\cdot`, action-level leaves):
+    /// declined by name, never dropped.
+    pub fn prepare_temporal<'a>(
+        spec: &'a LoadedSpec,
+        module: &'a Module,
+        init: &str,
+        next: &str,
+        temporal: &str,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config_kind(
+            spec,
+            module,
+            Roles {
+                init,
+                next,
+                inv: std::slice::from_ref(&temporal),
+                constraints: &[],
+            },
+            config,
+            InvKind::Temporal,
+            tm,
+        )
+    }
+
     /// Prepare a specification with its TLC configuration applied.
     ///
     /// The `.cfg` is where a specification's parameters actually live. Without
@@ -427,6 +486,20 @@ impl Bmc {
         module: &'a Module,
         roles: Roles<'_>,
         config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config_kind(spec, module, roles, config, InvKind::State, tm)
+    }
+
+    /// [`Self::prepare_with_config`] with the `--inv` names' kind given by
+    /// the caller: a state/action invariant (the default) or a temporal
+    /// property (the lasso encoding, issue #29).
+    fn prepare_with_config_kind<'a>(
+        spec: &'a LoadedSpec,
+        module: &'a Module,
+        roles: Roles<'_>,
+        config: &TlcConfig,
+        inv_kind: InvKind,
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
         let Roles {
@@ -537,8 +610,8 @@ impl Bmc {
             Some(l) if l > max => Err(SetupError::Level {
                 name: name.to_string(),
                 role,
-                found: format!("{l:?}"),
-                wanted: format!("{max:?}"),
+                found: format!("a {l:?}-level formula"),
+                wanted: format!("a {max:?}-level formula"),
             }),
             _ => Ok(()),
         };
@@ -547,26 +620,75 @@ impl Bmc {
         // The invariant levels split three ways, and only the temporal one
         // is refused: an action-level invariant is a legitimate thing to ask
         // (Apalache's `ActionInv.tla`), checked over step pairs; a temporal
-        // one is a lasso question this bounded loop does not ask, and
-        // pretending otherwise would answer a different question silently.
+        // one is a lasso question — answered only when asked for as such
+        // (`--temporal`, issue #29), never silently by treating it as a
+        // state invariant.
         let levels = nixie_tla_syntax::check_module(module);
         for inv in roles.inv {
-            if invariant_kind(&levels, inv) == InvariantKind::Temporal {
-                return Err(SetupError::Level {
-                    name: (*inv).to_string(),
-                    role: "an invariant",
-                    found: "a temporal".to_string(),
-                    wanted: "a state or action".to_string(),
-                });
+            let kind = invariant_kind(&levels, inv);
+            match (inv_kind, kind) {
+                // `--temporal=P`: the property is encoded as a lasso
+                // (issue #29), whatever its level — a state predicate
+                // `P` is a property of the initial state, as Apalache
+                // notes and accepts.
+                (InvKind::Temporal, _) => {}
+                // `--inv=P` where `P` is temporal: exit 255, by name. A
+                // temporal property is a lasso question, and checking it
+                // as a state invariant would answer a different question.
+                (InvKind::State, InvariantKind::Temporal) => {
+                    return Err(SetupError::Level {
+                        name: (*inv).to_string(),
+                        role: "an invariant",
+                        found: "a temporal formula".to_string(),
+                        wanted: "a state or action formula".to_string(),
+                    });
+                }
+                (InvKind::State, _) => {}
             }
         }
 
+        let mut lasso_box: Option<crate::temporal::Lasso> = None;
         let init_k = lower_one(&mut low, module, init)?;
         let next_k = lower_one(&mut low, module, next)?;
         let mut invs = Vec::with_capacity(roles.inv.len());
         for inv in roles.inv {
-            invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
+            if inv_kind == InvKind::Temporal {
+                // The lasso encoding (issue #29): the property's temporal
+                // structure comes back from the lowerer as a `Temporal`
+                // tree — every state-level leaf lowered by the ordinary
+                // machinery — and `temporal::encode` rewrites `Init`/`Next`
+                // with `__InLoop`, the frozen copies and the tableau, and
+                // yields the state invariant a violating lasso falsifies.
+                // The rest of this function sees an ordinary specification.
+                let body = definition_body(module, inv)
+                    .ok_or_else(|| SetupError::NoSuchDefinition((*inv).to_string()))?;
+                let tree =
+                    low.lower_temporal(module, body, &levels)
+                        .map_err(|e| SetupError::Lower {
+                            name: (*inv).to_string(),
+                            why: e.to_string(),
+                        })?;
+                let lasso = crate::temporal::encode(
+                    Rc::clone(&init_k),
+                    Rc::clone(&next_k),
+                    &tree,
+                    &all_state_variables(spec),
+                );
+                invs.push(((*inv).to_string(), Rc::clone(&lasso.invariant)));
+                lasso_box = Some(lasso);
+            } else {
+                invs.push(((*inv).to_string(), lower_one(&mut low, module, inv)?));
+            }
         }
+        // The rewritten `Init`/`Next` replace the originals from here on;
+        // inference, frames, encoding and replay all run on the lasso
+        // specification. `__LoopOK` is a term, not a unit, so nothing else
+        // in the module changes.
+        let lasso_kept = lasso_box.clone();
+        let (init_k, next_k) = match lasso_box.take() {
+            Some(l) => (l.init, l.next),
+            None => (init_k, next_k),
+        };
         // Positive existentials over the standard infinite sets – and, per
         // issue #20 step 4, over **symbolic set names the frame analysis
         // could not derive a universe for** – are skolemized before anything
@@ -912,8 +1034,8 @@ impl Bmc {
                 return Err(SetupError::Level {
                     name: name.to_string(),
                     role: "a formula",
-                    found: format!("{ty}"),
-                    wanted: "BOOLEAN".to_string(),
+                    found: format!("a {ty}"),
+                    wanted: "a BOOLEAN".to_string(),
                 });
             }
         }
@@ -937,7 +1059,16 @@ impl Bmc {
             }
         }
 
-        let state = all_state_variables(spec);
+        // The lasso's auxiliary variables (issue #29) are **state**
+        // variables of the rewritten specification: `__InLoop` changes when
+        // the loop is entered, the `__saved_` copies at entry, the tableau
+        // node variables at every step. Declared rigid (as a `CONSTANT`
+        // would be) they would be one value for the whole trace, the loop
+        // would never close, and every temporal property would "hold".
+        let mut state = all_state_variables(spec);
+        if let Some(l) = &lasso_kept {
+            state.extend(l.aux_variables.iter().cloned());
+        }
         // Native sets, not the arena. A set-valued **state variable** has no
         // statically knowable candidate list – `s@1` holds whatever the
         // transition relation puts there – so the arena cannot represent one
@@ -1049,6 +1180,7 @@ impl Bmc {
 
         Ok(Self {
             frames_done: true,
+            lasso: lasso_kept,
             paranoid: false,
             assumptions: typed_assumptions,
             dropped_setup: dropped,
@@ -1305,6 +1437,44 @@ impl Bmc {
                     solver.assert(*c, tm);
                 }
                 let answer = solver.check(tm);
+                // `NIXIE_TLA_DUMP_QUERY=<dir>`: every depth's query as a
+                // standalone SMT-LIB file — the assertions, with their free
+                // variables declared — so a surprising answer can be replayed
+                // in the `nixie` CLI and attached to a solver report.
+                if let Ok(dir) = std::env::var("NIXIE_TLA_DUMP_QUERY") {
+                    use std::io::Write;
+                    let path = format!("{dir}/d{depth}_j{j}.smt2");
+                    let mut roots = assumed.clone();
+                    roots.push(init);
+                    for i in 0..j {
+                        roots.push(transitions[i as usize]);
+                    }
+                    for c in self.encoder.side_constraints().to_vec() {
+                        roots.push(c);
+                    }
+                    roots.push(violated);
+                    let printer = nixie_core::smtlib::Printer::new(tm);
+                    let mut names: std::collections::BTreeMap<String, nixie_core::SortId> =
+                        std::collections::BTreeMap::new();
+                    for r in &roots {
+                        for v in tm.free_vars(*r) {
+                            if let Some(d) = tm.get(v) {
+                                names.insert(printer.print_term(v), d.sort);
+                            }
+                        }
+                    }
+                    if let Ok(mut f) = std::fs::File::create(&path) {
+                        let _ = writeln!(f, "(set-logic ALL)");
+                        for (n, sort) in &names {
+                            let _ =
+                                writeln!(f, "(declare-fun {n} () {})", printer.print_sort(*sort));
+                        }
+                        for r in &roots {
+                            let _ = writeln!(f, "(assert {})", printer.print_term(*r));
+                        }
+                        let _ = writeln!(f, "(check-sat)");
+                    }
+                }
                 if answer != SolverResult::Sat {
                     // Pop before any early return: an abandoned scope would leak
                     // its assertions into the *next* `check` call on this `Bmc`
@@ -2085,9 +2255,15 @@ impl Bmc {
     }
 
     fn render_itf(&self, trace: &Trace, source: &str) -> serde_json::Value {
+        // The lasso's bookkeeping (issue #29) is not the specification's:
+        // the frozen copies and the tableau node variables are how the
+        // encoding works, and a reader of the trace wants the spec's own
+        // variables — plus `__InLoop`, which is how the `loop` field is
+        // read. Hidden from the ITF, as Apalache hides its own.
         let mut vars: Vec<String> = self
             .encoder
             .state_names()
+            .filter(|n| !(n.starts_with("__saved_") || n.starts_with("__temporal_")))
             .map(std::string::ToString::to_string)
             .collect();
         let mut params: Vec<String> = self
@@ -2109,8 +2285,17 @@ impl Bmc {
                 description: "Generated by Nixie".to_string(),
                 source: source.to_string(),
                 violated: self.violated_invariants.clone(),
+                loop_start: self.lasso.as_ref().and_then(|_| loop_start(trace)),
             },
         )
+    }
+
+    /// The index of the state a lasso counterexample loops back to, read
+    /// off `__InLoop` in the last extracted trace (issue #29). `None` for
+    /// an ordinary check, or when no counterexample has been extracted.
+    #[must_use]
+    pub fn loop_start(&self) -> Option<usize> {
+        self.counterexample.as_ref().and_then(loop_start)
     }
 
     /// Whether the last counterexample was confirmed independently.
@@ -2342,6 +2527,25 @@ fn lower_one<'a>(
             name: name.to_string(),
             why: e.to_string(),
         })
+}
+
+/// The body of a zero-argument operator definition, when the module has one.
+fn definition_body<'a>(module: &'a Module, name: &str) -> Option<&'a nixie_tla_syntax::Expr> {
+    module.units.iter().find_map(|u| match &u.kind {
+        UnitKind::OpDef { name: n, body, .. } if n.name == name => Some(body),
+        _ => None,
+    })
+}
+
+/// The index of the state a lasso trace loops back to (issue #29):
+/// the first state in which `__InLoop` holds. `__InLoop` becomes true on
+/// the step **into** the loop's first repeated state, so the loop's start
+/// is that state's index. `None` when no state has it — not a lasso.
+fn loop_start(trace: &Trace) -> Option<usize> {
+    trace
+        .states
+        .iter()
+        .position(|st| matches!(st.get(crate::temporal::IN_LOOP), Some(v) if v == &nixie_tla::Value::Bool(true)))
 }
 
 /// Every empty-set literal reachable from `root`.
