@@ -411,6 +411,11 @@ fn reason(e: &SetupError) -> String {
         SetupError::Replacement { why, .. } => {
             format!("the .cfg's `<-` could not be applied: {why}")
         }
+        // Only produced under `--paranoid`, which the harness does not pass;
+        // named anyway so the tally never hides it behind a catch-all.
+        SetupError::FrameEscaped { var, step, .. } => {
+            format!("frame for `{var}` at step {step} may miss members")
+        }
     }
 }
 

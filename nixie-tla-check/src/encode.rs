@@ -273,6 +273,27 @@ impl Encoder {
         &self.side
     }
 
+    /// The installed frames' subjects: the set-frame names, then the
+    /// function-frame names (the paranoid containment probe enumerates
+    /// them).
+    pub fn framed_names(&self) -> (Vec<String>, Vec<String>) {
+        (
+            self.frames.universe.keys().cloned().collect(),
+            self.frames.fun_universe.keys().cloned().collect(),
+        )
+    }
+
+    /// Test-only: remove one element from a set frame's universe,
+    /// simulating a bad analysis, so the paranoid containment probe's
+    /// fail-closed path can be exercised on a frame that really does miss
+    /// a member.
+    #[cfg(test)]
+    pub(crate) fn drop_frame_element_for_test(&mut self, name: &str, n: usize) {
+        if let Some(u) = self.frames.universe.get_mut(name) {
+            u.remove(n);
+        }
+    }
+
     /// Install the frame analysis's candidate universes (issue #20).
     ///
     /// Called once per [`crate::bmc::Bmc`] before the depth loop; the frames
@@ -730,6 +751,72 @@ impl Encoder {
         self.step = saved;
         self.framing.remove(name);
         ok.then_some(members)
+    }
+
+    /// The candidate universe of a framed variable at one step, as **one
+    /// native set term** — every element unconditionally present (issue #20,
+    /// step 6). This is the `U_k` of the containment obligation, not the
+    /// guarded-members form a quantifier instantiates over: `v@k \subseteq
+    /// U_k` is the promise the frame analysis makes, and the paranoid probe
+    /// asks the solver to falsify exactly it.
+    ///
+    /// `None` when an element will not encode at this step — the obligation
+    /// cannot be stated, and the caller fails closed.
+    pub fn universe_set_at(
+        &mut self,
+        name: &str,
+        step: u32,
+        fun: bool,
+        tm: &mut TermManager,
+    ) -> Option<TermId> {
+        let universe = if fun {
+            self.frames.fun_universe.get(name)?.clone()
+        } else {
+            self.frames.universe.get(name)?.clone()
+        };
+        let saved = std::mem::replace(&mut self.step, step);
+        let mut members = Vec::with_capacity(universe.len());
+        let mut ok = true;
+        for e in &universe {
+            let v = match self.value(e, tm) {
+                Ok(v) => v,
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            };
+            let scalar = match &*v {
+                Value::Scalar(t) => *t,
+                structural => {
+                    let v = Rc::new(structural.clone());
+                    match self.reify(&v, tm) {
+                        Ok(r) => r,
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+            };
+            members.push(Member {
+                value: Rc::new(Value::Scalar(scalar)),
+                present: tm.mk_bool(true),
+            });
+        }
+        self.step = saved;
+        if !ok || members.is_empty() {
+            return None;
+        }
+        // The containing term is the set variable for a set frame and the
+        // **domain** variable for a function frame — the array is not a
+        // set and has no element sort.
+        let holder = if fun {
+            self.domain_at(name, step)?
+        } else {
+            self.var_at(name, step)?
+        };
+        let elem = self.element_sort_of(holder, tm).ok()?;
+        self.native_set_of(&members, elem, tm).ok()
     }
 
     /// The arena cell of a function-sorted state variable's domain at one

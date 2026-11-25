@@ -149,6 +149,23 @@ pub enum SetupError {
     /// Type inference failed.
     #[error("the specification does not type check: {0}")]
     Types(String),
+    /// A frame's containment obligation failed (or could not be decided)
+    /// under `--paranoid`: some member of the variable may lie outside the
+    /// candidate universe the analysis derived, so instantiating a bounded
+    /// quantifier over the universe could have skipped it. Fail closed —
+    /// the check is refused, never answered on a possibly-missing member
+    /// (issue #20, step 6).
+    #[error(
+        "the frame for `{var}` at step {step} may be missing members (containment {result}); refusing"
+    )]
+    FrameEscaped {
+        /// The variable whose universe may be incomplete.
+        var: String,
+        /// The step the probe could not discharge.
+        step: u32,
+        /// What the probe said.
+        result: &'static str,
+    },
     /// A name's type has no SMT sort yet.
     #[error("`{name}` is {ty}, which has no SMT sort yet")]
     NoSort {
@@ -302,6 +319,12 @@ pub struct Bmc {
     /// the encoder. Once per `Bmc`, at prepare time (the elements need the
     /// node-sort collection, which also runs there).
     frames_done: bool,
+    /// `--paranoid` (issue #20, step 6): probe every frame's containment
+    /// obligation `Init /\ Trans_{<k} /\ ~(v@k \subseteq U_k)` at every
+    /// step, and fail closed on `Sat` or `Unknown`. Off by default — the
+    /// fixpoint argument already guarantees containment, and the probe
+    /// roughly doubles the query count.
+    paranoid: bool,
     /// Which of the named invariants the last counterexample broke, by name.
     ///
     /// A list, because `--inv=A,B` asks about several at once and a caller
@@ -1026,6 +1049,7 @@ impl Bmc {
 
         Ok(Self {
             frames_done: true,
+            paranoid: false,
             assumptions: typed_assumptions,
             dropped_setup: dropped,
             dropped_assumptions: dropped,
@@ -1255,6 +1279,18 @@ impl Bmc {
             while side_sent < sides.len() {
                 solver.assert(sides[side_sent], tm);
                 side_sent += 1;
+            }
+
+            // The frame containment obligation (issue #20, step 6), behind
+            // `--paranoid`: with the transition into this step asserted,
+            // ask whether any member of a framed variable can lie outside
+            // the universe the analysis derived. The fixpoint argument says
+            // no; this asks the solver to agree, and fails closed when it
+            // will not — a `\A x \in v` instantiated over a universe that
+            // misses a member would skip it, which is the unsound
+            // direction.
+            if self.paranoid {
+                self.probe_frames(&mut solver, j, tm)?;
             }
 
             if !negated.is_empty() {
@@ -1530,6 +1566,73 @@ impl Bmc {
             }
         }
         Ok(Outcome::NoViolationWithin(depth))
+    }
+
+    /// Turn the frame containment probes on (`--paranoid`).
+    pub fn set_paranoid(&mut self, on: bool) {
+        self.paranoid = on;
+    }
+
+    /// The one frame containment probe for step `j` (issue #20, step 6):
+    /// for every framed variable, `~(v@j \subseteq U_j)` must be `Unsat`
+    /// under everything asserted so far. `Sat` (a member could escape the
+    /// universe) or `Unknown` (cannot tell) fails closed.
+    ///
+    /// The obligations are **built first, then asked**: building a universe
+    /// term goes through `&mut self.encoder` (the step save/restore), so it
+    /// happens in one pass, and the solver probes — `push`/`assert`/`check`/
+    /// `pop`, which borrow nothing but the solver — happen in a second.
+    fn probe_frames(
+        &mut self,
+        solver: &mut Solver,
+        j: u32,
+        tm: &mut TermManager,
+    ) -> core::result::Result<(), SetupError> {
+        let (set_names, fun_names) = self.encoder.framed_names();
+        let names: Vec<(String, bool)> = set_names
+            .into_iter()
+            .map(|n| (n, false))
+            .chain(fun_names.into_iter().map(|n| (n, true)))
+            .collect();
+        let mut obligations: Vec<(String, nixie_core::TermId, nixie_core::TermId)> = Vec::new();
+        for (name, fun) in names {
+            let holder = if fun {
+                self.encoder.domain_at(&name, j)
+            } else {
+                self.encoder.var_at(&name, j)
+            };
+            let u = holder.and_then(|_| self.encoder.universe_set_at(&name, j, fun, tm));
+            match (holder, u) {
+                (Some(holder), Some(u)) => obligations.push((name, holder, u)),
+                (name_opt, _) => {
+                    return Err(SetupError::FrameEscaped {
+                        var: name_opt.map_or_else(|| name.clone(), |_| name.clone()),
+                        step: j,
+                        result: "could not be stated",
+                    });
+                }
+            }
+        }
+        for (name, holder, u) in obligations {
+            let subset = tm.mk_set_subset(holder, u);
+            let escape = tm.mk_not(subset);
+            solver.push();
+            solver.assert(escape, tm);
+            let answer = solver.check(tm);
+            solver.pop();
+            if answer != SolverResult::Unsat {
+                return Err(SetupError::FrameEscaped {
+                    var: name,
+                    step: j,
+                    result: if answer == SolverResult::Sat {
+                        "is falsified"
+                    } else {
+                        "is undecided"
+                    },
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Whether the search looks for deadlocks; see [`Outcome::Deadlock`].
@@ -2492,4 +2595,68 @@ fn disjuncts_of(next: &KeraRef) -> Vec<KeraRef> {
     // Reverse the worklist order so the disjuncts come out in source order.
     out.reverse();
     out
+}
+
+#[cfg(test)]
+mod paranoid_tests {
+    use super::*;
+
+    fn spec() -> nixie_tla_syntax::LoadedSpec {
+        let src = "\
+---- MODULE P ----
+EXTENDS Naturals
+VARIABLE s
+Init == s = {1, 2}
+Next == \\/ \\E t \\in s : s' = s \\ {t}
+        \\/ s' = s
+Inv == \\A x \\in s : x < 10
+====
+";
+        let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+        nixie_tla_syntax::LoadedSpec::single(parsed)
+    }
+
+    fn prepared(tm: &mut TermManager) -> Bmc {
+        let spec = spec();
+        let module = spec.root_module().expect("root");
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], tm).expect("prepares")
+    }
+
+    /// A sound frame discharges every containment obligation: the check
+    /// runs to its ordinary verdict with the probes on.
+    #[test]
+    fn paranoid_probe_passes_a_sound_frame() {
+        let mut tm = TermManager::new();
+        let mut bmc = prepared(&mut tm);
+        bmc.set_paranoid(true);
+        match bmc.check(2, &mut tm) {
+            Ok(Outcome::NoViolationWithin(_)) => {}
+            other => panic!("expected a clean verdict under paranoid, got {other:?}"),
+        }
+    }
+
+    /// A frame that really misses a member is caught: with `2` removed
+    /// from `s`'s universe, the escape probe finds `s@0 = {1,2}` not
+    /// contained in `{1}` and the check **fails closed**, naming the
+    /// variable, the step, and the falsified obligation — never answering
+    /// `NoViolation` on a quantifier that skipped the missing member.
+    #[test]
+    fn paranoid_probe_fails_closed_on_a_broken_frame() {
+        let mut tm = TermManager::new();
+        let mut bmc = prepared(&mut tm);
+        // The universe is `{1, 2}` in derivation order; index 1 is `2`.
+        // (Element order is the analysis's, so the test first asserts the
+        // shape it is tampering with.)
+        let (sets, _) = bmc.encoder.framed_names();
+        assert!(sets.contains(&"s".to_string()), "the spec frames `s`");
+        bmc.encoder.drop_frame_element_for_test("s", 1);
+        bmc.set_paranoid(true);
+        match bmc.check(1, &mut tm) {
+            Err(SetupError::FrameEscaped { var, step, .. }) => {
+                assert_eq!(var, "s");
+                assert_eq!(step, 0);
+            }
+            other => panic!("expected fail-closed FrameEscaped, got {other:?}"),
+        }
+    }
 }

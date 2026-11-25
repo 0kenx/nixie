@@ -97,6 +97,13 @@ struct Args {
     /// no timestamped run directories, so this is simply where the files go
     /// when `--out-dir` does not say otherwise.
     run_dir: Option<PathBuf>,
+    /// `--paranoid` (issue #20, step 6): probe every frame's containment
+    /// obligation at every step — `Init /\ Trans_{<k} /\ ~(v@k \subseteq
+    /// U_k)` must be `Unsat` — and refuse the check (exit 255, cause named)
+    /// when it is not. Off by default: the frame derivation's fixpoint
+    /// argument already guarantees containment, and the probes roughly
+    /// double the query count.
+    paranoid: bool,
 }
 
 const USAGE: &str = "\
@@ -184,6 +191,7 @@ fn parse_args() -> Result<Args, String> {
         config: None,
         no_deadlock: false,
         run_dir: None,
+        paranoid: false,
     };
     let mut spec: Option<PathBuf> = None;
     for arg in it {
@@ -229,6 +237,7 @@ fn parse_args() -> Result<Args, String> {
                 "out-dir" => a.out_dir = Some(PathBuf::from(need(value)?)),
                 "config" => a.config = Some(PathBuf::from(need(value)?)),
                 "no-deadlock" => a.no_deadlock = true,
+                "paranoid" => a.paranoid = true,
                 // Accepted, no effect: a `.cfg` is not read by default any
                 // more (see `run`), so there is nothing left to turn off.
                 // Kept rather than rejected so a caller scripted against
@@ -796,6 +805,7 @@ fn run(args: &Args) -> u8 {
         }
     };
     bmc.set_check_deadlocks(check_deadlocks);
+    bmc.set_paranoid(args.paranoid);
 
     // The view: a state-level definition whose value at a step is what the
     // author considers "the same" counterexample. Anything above state
@@ -989,6 +999,10 @@ fn exit_for(e: &SetupError) -> u8 {
         // abort, which is the 255 bucket here. It must never read as 12 —
         // there is no behaviour to show.
         SetupError::AssumptionViolated { .. } => EXIT_SYSTEM,
+        // A frame the paranoid probe refused is a declined check, not a
+        // counterexample: the 255 bucket, with the named cause in the
+        // message.
+        SetupError::FrameEscaped { .. } => EXIT_SYSTEM,
         SetupError::NoSuchDefinition(_)
         | SetupError::Lower { .. }
         | SetupError::Encode { .. }

@@ -238,10 +238,15 @@ fn a_quantifier_reaches_the_values_too() {
     holds("\\A i \\in DOMAIN [j \\in 1..3 |-> j + 1] : [j \\in 1..3 |-> j + 1][i] > 1");
 }
 
-/// A genuinely opaque set — a state variable — has no candidate list, and is
-/// refused by that name rather than approximated.
+/// A set-valued state variable is **framed** (issue #20): `\\A i \\in s`
+/// instantiates over the candidate universe derived from `s`'s assignment
+/// sites, each candidate guarded by membership in the real variable. The
+/// universe is `{1, 2}` here and nothing escapes it, so the check reaches a
+/// verdict — and the invariant's content is live: a member that violates it
+/// is found (the frames test `an_added_violating_member_is_still_found`
+/// pins the other direction).
 #[test]
-fn an_opaque_set_has_no_candidate_list() {
+fn a_set_variable_quantifier_instantiates_over_its_frame() {
     let src = r"
 ---- MODULE Opaque ----
 EXTENDS Integers
@@ -255,22 +260,16 @@ Inv  == \A i \in s : i < 3
     let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
     let module = spec.root_module().expect("has a root module");
     let mut tm = TermManager::new();
-    let err =
+    let mut bmc =
         nixie_tla_check::bmc::Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm)
-            .err();
-    // Either it prepares and the quantifier is declined at encode time, or it
-    // is declined here — what must not happen is a candidate list being
-    // invented for a variable whose members the transition relation decides.
-    if err.is_none() {
-        let mut bmc =
-            nixie_tla_check::bmc::Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm)
-                .expect("prepares");
-        let out = bmc.check(1, &mut tm);
-        assert!(
-            out.is_err(),
-            "a quantifier over a set variable must be declined, got {out:?}"
-        );
-    }
+            .expect("prepares");
+    let out = bmc
+        .check(1, &mut tm)
+        .expect("the framed quantifier encodes");
+    assert!(
+        matches!(out, nixie_tla_check::bmc::Outcome::NoViolationWithin(_)),
+        "the framed quantifier checks to a verdict, got {out:?}"
+    );
 }
 
 // ---- a tuple is a function on `1..n` ----
