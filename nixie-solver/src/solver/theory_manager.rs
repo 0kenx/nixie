@@ -3166,15 +3166,15 @@ impl<'a> TheoryManager<'a> {
         // split), so the replay mirrors that.
         if matches!(self.var_to_constraint.get(&var), Some(Constraint::Eq(_, _))) {
             if is_positive {
-                self.arith.assert_eq(&terms, constant, reason);
+                self.arith.assert_eq(terms, constant, reason);
             }
             return;
         }
         match (parsed.constraint_type, is_positive) {
-            (Lt, true) | (Ge, false) => self.arith.assert_lt(&terms, constant, reason),
-            (Le, true) | (Gt, false) => self.arith.assert_le(&terms, constant, reason),
-            (Gt, true) | (Le, false) => self.arith.assert_gt(&terms, constant, reason),
-            (Ge, true) | (Lt, false) => self.arith.assert_ge(&terms, constant, reason),
+            (Lt, true) | (Ge, false) => self.arith.assert_lt(terms, constant, reason),
+            (Le, true) | (Gt, false) => self.arith.assert_le(terms, constant, reason),
+            (Gt, true) | (Le, false) => self.arith.assert_gt(terms, constant, reason),
+            (Ge, true) | (Lt, false) => self.arith.assert_ge(terms, constant, reason),
         }
     }
 
