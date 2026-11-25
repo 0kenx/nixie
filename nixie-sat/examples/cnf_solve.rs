@@ -1,4 +1,4 @@
-//! DIMACS CNF solver entry point — the single merged harness.
+//! DIMACS CNF solver entry point – the single merged harness.
 //!
 //! Parses a `.cnf` file with [`DimacsParser`], solves it, and prints the
 //! standard `s SATISFIABLE` / `s UNSATISFIABLE` line (matching the output
@@ -6,12 +6,12 @@
 //!
 //! This example subsumes the three former entry points; their extra output
 //! is opt-in behind env flags (debug/instrumentation is never on by
-//! default — the plain run prints only the verdict line):
+//! default – the plain run prints only the verdict line):
 //!
 //!   STATS=1   solver counters and rates on stderr after the solve
 //!             (decisions/propagations/conflicts/restarts/learned clauses,
-//!             props/s, sweep counters) — formerly `cnf_instrumented`.
-//!   DIAG=1    full search-shape diagnostics on stdout — formerly
+//!             props/s, sweep counters) – formerly `cnf_instrumented`.
+//!   DIAG=1    full search-shape diagnostics on stdout – formerly
 //!             `stats_solve`: `walk:` / `result=` / `conflicts=` lines,
 //!             learned/net-db counts, avg LBD, per-mode ticks,
 //!             stabilization phases, VMTF scan, subsumption/BVE counters.
@@ -82,7 +82,7 @@
 //! matching the arm count).  Arm tokens:
 //!   `default`  default config, built-in seed
 //!   `<n>`      default config, seed `n`
-//!   `chrono`   default config + `chrono_reuse` (ungated) — the
+//!   `chrono`   default config + `chrono_reuse` (ungated) – the
 //!              endurance-instance variant measured to solve 8 of the
 //!              25 cadical-only standing losses while being
 //!              corpus-negative as a *default* (standing-gap study):
@@ -90,7 +90,7 @@
 //!              zero risk to files the default arm already solves.
 //!              Optional seed suffix: `chrono:<n>`.
 //!   `els`      default config + the scheduled equivalence-literal-
-//!              substitution one-shot (`ELS=1` semantics) — the arm
+//!              substitution one-shot (`ELS=1` semantics) – the arm
 //!              measured 0.349x conflicts on 6s167-opt whose static gates
 //!              are falsified four ways. Optional seed suffix `els:<n>`.
 //! Each arm is a FULL solve restart (fresh solver, same clauses): CDCL
@@ -106,7 +106,7 @@
 //!   MAXC=N  global conflict budget (per-arm budgets take the tighter of
 //!           MAXC and their ARM_CONFLICTS entry); SEED=N per-invocation
 //!           PRNG seed (an arm token's explicit seed wins). Both are hard
-//!           errors when set to a non-number — a silently-ignored seed
+//!           errors when set to a non-number – a silently-ignored seed
 //!           or budget makes "seeded" screens replicas (2026-09-07
 //!           portfolio campaign lesson).
 //!
@@ -189,7 +189,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
     };
 
     // Restart strategy override on top of the chosen base. The interval-
-    // scheduled strategies disable the stabilize schedule — the
+    // scheduled strategies disable the stabilize schedule – the
     // stable/focused restart path implements Glucose+reluctant and never
     // consults `restart_strategy`, so `RESTART=luby/geometric/locallbd`
     // was silently inert on the preset (geo22 == geo200, 2026-09-07
@@ -221,7 +221,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
     }
 
     // Base restart interval. Only the interval-scheduled strategies read
-    // it as their schedule (luby/geometric — which disable stabilize, see
+    // it as their schedule (luby/geometric – which disable stabilize, see
     // RESTART above); for glucose it is the minimum restart gap of the
     // non-stabilize path.
     if let Some(v) = env_u64("INTERVAL") {
@@ -240,7 +240,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
         config.enable_bve = v;
     }
     // Pre-search probing bundle (failed-literal + hyper-binary): the
-    // CaDiCaL preset enables both, bare Default neither — the 2026-09-07
+    // CaDiCaL preset enables both, bare Default neither – the 2026-09-07
     // preset-ablation arm isolates which carries the tail-class swings.
     // PROBING toggles both; PROBE/HYPER (the former cnf_instrumented
     // spellings) toggle one each and apply after the bundle.
@@ -255,7 +255,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
         config.enable_hyper_binary_probing = v;
     }
     // Chronological backtracking A/B knob (cadical defaults it on; our
-    // measurements elsewhere were neutral-to-slightly-negative — the
+    // measurements elsewhere were neutral-to-slightly-negative – the
     // satcomp standing-gap study names it the cheap first trial for the
     // dense-3-CNF model-finding deficit, where cadical runs 26 %
     // chronological).
@@ -264,7 +264,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
     }
     // Fine-grained branching toggles first, then the VSIDS bundle arm for
     // the decision-quality study (VSIDS=1 switches the preset's VMTF to
-    // VSIDS in BOTH stable and focused modes — the standing-gap study's
+    // VSIDS in BOTH stable and focused modes – the standing-gap study's
     // dec/conf deficit: 5.1 vs cadical's 3.1 with schedule-level
     // behaviour otherwise matched), so an explicit VSIDS wins.
     if let Some(v) = env_bool("VMTF") {
@@ -328,10 +328,10 @@ fn config_from_env() -> nixie_sat::SolverConfig {
         config.stabilize_base = v;
     }
 
-    // --- study arms (formerly stats_solve) ---
+    // ======== study arms (formerly stats_solve) ========
     // Mid-search BVA study knobs (2026-09-07 follow-up #0): ride the
     // inprocessing rounds; NIXIE_BVA_MID_NULL implies the treatment flag
-    // (matched null — same generation/budgets/apply, scrambled rank).
+    // (matched null – same generation/budgets/apply, scrambled rank).
     if let Some(v) = env_bool("NIXIE_BVA_MID") {
         config.enable_mid_bva = v;
     }
@@ -392,7 +392,7 @@ fn config_from_env() -> nixie_sat::SolverConfig {
 
 /// Former `cnf_instrumented` output: solver counters and rates on stderr,
 /// used to separate *search quality* (conflicts needed) from *raw speed*
-/// (propagations/sec). Informational only — wall time is never a policy
+/// (propagations/sec). Informational only – wall time is never a policy
 /// input (see docs/BENCHMARKING.md).
 fn print_stats_block(solver: &Solver, dt: f64) {
     let s = solver.stats();
@@ -607,7 +607,7 @@ fn main() {
     // Arm tuple: (seed, chrono, els, maxgap).  `maxgap-<n>[:<seed>]`
     // carries the max-gap restart floor as a per-arm config (the corpus
     // flip failed the solved-at-cap bar, the portfolio conversion is the
-    // studied exit — 2026-09-07 campaign, T1/max-gap follow-up).
+    // studied exit – 2026-09-07 campaign, T1/max-gap follow-up).
     #[allow(clippy::type_complexity)]
     let parse_arm = |t: &str| -> (Option<u64>, bool, bool, Option<u64>) {
         let t = t.trim();
@@ -623,7 +623,7 @@ fn main() {
         if let Some(rest) = t.strip_prefix("els") {
             // ELS portfolio arm (2026-09-07 campaign, T3 portfolio
             // conversion): default config + the scheduled equivalence-
-            // literal-substitution one-shot (`ELS=1` semantics) — the arm
+            // literal-substitution one-shot (`ELS=1` semantics) – the arm
             // measured 0.349x conflicts on 6s167-opt whose static gates
             // are falsified four ways. Optional seed suffix `els:<n>`.
             let seed = rest
@@ -790,7 +790,7 @@ fn main() {
 
         if let Some((src, k)) = &els_gate {
             // The gate scalar: congruence-gate count (treatment) or the
-            // instance content hash (matched null — same threshold shape,
+            // instance content hash (matched null – same threshold shape,
             // same firing count, no structural information).
             let scalar: u32 = match src.as_str() {
                 "gates" => solver.detected_gate_count() as u32,
@@ -814,7 +814,7 @@ fn main() {
         }
         if std::env::var("GATE_COUNT").is_ok() {
             // Structural telemetry (2026-09-05 gate-gating study): gates found in
-            // the parsed formula, before any preprocessing.  Print and exit —
+            // the parsed formula, before any preprocessing.  Print and exit –
             // the metric is available before any search.
             println!("gates={}", solver.detected_gate_count());
             return;

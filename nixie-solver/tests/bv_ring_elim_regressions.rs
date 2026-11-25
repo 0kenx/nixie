@@ -3,8 +3,8 @@
 //! The pass eliminates one variable per round; the historical implementation
 //! rebuilt, on **every** round, the polynomial of every asserted equality and
 //! the variable-occurrence table of every assertion (a full DAG walk each).
-//! Definition-dense industrial inputs — the Sydr/Triton `predicate_*` files
-//! assert thousands of near-linear equations — offer one eliminable variable
+//! Definition-dense industrial inputs – the Sydr/Triton `predicate_*` files
+//! assert thousands of near-linear equations – offer one eliminable variable
 //! per round, so thousands of rounds × thousands of rescans made the pass the
 //! entire solve: `20210219-Sydr/master/cjpeg/predicate_2636` spent >390 s
 //! inside it and never reached bit-blast.  The incremental rewrite keeps the
@@ -13,21 +13,21 @@
 //!
 //! These tests pin the invariants that rewrite must preserve:
 //!
-//! 1. **Verdicts through long elimination chains** — a cyclic chain with an
+//! 1. **Verdicts through long elimination chains** – a cyclic chain with an
 //!    inconsistent offset is unsat *through* the eliminated links
 //!    (`ring_chain_unsat_through_eliminable_links`); the pass may not drop
 //!    the cycle constraint when the last link closes over already-eliminated
 //!    variables.
-//! 2. **Model reconstruction across replayed eliminations** — an open chain
+//! 2. **Model reconstruction across replayed eliminations** – an open chain
 //!    forces `x_1 − x_N ≡ N−1 (mod 2^w)`; the replayed definitions must
 //!    produce a model satisfying the *original* equations
 //!    (`ring_chain_model_reconstructs_telescope`).
-//! 3. **The invertibility gate** — odd coefficients are solved and
+//! 3. **The invertibility gate** – odd coefficients are solved and
 //!    substituted; even coefficients are *not* invertible mod 2^w and must
 //!    stay constraints (`even_coefficient_is_not_eliminable`: `2x = 1` is
 //!    unsat because no solution exists, which requires the equation to have
 //!    survived, not been rewritten to `true`).
-//! 4. **Preprocess-outcome memoization** — the dispatch/stage-4 cache is
+//! 4. **Preprocess-outcome memoization** – the dispatch/stage-4 cache is
 //!    invalidated on new assertions and on `push`/`pop`
 //!    (`preprocess_cache_invalidates_on_assert_and_pop`); a stale cache would
 //!    answer a *different* assertion set.
@@ -80,7 +80,7 @@ fn ring_chain_unsat_through_eliminable_links() {
 }
 
 /// Open chain: sat, and the replayed ring definitions must satisfy the
-/// original equations — telescoping forces `x_1 − x_N ≡ N−1 (mod 2^32)`.
+/// original equations – telescoping forces `x_1 − x_N ≡ N−1 (mod 2^32)`.
 #[test]
 fn ring_chain_model_reconstructs_telescope() {
     const N: u32 = 600;
@@ -90,7 +90,7 @@ fn ring_chain_model_reconstructs_telescope() {
     let script = script.replace("x_N", &format!("x_{N}"));
     let out = run(&script);
     assert_eq!(out[0], "sat", "open chain must be sat: {out:?}");
-    // Output shape: `((x_1 #x........)\n (x_n #x........))` — collect the
+    // Output shape: `((x_1 #x........)\n (x_n #x........))` – collect the
     // `#x…` value tokens in declaration order.
     let vals: Vec<&str> = out[1]
         .split_whitespace()
@@ -125,7 +125,7 @@ fn odd_coefficient_solves_to_contradiction() {
 }
 
 /// Even coefficient: `2x = 1` has no solution mod 2^32, and 2 is not a
-/// unit — the equation must stay a constraint (an elimination that divides
+/// unit – the equation must stay a constraint (an elimination that divides
 /// by the non-unit 2 would call it sat).
 #[test]
 fn even_coefficient_is_not_eliminable() {
@@ -158,11 +158,11 @@ fn preprocess_cache_invalidates_on_assert_and_pop() {
         (check-sat)
     "#);
     let verdicts: Vec<&str> = out.iter().map(String::as_str).collect();
-    // Step 1: one equation, two unknowns — sat.
-    // Step 2: x = y+1 ∧ x = y+3 — unsat.
+    // Step 1: one equation, two unknowns – sat.
+    // Step 2: x = y+1 ∧ x = y+3 – unsat.
     // Step 3: the pushed equation is implied by neither; still unsat
     //         (the step-2 assertions are still live under the push).
-    // Step 4: back to the step-2 set — unsat, *not* the stale sat of step 1.
+    // Step 4: back to the step-2 set – unsat, *not* the stale sat of step 1.
     assert_eq!(
         verdicts,
         vec!["sat", "unsat", "unsat", "unsat"],
@@ -172,7 +172,7 @@ fn preprocess_cache_invalidates_on_assert_and_pop() {
 
 /// Same invalidation across the *double-run* boundary the cache exists for:
 /// a definition-dense goal routes through the dispatch's preprocessing
-/// trial and then the stage-4 parity pass — both must see the same
+/// trial and then the stage-4 parity pass – both must see the same
 /// assertion set, and a second `check-sat` with more assertions must
 /// recompute (not replay) the memoized outcome.
 #[test]

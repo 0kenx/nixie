@@ -14,7 +14,7 @@
 //! benchmark data and are `.gitignore`d (see `.gitignore`) and are therefore
 //! absent from git worktrees. A missing instance now fails **loudly** with a
 //! `[corpus-missing]` diagnosis (worktree detection + the exact symlink
-//! command); set `NIXIE_CORPUS_MISSING=skip` to run corpus-less instead —
+//! command); set `NIXIE_CORPUS_MISSING=skip` to run corpus-less instead –
 //! each guard then prints a visible `[corpus-skip]` note and passes on the
 //! sound `Unknown` (it cannot guard without the data, so CI that cares about
 //! these guards must provision the corpus).
@@ -29,9 +29,9 @@
 //! | ext_con_064_002_0512 | QF_BV  | unsat | sat | sat | FIXED (unsat, ~27 s - 60 s guard budget; un-ignored, live) |
 //! | storecomm_t3_np_sf_ni_00010_001 | QF_AUFLIA | unsat | sat | sat | FIXED (unsat on 2026-08-31 main; un-ignored, live) |
 //! | xs_8_13           | QF_UFLIA | unsat | sat | **unsat** | FIXED by LP-optimization case-split (`ArithSolver::lp_int_bounds`); guard now LIVE |
-//! | xs_22_42          | QF_UFLIA | unsat | sat | — | FIXED by the lazy congruence-gap repair (2026-08-31); live |
+//! | xs_22_42          | QF_UFLIA | unsat | sat | – | FIXED by the lazy congruence-gap repair (2026-08-31); live |
 //!
-//! All six guards are LIVE — every documented wrong-answer instance in this
+//! All six guards are LIVE – every documented wrong-answer instance in this
 //! file is answered honestly on current main.  The wrong-verdict bar is
 //! `!= sat`; several also reach `unsat` outright.
 
@@ -43,7 +43,7 @@ use nixie_solver::{Context, SolverResult};
 fn solve_file(rel: &str, timeout_ms: u64) -> SolverResult {
     // Missing corpus: loud `[corpus-missing]` diagnosis by default; under
     // NIXIE_CORPUS_MISSING=skip a visible `[corpus-skip]` note and `Unknown`
-    // (a sound non-answer) — see the module docs above.
+    // (a sound non-answer) – see the module docs above.
     let Some(script) = nixie_testcorpus::read_opt(rel) else {
         return SolverResult::Unknown;
     };
@@ -113,7 +113,7 @@ fn xs_22_42_is_not_sat() {
 
 /// The flatness bug (2026-09-12): `solve_equations`' budget bounds (the
 /// break/skip sites) could leave a recorded elimination body still
-/// mentioning an eliminated variable whose defining equation was dropped —
+/// mentioning an eliminated variable whose defining equation was dropped –
 /// the single-pass apply substitution then left the reference dangling and
 /// the rewritten set lost that constraint content.  The unified-path
 /// deferral prototype (`NIXIE_BV_DEFER_BLAST=1`) searches the rewritten set

@@ -2,8 +2,8 @@
 """Generate the QF_FF chain corpus family (`bench/ff/bn254_chain_planted_*`).
 
 Reverse-engineered from the committed corpus (the original generator was
-not kept). The load-bearing structure — verified against the committed
-files' variable-sharing patterns — is RESIDUE PASSES:
+not kept). The load-bearing structure – verified against the committed
+files' variable-sharing patterns – is RESIDUE PASSES:
 
   pass 1: rows over {6k, 6k+1, 6k+2}, quads over {6k+2..+4} and {6k+4..+6}
   pass 2: rows over {6k+1, ..+3},     quads over {6k+3..+5} and {6k+5..+7}
@@ -15,10 +15,10 @@ quads). The pass structure is what keeps the linear core's RREF
 elimination chains LOCAL: consecutive-offset rows (a single stride-6
 sequence wrapping the ring) chain every row into one long elimination,
 and the pivot definitions go global (measured: a 62-variable definition
-for pivot 0, 1891-term substituted quads — nothing window-shaped
+for pivot 0, 1891-term substituted quads – nothing window-shaped
 survives). The corpus's residue passes overlap only pairwise, so
 definitions stay 2-local and the substituted quads stay at ≤4 variables
-— the shape the window decomposition eats.
+– the shape the window decomposition eats.
 
 Coefficients are < 40; every RHS is the constraint's LHS evaluated at
 the planted witness, so the goal is satisfiable by construction (any

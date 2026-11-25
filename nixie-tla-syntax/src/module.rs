@@ -4,7 +4,7 @@
 //! which extends `Integers` and `FiniteSets`. Until those are followed, every
 //! imported name is unknown, and [`crate::level`] can only mark the levels
 //! that depend on them as untrusted. Measured over the corpora, that was
-//! 1 806 of 7 774 definitions — the single largest source of lost coverage.
+//! 1 806 of 7 774 definitions – the single largest source of lost coverage.
 //!
 //! # Scope
 //!
@@ -14,7 +14,7 @@
 //! definitions become visible exactly as they are, so their levels carry over
 //! exactly. That makes the import sound rather than approximate.
 //!
-//! `INSTANCE` is different — `I == INSTANCE N WITH v <- e` substitutes into
+//! `INSTANCE` is different – `I == INSTANCE N WITH v <- e` substitutes into
 //! `N`, and a substitution can *lower* a level (replacing a variable with a
 //! constant). Computing that needs the substitution applied, so instance
 //! members stay untrusted until the lowering pass in `nixie-tla` can do it
@@ -111,14 +111,14 @@ pub struct Annotation {
     /// The module the annotated declaration belongs to.
     pub module: String,
     /// The annotated declaration's name (a CONSTANT, VARIABLE, or operator
-    /// definition — whichever unit the comment precedes).
+    /// definition – whichever unit the comment precedes).
     pub name: String,
     /// The annotation text after `@type:`, untrimmed of nothing.
     pub text: String,
     /// Where the comment was, for diagnostics.
     pub span: Span,
     /// The start offset of the declaration's **name** the annotation bound
-    /// to — the anchor the attach pass chose, precise whatever the name's
+    /// to – the anchor the attach pass chose, precise whatever the name's
     /// scope (module level, or a `LET` definition inside a body).
     pub decl_offset: u32,
 }
@@ -181,7 +181,7 @@ impl Loader {
     ///
     /// Fails only if the *root* cannot be read or parsed. A dependency that
     /// cannot be found is recorded in [`LoadedSpec::missing`], and one that
-    /// cannot be parsed is skipped and recorded there too — a spec is still
+    /// cannot be parsed is skipped and recorded there too – a spec is still
     /// worth analysing when one of its imports is unavailable, as long as the
     /// caller is told.
     pub fn load(&self, path: &Path) -> Result<LoadedSpec, LoadError> {
@@ -261,12 +261,12 @@ impl Loader {
 
         // Nested modules: registered under their own names so `INSTANCE`
         // can find them, and their own `EXTENDS` become dependencies. A
-        // submodule's definitions do NOT join any visible name space — the
+        // submodule's definitions do NOT join any visible name space – the
         // loader only registers the module; visibility is the lowerer's
         // instance machinery, which substitutes rather than imports.
         loop {
             // Collect this round's additions first (submodules are cheap
-            // clones of already-parsed ASTs), then insert — no borrow of
+            // clones of already-parsed ASTs), then insert – no borrow of
             // `loaded` may survive the mutation.
             let mut round: Vec<(String, Module, Vec<String>)> = Vec::new();
             for module in loaded.values() {
@@ -352,10 +352,10 @@ impl Loader {
 ///
 /// "Follows" is by source position: the annotated unit is the first one
 /// whose span starts after the comment ends, in the same module. A comment
-/// that precedes nothing (end of module) is dropped — there is no
+/// that precedes nothing (end of module) is dropped – there is no
 /// declaration to annotate, and inventing one would be the silent-gap
 /// pattern this codebase refuses elsewhere.
-/// The operator definition whose **name** starts at `decl_offset` — a
+/// The operator definition whose **name** starts at `decl_offset` – a
 /// module-level definition or a `LET`-scoped one inside a body, whichever
 /// the attach pass bound an annotation to.
 ///
@@ -455,9 +455,9 @@ fn attach_annotations(
         return Vec::new();
     }
 
-    // Declaration anchors — the **name's** position, not the unit's: a
+    // Declaration anchors – the **name's** position, not the unit's: a
     // `CONSTANT`/`VARIABLE` unit's span starts at the keyword, which is
-    // *before* the annotation comment that precedes the name inside it —
+    // *before* the annotation comment that precedes the name inside it –
     // anchoring on the unit start mis-bound every such annotation to the
     // *next* declaration, found the moment the first annotated spec ran.
     // A declaration block declares **several** names, each with its own
@@ -469,7 +469,7 @@ fn attach_annotations(
     // A `LET` definition is an anchor too, wherever it sits in a body: an
     // annotation inside a definition binds to the *next* definition at its
     // own level, and binding it to the next module-level unit instead
-    // attributed NestedCallByName's `LET F` signature to `Init` — the
+    // attributed NestedCallByName's `LET F` signature to `Init` – the
     // operator-signature check then declined a specification Apalache
     // accepts. The walk is iterative (`Expr::subexprs`), LET bodies
     // included through it.

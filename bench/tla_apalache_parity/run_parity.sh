@@ -5,14 +5,14 @@
 # (extracted into corpus.json by extract.py; regenerate only with the pinned
 # Apalache version in hand). Oracle arm: the real apalache-mc binary, run once
 # per cell, stored under precompile/<apalache-sha>/benchmark/tla_parity/ via
-# benchstore.py — NEVER re-run an existing cell. Nixie arm: the precompiled
+# benchstore.py – NEVER re-run an existing cell. Nixie arm: the precompiled
 # nixie-tla of this commit, identical argv and working directory.
 #
 # Comparator (ported from bench/z3_parity's rules):
-#   Agree-Ok / Agree-Violation / Agree-Deadlock  — same verdict class
-#   MISMATCH                                     — same cell, different verdict
-#   Inconclusive                                 — Unknown/timeout on either side
-#   Declined                                     — nixie exits 75/120/150
+#   Agree-Ok / Agree-Violation / Agree-Deadlock  – same verdict class
+#   MISMATCH                                     – same cell, different verdict
+#   Inconclusive                                 – Unknown/timeout on either side
+#   Declined                                     – nixie exits 75/120/150
 # Inconclusive and Declined NEVER count as a match and are reported separately.
 # Agree-Violation additionally requires equal counterexample length.
 #

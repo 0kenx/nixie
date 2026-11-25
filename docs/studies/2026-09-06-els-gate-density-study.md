@@ -18,7 +18,7 @@ collapse (70 % of variables eliminated).
 
 The no-gate study closed the *mid-search round* gate thread (no online
 signal separates winners from losers there). It did **not** test static
-formula observables for the **ELS one-shot** — specifically the
+formula observables for the **ELS one-shot** – specifically the
 congruence-gate density, the same signal that carries the 6s167 win.
 
 ## Hypothesis
@@ -48,7 +48,7 @@ on conflicts-to-verdict geomean with no solved-at-cap regression.
 the **same number of corpus files** (`K'` = the hash-scalar rank that
 matches). Both arms run identical code (the harness computes one scalar per
 file and a threshold; only the scalar's source differs). The hash scalar is
-`sha256(instance)[:8]` as u32 — deterministic, content-derived, carrying no
+`sha256(instance)[:8]` as u32 – deterministic, content-derived, carrying no
 structural information.
 
 ## Metrics and decision rule (pre-registered)
@@ -59,13 +59,13 @@ structural information.
   solved regression. Loss = T/N > 1.05 → do not land.
 - Secondary: solved-at-cap per arm; per-file T/N table for the three
   seed-robust tails (6s167-opt, FmlaEquivChain, mrpp must all fire ELS
-  under the treatment gate — if the gate does not fire on them, the gate is
+  under the treatment gate – if the gate does not fire on them, the gate is
   wrong by construction and the study closes as a telemetry null).
 - Seeds: 0–9 (SEED env; CRN where the firing set matches, seed-variance
   elsewhere). 54 corpus files. Counters only (conflicts); wall is sanity.
 - Falsification: if the telemetry rung shows no separation (the gate-count
   distribution of ELS winners overlaps the losers'), the study closes as a
-  documented null without the A/B — recording that the last plausible
+  documented null without the A/B – recording that the last plausible
   static observable fails, consistent with the round-gate closure.
 
 ## Rung 0 (telemetry, before A/B)
@@ -74,7 +74,7 @@ structural information.
 2. Seed-0 `ELS=1` vs default: conflicts per file, decisive set.
 3. Overlap check: gate counts of winners vs losers.
 
-## Result: closed at rung 0 — the observable does not separate (falsified)
+## Result: closed at rung 0 – the observable does not separate (falsified)
 
 Rung 0 ran 2026-09-06, corpus `/tmp/sc24f` (54 files), `GATE_COUNT=1`
 (deterministic, seed-invariant):
@@ -88,11 +88,11 @@ Rung 0 ran 2026-09-06, corpus `/tmp/sc24f` (54 files), `GATE_COUNT=1`
 | ELS loser | mp1-klieber2017s | 30 563 |
 | near-cap losers/noise | g2-ak128 (×2), g2-slp, summle (×3), shuffling-2, j3037 (×2), simon (×3) | 764–571 244 |
 
-The pre-registered secondary criterion — "the gate must fire on the three
+The pre-registered secondary criterion – "the gate must fire on the three
 seed-robust tails (6s167-opt, FmlaEquivChain, mrpp); if not, the gate is
-wrong by construction" — **fails for any threshold**: two of the three
+wrong by construction" – **fails for any threshold**: two of the three
 winners have **zero** congruence gates (their equivalences live in the
-binary-implication SCC structure the ELS itself computes — FmlaEquivChain
+binary-implication SCC structure the ELS itself computes – FmlaEquivChain
 is an equivalence chain by construction), while the biggest loser has the
 corpus's highest gate count (4 M). The gate-density distribution of
 winners and losers is not merely overlapping, it is inverted.

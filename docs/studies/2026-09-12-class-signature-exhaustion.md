@@ -3,7 +3,7 @@
 The recorded endgame question for the amplitude/restart program: five
 intervention families (margin ladder, adaptive margin, tiered schedule,
 OTFS, eager-sub, plus their combination) all land on the **same
-winner/loser split** — so an adaptive gate on a measurable class
+winner/loser split** – so an adaptive gate on a measurable class
 signature would arm the mechanisms only where they pay.  This study
 exhausted the cheap static observable set against the combination
 screen's per-file ratios (the most complete effect measurement).
@@ -32,7 +32,7 @@ cheap set.
 ## What this establishes
 
 The winner/loser classes are **not separable on any static search-shape
-observable** — the effect of an amplitude perturbation is not a function
+observable** – the effect of an amplitude perturbation is not a function
 of the macroscopic search statistics.  This is consistent with the
 chaos-band finding (7.31× seed spread): the classes are trajectory
 facts, not profile facts.  Every gate design that reads these counters
@@ -45,35 +45,35 @@ is dead on arrival; five families of landing data now say so.
    (conflict rate at matched propagation budgets), arm accordingly.
    The signature is the response to the perturbation itself, not a
    static profile.  Costly to design soundly (the probe perturbs what it
-   measures — needs the null discipline), multi-session.
+   measures – needs the null discipline), multi-session.
 2. **Structural (pre-search) features beyond the cheap set**:
    occurrence-distribution shape, measured redundancy density (an actual
    bounded subsume probe's yield/clause), clause-width entropy.  These
-   are formula facts, not search facts — computable once, cheap to gate
+   are formula facts, not search facts – computable once, cheap to gate
    on.  Untested; the redundancy-mass theory of the circuit class
    predicts *some* separation here (circuit64's 1323 ratio is unique,
    but the mid-band interleaving suggests it will not generalize).
-3. **Portfolio budget arithmetic** (measured dead once at the 60 s cap —
+3. **Portfolio budget arithmetic** (measured dead once at the 60 s cap –
    the Phase-3 finding; revivable only at wider caps).
 
 The combination itself stays available as two env flags
 (`NIXIE_OTFS=1 NIXIE_EAGER_SUB=1`, 0.9645× conflicts, circuit class
-fully converted) — arming it per-class is what needs the signature this
+fully converted) – arming it per-class is what needs the signature this
 study rules out of the cheap observable set.
 
 ## Postscript (same day): the structural set fails too
 
 Exact-duplicate fraction and clause-width statistics (mean/σ over the
-first 600 k clauses) join the exhausted set — the interleaving is total:
+first 600 k clauses) join the exhausted set – the interleaving is total:
 
 - `dup%`: winners at 0.00 / 0.35 / 2.53 / 5.13, losers at 0.00 / 2.69 /
-  4.85 / 7.82 — Break_08_24 (winner, 5.13 %) sits *between* rbsat
+  4.85 / 7.82 – Break_08_24 (winner, 5.13 %) sits *between* rbsat
   (loser, 4.85 %) and ITC (loser, 7.82 %).
 - Width: FmlaEquivChain (W, μ 2.8 σ 0.6) vs mp1-klieber (L, 2.3/0.5) vs
-  mp1-Nb7T42 (W, 2.7/0.7) vs qwh (L, 2.1/1.2) — indistinguishable.
+  mp1-Nb7T42 (W, 2.7/0.7) vs qwh (L, 2.1/1.2) – indistinguishable.
 
 **Seven features, zero separation.**  The winner/loser classes are
-trajectory facts, full stop — every cheap gate (search-shape or
+trajectory facts, full stop – every cheap gate (search-shape or
 formula-structure) is dead.  The remaining shapes are the online A/B
 probe and the portfolio, as recorded above.
 
@@ -81,8 +81,8 @@ probe and the portfolio, as recorded above.
 
 The remaining "cheap" shape was gating on the *response* to the
 perturbation rather than a static profile: run both arms for an early
-window, compare, commit.  Its core assumption — that the early-window
-response predicts the full-run effect — was tested directly against the
+window, compare, commit.  Its core assumption – that the early-window
+response predicts the full-run effect – was tested directly against the
 store's known full-run ratios (14 files spanning the classes, both arms
 at a 15 k-conflict window, seed 0):
 
@@ -103,9 +103,9 @@ exceptions point in *both* directions across winners (worker's dec/c Δ
 0.51 vs FmlaEquiv's 1.58).  The compounding advantage that makes the
 winner class win emerges after the window any practical probe could
 afford.  **The probe gate is dead on the same evidence pattern as the
-static gates — the effect is a late-trajectory fact.**
+static gates – the effect is a late-trajectory fact.**
 
 The adaptive-arming route is now exhausted end to end: seven static
 features and the online probe, all measured non-predictive.  What
-remains is portfolio budget arithmetic at wider caps — a pure
+remains is portfolio budget arithmetic at wider caps – a pure
 scheduling/evaluation-policy question, not a solver-heuristic one.

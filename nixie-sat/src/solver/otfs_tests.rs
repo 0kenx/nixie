@@ -14,7 +14,7 @@ use crate::LBool;
 use crate::literal::Lit;
 use crate::solver::Solver;
 
-/// Deterministic xorshift64* — stable across platforms and releases so a
+/// Deterministic xorshift64* – stable across platforms and releases so a
 /// failure reproduces exactly.
 struct Rng(u64);
 impl Rng {
@@ -33,7 +33,7 @@ impl Rng {
 
 /// One random CNF with redundancy structure: every base clause also appears
 /// as literal-supersets (c ∪ {extra}), the shape that makes the OTFS trigger
-/// (`accumulated resolvent < antecedent size`) reachable — circuit-class
+/// (`accumulated resolvent < antecedent size`) reachable – circuit-class
 /// formulas are exactly this shape (507 904 near-duplicate 13-clauses).
 fn random_cnf(rng: &mut Rng, vars: usize, clauses: usize, len: usize) -> Vec<Vec<i32>> {
     let mut out = Vec::with_capacity(clauses * 2);

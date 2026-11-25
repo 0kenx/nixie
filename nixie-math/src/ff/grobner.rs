@@ -9,7 +9,7 @@
 //! ## Budget, not wall-clock
 //!
 //! The step counter counts S-pairs processed and reduction steps
-//! performed. Exceeding the budget surfaces as [`GrobnerError::Budget`] —
+//! performed. Exceeding the budget surfaces as [`GrobnerError::Budget`] –
 //! never a silently wrong basis, and never a seconds-based cutoff
 //! (determinism requirement, `AGENTS.md`).
 //!
@@ -34,14 +34,14 @@ use crate::polynomial::{Monomial, MonomialOrder, Var};
 use num_bigint::BigUint;
 
 // Matrix echelonization indexes its columns explicitly (column-major
-// pivot order over row-major sparse rows) — the same rationale as the
+// pivot order over row-major sparse rows) – the same rationale as the
 // rational F4 module's module-level allow.
 #[allow(clippy::needless_range_loop)]
 /// Faugère's F4 over 𝔽_p (the Phase-7 lever; see
 /// `docs/studies/2026-09-18-ff-f4.md` for the pre-registration, the
 /// engine bug the validation surfaced, and the prototype's bug log).
-/// Computes the same object as [`grobner_basis`] — a degrevlex Gröbner
-/// basis of `⟨inputs⟩` — by replacing the per-pair S-polynomial loop
+/// Computes the same object as [`grobner_basis`] – a degrevlex Gröbner
+/// basis of `⟨inputs⟩` – by replacing the per-pair S-polynomial loop
 /// with degree-batched matrices: all selected pairs' rows plus their
 /// reducer closure are placed in one sparse matrix over the monomial
 /// columns, echelonized by one linear-algebra kernel, and the rows
@@ -49,7 +49,7 @@ use num_bigint::BigUint;
 ///
 /// **Soundness**: every matrix row is an explicit 𝔽_p combination
 /// `Σ cₖ·(mₖ·gₖ)` of monomial multiples of current basis elements, so
-/// every row — hence every extracted element — lies in the ideal the
+/// every row – hence every extracted element – lies in the ideal the
 /// basis generates, inductively the input ideal. A constant row is
 /// the whole-ring witness (unchanged detection). v1 is UNTRACED: no
 /// certificate is minted from an F4 basis.
@@ -58,7 +58,7 @@ use num_bigint::BigUint;
 /// construction order; pivot = the first eligible unused row in index
 /// order; selection = all pairs of minimal lcm degree (ties by pair
 /// index). The sparse row layout (`Vec<(col, coeff)>`, sorted) is the
-/// flat structure any later SIMD vectorization of the kernel wants —
+/// flat structure any later SIMD vectorization of the kernel wants –
 /// exact modular arithmetic is order-independent, so vectorizing the
 /// axpy kernel could not change results even in principle.
 pub fn f4_basis(
@@ -87,8 +87,8 @@ pub fn f4_basis(
         .collect();
     basis.retain(|p| !p.is_zero());
 
-    // Seed leading-term deduplication (the GM discard — and F4's own
-    // pair discard — is unsound over duplicate-lm seeds; see the
+    // Seed leading-term deduplication (the GM discard – and F4's own
+    // pair discard – is unsound over duplicate-lm seeds; see the
     // Buchberger engine's init for the measured story).
     {
         let mut i = 0;
@@ -185,7 +185,7 @@ pub fn f4_basis(
             selected.iter().copied().collect();
         pairs.retain(|p| !sel_set.contains(p));
 
-        // --- Symbolic preprocessing ---
+        // ======== Symbolic preprocessing ========
         let mut rows: Vec<(Monomial, usize)> = Vec::new();
         let mut queued: rustc_hash::FxHashSet<Monomial> = rustc_hash::FxHashSet::default();
         let mut queue: Vec<Monomial> = Vec::new();
@@ -210,7 +210,7 @@ pub fn f4_basis(
             rustc_hash::FxHashMap::default();
         while let Some(m) = queue.pop() {
             budget.charge(1)?;
-            // Reducer scan over the CACHED leading monomials — an `lm()`
+            // Reducer scan over the CACHED leading monomials – an `lm()`
             // call is a full terms-map scan, and calling it per candidate
             // per monomial was the prototype's dominant cost (the same
             // trap the budget-honesty study documented for the selection
@@ -239,9 +239,9 @@ pub fn f4_basis(
         let col_index: rustc_hash::FxHashMap<&Monomial, usize> =
             columns.iter().enumerate().map(|(c, m)| (m, c)).collect();
 
-        // --- Matrix construction ---
+        // ======== Matrix construction ========
         // FUSED: iterate the basis element's terms directly and look up
-        // `q·term` in the column index — no intermediate scaled MPoly
+        // `q·term` in the column index – no intermediate scaled MPoly
         // (each `mul_by_monomial` rebuilt a whole terms hash map per
         // row, only for it to be iterated once and dropped).
         let mut matrix: Vec<Row> = Vec::with_capacity(rows.len());
@@ -258,7 +258,7 @@ pub fn f4_basis(
             matrix.push(row);
         }
 
-        // --- Echelonization ---
+        // ======== Echelonization ========
         // Column-ascending; the first live UNUSED row with a nonzero
         // entry pivots (a row pivots exactly once, at its first nonzero
         // column), is normalized, and the column is eliminated from
@@ -304,16 +304,16 @@ pub fn f4_basis(
             }
         }
 
-        // --- Extraction ---
+        // ======== Extraction ========
         // Every pivot row whose column monomial is not a live leading
         // monomial is a CANDIDATE. THE FIX (the prototype's fourth bug):
         // the candidate is REDUCED against the live basis before the
-        // admission decision — the first version SKIPPED candidates
+        // admission decision – the first version SKIPPED candidates
         // whose lm was divisible by an existing lm, silently dropping
         // elements whose reduction would have surfaced a new leading
         // monomial (the measured incompleteness vs Buchberger). After
         // the reduction: zero ⇒ skip; else admit the reduced form (its
-        // lm is now irreducible — the minimal-GB property for free) and
+        // lm is now irreducible – the minimal-GB property for free) and
         // kill superseded elements.
         for (c, pr_slot) in pivots.iter().enumerate() {
             let Some(pr) = pr_slot.as_ref().copied() else {
@@ -401,14 +401,14 @@ pub fn f4_basis(
             // <survivors ∪ admissions>, but a multi-kill round can only
             // discharge that CIRCULARLY (g1 ∈ <new, g2>, g2 ∈ <new, g1>
             // proves neither). Measured on the 3x4 whole-ring
-            // reproducer: dead elements — including seeds — carried
+            // reproducer: dead elements – including seeds – carried
             // nonzero remainders modulo the final live basis
             // (information loss; the constant refutation was among the
             // losses). The sound form VERIFIES each supersession: g is
             // fully reduced against the live basis (excluding itself,
             // including the just-admitted element); zero ⇒ kill
             // (witnessed), nonzero ⇒ g is REPLACED by its reductum
-            // (g ≡ reductum, strictly smaller lm — the antichain and
+            // (g ≡ reductum, strictly smaller lm – the antichain and
             // Noetherian termination both hold).
             {
                 let mut superseded: Vec<usize> = Vec::new();
@@ -492,7 +492,7 @@ fn entry(row: &[(usize, Limbs)], c: usize) -> Option<&Limbs> {
 }
 
 /// `dst + c·src` over sorted sparse rows (the axpy kernel; flat layout
-/// by design — see f4_basis's doc comment on later vectorization).
+/// by design – see f4_basis's doc comment on later vectorization).
 fn axpy(
     f: &FieldCtx,
     dst: &[(usize, Limbs)],
@@ -542,7 +542,7 @@ fn lm_cache_mp(basis: &[MPoly]) -> Vec<Monomial> {
         .collect()
 }
 
-/// The degrevlex order used for the (UNSAT-oriented) basis computations —
+/// The degrevlex order used for the (UNSAT-oriented) basis computations –
 /// the cheapest order for the `1 ∈ I` test.
 pub const DEGREVLEX: MonomialOrder = MonomialOrder::GRevLex;
 
@@ -573,8 +573,8 @@ impl GrobnerBudget {
     /// Charge `units` of work. The unit is ONE MONOMIAL OPERATION (a
     /// single coefficient multiply/add), not a step: a reduction between
     /// s-term polynomials costs ~s units. Step-counting made a 2^24
-    /// budget worth hours on big-polynomial cascades — the budget never
-    /// noticed the polynomials growing — so a goal refused in principle
+    /// budget worth hours on big-polynomial cascades – the budget never
+    /// noticed the polynomials growing – so a goal refused in principle
     /// but ground in practice. Monomial-operation charging keeps the
     /// budget a faithful work bound (deterministic: sizes are functions
     /// of the computation, never of the clock).
@@ -595,7 +595,7 @@ impl GrobnerBudget {
 }
 
 /// One basis element with its cofactors against the *input* generators:
-/// `poly = Σ cofactors[i] · inputs[i]`. This is the tracer's payload — the
+/// `poly = Σ cofactors[i] · inputs[i]`. This is the tracer's payload – the
 /// checkable object that turns "UNSAT because the GB is {1}" into a
 /// verifiable certificate (`Σ cᵢ fᵢ = 1`).
 #[derive(Debug, Clone)]
@@ -617,7 +617,7 @@ impl TracedPoly {
     }
 
     /// Monomial-multiply both the polynomial and every cofactor. An
-    /// UNTRACED element (empty cofactor row — see
+    /// UNTRACED element (empty cofactor row – see
     /// [`grobner_basis_untraced`]) stays untraced: the row work is the
     /// measured ~n_inputs× cost on wide cascades, and it is skipped
     /// entirely when no certificate will be minted from this run.
@@ -697,7 +697,7 @@ impl TracedPoly {
     /// Verify the cofactor identity against the inputs: recompute
     /// `Σ cofactors[i]·inputs[i]` and compare with `poly`. One pass of
     /// polynomial arithmetic, orders of magnitude cheaper than the basis
-    /// computation — the point of the certificate.
+    /// computation – the point of the certificate.
     #[must_use]
     pub fn verify(&self, f: &FieldCtx, inputs: &[MPoly]) -> bool {
         let mut acc = MPoly::zero();
@@ -709,7 +709,7 @@ impl TracedPoly {
 }
 
 /// Public wrapper: multiply a polynomial by a monomial (test-oracle
-/// support — the regression batteries construct reference S-polynomials
+/// support – the regression batteries construct reference S-polynomials
 /// with it).
 pub fn mul_by_monomial_pub(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
     mul_by_monomial(f, p, m)
@@ -748,7 +748,7 @@ pub fn grobner_basis(
 }
 
 /// The UNTRACED fast path: the same deterministic cascade with NO cofactor
-/// rows (empty `cofactors` propagates through every traced op — the row
+/// rows (empty `cofactors` propagates through every traced op – the row
 /// maintenance was the measured ~1 s-per-S-pair cost on 96-input cascades).
 /// Use when the caller will not mint a certificate from this run's basis;
 /// reductions, pair selection, and the resulting basis are IDENTICAL (rows
@@ -807,12 +807,12 @@ fn grobner_basis_inner(
     // The Gebauer–Möller discard is UNSOUND when two basis elements
     // share a leading monomial (the duplicate trivially divides every
     // lcm of its own multiples, discarding pairs whose S-polynomials do
-    // not reduce to zero): a whole-ring ideal — an UNSAT goal with a
-    // verified `1 = Σ cᵢ·fᵢ` witness — returned a 9-element non-basis
+    // not reduce to zero): a whole-ring ideal – an UNSAT goal with a
+    // verified `1 = Σ cᵢ·fᵢ` witness – returned a 9-element non-basis
     // with `is_gb = true`, missing the refutation entirely (the
     // reproducer class in tests/ff_gb_seed_dedup_regression.rs). Each
     // input's LEADING TERM is reduced against the others so the seed
-    // lms are distinct — not full inter-reduction (`x² − x` survives
+    // lms are distinct – not full inter-reduction (`x² − x` survives
     // unless another seed's lm divides `x²`); admitted elements are
     // already lm-irreducible by the pre-admission reduction, so the
     // seeds are the only duplicate source.
@@ -839,7 +839,7 @@ fn grobner_basis_inner(
             if old_lm == new_lm {
                 i += 1;
             }
-            // else: the lm shrank — re-reduce this slot against the
+            // else: the lm shrank – re-reduce this slot against the
             // updated basis (swap_remove may also have moved a fresh
             // element into this slot).
         }
@@ -848,7 +848,7 @@ fn grobner_basis_inner(
     // Pair list with Gebauer–Möller criteria. Pairs are (i, j), i < j.
     //
     // The chain criterion is carried as EXPLICIT BOOKKEEPING of
-    // provably-zero pairs — the sound form of Buchberger's second
+    // provably-zero pairs – the sound form of Buchberger's second
     // criterion: sp(i,j) reduces to zero if some k has lm_k |
     // lcm(lm_i,lm_j) AND the pairs (i,k), (j,k) are THEMSELVES provably
     // zero (processed-to-zero, coprime, or recursively chain-verified).
@@ -860,7 +860,7 @@ fn grobner_basis_inner(
                 pairs.push((i, j));
             } else {
                 // Coprime lms: the first criterion is an unconditional
-                // theorem — a provably-zero pair.
+                // theorem – a provably-zero pair.
                 zero_pairs.insert((i, j));
             }
         }
@@ -871,7 +871,7 @@ fn grobner_basis_inner(
     // its inputs, or whose elements have exploded in term count, is the
     // pathological shape the caller's fallback engines (the split basis)
     // exist for. Aborting early hands them the remaining time INSTEAD of
-    // burning it all on a hopeless monolithic run — deterministic and
+    // burning it all on a hopeless monolithic run – deterministic and
     // purely a capacity decision (Err(Budget) → the caller's honest
     // Unknown-or-fallback, never a verdict).
     let inputs_len = inputs.len();
@@ -897,12 +897,12 @@ fn grobner_basis_inner(
         let mut best_key = pair_key_lms(&lms, pairs[next_pair]);
         for (cand, pair) in pairs.iter().enumerate().skip(next_pair + 1) {
             // Selection scans are WORK: each candidate costs one LCM,
-            // and the scan is O(#pairs) per selection — quadratic over
+            // and the scan is O(#pairs) per selection – quadratic over
             // the cascade. Uncharged, a blowup's pair bookkeeping alone
             // outran the budget by an order of magnitude (the chain
             // 64×96 profile: the monolithic attempt spent 700 s in
             // scan-side LCM/monomial churn before ever exhausting its
-            // tick budget — T5's "charge what runs" violated at the
+            // tick budget – T5's "charge what runs" violated at the
             // selection layer).
             budget.charge(1)?;
             let key = pair_key_lms(&lms, *pair);
@@ -958,7 +958,7 @@ fn grobner_basis_inner(
         // Reduce the new element fully against the current basis before
         // admitting it: keeps intermediate elements small and drops
         // duplicates early (a remainder already spanned by the basis never
-        // enters). In-place on the new element only — existing indices
+        // enters). In-place on the new element only – existing indices
         // stay valid.
         let mut reduced = reduced.monic_traced(f);
         let mut guard = 0;
@@ -996,7 +996,7 @@ fn grobner_basis_inner(
         }
         // No inter-reduction inside the loop: `reduce_all` *shrinks* the
         // basis (dropping elements that reduce to zero), which would
-        // invalidate the pair list's indices mid-flight — the index-out-of-
+        // invalidate the pair list's indices mid-flight – the index-out-of-
         // bounds crash. Inter-reduction happens once, after the loop.
     }
 
@@ -1007,11 +1007,11 @@ fn grobner_basis_inner(
     })
 }
 
-/// The selection key of a pair: (deg lcm(lm_i, lm_j), lcm) — the normal
+/// The selection key of a pair: (deg lcm(lm_i, lm_j), lcm) – the normal
 /// strategy.
 /// The leading monomials of a basis slice, computed once (an `lm()` is
 /// a full terms-map scan; the pair-selection scan and the reduction
-/// scans consult them O(pairs) and O(basis) times respectively —
+/// scans consult them O(pairs) and O(basis) times respectively –
 /// recomputing made the chain 64×96 cascade spend minutes in `lm`
 /// alone, ~1000× the per-unit budget charge).
 fn lm_cache(basis: &[TracedPoly]) -> Vec<Monomial> {
@@ -1027,9 +1027,9 @@ fn pair_key_lms(lms: &[Monomial], pair: (usize, usize)) -> (u32, Monomial) {
 }
 
 /// Gebauer–Möller discard test for the pair (i, j):
-/// 1. Buchberger's first criterion — relatively prime leading monomials:
+/// 1. Buchberger's first criterion – relatively prime leading monomials:
 ///    the S-polynomial reduces to zero.
-/// 2. The third-element criterion — some other leading monomial strictly
+/// 2. The third-element criterion – some other leading monomial strictly
 ///    divides the pair's lcm.
 fn criterion_applies_lms(lms: &[Monomial], i: usize, j: usize) -> bool {
     let (lmi, lmj) = (&lms[i], &lms[j]);
@@ -1042,7 +1042,7 @@ fn criterion_applies_lms(lms: &[Monomial], i: usize, j: usize) -> bool {
     //    criterion (`lm_k | lcm(i,j)` for some k) is only sound under
     //    the full Gebauer–Möller installation discipline (pair-lcm
     //    chain conditions on the incremental update order), which this
-    //    engine does not implement — measured: whole-ring ideals
+    //    engine does not implement – measured: whole-ring ideals
     //    returning non-bases with `is_gb = true` (missed refutations:
     //    seeds 0xBEEF_0001 5×6 after the duplicate-lm fix, 0xF00D_CAFE
     //    3×4 through the INITIAL pair set, which used the sibling
@@ -1057,9 +1057,9 @@ fn criterion_applies(basis: &[TracedPoly], i: usize, j: usize) -> bool {
         return false;
     };
     // 1. Relatively prime: no shared variable (Buchberger's first
-    //    criterion — an unconditional theorem).
+    //    criterion – an unconditional theorem).
     lmi.vars().iter().all(|vp| lmj.degree(vp.var) == 0)
-    // 2. Third element: DISABLED here as well — the INITIAL pair
+    // 2. Third element: DISABLED here as well – the INITIAL pair
     //    creation went through this sibling while the incremental path
     //    had it disabled, and the 3×4 reproducer's missing pairs were
     //    exactly the initial ones (the dual-computed trace agreed on
@@ -1121,7 +1121,7 @@ fn reduce_traced(
             let factor = f.mul(&lc_cur, &inv_g);
             let sub = g.mul_monomial(f, &q).scale(f, &factor);
             // The step's true cost: the polynomial subtraction PLUS the
-            // cofactor-row maintenance — `TracedPoly::sub` updates every
+            // cofactor-row maintenance – `TracedPoly::sub` updates every
             // input's cofactor (n_inputs polynomial subtractions), and
             // `mul_monomial`/`scale` rebuilt them on the way in. The
             // first version charged only the poly side: with dozens of
@@ -1129,7 +1129,7 @@ fn reduce_traced(
             // charged work, and a 2^24 budget meant minutes of grinding
             // instead of seconds (the chain-64×96 wall-vs-budget gap,
             // profiled to FieldCtx::add/SmallVec churn in the cofactor
-            // rows — T5's charge-what-runs, at the tracer layer).
+            // rows – T5's charge-what-runs, at the tracer layer).
             // The actual row length (0 when untraced): the charge
             // follows the work really done.
             let n_inputs = current.cofactors.len() as u64;
@@ -1154,7 +1154,7 @@ fn reduce_traced(
 
 /// Inter-reduce the basis in place to the *reduced* Gröbner basis: each
 /// element's leading term reduced against the others (deterministic
-/// left-to-right), then every tail term reduced too — the tail pass is
+/// left-to-right), then every tail term reduced too – the tail pass is
 /// what turns `x + 2y − 3` into `x − c` once `y − c'` is present, i.e.
 /// the shape the model extraction reads.
 fn reduce_all(
@@ -1245,7 +1245,7 @@ fn tail_reduce_traced(
 
 impl GrobnerBasis {
     /// Whether the ideal is the whole ring: some basis element is a
-    /// nonzero constant — the OKTB23 UNSAT test.
+    /// nonzero constant – the OKTB23 UNSAT test.
     #[must_use]
     pub fn contains_nonzero_constant(&self) -> bool {
         self.basis.iter().any(|g| g.poly.is_nonzero_constant())
@@ -1283,7 +1283,7 @@ impl GrobnerBasis {
             };
             if lm.vars().len() == 1 && lm.vars()[0].power == 1 && g.poly.n_terms() == 2 {
                 // x + c with leading coefficient 1 (basis elements are
-                // monic): the root is -c — the negation is the whole point.
+                // monic): the root is -c – the negation is the whole point.
                 let c = g.poly.constant_term(f);
                 out.push((lm.vars()[0].var, f.neg(&c)));
             }
@@ -1306,7 +1306,7 @@ pub fn standard_monomials(basis: &GrobnerBasis, cap: usize) -> Vec<Monomial> {
         .collect();
     // Variables and per-variable exponent caps: a pure-power leading
     // monomial bounds that variable; a variable without one means the
-    // ideal is not zero-dimensional — the BFS cap bounds the work.
+    // ideal is not zero-dimensional – the BFS cap bounds the work.
     let mut vars: Vec<Var> = Vec::new();
     for lm in &leadings {
         for vp in lm.vars() {
@@ -1403,7 +1403,7 @@ pub fn normal_form(
 
 /// Reduction with cofactor tracking: computes `p − Σᵢ cof[i]·basis[i]`
 /// alongside the normal form, so a reduction to zero yields `p`'s
-/// expression over the basis — the branch-exhaustion certificate's
+/// expression over the basis – the branch-exhaustion certificate's
 /// membership witness (§8's case trees: the branch polynomial and the
 /// leaf refutations must present as combinations of the atoms).
 ///
@@ -1453,16 +1453,16 @@ pub fn normal_form_traced(
 /// (as vectors over the standard monomials) by Gaussian elimination.
 ///
 /// Each Krylov vector carries its *defining polynomial* alongside the
-/// quotient vector, and every row operation updates both — the
+/// quotient vector, and every row operation updates both – the
 /// dependency's polynomial is then the minimal polynomial by
-/// construction. (Carrying only each row's top degree — the first
-/// version — is wrong whenever back-substitution is needed: it returned
+/// construction. (Carrying only each row's top degree – the first
+/// version – is wrong whenever back-substitution is needed: it returned
 /// non-annihilating polynomials at degree ≥ 2, which the planted
 /// fuzzer surfaced as false UNSATs at BN254.)
 ///
 /// Returns `None` when the ideal is not zero-dimensional over `x`, when
 /// the standard-monomial enumeration exceeds its cap, or when the budget
-/// runs out — in every case the caller must answer `Unknown`.
+/// runs out – in every case the caller must answer `Unknown`.
 #[must_use]
 pub fn minimal_polynomial(
     f: &FieldCtx,
@@ -1498,7 +1498,7 @@ pub fn minimal_polynomial(
     }
 
     // One Krylov step: k ↦ x·k. The vector is the normal form of
-    // x·p(x); the polynomial is p SHIFTED one degree up (p_d · x — a
+    // x·p(x); the polynomial is p SHIFTED one degree up (p_d · x – a
     // shift, not an append: the first version copied p into the low
     // slots and set the new top slot, producing `1 + x` from `1`).
     fn mul_by_x(
@@ -1835,7 +1835,7 @@ mod agreement_tests {
     /// prime, every 𝔽_p-point satisfies the input system **iff** it
     /// satisfies the computed basis (the ideals agree as *solution sets*),
     /// and every tracer row verifies. Enumerating all p^n points makes
-    /// this exact — the finite-field analogue of the BV exhaustive
+    /// this exact – the finite-field analogue of the BV exhaustive
     /// certification study.
     #[test]
     fn basis_and_inputs_agree_on_all_points() {

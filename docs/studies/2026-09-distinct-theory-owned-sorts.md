@@ -23,7 +23,7 @@ congruence on `dist-f` collides the distinguished values `m_i ≠ m_j`.
 For EUF-owned S that is automatic. For Int/Real, equality can hold through
 arithmetic the e-graph never sees:
 
-* **pinned collisions** (`(>= x 5) (<= x 5) (= y 5)`): handled — the care
+* **pinned collisions** (`(>= x 5) (<= x 5) (= y 5)`): handled – the care
   graph's model-equal UF-argument probe merges the pair with a complete
   derived reason (`nelson_oppen_combine`), the value conflict fires.
   Verified: 44-argument bounds-pinned instance answers `unsat`.
@@ -33,7 +33,7 @@ arithmetic the e-graph never sees:
   gate cannot catch it (`Distinct` is deliberately UNDETERMINED there); the
   model-blocking gate catches some of it after the fact.
 
-## Attack 1: sorting-network order encoding — wrong tool here
+## Attack 1: sorting-network order encoding – wrong tool here
 
 Design: pad the arguments to a power of two, run a Batcher bitonic network
 of comparators `c := a ≤ b; ¬c → u=a,v=b; c → u=b,v=a`, and Tseitin
@@ -42,8 +42,8 @@ zero disequality atoms.
 
 **Total order is required, and that is a soundness boundary, not a
 formality.** The chain's soundness direction needs only irreflexivity +
-transitivity of the theory's `<`; the *completeness* direction — distinct
-values admit a strictly increasing arrangement — needs **totality**. Over a
+transitivity of the theory's `<`; the *completeness* direction – distinct
+values admit a strictly increasing arrangement – needs **totality**. Over a
 partial order, two incomparable distinct values admit no chain, the
 encoding over-constrains, and the failure is a silent false `unsat`.
 FloatingPoint is the live example (`fp.lt` is irreflexive and transitive
@@ -60,7 +60,7 @@ guess with no propagation behind it. Measured on 16 wires with *fully
 pinned inputs*: ~40 decisions per conflict, no convergence; phase guidance
 (`set_deterministic_phase(c, true)`, the identity arrangement) did not fix
 it. Sorting-network encodings earn their keep over **bounded** domains
-where `≤` bit-blasts into propagating circuits — i.e. they remain the right
+where `≤` bit-blasts into propagating circuits – i.e. they remain the right
 candidate for **BitVec** later, where pairwise equality atoms are also
 cheap XOR trees rather than trichotomy splits.
 
@@ -71,7 +71,7 @@ Code removed; this note and the analysis above are the artifact.
 The encoding was enabled for `Int | Real` experimentally, with three
 supporting changes (all still in the tree, see "What landed"):
 
-1. **E-clause** `result → ¬at_least_two(L_1..L_n)` — valid (two true `L`s
+1. **E-clause** `result → ¬at_least_two(L_1..L_n)` – valid (two true `L`s
    plus the `F`s force `m_i = a = m_j`), and it converts the encoding's
    worst search mode from a final-check theory conflict into unit
    propagation. Without it, CDCL freely decides pairs of `L` atoms true;
@@ -82,11 +82,11 @@ supporting changes (all still in the tree, see "What landed"):
    forever satisfied and its `lt`/`gt` atoms are unconstrained decision
    fodder.
 3. **Pre-pass skip**: `add_arith_diseq_split` must not emit C(n,2)
-   trichotomies for a distinct the injective map owns — the quadratic
+   trichotomies for a distinct the injective map owns – the quadratic
    atoms the encoding exists to remove, on top of it (measured as the
    dominant thrash: 2380 parsed atoms at n = 40).
 
-**Unsat side: fully correct and fast** — pinned collisions, forced
+**Unsat side: fully correct and fast** – pinned collisions, forced
 equalities, duplicate arguments, negated-with-all-pinned-apart, all refute
 through the care graph + congruence + value marks.
 
@@ -94,16 +94,16 @@ through the care graph + congruence + value marks.
 co-located (all 0; the A-units give each argument a row, so the model
 builder's unconstrained-argument default never applies). Closing each
 collision needs the pair's `(= x y)` atom decided and its trichotomy split
-run — the co-located care-split proposals (added, gated on the encoding's
+run – the co-located care-split proposals (added, gated on the encoding's
 presence) do exactly this, lazily. But for n free arguments that is ~C(n,2)
-lazy atoms — the pairwise cost again — and the loop through
+lazy atoms – the pairwise cost again – and the loop through
 refine/re-solve/model-blocking eventually exhausts itself into a sound
 `Unknown`. Measured: n = 40 free variables → `Unknown` in 0.3 s (was: slow
 but correct `sat` under pairwise). That precision regression is why the
 gate stays off.
 
 **The enabling change (for the next session):** Z3's `theory_arith` final
-check *separates* variables the e-graph holds apart — it repairs the
+check *separates* variables the e-graph holds apart – it repairs the
 simplex model (or emits the split lemma `x < y ∨ x > y` and continues)
 without materializing `(= x y)` atoms for every pair. The nixie-native
 equivalent is one of:
@@ -123,15 +123,15 @@ gated for it.
 
 ## What landed
 
-* **E-clause** in `encode_distinct_injective` — valid for every sort the
+* **E-clause** in `encode_distinct_injective` – valid for every sort the
   encoding takes; measured 10× on the uninterpreted congruence family
   (N=200: 0.44 s → 0.044 s; N=500: parity).
 * **`suppress_numeric_eq_trichotomy`** save/restore around the A-units
   (inert while the encoding is uninterpreted-only).
 * **`has_injective_distinct` / `injective_distinct_specs` /
-  `TrailOp::DistinctSpecAdded`** — the flag, the spec registry, and its
+  `TrailOp::DistinctSpecAdded`** – the flag, the spec registry, and its
   pop-discipline, threaded to the `TheoryManager`.
-* **Co-located care-split proposals** in `nelson_oppen_combine` — gated on
+* **Co-located care-split proposals** in `nelson_oppen_combine` – gated on
   the flag, all-pairs per co-located group, capped at 256/round, deduped;
   inert today (uninterpreted arguments carry no arithmetic values).
 * The gate comment in the `Distinct` arm pointing here.
@@ -307,7 +307,7 @@ zero verdict mismatches, 3 wins / 1 loss / 296 ties.  Parity 100%.
 Remaining gaps: BitVec large-arity `distinct`, unchanged (see below) –
 still the only row of the original table left open.
 
-## Attack 3: the order encoding over BitVec — correct, measured, no flip
+## Attack 3: the order encoding over BitVec – correct, measured, no flip
 
 The study's original conclusion predicted BitVec as the order encoding's
 home turf: `bvule` is a total order (the whitelist passes), and every atom
@@ -325,7 +325,7 @@ free-variable `sat` (model verified pairwise-distinct), forced-equality
 `unsat`, the 32/33 boundary in both polarities, the exactly-full-domain
 edge (`n=40, w=6 → n2 = 64 = 2^6`), and 200 randomized differential
 trials (n ∈ {2..120}, w ∈ {4..32}, constants/compounds mixed in, both
-polarities, forced equalities) — zero verdict disagreements.
+polarities, forced equalities) – zero verdict disagreements.
 
 **Performance: a wash.**  Release builds, old (pairwise) vs new (network):
 
@@ -368,7 +368,7 @@ core (or give the embedded solver a per-decision propagation
 interface).  Then comparators genuinely propagate mid-descent, the
 identity phases guide the whole descent, and the network's O(n log²n)
 shape should beat pairwise's on-demand C(n,2).  Until then, BitVec
-stays pairwise for n > 32, exactly like Int/Real — for a different
+stays pairwise for n > 32, exactly like Int/Real – for a different
 reason: not a soundness gap, but the absence of a measurable win.
 
 Code not landed (design lives here; the bitonic generator and 0-1

@@ -161,7 +161,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Strings** | Brzozowski derivatives, automata-based regex, word equations |
 | **Floating-Point** | IEEE 754 with bit-blasting, rounding modes |
 | **Datatypes** | ADT with constructors, testers, selectors |
-| **Transcendentals** | dReal-style δ-satisfiability: dPLL over arithmetic atoms, per-assignment interval constraint propagation with rigorous outward-rounded enclosures (`exp`/`log`/`sin`/`cos`/`atan`/`sqrt`; `unsat` exact, `delta-sat` witness, else `unknown` — `docs/TRANS.md`) |
+| **Transcendentals** | dReal-style δ-satisfiability: dPLL over arithmetic atoms, per-assignment interval constraint propagation with rigorous outward-rounded enclosures (`exp`/`log`/`sin`/`cos`/`atan`/`sqrt`; `unsat` exact, `delta-sat` witness, else `unknown` – `docs/TRANS.md`) |
 | **Pseudo-Boolean** | Cardinality constraints, PB-specific propagation |
 | **Finite Graphs** | Reified directed reachability/acyclicity over fixed vertex universes; explained user-propagator integration (`docs/GRAPH.md`) |
 | **Guarded FSMs** | MonoSAT-style NFA acceptance of constant words with symbolic transition guards, lowered to graph reachability (`docs/FSM.md`) |

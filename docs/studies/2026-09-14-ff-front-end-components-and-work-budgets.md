@@ -11,7 +11,7 @@ reported").
 Three deterministic changes to the 𝔽_p procedure. None alters the answer
 space: they change what the procedure *does* (per `docs/BENCHMARKING.md`,
 such changes report solved counts and step counts; no matched null is
-required — there is no stochastic baseline to null out, the procedures are
+required – there is no stochastic baseline to null out, the procedures are
 deterministic and the oracles pin the verdicts).
 
 1. **Connected components (§6.4).** After the linear core, the generator
@@ -19,7 +19,7 @@ deterministic and the oracles pin the verdicts).
    ordered by smallest generator index). Each component gets its own
    Gröbner + FindZero with its own budget; UNSAT of any refutes the whole
    (core = that component's origins), SAT needs a point per component.
-   `FindZero` now takes the component's variable list — zero-dimensionality
+   `FindZero` now takes the component's variable list – zero-dimensionality
    and completion are per-component questions.
 
 2. **Min-degree brancher selection.** Among super-linear univariate
@@ -32,7 +32,7 @@ deterministic and the oracles pin the verdicts).
    costs ~s), not one per step. Step-counting made a 2^24 budget mean
    *hours* on big-polynomial cascades: the budget never noticed the
    polynomials growing, so a goal that should have refused in principle
-   ground in practice — a refusal that never arrives is no refusal.
+   ground in practice – a refusal that never arrives is no refusal.
 
 ## Measurements (bench/ff/, debug build, 3 runs, median)
 
@@ -50,7 +50,7 @@ deterministic and the oracles pin the verdicts).
 | planted-witness fuzz suite (`ff_planted_fuzz`) | 103 s | **2.4–3 s** | all pass |
 
 (Times are debug-build medians of 3; the machine is shared, so treat
-cross-run deltas under ~2× as noise — the load-stable facts are the
+cross-run deltas under ~2× as noise – the load-stable facts are the
 verdict column and the >200 s → seconds class change.)
 
 The dominant effect is (3): honest refusals that used to take minutes of
@@ -58,7 +58,7 @@ grinding (or never arrive) now land in seconds, and the whole fuzz oracle
 runs 43× faster because its refusal-exercising rounds stopped subsidizing
 undercounted big-polynomial work. (1) and (2) matter on decomposable or
 low-degree-structured goals; the dense corpus (every constraint mentions
-every variable — unrealistically dense for R1CS) stays one component by
+every variable – unrealistically dense for R1CS) stays one component by
 construction, which is why its 12×20 goal still refuses: that case needs
 split-GB (Phase 7), and the corpus keeps it as the capacity marker.
 
@@ -66,7 +66,7 @@ split-GB (Phase 7), and the corpus keeps it as the capacity marker.
 
 Every refusal names its site (`OutOutOfBudget { where_ }`): Gröbner basis
 (component) on the sparse 16×24/32×48/128×192 and dense 12×20 goals. The
-planted-witness invariant held throughout — no planted-satisfiable goal was
+planted-witness invariant held throughout – no planted-satisfiable goal was
 ever answered `unsat` (§10.3 oracle), and every `sat` model validated
 exactly.
 
@@ -76,5 +76,5 @@ exactly.
 - planted-witness fuzz (Goldilocks/BN254/BLS12-381): 5/5
 - solver regressions incl. certified-mode certificates: 24/24
 - instrumentation: `NIXIE_FF_STATS=1` prints generator/component counts,
-  per-component basis sizes, and residual budget (2^k) — deterministic,
+  per-component basis sizes, and residual budget (2^k) – deterministic,
   never a policy input.

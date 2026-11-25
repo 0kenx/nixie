@@ -41,7 +41,7 @@ fn verdict(script: &str) -> String {
 }
 
 /// (x · y) mod 2^w must equal a forced concrete product for a grid of
-/// operands at `width` — both the multiplication and the equality are
+/// operands at `width` – both the multiplication and the equality are
 /// decided by the SAT core over the row-array circuit.
 fn mul_grid(width: u32, xs: &[u128], ys: &[u128]) {
     let mask: u128 = if width >= 128 {
@@ -142,7 +142,7 @@ fn row_array_mul_commutativity() {
 
 /// The smulov operand class: products of conditionally sign-extended
 /// operands (`concat (ite c −1 0) x`).  The signed-overflow identity at
-/// the heart of the family: `sx(x)·sx(y) = sx(x·y)` whenever x·y fits —
+/// the heart of the family: `sx(x)·sx(y) = sx(x·y)` whenever x·y fits –
 /// pinned here as a concrete grid the array must decide.
 #[test]
 fn row_array_mul_sign_extended_operands() {
@@ -170,7 +170,7 @@ fn row_array_mul_sign_extended_operands() {
     // The unconditional form: (0^12 ++ x) · (0^12 ++ y) = 0^12 ++ (x·y)
     // must REFUTE when the product overflows 12 bits: 2047·2047 =
     // 4190209 needs 23 bits, while the RHS's low half is the product mod
-    // 2^12 = 1 — asserting the equation yields unsat.
+    // 2^12 = 1 – asserting the equation yields unsat.
     assert_eq!(
         verdict(
             r#"

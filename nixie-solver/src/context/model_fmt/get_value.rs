@@ -1,4 +1,4 @@
-//! Answering `(get-value (t1 … tn))` — the second of the two commands that
+//! Answering `(get-value (t1 … tn))` – the second of the two commands that
 //! describe the model, and the one that has to agree with `(get-model)`
 //! term for term (`#P2b-35`).
 //!
@@ -12,8 +12,8 @@
 //!
 //! The invariant the whole module exists for: every answer here is the answer
 //! `(get-model)` would give for the same term in the same model.  Where a
-//! reading is duplicated rather than shared — `Context::array_class_read` is
-//! the read-side twin of the array renderer — the two carry cross-references
+//! reading is duplicated rather than shared – `Context::array_class_read` is
+//! the read-side twin of the array renderer – the two carry cross-references
 //! and `tests/model_one_reading.rs` pins their agreement.
 
 use super::*;
@@ -34,7 +34,7 @@ impl Context {
     /// missing/superseded check result is reported as an error rather than
     /// answered from stale state.  Each term is evaluated in the current model,
     /// which is first *completed* with the sort defaults `get_model` reports for
-    /// unconstrained declared constants — otherwise `Model::eval` returns an
+    /// unconstrained declared constants – otherwise `Model::eval` returns an
     /// unassigned constant unchanged and `(get-value (x))` answered `((x x))`,
     /// echoing the term instead of producing a value.
     ///
@@ -42,7 +42,7 @@ impl Context {
     /// (`Solver::model_value_in`, `#P2b-26`): `Model::eval` knows the Boolean
     /// connectives and integer arithmetic only, so `(bvadd v #x01)`,
     /// `(bvult v #x81)`, `(select (store arr i #x05) i)`, a `define-fun`
-    /// name standing for any of them — the parser inlines the body — and an
+    /// name standing for any of them – the parser inlines the body – and an
     /// application `(f b)` whose value lives on a congruent `(f a)` all
     /// echoed their body back.  The substitution path below is kept for what
     /// the evaluator declines to fold (a term over a defaulted constant, a
@@ -94,8 +94,8 @@ impl Context {
             return error;
         }
         // Owned so the evaluation below can borrow `self.terms` mutably; see
-        // `get_model` for why an empty assertion stack — or a populated
-        // algebraic side-channel — yields an empty model rather than an error.
+        // `get_model` for why an empty assertion stack – or a populated
+        // algebraic side-channel – yields an empty model rather than an error.
         let model = match self.published_model() {
             Some(model) => model.clone(),
             None if self.assertions.is_empty() || !self.solver.nl_algebraic_values().is_empty() => {
@@ -110,7 +110,7 @@ impl Context {
         // A constant the algebraic side-channel *does* pin is excluded. Its
         // sort default is `0.0`, and substituting that would answer a compound
         // query like `(get-value ((* x x)))` with `0.0` for a goal whose
-        // witness is `√2` — a fabricated value, and one contradicting the `2.0`
+        // witness is `√2` – a fabricated value, and one contradicting the `2.0`
         // that the very same model implies. Left out of the map the term
         // survives evaluation unreduced and echoes back, which is the same
         // honest non-answer this path already gives for anything else it
@@ -132,8 +132,8 @@ impl Context {
             }
         }
         // A datatype constant the model *did* assign goes into the
-        // substitution too (`#P2b-35`).  `Model::eval` stops at a selector —
-        // it has no arm for one — so `(get-value ((snd q)))` echoed `(snd q)`
+        // substitution too (`#P2b-35`).  `Model::eval` stops at a selector –
+        // it has no arm for one – so `(get-value ((snd q)))` echoed `(snd q)`
         // beside a `(get-model)` that printed `q = (mk #b00 #b01)`, two
         // commands describing two different models.  With the constructor
         // value substituted, the datatype rewriter folds the selector to the
@@ -161,7 +161,7 @@ impl Context {
         // disagreeing about an unconstrained constant: `(get-value (w))`
         // answered `#x00` from the completion while `(get-value ((bvult w v)))`
         // could not fold at all, because the evaluator saw `w` as a leaf with
-        // no entry, and printed `(bvult #x00 v)` — a term, not a value.
+        // no entry, and printed `(bvult #x00 v)` – a term, not a value.
         let mut completed_model = model.clone();
         for (&term, &value) in &completion {
             completed_model.set(term, value);
@@ -217,7 +217,7 @@ impl Context {
                 // An array-sorted query term (`#P2b-39`).  Before this arm the
                 // structural reading below folded `(ite p a b)` to the *term*
                 // `a` and printed it, and an array-sorted datatype selector
-                // `(arr b)` echoed itself — decision (4) says an array value is
+                // `(arr b)` echoed itself – decision (4) says an array value is
                 // a store chain or an `(as const …)` value, never a term, and
                 // an echo beside a `(get-model)` that prints the chain is two
                 // commands describing two different models.  Placed *above* the
@@ -229,7 +229,7 @@ impl Context {
                 // A quantified goal's model is certified AS PRINTED (decision
                 // (67)): where the congruence closure left two values at one
                 // point, the printed table keeps the first (`#P2b-74`), and the
-                // structural reading below answered from the other —
+                // structural reading below answered from the other –
                 // `(get-value ((select a (f m))))` said `-2` beside a
                 // `(get-model)` whose `f` and `a` give `0` (recheck 14's
                 // `g14a/s02595`, pre-existing on `c702310`).  So a compound
@@ -260,7 +260,7 @@ impl Context {
                 // A read of an array the model describes only through its
                 // class (`#P2b-35`): no store to reduce, no published value of
                 // its own, so the structural reading above cannot fold it and
-                // it echoed — beside a `(get-model)` that prints the very
+                // it echoed – beside a `(get-model)` that prints the very
                 // entry being asked for.  Answered from the same class
                 // rendering that model prints.
                 value
@@ -269,7 +269,7 @@ impl Context {
             {
                 // The interpretation `(get-model)` prints for this function
                 // (`#P2b-35`).  An application the structural reading cannot
-                // fold — no model entry, no congruent application with one —
+                // fold – no model entry, no congruent application with one –
                 // used to echo itself, so `(get-value ((f a)))` answered
                 // `(f a)` while `(get-model)` printed `f` as a *total*
                 // function with an else-value: two commands describing two
@@ -279,7 +279,7 @@ impl Context {
             } else if let Some(value) = {
                 // The printed model read back, folded exactly: a compound over
                 // an application (`(+ (f j) 3)`), a comparison of two
-                // applications, a read at an applied index — each echoed its
+                // applications, a read at an applied index – each echoed its
                 // body before (`#P2b-35`'s residue, decision (69)(9)).
                 if reading.is_none() {
                     reading = Some(self.printed_reading());
@@ -338,8 +338,8 @@ impl Context {
     /// The value the printed model gives the array read `term`, when `term` is
     /// a `select` the structural reading could not fold.
     ///
-    /// The index is evaluated first — a compound index term names the position
-    /// its *value* names, not the one its leading variable does — and the read
+    /// The index is evaluated first – a compound index term names the position
+    /// its *value* names, not the one its leading variable does – and the read
     /// itself is answered by [`Context::array_class_read`], the read-side twin
     /// of the renderer `(get-model)` prints from.
     fn array_read_value(
@@ -374,7 +374,7 @@ impl Context {
         // default": it is "this reading cannot answer", and the caller then
         // falls back to the substitution path, whose echo a consumer can
         // detect.  Answering `default_value(range)` instead turned a
-        // detectable non-answer into a wrong one — `(get-value ((select (ite p
+        // detectable non-answer into a wrong one – `(get-value ((select (ite p
         // a b) #b0)))` answered `#b0`, the *else* branch's value, beside a
         // `(get-model)` in the same run that printed `p = true` and
         // `(select a #b0) = #b1`.  A `(get-value)` answer that contradicts the
@@ -412,8 +412,8 @@ impl Context {
         // reaches it: `array_class_parts_inner` prints the sort default as the
         // base of a chain whose class pins some entries but names no
         // background, so at an index that chain does not cover the printed
-        // array really is that default.  The gate — "does the renderer
-        // describe this array at all" — is the whole fix.  Ungated, "no class
+        // array really is that default.  The gate – "does the renderer
+        // describe this array at all" – is the whole fix.  Ungated, "no class
         // for this term" was answered with the sort default too, and
         // `(get-value ((select (ite p a b) #b0)))` answered `#b0`, the *else*
         // branch's value, beside a `(get-model)` in the same run printing
@@ -429,9 +429,9 @@ impl Context {
     /// Three shapes reach here that `(get-model)` never has to render, because
     /// it only ever prints *declared constants*: an `ite` between two arrays,
     /// an array-sorted datatype field, and a `store` expression.  All three are
-    /// resolved to the array term the model means — the `ite` through its
+    /// resolved to the array term the model means – the `ite` through its
     /// condition's value, the selector through the constructor value
-    /// [`Context::fold_dt_selectors`] put in the completed model — and then
+    /// [`Context::fold_dt_selectors`] put in the completed model – and then
     /// handed to the same [`Context::array_model_value`] renderer
     /// `(get-model)` uses, so the two commands cannot describe the same array
     /// differently.
@@ -460,7 +460,7 @@ impl Context {
 
     /// A `store` chain whose innermost base is an array the model binds to an
     /// installed value (`solver::array_completion_certify`), printed as that
-    /// value with the chain's writes laid on top — or `None` when `term` is
+    /// value with the chain's writes laid on top – or `None` when `term` is
     /// not such a chain or a write's index or value has no literal value in
     /// the model.
     ///
@@ -533,7 +533,7 @@ impl Context {
     /// constructor holds, adding the mapping to `completion` (`#P2b-35`).
     ///
     /// `(get-model)` prints `q = (mk #b00 #b01)`; `(get-value ((snd q)))`
-    /// answered `(snd q)` — an echo, and the two commands then describe two
+    /// answered `(snd q)` – an echo, and the two commands then describe two
     /// different models.  `Model::eval` has no selector arm, and the core
     /// rewriter's datatype rule needs a registry this path does not build, so
     /// the fold is done here, against the same declaration table
@@ -621,7 +621,7 @@ impl Context {
     /// The argument tuple is *evaluated* first, exactly as
     /// [`Context::func_interp_from`] evaluates the tuples it prints, and an
     /// argument tuple matching no entry answers the interpretation's
-    /// else-value — the branch the printed `define-fun`'s innermost `ite`
+    /// else-value – the branch the printed `define-fun`'s innermost `ite`
     /// takes.  `None` when `term` is not such an application, when the
     /// function has no interpretation, or when an argument has no value in
     /// this model: an answer would then be a guess, and echoing the term is

@@ -3,7 +3,7 @@
 //! [`Solver::extract_bag_model`] runs at model-build time, right after the
 //! set pass: by then the arithmetic solver has valued every `bag.count`
 //! term the reduction's axioms constrained (they are ordinary integer
-//! columns), and a bag's value is *fully determined* by those counts — no
+//! columns), and a bag's value is *fully determined* by those counts – no
 //! mints, no pools, no guesses, unlike the set synthesis. For each bag
 //! term whose per-element counts all resolve, the value is assembled as
 //! the canonical `bag.union_disjoint` of `(bag e n)` terms (positive
@@ -18,7 +18,7 @@
 //! arithmetic model's counts*. The one independent commitment to verify is
 //! cardinality: where the formula constrains `bag.card`, the assembled
 //! value's size (the sum of its multiplicities) must equal the arithmetic
-//! solver's word for it — a mismatch means the reduction's axioms and the
+//! solver's word for it – a mismatch means the reduction's axioms and the
 //! arithmetic model disagree, and the bag's entries roll back (the honest
 //! echo) rather than publish a value that falsifies a constraint.
 //! Multiplicities are nonnegative by the reduction's axiom; a resolved
@@ -87,7 +87,7 @@ impl Solver {
          -> Option<i64> {
             // A count over a closed base folds in the builder to a plain
             // constant (`count(2, (2:5))` is `ite(2=2 ∧ 5≥1, 5, 0)` → `5`)
-            // — the constant IS the value.
+            // – the constant IS the value.
             if let Some(TermKind::IntConst(n)) = manager.get(c).map(|d| &d.kind) {
                 return num_traits::ToPrimitive::to_i64(n);
             }
@@ -109,12 +109,12 @@ impl Solver {
             v
         };
 
-        // ---- the fold readbacks ----
+        // ======== the fold readbacks ========
         // A defined fold's equation pinned it to its unrolled chain, an
         // arithmetic/string term like any other; the value the tableau
         // (or its purification proxy) holds is the fold's value, read back
         // so `(get-value ((bag.fold …)))` answers with it instead of
-        // echoing. Int-sorted accumulators only — a `String` accumulator's
+        // echoing. Int-sorted accumulators only – a `String` accumulator's
         // value has no tableau column, and the echo is the honest answer
         // there.
         for &(fold, _, _, _) in &survey.folds {
@@ -130,12 +130,12 @@ impl Solver {
             }
         }
 
-        // ---- value the choose elements ----
+        // ======== value the choose elements ========
         // A choose's value must satisfy its count constraints over every
         // bag, and the one the reduction's axiom pins is its own:
         //     count(choose(b), b) = n
         // so `choose(b)`'s value is a cell of `b` whose multiplicity is
-        // exactly `n` (any such cell — the choose axioms only demand
+        // exactly `n` (any such cell – the choose axioms only demand
         // membership and congruence, and class-equal bags share cells, so
         // congruent chooses agree on the deterministic first match). For
         // `n = 0` (an empty bag, or the element simply absent) the value
@@ -199,7 +199,7 @@ impl Solver {
             // committed `choose(b) = e` (a user assertion) or
             // `choose(b) ≠ e` for a known element; a pick that ignores
             // them publishes a value falsifying an atom the search already
-            // decided — the set model's choose pass reads the same
+            // decided – the set model's choose pass reads the same
             // commitment (`committed_bool_model`). A committed-true pick
             // must still be a cell (the axioms force the counts to agree;
             // if they did not, the verification below rolls it back).
@@ -232,7 +232,7 @@ impl Solver {
                         .map(|&(v, _)| v)
                 } else {
                     // Not a member: a fresh value of the sort that is no
-                    // cell's — `0` when free, else the smallest nonnegative
+                    // cell's – `0` when free, else the smallest nonnegative
                     // integer no cell holds. Non-`Int` element sorts decline
                     // (the honest echo) rather than guess a string/BV that
                     // might collide with a cell.
@@ -252,7 +252,7 @@ impl Solver {
             });
             let Some(v) = value else {
                 // No consistent cell (or an unvalued sort): leave the
-                // choose unvalued — the assembly's disagreement check
+                // choose unvalued – the assembly's disagreement check
                 // will decline the bag if that mattered.
                 continue;
             };
@@ -264,7 +264,7 @@ impl Solver {
             }
         }
 
-        // ---- assemble and install ----
+        // ======== assemble and install ========
         let mut installed_bags: Vec<TermId> = Vec::new();
         for &(b, es) in &survey.bags {
             let Some(elems) = by_sort.get(&es) else {
@@ -274,7 +274,7 @@ impl Solver {
             // declines the term (the honest default), never a guess.
             // Elements are then **grouped by their resolved values**: the
             // reduction's `@bag_ext_*` witnesses are ordinary elements the
-            // arithmetic model values (often equal to a real element —
+            // arithmetic model values (often equal to a real element –
             // that is what their consistency axioms force), and two
             // elements of one value are one bag cell whose counts must
             // agree. Printing the skolem's spelling instead of its value,
@@ -293,7 +293,7 @@ impl Solver {
                     // A consistent model cannot assign a negative
                     // multiplicity (the reduction axioms forbid it);
                     // seeing one means the counts and the constraints
-                    // diverged — decline.
+                    // diverged – decline.
                     resolved_all = false;
                     break;
                 }
@@ -305,7 +305,7 @@ impl Solver {
                     match counts_by_value.get(&v) {
                         Some(&m) if m != n => {
                             // Two spellings of one value disagreeing on
-                            // the count: an inconsistent model — decline.
+                            // the count: an inconsistent model – decline.
                             resolved_all = false;
                             break;
                         }
@@ -336,7 +336,7 @@ impl Solver {
             installed_bags.push(b);
         }
 
-        // ---- verify the cardinality commitments ----
+        // ======== verify the cardinality commitments ========
         // Where the formula constrains `bag.card`, the assembled size (the
         // sum of the multiplicities) must match the arithmetic solver's
         // word. A mismatch rolls the *bag* entries of that sort back; the
@@ -358,10 +358,10 @@ impl Solver {
             else {
                 continue;
             };
-            // The verified size is the *installed value's* — the sum of
+            // The verified size is the *installed value's* – the sum of
             // the cells actually published, which the assembly already
             // de-duplicated by element value (the raw per-element sum
-            // would count a witness spelling twice — exactly the
+            // would count a witness spelling twice – exactly the
             // double-count the assembly's grouping exists to avoid).
             let Some(es) = bag_element_of(b, manager) else {
                 continue;
@@ -457,9 +457,9 @@ impl Solver {
             model.set(card, n_term);
         }
 
-        // ---- verify the choose commitments ----
+        // ======== verify the choose commitments ========
         // A valued choose's multiplicity among the *installed* cells of its
-        // bag must equal the arithmetic count the pick was made from — the
+        // bag must equal the arithmetic count the pick was made from – the
         // same reconciliation the cardinality check performs, per element.
         // A mismatch means the counts and the published value disagree;
         // both roll back (the honest echo), never a falsifying value.
@@ -531,14 +531,14 @@ impl Solver {
                 }
             }
         }
-        // ---- the declined folds: faithful synthesis + certification ----
+        // ======== the declined folds: faithful synthesis + certification ========
         // A fold the reduction could not unroll stayed *free*: every
         // `unsat` is sound (nothing was asserted about it), but a `sat`
         // model is only genuine if the fold's exhibited value is the true
         // fold of its bag's assembled value. Synthesize that faithful
         // value from the cells; an assertion that contradicts it (or a
         // fold whose value cannot be computed at all) degrades the
-        // verdict — the gate is read after this pass, inside `check`.
+        // verdict – the gate is read after this pass, inside `check`.
         let declined: Vec<(TermId, nixie_core::interner::Spur, TermId, TermId)> = survey
             .folds
             .iter()
@@ -577,7 +577,7 @@ impl Solver {
             // Certification: every assertion that mentions a declined fold
             // must evaluate true under the finished model (the faithful
             // values are installed, so a formula that forced a different
-            // fold value evaluates false here). `Undetermined` is benign —
+            // fold value evaluates false here). `Undetermined` is benign –
             // the evaluator's own philosophy: the purified formula's
             // satisfaction is the search's guarantee; this check exists
             // only for the fold terms that guarantee does not cover.
@@ -826,7 +826,7 @@ fn collect_bag_support(
             }
             Some(TermKind::BagSetof(a)) => stack.push(a),
             // An ite bag's support is the union of its branches' (the
-            // `Bool` condition contributes none) — mirrors the reduction's
+            // `Bool` condition contributes none) – mirrors the reduction's
             // support walk so the two see the same element universe. A
             // map's/filter's support lives in its domain bag; the *images*
             // are collected by the dedicated pass in `extract_bag_model`.

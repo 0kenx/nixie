@@ -29,7 +29,7 @@ use nixie_proof::{
 /// the original 1 MiB / 50_000 because several construction and rendering paths
 /// are quadratic in the depth (see the cost table at the top of
 /// `src/visualization.rs`: all three indent-by-depth formats emit O(depth^2)
-/// bytes, and `AsciiTree` also *retains* O(depth^2) once the proof branches —
+/// bytes, and `AsciiTree` also *retains* O(depth^2) once the proof branches –
 /// `write_json_node` used to retain O(depth^2) on any shape, and no longer
 /// does); the 8x cut keeps the detection power identical at 1/64th of the
 /// memory cost.

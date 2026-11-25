@@ -349,7 +349,7 @@ impl<'a> Lexer<'a> {
                     // back the empty `Symbol("")` it produced would leave
                     // `self.pos` exactly where it was, and every later
                     // `next_token` would mint the same zero-width token at the
-                    // same offset for ever — a caller scanning to `Eof` (the
+                    // same offset for ever – a caller scanning to `Eof` (the
                     // parser's balanced-paren skip, say) never terminates.
                     // Consume exactly the one offending character and record
                     // it, the way the bare `#` case above does.

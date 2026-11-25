@@ -1,6 +1,6 @@
 //! Regression for issue #42: `solve_with_theory`'s inner theory-check loop used
 //! to clone the *entire* trail (`self.trail.assignments().to_vec()`) on every
-//! iteration and only then slice `[safe_start..]` — an O(trail_len^2) copy over
+//! iteration and only then slice `[safe_start..]` – an O(trail_len^2) copy over
 //! a search. The fix reads `self.trail.assignments()[safe_start..]` in place
 //! (no clone at all), so each iteration's work is proportional to what's
 //! actually new.
@@ -10,7 +10,7 @@
 //!
 //!   (a) a literal is never delivered to `TheoryCallback::on_assignment` twice
 //!       within the same "quiescent stretch" (the run of assignments between
-//!       one `on_backtrack` and the next) — i.e. the clamp never re-sends a
+//!       one `on_backtrack` and the next) – i.e. the clamp never re-sends a
 //!       still-valid trail entry it already sent since the last unwind;
 //!   (b) every literal on the final trail was delivered to the theory at some
 //!       point (verified by comparing the theory's last-recorded polarity for
@@ -19,7 +19,7 @@
 //! The mock theory never fabricates a conflict of its own (an invented
 //! "conflict" clause that is not an actual consequence of the formula would
 //! make the solver learn something unsound and the assertions below
-//! meaningless) — it only ever answers `Sat`, purely observing whatever
+//! meaningless) – it only ever answers `Sat`, purely observing whatever
 //! genuine Boolean conflicts/backtracks the CDCL core produces on its own.
 //! Two instances exercise both directions:
 //!   - a small unsatisfiable pigeonhole instance (3 pigeons, 2 holes), which
@@ -30,7 +30,7 @@
 use nixie_sat::{Lit, Solver, SolverResult, TheoryCallback, TheoryCheckResult, Var};
 use std::collections::HashMap;
 
-/// A theory that never reports a conflict or propagation of its own — it only
+/// A theory that never reports a conflict or propagation of its own – it only
 /// records what it is told, so any conflict/backtrack activity observed comes
 /// entirely from genuine Boolean CDCL, keeping the solve itself sound.
 struct RecordingTheory {

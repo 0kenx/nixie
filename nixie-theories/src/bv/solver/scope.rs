@@ -6,7 +6,7 @@
 //!
 //! Every clause this solver hands its embedded SAT engine is one of two kinds.
 //!
-//! * A **definition** — a gate of a bit-blasted circuit (`bvadd`'s adder, a
+//! * A **definition** – a gate of a bit-blasted circuit (`bvadd`'s adder, a
 //!   multiplexer for an `ite`, the comparator behind `bvult`), the truth
 //!   variable of a Boolean node (`eq_cache`, `ult_cache`, `slt_cache`,
 //!   `bool_node`), the bits of a constant term, the selector clause of a
@@ -14,12 +14,12 @@
 //!   variables that already exist, or states a fact that holds of the term it
 //!   encodes whatever the rest of the problem says (a constant's bits).  So a
 //!   definition is a **conservative extension of every clause set**: any
-//!   assignment to the variables it does not define extends — uniquely, by
-//!   evaluating the gate — to one that satisfies it.  It is therefore valid at
+//!   assignment to the variables it does not define extends – uniquely, by
+//!   evaluating the gate – to one that satisfies it.  It is therefore valid at
 //!   every scope, and it is installed at the root with
 //!   [`nixie_sat::Solver::add_clause_at_root`] and never retracted (until
 //!   `reset`).
-//! * An **assertion** — "this atom holds under the current assignment of the
+//! * An **assertion** – "this atom holds under the current assignment of the
 //!   enclosing search": `a = b`, `a ≠ b`, `a <u b`, a constant pinned onto a
 //!   variable, an outer Boolean value pinned onto a node, a lemma of the
 //!   bit-vector / EUF exchange.  Each is a single **literal** over a defined
@@ -34,7 +34,7 @@
 //! outer Boolean value) to [`nixie_sat::Solver::solve_with_assumptions`].  By
 //! the conservative-extension property the definitions add no constraint on
 //! the atoms' operands, so the question answered is exactly "is the
-//! conjunction of the currently asserted atoms satisfiable over bit-vectors" —
+//! conjunction of the currently asserted atoms satisfiable over bit-vectors" –
 //! for the current scope, and independently of anything asserted and popped
 //! before: a popped assertion is simply no longer among the assumptions, and
 //! the gate it was asserted through stays behind as a definition.
@@ -47,29 +47,29 @@
 //! an unconstrained bit-vector.  The four undo journals existed to retract the
 //! entry with its clauses.  A root definition is never deleted, so the entry
 //! and its clauses live exactly as long as each other and there is nothing to
-//! retract; the journals are gone.  The price they used to charge — a fresh
+//! retract; the journals are gone.  The price they used to charge – a fresh
 //! circuit, with fresh SAT variables, every time a popped term was asserted
-//! again — was the `O(num_vars)` leak of `#P2b-46` (f): the embedded variable
+//! again – was the `O(num_vars)` leak of `#P2b-46` (f): the embedded variable
 //! count grew with the number of outer backtracks, not with the formula.
 //!
 //! # Learned clauses outlive every check, and why that is sound
 //!
-//! The per-check cleanup this solver used to run — roll the trail back,
-//! forget the check's learned clauses, and re-verify an `Unsat` from scratch —
+//! The per-check cleanup this solver used to run – roll the trail back,
+//! forget the check's learned clauses, and re-verify an `Unsat` from scratch –
 //! existed because an assertion used to be a *bare level-0 unit*: a trail
 //! assignment with no clause behind it, which conflict analysis treats as an
 //! unconditional fact, so a clause learned under it silently depended on it
 //! and became unsound the moment the unit was rolled back.  No assertion is a
 //! unit any more.  Assumptions are *decisions* at levels above 0, which
 //! conflict analysis resolves through like any other decision, and the only
-//! level-0 facts are root definitions and learned units — all permanent.  So
+//! level-0 facts are root definitions and learned units – all permanent.  So
 //! every learned clause is a consequence of the permanent clause set alone,
 //! valid under every later assumption set, and the cleanup is dropped: the
 //! embedded engine keeps what it learns, check after check.
 //!
-//! `#P2b-19`/`#P2b-21`'s assertion-level registration — a learned clause, or a
+//! `#P2b-19`/`#P2b-21`'s assertion-level registration – a learned clause, or a
 //! theory reason clause, is registered in the innermost open assertion level
-//! so that `pop` retracts it with the scope that entailed it — is consistent
+//! so that `pop` retracts it with the scope that entailed it – is consistent
 //! with this: the embedded engine never opens an assertion level now, so every
 //! registration lands at level 0, which is exactly the level a clause entailed
 //! by the permanent clause set belongs to.
@@ -81,8 +81,8 @@
 //! `blame` recorded by [`BvSolver::record_constraint_term`], or the pinned
 //! outer atom); their conjunction is unsatisfiable together with definitions
 //! that hold in every bit-vector model, so its negation is a valid theory
-//! lemma.  The old explanation — every recorded constraint term and every pin
-//! — was sound too, but blamed the whole scope, so the enclosing CDCL(T)
+//! lemma.  The old explanation – every recorded constraint term and every pin
+//! – was sound too, but blamed the whole scope, so the enclosing CDCL(T)
 //! search learned one clause per refuted *combination* of bit-vector atoms:
 //! `#P2b-59`'s repro spent 6,300 of its 8,294 outer conflicts in one
 //! refinement round doing exactly that.  When a core literal carries no blame
@@ -116,15 +116,15 @@ pub(super) struct Asserted {
 }
 
 impl BvSolver {
-    /// Retract every assertion — every scope, every pin, every recorded
-    /// constraint term — and keep every definition, every learned clause and
+    /// Retract every assertion – every scope, every pin, every recorded
+    /// constraint term – and keep every definition, every learned clause and
     /// the last model.
     ///
     /// The soft counterpart of `Theory::reset`, for an owning solver that
     /// starts a new search over the *same* terms (a refinement round, an MBQI
     /// round): the circuits it encoded are definitions, valid in the new
     /// search exactly as in the old one, so re-encoding them from scratch is
-    /// pure cost — on a 64-store replay script it was most of the check.
+    /// pure cost – on a 64-store replay script it was most of the check.
     /// Nothing asserted survives: the new search starts with an empty scope,
     /// as after `reset`.
     pub fn retract_assertions(&mut self) {
@@ -181,13 +181,13 @@ impl BvSolver {
     ///
     /// This is the shape of the lemmas the bit-vector / EUF equality
     /// exchange derives (`#P2b-29`): congruence closure refutes a
-    /// *partition* of the circuit's model — "these argument pairs equal and
-    /// those leaves apart is impossible" — and hands the circuit the
+    /// *partition* of the circuit's model – "these argument pairs equal and
+    /// those leaves apart is impossible" – and hands the circuit the
     /// disjunction that fact entails, so the next model must move.  Every
     /// disjunct is a fresh truth variable defined by the same XOR/AND
     /// circuits [`Self::encode_bool_node`] uses for a bit equality.
     ///
-    /// Returns `false` — asserting nothing — when the clause would be empty
+    /// Returns `false` – asserting nothing – when the clause would be empty
     /// or any operand is missing or ill-matched in width.
     #[must_use]
     pub fn assert_any(&mut self, differ: &[(TermId, TermId)], equal: &[(TermId, TermId)]) -> bool {
@@ -208,7 +208,7 @@ impl BvSolver {
             return false;
         }
         // The disjunction is *defined* once, behind a selector, and the
-        // selector is asserted — so a lemma derived again reuses its clause,
+        // selector is asserted – so a lemma derived again reuses its clause,
         // and a `pop` retracts the assertion without deleting a clause.
         let selector = self.clause_selector(&lits);
         self.assert_lit(selector);
@@ -246,7 +246,7 @@ impl BvSolver {
         let var = self.sat.new_var();
         // Z3 `mk_leq_core`'s numeral rules, at the circuit layer: a
         // constant operand collapses the comparator to a reduction (or a
-        // constant) — the carry chain of the generic encoder is never
+        // constant) – the carry chain of the generic encoder is never
         // built for these shapes.
         let width = va.width as usize;
         let all_const = |bits: &[Var], want: Var| bits.iter().all(|v| *v == want);
@@ -315,8 +315,8 @@ impl BvSolver {
         // model of the whole clause set (a learned clause since is implied by
         // that set, so it holds there too) and of the scope, so `Sat` is
         // exact and the snapshot stays the model the check reports.  This is
-        // the common case once the round's circuits exist — a re-asserted
-        // atom whose literal the current model already makes true — and it
+        // the common case once the round's circuits exist – a re-asserted
+        // atom whose literal the current model already makes true – and it
         // costs one lookup per assumption instead of a search that assigns
         // every variable of every circuit defined so far.
         if self.model_is_current
@@ -326,7 +326,7 @@ impl BvSolver {
         {
             // A variable minted since the model was found (a free leaf, a
             // circuit's fresh bit before its first clause) occurs in no
-            // clause — any clause would have cleared `model_is_current` — so
+            // clause – any clause would have cleared `model_is_current` – so
             // every value of it extends the model: the snapshot is widened to
             // it (unassigned, read as `0`), which is what lets
             // `snapshot_covers` tell such a variable from one the snapshot has
@@ -351,10 +351,10 @@ impl BvSolver {
     /// Whether every bit of `term`'s circuit existed when the model snapshot
     /// of the last `Sat` check was taken (`false` for a term with no circuit).
     ///
-    /// A circuit defined *after* that check — a definition installed while
+    /// A circuit defined *after* that check – a definition installed while
     /// encoding an atom that was then never asserted (an operand the encoder
     /// could model beside one it could not), or one built for a partition
-    /// candidate — has no value in the snapshot, and
+    /// candidate – has no value in the snapshot, and
     /// [`Self::get_value_big`] then reads its bits as `0` whatever they are
     /// defined to be: a literal `#b1` read back as `#b0`.  A caller that
     /// compares circuit values (the bit-vector / EUF exchange of

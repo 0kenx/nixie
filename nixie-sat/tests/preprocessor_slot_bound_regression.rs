@@ -9,7 +9,7 @@
 //! classified a variable as pure when its only opposite-polarity occurrences
 //! lived in the invisible tail, pinned it to the wrong polarity in
 //! `pure_literal_reconstruction`, and `save_model` later overwrote the
-//! trail's correct value with the stale pin — a **false `sat` whose model
+//! trail's correct value with the stale pin – a **false `sat` whose model
 //! violates the input** (end-to-end reproducer:
 //! `satcomp2024/bench/…-j3037_10_mdd_bm1.cnf` under BVE+ELS+inprocessing:
 //! the solver answered `sat` with a model falsifying 134 input clauses,
@@ -27,7 +27,7 @@ use nixie_sat::{Lit, Solver, SolverConfig, SolverResult, Var};
 /// The minimal shape: after BVE elimination of `a` the live clause count
 /// drops below the slot of the final input clause `(x ∨ y)`, so the pure
 /// pass's occurrence view missed `+x` entirely, `x` looked pure negative,
-/// and the model reconstruction pinned `x = false` — violating `(x ∨ y)`
+/// and the model reconstruction pinned `x = false` – violating `(x ∨ y)`
 /// once the search (correctly) assigned `x = true` under the forced unit
 /// `¬y`.
 #[test]

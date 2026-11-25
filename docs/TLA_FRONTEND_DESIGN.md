@@ -7,10 +7,10 @@ Apalache but without Apalache's architecture. Two targets, in order:
 
 1. **Parity.** Every specification Apalache accepts, Nixie accepts, with the same verdict.
    This is the acceptance bar for the first release: *any valid Apalache input runs.*
-2. **Superset.** Beyond parity, principally **temporal logic** — see
+2. **Superset.** Beyond parity, principally **temporal logic** – see
    [Long-term: temporal logic](#long-term-temporal-logic). Long term, not milestone 1.
 
-Everything is pure Rust. **No JVM, no `tla2tools.jar`, no FFI** — same rule as the solver
+Everything is pure Rust. **No JVM, no `tla2tools.jar`, no FFI** – same rule as the solver
 core (`deny.toml`). That decision has one large consequence, stated up front in
 [The parser](#1-the-parser-nixie-tla-syntax).
 
@@ -34,7 +34,7 @@ is the whole point of the exercise.
 opaque process behind an API boundary: the arena/cell encoding, the `oopsla19` term blast,
 the per-transition `push`/`pop` discipline, `--discard-disabled` pruning. Every one of those
 is *compensation for not being able to see inside the solver*. Reproducing them in a monorepo
-relocates the boundary instead of deleting it — and deleting the boundary is the only thing a
+relocates the boundary instead of deleting it – and deleting the boundary is the only thing a
 monorepo buys. The recurring theme of
 [Cross-layer optimisations](#cross-layer-optimisations) is exactly this: information that is
 known exactly at the TLA+ layer, needed at the SAT layer, and destroyed in between.
@@ -43,17 +43,17 @@ known exactly at the TLA+ layer, needed at the SAT layer, and destroyed in betwe
 
 Read as specification; never linked, never a dependency.
 
-- **Apalache** (Scala, Apache-2.0) — IR, Snowcat, pass pipeline, KerA, both encodings,
+- **Apalache** (Scala, Apache-2.0) – IR, Snowcat, pass pipeline, KerA, both encodings,
   transition splitting, ITF. Not vendored in `../temp`; fetch a read-only checkout when the
   work starts.
-- **SANY** (Java, part of `tla2tools`) — the normative TLA+ parser. Its level checker and
+- **SANY** (Java, part of `tla2tools`) – the normative TLA+ parser. Its level checker and
   operator table are the ground truth for [the parser](#1-the-parser-nixie-tla-syntax).
-- **`tree-sitter-tlaplus`** — the most complete machine-readable TLA+ grammar in existence.
+- **`tree-sitter-tlaplus`** – the most complete machine-readable TLA+ grammar in existence.
   Treat it the way this repo treats `../temp/z3`: read it to learn the shape, do not link it
   (its generated parser is C).
-- ***Specifying Systems*, Lamport** — normative for the operator precedence table, the
+- ***Specifying Systems*, Lamport** – normative for the operator precedence table, the
   junction-list layout rule, levels, and module instantiation semantics.
-- **`nixie-spacer`**, **`nixie-theories/src/set`**, **`nixie-sat/src/symmetry.rs`** — the
+- **`nixie-spacer`**, **`nixie-theories/src/set`**, **`nixie-sat/src/symmetry.rs`** – the
   in-repo capabilities the cross-layer work is built on.
 
 ## Crate layout
@@ -70,7 +70,7 @@ crates, driven by hints from `nixie-tla`; they need hint channels, not new crate
 
 ## 1. The parser (`nixie-tla-syntax`)
 
-**This is the critical path, not the SMT encoding.** Apalache does not parse TLA+ — it shells
+**This is the critical path, not the SMT encoding.** Apalache does not parse TLA+ – it shells
 out to SANY. Removing the JVM means writing the thing Apalache never had to. Scope it
 honestly; it is the single largest risk in this plan.
 
@@ -85,7 +85,7 @@ Asked directly, and worth recording because the rest of this section rests on it
 not a good fit for LR(1).** Three problems, increasing in severity.
 
 1. **Junction lists are not context-free** (§1.1), so no LR(1) grammar exists over the raw
-   token stream. This one is fixable — the layout pre-pass restores context-freeness — so it
+   token stream. This one is fixable – the layout pre-pass restores context-freeness – so it
    rules out "LR(1) on raw tokens", not LR(1) in principle.
 
 2. **`[` is overloaded six ways**, and the disambiguating token is arbitrarily far in:
@@ -98,19 +98,19 @@ not a good fit for LR(1).** Three problems, increasing in severity.
    and juxtaposing two operators with *overlapping* intervals is a **static error we want to
    report precisely**, not an ambiguity to resolve silently. Yacc-style `%left` / `%nonassoc`
    assigns one number per token and cannot express an interval, so any LR encoding
-   approximates — turning a precise diagnostic ("`\cup` and `\in` have overlapping
+   approximates – turning a precise diagnostic ("`\cup` and `\in` have overlapping
    precedence, parenthesise") into a generic parse error.
 
 Two external data points, both worth re-verifying against source when the work starts:
 
 - `tree-sitter-tlaplus` is **GLR**, not LR(1), *and* still needs an external scanner plus
   dynamic-precedence conflict declarations. If LR(1) sufficed, that machinery would not exist.
-- SANY is JavaCC-based — LL(k) with syntactic lookahead — and resolves operator precedence in
+- SANY is JavaCC-based – LL(k) with syntactic lookahead – and resolves operator precedence in
   a **separate post-parse phase**. That is the same split Pratt parsing gives for free.
 
 A Pratt parser carries `(lo, hi)` in its loop condition and compares intervals directly, which
 is exactly what a static precedence table cannot express. Combined with recursive descent it
-also yields real error recovery — which matters more here than anywhere in the solver, because
+also yields real error recovery – which matters more here than anywhere in the solver, because
 this is the user-facing surface of the entire pipeline.
 
 ### 1.1 Junction lists are layout-sensitive (the only non-context-free part)
@@ -124,7 +124,7 @@ Next == \/ /\ a
 A `/\` or `\/` at column *c* opens a list whose items must align at *c*; any token at a column
 ≤ *c* terminates it. The indentation column behaves as a bracket.
 
-**Superseded by the implementation — see the correction below.** The original plan was to
+**Superseded by the implementation – see the correction below.** The original plan was to
 handle this the way Haskell does: a token-stream transformer inserting *virtual* open/close
 brackets, so that the grammar the parser sees stays plain context-free, on the precedent of
 the Haskell 2010 layout algorithm (§10.3) and Python's INDENT/DEDENT insertion.
@@ -132,7 +132,7 @@ the Haskell 2010 layout algorithm (§10.3) and Python's INDENT/DEDENT insertion.
 **That does not work, and `nixie-tla-syntax` does it differently.** A `/\` opens a bulleted
 list only where an *expression* is expected; in `x == a /\ b` the identical token is an
 ordinary infix operator. A lexical pass cannot separate the two without reconstructing
-expression-position — the same problem as regex-versus-division in a JavaScript lexer, and
+expression-position – the same problem as regex-versus-division in a JavaScript lexer, and
 equally prone to misfiring. The parser already knows, exactly, so layout is decided there:
 `/\` in prefix position starts a list, and a column check in the Pratt loop stops an
 expression at a token that would close an enclosing one.
@@ -147,7 +147,7 @@ is ordinary continuation.
 
 TLA+ gives each operator a precedence **interval** (`'` sits at the top, `=>` at the bottom;
 *Specifying Systems*' table is normative). Two operators whose intervals overlap may not be
-juxtaposed without parentheses — and that is a **static error to report**, not an ambiguity to
+juxtaposed without parentheses – and that is a **static error to report**, not an ambiguity to
 resolve. A Pratt parser carrying `(lo, hi)` per operator and rejecting overlap gets this
 exactly right and produces a good message.
 
@@ -161,7 +161,7 @@ one. So the operator table is closed and can be a static table in the lexer.
   instances, and `I!Op(...)` qualification. Substitution must be capture-avoiding and applied
   at use sites. Standard modules (`Naturals`, `Integers`, `Sequences`, `FiniteSets`, `TLC`,
   `Apalache`) ship as built-in module sources.
-- **Level checking.** Four levels — constant, state, action, temporal. Primes only at action
+- **Level checking.** Four levels – constant, state, action, temporal. Primes only at action
   level; `ENABLED`, `UNCHANGED`, `[A]_v`, `<<A>>_v`, `WF_v`/`SF_v` have their own rules. This
   is not optional polish: the symbolic-transition analysis in §2 needs levels, and mislevelled
   input must be **rejected**, never silently accepted (`AGENTS.md`: no silent fallthrough).
@@ -186,9 +186,9 @@ rejected here. That corpus is also the first differential oracle (§5).
 
 Two levels, and the second one is what makes the rest tractable:
 
-- **Surface IR** — a faithful tree of what was written, with source spans, for diagnostics and
+- **Surface IR** – a faithful tree of what was written, with source spans, for diagnostics and
   round-tripping.
-- **KerA kernel** — the minimal core TLA+ reduces to. *Only KerA is ever encoded.* Everything
+- **KerA kernel** – the minimal core TLA+ reduces to. *Only KerA is ever encoded.* Everything
   downstream (typing, transition analysis, encoding, theory plugin) matches exhaustively on a
   small closed enum, so a new construct **breaks compilation** rather than slipping through a
   `_ =>` arm. This is the same discipline the solver core already runs on, and it is why the
@@ -196,7 +196,7 @@ Two levels, and the second one is what makes the rest tractable:
 
 **One deliberate divergence from Apalache's Keramelizer.** It expands set operations away:
 `A \cup B` becomes a comprehension, `\subseteq` becomes a quantifier. That is right when the
-backend is an opaque SMT solver with no set theory — the expansion is the only way to say it.
+backend is an opaque SMT solver with no set theory – the expansion is the only way to say it.
 `\cup`, `\cap`, `\`, `SUBSET` and `UNION` stay *in* the kernel here, because expanding them
 destroys exactly the structure O3 needs and it cannot be recovered afterwards. `\subseteq` is
 the one exception: it is a quantifier in every encoding, so nothing is lost.
@@ -205,7 +205,7 @@ the one exception: it is a quantifier in every encoding, so nothing is lost.
 `nixie-theories/src/set`". That premise was checked before building on it and is weaker than
 stated: the module exists, but there is no `SortKind::Set`, no set term kinds, and no
 `TermTheory::Set` in Nelson-Oppen, and nothing outside `nixie-theories` references `SetSolver`.
-It is a standalone decision procedure beside the solver, not a theory inside it — see
+It is a standalone decision procedure beside the solver, not a theory inside it – see
 `docs/studies/2026-09-13-set-theory-not-reachable-from-solver.md`. The divergence still stands,
 on a different and stronger ground: keeping the set constructors is what lets *both* the naive
 encoding and the later lazy theory be expressed from one IR. What changes is that milestone 3
@@ -218,15 +218,15 @@ assignment solving → analysis (skolemization / expansion / free-existential) �
 
 **Status: the kernel and the lowering pass are landed** in `nixie-tla`. Measured over the
 corpora, 4 349 of 4 637 expression-level definitions lower (93.8%); a further 694 definitions
-are *spec structure* — `Spec == Init /\ [][Next]_vars`, fairness, `ENABLED`, temporal operators
-— which are correctly rejected because they are not kernel expressions at all. Snowcat typing
+are *spec structure* – `Spec == Init /\ [][Next]_vars`, fairness, `ENABLED`, temporal operators
+– which are correctly rejected because they are not kernel expressions at all. Snowcat typing
 and the rest of the pass pipeline are still open.
 
 **`INSTANCE` is resolved.** `I == INSTANCE M WITH v <- w` looks through `M` under that
 substitution, including unnamed instances, member arguments, and members that reach other
 members of the same module. The visibility rule is the load-bearing part: a module reached
 *only* through `INSTANCE` must not contribute to the flat name space, because its definitions
-mean something only under the substitution — resolving one directly would silently use the
+mean something only under the substitution – resolving one directly would silently use the
 unsubstituted body and read the wrong module's variables. Only the root and its transitive
 `EXTENDS` closure are visible.
 
@@ -262,7 +262,7 @@ subset and powerset propagators, and `docs/TUTORIAL_CUSTOM_THEORY.md` documents 
 path into Nelson-Oppen.
 
 - Membership becomes a watched propagator instead of 10⁵ Boolean variables.
-- `CHOOSE` / `CherryPick` becomes a backtrackable **theory decision** with a real explanation —
+- `CHOOSE` / `CherryPick` becomes a backtrackable **theory decision** with a real explanation –
   pick-on-demand driven by the SAT trail, i.e. ordinary model-based theory combination.
 - Functions and records get the same treatment rather than being flattened to arrays first.
 
@@ -272,34 +272,34 @@ verdict; every piece of theory state rolls back in lockstep on `pop`.
 ## 4. Cross-layer optimisations
 
 Ranked by expected payoff. Each names the information, where it is known, and where it is
-needed — the rest of the framing is in §0.
+needed – the rest of the framing is in §0.
 
-### O1. Symmetry — known exactly at the top, badly rediscovered at the bottom
+### O1. Symmetry – known exactly at the top, badly rediscovered at the bottom
 
 TLA+ specs are saturated with symmetry over CONSTANT model values (`Perms(Proc)`). TLC
 exploits it; Apalache largely declines to. That symmetry is a permutation group over
 uninterpreted constants, which after encoding is a permutation group acting on the CNF. A
 standalone tool must *rediscover* it by graph automorphism on a CNF the encoding has already
-mangled — expensive, and it often fails.
+mangled – expensive, and it often fails.
 
 `nixie-sat/src/symmetry.rs` already exposes `SymmetryGroup::add_generator`, `SymmetryBreaker`
 and `MatrixSymmetry`, next to the `AutomorphismDetector::detect_symmetries()` path we would be
 skipping. The front end hands the generators straight down. Clearest instance of the
 principle; do it first.
 
-### O2. Unbounded verification — a new answer class, not a speed-up
+### O2. Unbounded verification – a new answer class, not a speed-up
 
 Apalache is a *bounded* checker: it cannot prove a safety property for all behaviours. You
 hand-write an inductive invariant and check it at `--length=1`.
 
 This repo has `nixie-spacer`: PDR/IC3, CHC, Craig interpolation, k-induction in `bmc.rs`,
 `invariant.rs`, `generalize.rs`. Lowering `(Init, Next, Inv)` to a CHC system gives
-**automatic inductive invariant inference for TLA+ specs**. For the common case — protocol
+**automatic inductive invariant inference for TLA+ specs**. For the common case – protocol
 specs whose state is records over finite-domain and integer fields after CONSTANT
-instantiation — this works with what is already in the crate. The thin part is specs whose
+instantiation – this works with what is already in the crate. The thin part is specs whose
 state variables are genuinely higher-order (sets of functions), where Spacer generalisation
 over arrays/ADTs is weak. Prior art to mine: **IC3PO** and **mypyvy**, both symmetry-aware
-invariant inference over uninterpreted sorts — which composes directly with O1.
+invariant inference over uninterpreted sorts – which composes directly with O1.
 
 ### O3. Cross-step lemma replication in the BMC unrolling
 
@@ -310,19 +310,19 @@ frame can be replicated to every other step by renaming. Sound, cheap, and impos
 externally because the renaming is invisible there.
 
 Transfer: clause sharing under symmetry (BreakID) crossed with IC3's frame-to-frame clause
-pushing. This is a **heuristic** change, so `AGENTS.md` applies in full — it ships with a
+pushing. This is a **heuristic** change, so `AGENTS.md` applies in full – it ships with a
 matched null (replicate randomly chosen clauses at the same rate and size distribution),
 ≥10 seeds, tick counters not wall clock, and the reported number is treatment / matched-null.
 
 ### O4. One assumption-based solve instead of k enabledness solves
 
 Apalache splits `Next` into symbolic transitions, then feeds each to Z3 *separately* under
-`push`/`pop`, pruning with `--discard-disabled` — re-solving the shared subformula once per
+`push`/`pop`, pruning with `--discard-disabled` – re-solving the shared subformula once per
 transition per step.
 
 In-process: encode all transitions once under selector literals and settle enabledness of all
 of them in one solve, via `nixie-sat/src/assumptions.rs`, `backbone.rs`, and projected
-enumeration in `allsat.rs`. Further: this problem shape *is* cube-and-conquer — `cube.rs` plus
+enumeration in `allsat.rs`. Further: this problem shape *is* cube-and-conquer – `cube.rs` plus
 `kitten.rs` (tick-budgeted sub-solver) give a lookahead splitter, and `clause_exchange.rs`
 shares learned clauses across branches. Separate solver contexts cannot.
 
@@ -332,7 +332,7 @@ Snowcat says `Int`, so Z3 gets unbounded `Int` and we are in LIA. But TLA+ specs
 always finitely instantiated, so most integers have provable finite ranges. Owning the stack
 lets a front-end interval analysis choose a **per-variable BV width**, and then choose the
 adder/comparator CNF encoding per operation. If a width proves too narrow the solver says so
-and the front end widens — CEGAR on bit-width, reusing the machinery from
+and the front end widens – CEGAR on bit-width, reusing the machinery from
 `docs/studies/2026-08-bv-mul-cegar.md`.
 
 The cross-domain source is HLS bit-width inference and CBMC-style range analysis, moved to the
@@ -365,8 +365,8 @@ natural market.
 ### O9. Determinism end to end
 
 `AGENTS.md` forbids wall-clock as a policy input; Apalache drives Z3 on wall-clock timeouts,
-so its results are not reproducible under load. In-process, the model-checking search — which
-transition to expand, when to abandon a step — runs on Nixie's tick counters, as `kitten`
+so its results are not reproducible under load. In-process, the model-checking search – which
+transition to expand, when to abandon a step – runs on Nixie's tick counters, as `kitten`
 already demonstrates for sub-solving. Whole-pipeline determinism is worth a great deal for a
 verification tool: bug reproduction, CI stability, differential fuzzing.
 
@@ -374,21 +374,21 @@ verification tool: bug reproduction, CI stability, differential fuzzing.
 
 Deliberately out of milestone 1, recorded so the IR does not foreclose it.
 
-**Step 0 — establish the baseline honestly.** Apalache has *some* temporal-property support
+**Step 0 – establish the baseline honestly.** Apalache has *some* temporal-property support
 (a bounded loop/lasso tableau encoding, behind a flag). Before scoping "superset", verify
 against the current Apalache release exactly which fragment it covers and which fairness
 constructs it handles. Do not design against memory of it.
 
-**Step 1 — parity.** Match that bounded encoding: liveness-to-safety over a bounded unrolling
+**Step 1 – parity.** Match that bounded encoding: liveness-to-safety over a bounded unrolling
 with an explicit loop-back selector (Biere/Artho/Schuppan L2S, the standard hardware
 model-checking construction). `WF_v` / `SF_v` become fairness constraints on the lasso.
 
-**Step 2 — superset, and the reason it is worth doing.** Bounded L2S proves nothing when no
+**Step 2 – superset, and the reason it is worth doing.** Bounded L2S proves nothing when no
 lasso is found. The interesting target is **unbounded liveness**: well-founded ranking
 arguments discharged through `nixie-spacer` (termination as a CHC problem, in the shape of
 T2 / Ultimate / CPAchecker's ranking synthesis), with fairness as Streett/Büchi acceptance.
 That is a capability neither Apalache nor TLC has, and it is reachable precisely because the
-CHC engine is in the same process. It also inherits O1 directly — liveness proofs over
+CHC engine is in the same process. It also inherits O1 directly – liveness proofs over
 symmetric protocols are where symmetry pays most.
 
 Constraint on milestone 1: keep levels and fairness constructs in the surface IR even though
@@ -399,11 +399,11 @@ milestone 1 rejects them, so the parser never has to be revisited for this.
 A wrong `sat`/`unsat` is catastrophic here for exactly the reasons `AGENTS.md` gives, and a
 model checker multiplies the blast radius. Three oracles, all cheap:
 
-1. **Parser differential** — every file in the Apalache test suite and the public TLA+ examples
+1. **Parser differential** – every file in the Apalache test suite and the public TLA+ examples
    corpus: accepted/rejected must agree with SANY, IR must be isomorphic.
 
    **Status: closed.** `bench/tla_parity/` runs SANY as an oracle over the sibling corpora
-   (907 `.tla` files) and compares both directions. SANY is consulted, never linked — the same
+   (907 `.tla` files) and compares both directions. SANY is consulted, never linked – the same
    relationship `bench/z3_parity` has with Z3, and `deny.toml` still bans FFI.
 
    ```
@@ -414,7 +414,7 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 
    The syntax gate is **one-sided** on purpose: every file SANY parses must parse here, but
    parsing more is allowed, because the target is a superset. The two extras are `\mod` as a
-   definable operator — accepted with its own identity rather than aliased to `%`, so that
+   definable operator – accepted with its own identity rather than aliased to `%`, so that
    `u \mod v == u` cannot silently redefine `%`.
 
    Level comparison covers only definitions whose level was actually *established*; a guess
@@ -435,11 +435,11 @@ model checker multiplies the blast radius. Three oracles, all cheap:
    with `NEW`, structured proofs, nested modules, prose before the header and after the
    footer, digit-leading identifiers, and subscript-underscore adjacency. Reading the
    specification would not have produced that list.
-2. **TLC differential** — TLC is explicit-state and exhaustive on finite models. On small
+2. **TLC differential** – TLC is explicit-state and exhaustive on finite models. On small
    instances it is a complete oracle for the symbolic checker, exactly the relationship
    `run_parity.sh` has with Z3. This is the soundness canary for the new layer and should be a
    gate, not an afterthought.
-3. **Apalache differential** — same spec, same bound, same verdict; disagreements are bugs in
+3. **Apalache differential** – same spec, same bound, same verdict; disagreements are bugs in
    one of the two and worth chasing either way.
 
 4. **Encoder cross-check** (`nixie-tla-check/examples/encodecheck.rs`). The evaluator is
@@ -447,12 +447,12 @@ model checker multiplies the blast radius. Three oracles, all cheap:
    validates it against TLA+ semantics transitively, with no second oracle needed: a ground
    definition the evaluator calls `TRUE` must encode to a formula whose negation the solver
    finds unsatisfiable. **306 of 308 agree; 0 disagreements.** The two exceptions are solver
-   defects, not encoding ones — see below.
+   defects, not encoding ones – see below.
 
 5. **Semantic differential against TLC** (`bench/tla_eval/`). The three above are all
    *structural*: they check that we parse, level and lower what SANY does, not that a lowered
    term **means** what the source meant. The `INSTANCE` visibility bug is why that distinction
-   matters — it produced a perfectly valid kernel term that read the wrong module's variables
+   matters – it produced a perfectly valid kernel term that read the wrong module's variables
    and passed every structural check.
 
    The suite lowers each nullary definition of a constant- and variable-free module, evaluates
@@ -506,7 +506,7 @@ unsoundly and silently:
 - **An action that does not mention `x'` leaves `x` unconstrained at the next step.** That is
   what TLA+ means, and "helpfully" encoding it as unchanged would discard behaviours and could
   turn a real counterexample into a false clean bill of health. Also pinned, in both
-  directions — with and without `UNCHANGED`.
+  directions – with and without `UNCHANGED`.
 - **There is no `Safe` verdict to reach for.** The outcome is `NoViolationWithin(k)`, which
   says no counterexample of that length exists and stays silent about *k+1*. Proving an
   invariant needs O2's CHC lowering to `nixie-spacer`. Naming the bound in the variant is the
@@ -521,7 +521,7 @@ load-bearing, not tidiness.
 
 **Measured on the corpora** (`bench/tla_bmc/METHODOLOGY.md`): of 905 modules, 315 have an
 `Init`/`Next`/`Inv` triple under the naming conventions, 81 prepare (type check *and* have a
-sort for every state variable), and 18 are checked at depth 4 — 9 with no violation in the
+sort for every state variable), and 18 are checked at depth 4 – 9 with no violation in the
 bound and 9 with a counterexample. (Current numbers: **160** prepared, **39** checked. The
 table below is the snapshot that drove the next three stages, kept because each line is what
 motivated the work that cleared it.) What blocks the rest is the useful half of the number:
@@ -535,7 +535,7 @@ motivated the work that cleared it.) What blocks the rest is the useful half of 
 | 18 | `\in` has no encoding |
 | 17 | `[x \in S \|-> e]` has no encoding |
 
-**Functions are SMT arrays** — `f[x]` is a select, `[f EXCEPT ![i] = v]` a store — which cost
+**Functions are SMT arrays** – `f[x]` is a select, `[f EXCEPT ![i] = v]` a store – which cost
 nothing to wire up because the array theory is already in Nelson-Oppen. That moved *prepared*
 from 81 to 106 and **left *checked* at 18**, which is the useful part of the measurement: a
 function-typed state variable now gets a sort, and then fails at the encoder, because
@@ -546,7 +546,7 @@ What an array does not carry is the domain, and it shows up twice: `f[x]` outsid
 is undefined in TLA+ but total in an array, and array equality compares every index where
 TLA+ compares the domain, so it is *stricter*. Under a negation that lets two TLA+-equal
 functions be told apart. Both err towards manufacturing a counterexample rather than hiding
-one — the same asymmetry as a dropped assumption — and `Encoder::domain_unmodelled()` reports
+one – the same asymmetry as a dropped assumption – and `Encoder::domain_unmodelled()` reports
 when a verdict came through it.
 
 The remaining big lines all reduce to one question: **what are the candidate elements of this
@@ -563,24 +563,24 @@ comprehension keeps the list and strengthens the Booleans, and a bounded quantif
 Two details are where an arena encoding goes wrong, and both are pinned by tests:
 
 - **Candidates are not distinct.** `{x, y}` has two that may denote one value, and `A \cup B`
-  concatenates lists that may overlap. Membership and quantification do not care — a duplicate
-  just satisfies the disjunct twice — but **cardinality does**, so a candidate counts only when
+  concatenates lists that may overlap. Membership and quantification do not care – a duplicate
+  just satisfies the disjunct twice – but **cardinality does**, so a candidate counts only when
   no *earlier* candidate is present and equal to it. A plain sum of indicators would report
   `Cardinality({x, y}) = 2` when `x = y`.
 - **Equality is extensional**, the only definition TLA+ has. Comparing candidate lists would
   make `{1, 1}` differ from `{1}` and `{x} \cup {y}` differ from `{x}` when `x = y`.
 
-A set with no finite candidate list — `1..n` for symbolic `n` — is refused **by that name**
+A set with no finite candidate list – `1..n` for symbolic `n` – is refused **by that name**
 (`NotEnumerable`) rather than as "unsupported", because the construct is understood and what
 is missing is a bound. A candidate budget turns a blow-up (`SUBSET A` is `2^|A|`) into a
 reported refusal rather than an out-of-memory kill.
 
-**Strings, tuples and records share the representation.** A TLA+ string is an atom — only ever
-compared for equality — so it is a `StringLit`. Tuples and records are *structural*, taken
+**Strings, tuples and records share the representation.** A TLA+ string is an atom – only ever
+compared for equality – so it is a `StringLit`. Tuples and records are *structural*, taken
 apart by the encoder before anything reaches the solver, and that is forced by TLA+ rather
 than chosen: `<<1, "a">>` is an ordinary tuple, and an SMT array forces one sort across every
 index, so an array-backed tuple could only be homogeneous. Being structural also makes `DOMAIN`
-exact where an array cannot be — `1..n` for a tuple, the field names for a record — while
+exact where an array cannot be – `1..n` for a tuple, the field names for a record – while
 `DOMAIN` of an array-backed function is refused rather than answered with something plausible.
 
 Measured: the ground cross-check went **308 → 817** definitions, still **zero disagreements**
@@ -595,7 +595,7 @@ recording because it is what the arena bought beyond coverage. `Cardinality` is 
 `ite`s guarded by element equalities; with string elements those guards are string equalities,
 and *any* string equality that reached the solver as something other than a foldable top-level
 assertion was a free Boolean. Two causes, neither the one first suspected: `mk_eq` did not
-fold distinct string literals, and EUF did not mark string literals as distinguished values —
+fold distinct string literals, and EUF did not mark string literals as distinguished values –
 a mechanism floating-point literals already used.
 `docs/studies/2026-09-13-string-literal-distinctness-false-sat.md` records both, and the two
 wrong hypotheses the controls eliminated first. The encoding was deliberately **not** reshaped
@@ -603,7 +603,7 @@ to avoid the `ite`: that would have hidden a live soundness bug rather than fixe
 blocked test would have gone green while the solver stayed wrong.
 
 **O3 is landed, and the comparison it existed for has been run.** `nixie-solver` now has a real
-finite-set theory — a `Set` sort, the eight SMT-LIB operators, `TermTheory::Set` in
+finite-set theory – a `Set` sort, the eight SMT-LIB operators, `TermTheory::Set` in
 Nelson-Oppen, membership and extensionality decided by a reduction with disequality witnesses,
 and cardinality exact wherever a set's members are statically known. The front end can point at
 either encoding, and on the corpus:
@@ -616,7 +616,7 @@ either encoding, and on the corpus:
 
 **Neither pure encoding dominates**, which is the whole reason milestone 3 came before O3.
 
-- Native unlocks a set-valued **state variable** — 54 more specifications prepare. The arena
+- Native unlocks a set-valued **state variable** – 54 more specifications prepare. The arena
   cannot represent one *at all*: its candidate list has to be known before the solver runs, and
   `s@1` holds whatever the transition relation puts there.
 - Native loses **comprehensions and bounded quantifiers**: the theory has no comprehension, so
@@ -624,7 +624,7 @@ either encoding, and on the corpus:
 
 The hybrid is not a split-the-difference compromise but a structural observation: a bounded
 quantifier's *result* is a `Bool`, so the arena can enumerate the bound set while the body goes
-on using native set terms. Comprehensions still decline — their result is a set, and mixing
+on using native set terms. Comprehensions still decline – their result is a set, and mixing
 representations there is not free.
 
 Two soundness findings came out of this stage, both by reading the reported violations against
@@ -632,23 +632,23 @@ their sources rather than trusting the count:
 
 - `Nat` was becoming an unconstrained opaque set constant, so the solver could decide
   `0 \notin Nat` and report `TypeOK == x \in Nat` violated in the initial state
-  (`AddTwo.tla`). Membership in the standard infinite sets is exactly expressible —
-  `x \in Nat` is `x >= 0` — so it is encoded; using one as a *value* is declined by name.
+  (`AddTwo.tla`). Membership in the standard infinite sets is exactly expressible –
+  `x \in Nat` is `x >= 0` – so it is encoded; using one as a *value* is declined by name.
 - The arena's `Cardinality` guards exposed a **false `sat`** in the solver itself: a string
   equality that was not a foldable top-level assertion was a free Boolean. See
   `docs/studies/2026-09-13-string-literal-distinctness-false-sat.md`.
 
-What is still blocked is a set whose *element* sort has no SMT sort — `Set(Set(<<Int, Int>>))`
+What is still blocked is a set whose *element* sort has no SMT sort – `Set(Set(<<Int, Int>>))`
 needs tuples to be sortable, which structural values are not.
 
 **The function theory is the other half of O3, and it is landed.** A TLA+ function is a
-*domain* and a *graph*; an SMT array is only the graph. `arena::Value::Fun` carries both — the
+*domain* and a *graph*; an SMT array is only the graph. `arena::Value::Fun` carries both – the
 graph as an array, so `f[x]` is a select and `[f EXCEPT ![i] = v]` a store, and the domain as a
 **set-sorted term**, which is only possible because the set theory landed first.
 
 Carrying the domain is not a refinement of an approximation, it closes a hole in the direction
 that **hides** a counterexample. Array equality compares every index, so
-`[x \in {1} |-> 0]` and `[x \in {1, 2} |-> 0]` — different TLA+ functions — read as equal
+`[x \in {1} |-> 0]` and `[x \in {1, 2} |-> 0]` – different TLA+ functions – read as equal
 whenever the array happens to agree at 2. Equality is now `same domain /\ same graph`, which is
 *stricter* than TLA+ and therefore errs the safe way; and it is **exact** whenever both graphs
 were built here, because every graph stores over one canonical base array per array sort and so
@@ -659,7 +659,7 @@ literals free to differ.
 Three things follow, and each was previously refused or wrong:
 
 - `DOMAIN f` is exact for a constructed function, not declined.
-- `f \in [S -> T]` — how most specifications state a function variable's type in `TypeOK` —
+- `f \in [S -> T]` – how most specifications state a function variable's type in `TypeOK` –
   is *statable*: "the domain is `S`, and every value on it is in `T`". It goes back through the
   ordinary `\in` dispatch, so `[S -> Nat]` becomes `>= 0` rather than an opaque set.
 - A function-typed `VARIABLE` is **two** SMT variables, `f@k` and `f@k$dom`. `UNCHANGED f` then
@@ -668,35 +668,35 @@ Three things follow, and each was previously refused or wrong:
 The bridge between the two set encodings runs both ways now. `Encoder::candidates_of` reads an
 arena candidate list *back off* a set-sorted term, which is what makes `\A i \in DOMAIN f : P`
 work: a bounded quantifier is instantiated per candidate, and every set this encoder builds is a
-union of (conditional) singletons — the normal form CVC5 uses for a set constant. A genuinely
+union of (conditional) singletons – the normal form CVC5 uses for a set constant. A genuinely
 opaque set (a state variable) has no candidate list and is refused by that name.
 
 Measured: the ground cross-check went **817 → 847** definitions, still **zero disagreements**
-and zero `Unknown` — function-valued definitions are now claimed by equality against the
+and zero `Unknown` – function-valued definitions are now claimed by equality against the
 evaluator's own function rather than skipped. Bounded model checking went **35 → 39**
 specifications, and **46** once the `.cfg` is read (below).
 
 And the blocker moved again, informatively. The largest single cause was
 `a function constructor [x \in S |-> e] has no encoding` (39); that line is gone, and what
-those specifications hit next is **`1..N` for a symbolic `N`** (23) — a `CONSTANT` with no
+those specifications hit next is **`1..N` for a symbolic `N`** (23) – a `CONSTANT` with no
 value, which is what the `.cfg` supplies. The next unlock is config parsing, not more theory.
 
 What is still refused, by name: a function whose *values* are themselves functions (the inner
 domain would be lost), a function over an empty domain with no sort to give it, and `[S -> T]`
-as a value rather than as a membership test — it has `|T|^|S|` members.
+as a value rather than as a membership test – it has `|T|^|S|` members.
 
 **The TLC configuration file is read** (`nixie-tla-syntax::config`). A
 specification does not name its own entry points or fix its own constants; the
 `.cfg` beside it does, and without it a `CONSTANT N` is an arbitrary integer and
 `1..N` has no enumerable member list. All **363 of 363** corpus `.cfg` files
-parse. Constants are *substituted* rather than assumed — TLC's own wording is
+parse. Constants are *substituted* rather than assumed – TLC's own wording is
 "replace the constant with the constant expression", and the difference is
 load-bearing: an assumption `N = 3` reaches the solver, but the encoder needs
 the value earlier than that. A **model value** (a bare identifier) becomes a
 string literal under a reserved prefix, which costs nothing because distinct
 string literals are already distinct in the solver.
 
-Measured with the same binary, configuration on versus off — the only honest
+Measured with the same binary, configuration on versus off – the only honest
 control, since an older build would differ in everything else:
 
 | | `.cfg` ignored | `.cfg` read |
@@ -713,7 +713,7 @@ answer.
 **Two bugs surfaced by doing this, both older than the work that found them.**
 
 *`@` in a multi-update `EXCEPT` read the wrong thing.* `[f EXCEPT !.a = d, !.b
-= 1 - @]` lowered `@` to `d["b"]` — the *previous update's value* — because the
+= 1 - @]` lowered `@` to `d["b"]` – the *previous update's value* – because the
 function was assumed to sit a fixed distance below the top of the lowering's
 value stack, which holds only for the first update. Silent, and a wrong value
 rather than a refusal. TLC settles what `@` should mean, and the two readings
@@ -721,7 +721,7 @@ differ only when two updates touch the same index:
 `[[a |-> 1] EXCEPT !.a = 5, !.a = @ + 100].a` is **105**, so `@` sees what the
 earlier update wrote. Fixing it moved eight specifications (`EWD998`, `Channel`,
 `LamportMutex`, `CoffeeCan`, `DieHarder`, …) out of "does not type check", and
-**no reported verdict changed** — it had only ever mis-typed specifications,
+**no reported verdict changed** – it had only ever mis-typed specifications,
 never corrupted a result that reached the solver.
 
 *A tuple is a function on `1..n`, and the evaluator disagreed.* `Apalache!MkSeq`
@@ -730,8 +730,8 @@ literal; the evaluator said `FALSE`. Fixed by normalising at *construction*
 rather than with a hand-written `PartialEq`: `Value` is a `BTreeMap` key, so an
 equality crossing the two variants while a derived `Ord` still separated them
 would make `{<<1, 2>>, [i \in 1..2 |-> i]}` a two-element set. The encoder
-cannot normalise the same way — a function-typed state variable has no
-candidate list to turn into a tuple — so `arena::eq_values` crosses the two
+cannot normalise the same way – a function-typed state variable has no
+candidate list to turn into a tuple – so `arena::eq_values` crosses the two
 there by the definition instead.
 
 **The differential that found the second one had been reporting nothing.**
@@ -739,20 +739,20 @@ there by the definition instead.
 in this front end that can see a *lowering* bug: the encoder cross-check shares
 the lowering with the evaluator, so a wrong kernel term is invisible to it.
 `compare.py` read `tlcout/` while the runner had always written `out/`, so a
-clean run compared zero definitions and printed `SEMANTIC MISMATCHES: 0` — which
+clean run compared zero definitions and printed `SEMANTIC MISMATCHES: 0` – which
 reads as a pass. It now compares **587 definitions across 217 probes with 0
 mismatches**, and an empty comparison is a hard failure rather than a clean
 sheet. The number in this document before today came from a run where a
 hand-made `tlcout/` happened to exist.
 
 **Tuples and records are single-constructor datatypes.** They were structural
-only — taken apart by the encoder before anything reached the solver, with no
+only – taken apart by the encoder before anything reached the solver, with no
 SMT sort. The stated reason was that an SMT array forces one sort across every
 index, so `<<1, "a">>` could not be array-backed; that is true, and it does not
 apply to a datatype, where each field carries its own sort. Z3 and CVC5 model
 TLA-style tuples and records exactly this way.
 
-Having a sort was the largest single cause on the blocked list — **61**
+Having a sort was the largest single cause on the blocked list – **61**
 specifications whose three lines were one root: `Set(<<Str, Str>>)`,
 `[color: Str, pos: Int, q: Int]`, `(Str -> [clientIdCounter: Int, …])`.
 
@@ -767,8 +767,8 @@ The `Set`/`record`/`function` lines of "state type has no sort yet" went
 set-valued term with no candidate list" rose 16 → 34 and `1..N` for symbolic
 `N` 21 → 31.
 
-The structural form stays primary — it is what makes a literal index and an
-exact `DOMAIN` work — and the datatype is what a value **reifies into** when
+The structural form stays primary – it is what makes a literal index and an
+exact `DOMAIN` work – and the datatype is what a value **reifies into** when
 something needs one term. The sort's name is a function of the field names and
 their sorts rather than of the TLA+ type, because the encoder holds values and
 sorts and never the inferred type; a name derived from the type would be one it
@@ -783,7 +783,7 @@ kind. `TermTheory::Set` is classified in Nelson-Oppen and **nothing consumes
 it**: the whole of finite sets is the ground reduction, so `set.member` is not
 a congruence-closed symbol and two membership atoms over sets the solver
 equates *at solve time* are unrelated SAT variables. The reduction bridges only
-equalities it can *read*, so `5 \in (store a 1 {})[1]` answered `sat` — the
+equalities it can *read*, so `5 \in (store a 1 {})[1]` answered `sat` – the
 array theory merges the select with the empty set, and nothing carries that to
 the membership. Two set variables equated through `f(x)`/`f(y)` with `x = y`
 failed the same way; an equality written down worked. Now every pair with an
@@ -793,15 +793,15 @@ congruence-complete, and CVC5 keeps membership indexed by equivalence class for
 exactly that reason. The real repair is a theory solver, not an axiom.
 
 **And that fix exposed a wrong `unsat` in the same file.** The extensionality
-witness was named from a counter that restarts on every `reduce` call — and
-`reduce` runs per `assert` over the whole stack — so one hash-consed variable
+witness was named from a counter that restarts on every `reduce` call – and
+`reduce` runs per `assert` over the whole stack – so one hash-consed variable
 could be handed to two different pairs and forced to witness two unrelated
 disequalities. It surfaced as a counterexample the checker had been finding and
 suddenly missed. Witnesses are keyed on their pair now.
 
 The wrong `sat` was not hypothetical on the corpus: `Consensus_epr.tla`
 reported a violation at step 0 of an invariant its own `Init` makes vacuously
-true. Closing it removed that violation and **cost one verdict** —
+true. Closing it removed that violation and **cost one verdict** –
 `DiningPhilosophers.tla` went from `NoViolationWithin` to `Unknown`, because
 the extra axioms make its query far harder. That is the safe direction (a claim
 withdrawn, not a claim invented), and it is the price of a ground reduction
@@ -811,7 +811,7 @@ The harness needed a **deterministic per-query budget** to go with it: some
 specifications now reach the solver with hundreds of set and datatype terms and
 do not finish in any useful time, and a corpus run that hangs is not a
 measurement. It is counted in *conflicts*, not seconds, so the verdict does not
-depend on machine load — the numbers here stopped being reproducible the last
+depend on machine load – the numbers here stopped being reproducible the last
 time anything depended on a clock. At 20 000 conflicts the whole corpus runs in
 **4m16s**.
 
@@ -821,7 +821,7 @@ undecided.
 
 One measurement hygiene fix came with it: the corpus harnesses sort their inputs and `Bmc`
 sorts the names it declares. `find` hands back directory order, which is not stable between
-invocations, and `Inference::free_names` comes off a `HashMap` — so `SortId`s, `TermId`s and
+invocations, and `Inference::free_names` comes off a `HashMap` – so `SortId`s, `TermId`s and
 the reported examples all varied from run to run. Two consecutive runs are now byte-identical,
 which is the minimum bar for a number to mean anything.
 
@@ -831,35 +831,35 @@ specifications behind reported violations rather than trusting the count:
 1. **`ASSUME`.** A specification is claimed to hold *under its assumptions*, which are usually
    the only thing pinning a `CONSTANT`. Ignoring them asks a strictly harder question and
    manufactures counterexamples. Assumptions are now asserted; one that cannot be encoded is
-   dropped **and counted**, because dropping weakens the search — it can invent a
+   dropped **and counted**, because dropping weakens the search – it can invent a
    counterexample but never hide one.
 2. **Apalache's `ConstInit`.** A specification run with `--cinit` pins its constants in a
    definition rather than an `ASSUME`. `Bug1023.tla` in Apalache's own suite is that shape and
    produced a violation before the convention was supported.
-3. **The `.cfg`.** TLC's config can replace a `CONSTANT` *or a definition* —
+3. **The `.cfg`.** TLC's config can replace a `CONSTANT` *or a definition* –
    `ConfigReplacements.tla` replaces `Value`. Not yet parsed; reported when present so the
    number is visible rather than folded into the total.
 
 And one malformed-specification case worth its own line: `UnchangedAsInv1663.tla` has
 `Inv == UNCHANGED x`, an **action** used as an invariant. At depth 0 with no transition
 asserted the next-state value is unconstrained, so `~Inv` is trivially satisfiable and the
-checker reported a violation — a faithful reading of the formula and a meaningless statement
+checker reported a violation – a faithful reading of the formula and a meaningless statement
 about the specification. `prepare` now rejects it on level grounds, one-sidedly: a level that
 could not be *established* is never grounds for rejection, only one proved too high.
 
 ## 7. Open questions
 
-- **Parser effort — answered.** `nixie-tla-syntax` accepts **905 of 907** files (99.8%) across
+- **Parser effort – answered.** `nixie-tla-syntax` accepts **905 of 907** files (99.8%) across
   the two external corpora (see below). The two rejections are invalid TLA+ that SANY rejects
   too. The grammar work is done; what is *not* done is level checking.
 - **The operator precedence table is transcribed, not verified.** The common operators are
   high-confidence and pinned by a test; the exotic ones (`\wr`, `\sqcap`, `##`, `$$`, `??`)
-  are not. Two errors were found this way — `\X` marked non-associative (rejecting the legal
+  are not. Two errors were found this way – `\X` marked non-associative (rejecting the legal
   ternary product `A \X B \X C`), and `!!`, `:=`, `::=`, `\mod`, `\exists`, `\forall`
   missing altogether. Check the whole table against SANY before declaring the differential
   suite green.
 - **Level checking is implemented, and deliberately under-reports.** `nixie-tla-syntax::level`
-  computes constant/state/action/temporal levels and reports violations — but only those that
+  computes constant/state/action/temporal levels and reports violations – but only those that
   do **not** depend on a name it could not resolve. Two things it cannot yet see would
   otherwise make it reject correct specifications: `EXTENDS` is not resolved, and operator
   levels use the max rule rather than full TLA+ *argument level constraints* (which is what
@@ -878,9 +878,9 @@ could not be *established* is never grounds for rejection, only one proved too h
   `SVGElemToString(elem) == TRUE` *ignores* its parameter entirely. Each parameter now carries
   an exact level function on the four-element chain, obtained by evaluating the body once per
   level; built-in operators passed as values (`BoxTest([])`) carry theirs too. Both cases came
-  from the parity run — the second was SANY disagreeing and being *right*.
+  from the parity run – the second was SANY disagreeing and being *right*.
 
-  **`EXTENDS` is resolved** (`module::Loader`), so imported levels are exact — `EXTENDS`
+  **`EXTENDS` is resolved** (`module::Loader`), so imported levels are exact – `EXTENDS`
   performs no substitution. `INSTANCE` is not: `I == INSTANCE N WITH v <- e` substitutes, and
   a substitution can lower a level, so instance members stay untrusted until the lowering pass
   can apply the substitution properly.
@@ -906,7 +906,7 @@ could not be *established* is never grounds for rejection, only one proved too h
   It refuses to guess. `f[1]` where nothing constrains `f` fits a tuple, a sequence and a
   function, and the three encode differently, so it is **reported** (97 definitions, 2.2%).
   `DOMAIN f` is deliberately *not* in that category: `Fun(d, r)` is the top of the shape
-  lattice — a tuple, a sequence and a record are each a function — so committing there rules
+  lattice – a tuple, a sequence and a record are each a function – so committing there rules
   nothing out, whereas committing on an index would force a tuple to be homogeneous.
 
   Three corpus-found defects are worth recording, because all three come from the same root:
@@ -928,23 +928,23 @@ could not be *established* is never grounds for rejection, only one proved too h
   What it does **not** do is variant records: `[type: {"1a"}, bal: B] \cup [type: {"1b"},
   acc: A, bal: B]` is the standard message idiom and needs variant types, which is what
   Apalache added `Variant` for. 152 definitions (3.5%). Width subtyping does not rescue this
-  either — the join drops `acc`, so `m.acc` after filtering on `m.type` is still ill typed.
+  either – the join drops `acc`, so `m.acc` after filtering on `m.type` is still ill typed.
 
   Remaining question: how much *more* is bought by reading `@type:` annotations, given that
   inference alone reaches 90.9%? The answer is probably "the variant records and little
   else", which would make annotations a feature for the hard 3.5% rather than a prerequisite.
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or
   does O2 need a state abstraction first? Unknown until measured.
-- Apalache's current temporal fragment — see Step 0 above.
+- Apalache's current temporal fragment – see Step 0 above.
 
 ## PlusCal (2026-09-21)
 
-A PlusCal algorithm is a TLA+ *comment* — `(* --algorithm … *)` — which is
+A PlusCal algorithm is a TLA+ *comment* – `(* --algorithm … *)` – which is
 why a front end can accept every PlusCal specification and never see the
 algorithm. `nixie_tla_syntax::pcal` is the missing layer: it extracts the
 algorithm from the comment stream, parses it (both p- and c-syntax) over
 this front end's own lexer and expression parser, and translates to plain
-TLA+ through the reference's phases — required-label insertion, cluster
+TLA+ through the reference's phases – required-label insertion, cluster
 splitting, symbol disambiguation, the control-flow explosion into `pc`
 guards and updates, and text generation. The label-placement rules are the
 semantics (a statement cluster between labels is one atomic step), so the

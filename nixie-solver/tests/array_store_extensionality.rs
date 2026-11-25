@@ -7,8 +7,8 @@
 //! (not (= (store (store a 1 x) 2 y) (store (store a 2 y) 1 x)))
 //! ```
 //!
-//! is unsatisfiable — writing two distinct indices in either order yields the
-//! same array — but deciding it needs extensionality, which manufactures the
+//! is unsatisfiable – writing two distinct indices in either order yields the
+//! same array – but deciding it needs extensionality, which manufactures the
 //! read the formula itself never performs.
 //!
 //! `Solver::has_array_ops` is the switch that lets the lazy array-axiom
@@ -21,7 +21,7 @@
 //! back `sat` in milliseconds.
 //!
 //! The fix gives `track_theory_vars` a `Store` arm that sets the flag (descent
-//! is unchanged — a store's operands are not arithmetic variables of the
+//! is unchanged – a store's operands are not arithmetic variables of the
 //! constraint being registered). Extensionality then supplies a witness index
 //! `k` for the disequal pair and read-over-write reduces both chains at `k`.
 //!
@@ -42,9 +42,9 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Store-only formulas: no `select` anywhere in the input.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The minimal repro: two writes at distinct constant indices, swapped.
 ///
@@ -187,12 +187,12 @@ fn shadowed_store_is_unsat() {
     assert_eq!(out, vec!["unsat"], "the second write shadows the first");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // The flag itself: a store must switch array reasoning on.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// A store-only problem that is *satisfiable* still has to come back `sat`
-/// promptly — enabling the refinement loop for stores must not turn every
+/// promptly – enabling the refinement loop for stores must not turn every
 /// store-only input into a search. Two writes at indices the input leaves
 /// free, with no disequality to refute.
 #[test]

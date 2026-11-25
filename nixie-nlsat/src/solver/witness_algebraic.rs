@@ -5,13 +5,13 @@
 //! `NlsatSolver::pick_arith_value` hands each arithmetic variable a *rational*
 //! sample point. For `x² = 2` there is no such point, so the search used to
 //! classify the variable as `ArithDecision::IrrationalOnly` and the whole
-//! problem came back `unknown` — the true feasible set is `{−√2, √2}`, both of
+//! problem came back `unknown` – the true feasible set is `{−√2, √2}`, both of
 //! which the assignment simply could not hold. This module lets the search
 //! commit to one of them exactly.
 //!
 //! ## The carrier, and the three types deliberately *not* used
 //!
-//! The value carrier is [`CadPoint`] — a rational, or a defining polynomial
+//! The value carrier is [`CadPoint`] – a rational, or a defining polynomial
 //! plus an isolating interval and root index, which is exactly Z3's `root-obj`
 //! shape. It is already the carrier of `crate::cad`'s sample points, and
 //! `CadPoint::try_sign_of` (see `crate::cad_algebraic`) answers *sign of a
@@ -39,7 +39,7 @@
 //! *rational* values, or over rationals plus **one** algebraic value (the
 //! rationals substitute away, leaving a univariate polynomial the point can be
 //! evaluated against exactly). Two algebraic values leave a genuinely
-//! multivariate real-algebraic problem, which this crate cannot solve — and an
+//! multivariate real-algebraic problem, which this crate cannot solve – and an
 //! atom whose sign cannot be decided is an atom that cannot be *checked*.
 //!
 //! That is not a performance concern, it is a soundness one. With `x = √2` and
@@ -70,7 +70,7 @@ use nixie_math::polynomial::{Polynomial, Var};
 /// Three-valued on purpose. An `Option<CadPoint>` cannot distinguish "every
 /// candidate cell was *proved* not to satisfy the constraints" from "some
 /// check could not be completed", and the caller turns the first into a theory
-/// lemma (`ProvedEmpty`) — so conflating them would fabricate `unsat`.
+/// lemma (`ProvedEmpty`) – so conflating them would fabricate `unsat`.
 pub(super) enum AlgebraicWitness {
     /// An exact point satisfying every constraint on the variable that is
     /// decidable under the current assignment.
@@ -106,7 +106,7 @@ struct CheckedAtom<'a> {
     is_true: bool,
     /// The literal to negate when this atom joins a lemma.
     lit: Literal,
-    /// Whether the atom mentions no variable other than the sampled one — only
+    /// Whether the atom mentions no variable other than the sampled one – only
     /// then is its refutation independent of earlier (greedy) choices.
     pure: bool,
 }
@@ -115,13 +115,13 @@ impl NlsatSolver {
     /// Search for an exact witness for `var` among the cells of the
     /// sign-invariant decomposition its currently-assigned constraints induce.
     ///
-    /// The candidate list is one representative per cell — every root of every
+    /// The candidate list is one representative per cell – every root of every
     /// specialized constraint polynomial, and one rational strictly inside each
     /// gap between consecutive roots. That makes the search a *decision
     /// procedure* over those constraints: a cell is sign-invariant, so if no
     /// representative satisfies them, no real number does.
     pub(super) fn sample_algebraic_witness(&self, var: Var) -> AlgebraicWitness {
-        // One algebraic value at a time — see the module docs. This is the
+        // One algebraic value at a time – see the module docs. This is the
         // guard that keeps every atom over fully-assigned variables inside
         // `Assignment::eval_poly_sign`'s decidable range.
         if self.assignment.has_algebraic_value() {
@@ -326,7 +326,7 @@ impl NlsatSolver {
     /// The counterpart of `NlsatSolver::commit_arith_witness`, with one
     /// difference: the ledger entry offers **no** replacement point. The
     /// natural retry for an algebraic witness is a *different root*, not a
-    /// rational drawn from the same region — the rationals immediately around
+    /// rational drawn from the same region – the rationals immediately around
     /// `√2` all violate `x² = 2`, so offering them would burn the retry
     /// allowance on points that are already known to fail. Withdrawal
     /// therefore walks straight past this entry to an earlier, genuinely
@@ -354,8 +354,8 @@ impl NlsatSolver {
     /// The rational search path is left untouched: with no algebraic value
     /// installed this is an immediate `true`. Otherwise every Boolean-assigned
     /// atom must be *proved* to agree with its assigned polarity. Anything
-    /// undecidable — a refinement budget that ran out, a root atom, an atom
-    /// over two algebraic values — fails the sweep and the caller answers
+    /// undecidable – a refinement budget that ran out, a root atom, an atom
+    /// over two algebraic values – fails the sweep and the caller answers
     /// `Unknown`.
     ///
     /// This is the only net under an algebraic `Sat`:
@@ -370,7 +370,7 @@ impl NlsatSolver {
         // a genuine disjunction can be added (the real-division guarded
         // defining clause `rhs = 0 ∨ rhs·t − lhs = 0`), `decide()` may
         // assign an atom's Boolean a truth value its arithmetic does not
-        // support, and nothing downstream caught it — observed as a
+        // support, and nothing downstream caught it – observed as a
         // wrong `sat` on `(= y 2) (= x 9) (= (/ x y) 5)`. A `Sat` now
         // requires the final assignment to *concretely* satisfy every atom
         // and every clause, rational or algebraic (the codebase's
@@ -401,7 +401,7 @@ impl NlsatSolver {
             }
         }
         // Clause level: every clause must have a literal that is TRUE under
-        // the final assignment — a Boolean whose atom's arithmetic really
+        // the final assignment – a Boolean whose atom's arithmetic really
         // holds (checked above) or a Boolean consistent with it. All-false
         // (or false-plus-undef, which is a complete assignment pretending
         // nothing) means the "model" satisfies the watched structure but
@@ -481,7 +481,7 @@ mod tests {
     /// a pinned divisor makes the guard disjunct false, and the identity
     /// `2·t − x = 0` contradicts the pinned `t = 5`, `x = 9`. The verdict
     /// may be `Unsat` (propagation finds it) or `Unknown` (the Eq-distrust
-    /// decline) — but NEVER `Sat`: with the guard's polarity inverted, this
+    /// decline) – but NEVER `Sat`: with the guard's polarity inverted, this
     /// exact shape produced a wrong `sat` (a rational model trusted on the
     /// search's word alone).
     #[test]
@@ -498,7 +498,7 @@ mod tests {
         let y0 = s.new_ineq_atom(Polynomial::univariate(0, &[rat(0), rat(1)]), AtomKind::Eq);
         // identity disjunct: 2·t − x = 0
         let mut id = Polynomial::univariate(2, &[rat(0), rat(2)]);
-        // subtract x: coefficient −1 on var 1 — build via arithmetic on polys
+        // subtract x: coefficient −1 on var 1 – build via arithmetic on polys
         id = Polynomial::sub(&id, &Polynomial::univariate(1, &[rat(0), rat(1)]));
         let ident = s.new_ineq_atom(id, AtomKind::Eq);
         s.add_clause(vec![s.atom_literal(y2, true)]);
@@ -646,7 +646,7 @@ mod tests {
     }
 
     /// A pure but genuinely infeasible constraint set must come back as a
-    /// *proof* (`NoRealPoint`), which the caller turns into a theory lemma —
+    /// *proof* (`NoRealPoint`), which the caller turns into a theory lemma –
     /// not as `Inconclusive`.
     #[test]
     fn pure_infeasible_set_is_proved_empty_not_inconclusive() {
@@ -676,7 +676,7 @@ mod tests {
                 panic!("no real x satisfies both, yet {point:?} was accepted")
             }
             AlgebraicWitness::Inconclusive => {
-                panic!("both constraints are pure and exactly decidable — this is a proof")
+                panic!("both constraints are pure and exactly decidable – this is a proof")
             }
         }
     }

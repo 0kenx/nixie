@@ -42,7 +42,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
             | "re.opt" | "re.comp" | "ff.neg" | "seq.unit" | "seq.len"
             // Transcendentals over the reals (dReal-style surface; the
-            // delta-ICP theory owns them — see docs/TRANS.md).
+            // delta-ICP theory owns them – see docs/TRANS.md).
             | "exp" | "log" | "sin" | "cos" | "atan" | "sqrt"
             | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
             | "set.is_singleton" | "set.singleton"
@@ -57,7 +57,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // (Bit-vector operators marked `:left-associative` by the
             // SMT-LIB 2.6 `FixedSizeBitVectors` theory are listed under the
             // variadic plans below instead, so `(bvadd a b c)` parses as the
-            // standard's left fold `bvadd(bvadd(a, b), c)` — exactly Z3's
+            // standard's left fold `bvadd(bvadd(a, b), c)` – exactly Z3's
             // behaviour, including the `(bvadd x)` arity-1 identity.)
             "seq.nth" | "mod" | "select" | "bvult"
             | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvcomp"
@@ -150,8 +150,8 @@ impl Parser<'_> {
     }
 
     /// A finite-field builder refusal, surfaced as a parse error: an
-    /// ill-typed FF application is a user error, and the alternative —
-    /// silently dropping the constraint — is the soundness bug this
+    /// ill-typed FF application is a user error, and the alternative –
+    /// silently dropping the constraint – is the soundness bug this
     /// codebase does not allow.
     pub(super) fn ff_build_error(&self, op: &str, err: crate::ast::FfBuildError) -> NixieError {
         NixieError::ParseError {
@@ -288,7 +288,7 @@ impl Parser<'_> {
             }
             // `bag.all`/`bag.some` are CVC5's `ALL_FILTER`/`SOME_FILTER`
             // lowerings, applied at parse time: both are exactly the
-            // filter's extensional equality — `all p b <=> filter p b = b`
+            // filter's extensional equality – `all p b <=> filter p b = b`
             // (the negated direction's witness is precisely "an element
             // present in `b` that `p` rejects"), and
             // `some p b <=> filter p b != empty` (the witness: "an element
@@ -318,7 +318,7 @@ impl Parser<'_> {
     /// Build `(bag.fold f t b)` from the parsed head: `f` validated as
     /// binary `(-> T1 T2 T2)` by the parser, the initial value checked
     /// against `f`'s codomain, and the bag operand against `f`'s element
-    /// domain — CVC5's `BAG_FOLD` type rule in full.
+    /// domain – CVC5's `BAG_FOLD` type rule in full.
     pub(super) fn build_bag_fold(
         &mut self,
         func: &str,
@@ -443,7 +443,7 @@ impl Parser<'_> {
     }
 
     /// SMT-LIB sort check: `/` accepts `Int`/`Real` operands only (the `Int`
-    /// ones coerce up to `Real`; anything else — bit-vectors, strings, ... —
+    /// ones coerce up to `Real`; anything else – bit-vectors, strings, ... –
     /// is a sort error).
     fn check_arith_operands(&self, op: &str, args: &[TermId]) -> Result<()> {
         let int = self.manager.sorts.int_sort;
@@ -486,7 +486,7 @@ impl Parser<'_> {
     /// The bit-vector width both operands of an overflow predicate share.
     ///
     /// [`Parser::check_bv_binary_widths`] has already rejected a mismatch, so
-    /// this only has to read the width back off the left operand — and reject
+    /// this only has to read the width back off the left operand – and reject
     /// the degenerate width 0, which has no sign bit for the signed
     /// predicates and no `(_ bvMIN 0)` for `bvnego`.
     fn overflow_operand_width(&self, op: &str, x: TermId) -> Result<u32> {
@@ -562,13 +562,13 @@ impl Parser<'_> {
     /// Build one of the SMT-LIB 2.7 binary overflow predicates.
     ///
     /// Every one of them is a *desugaring* into term kinds the bit-blaster
-    /// already handles — there is no new `TermKind` and no new circuit — so
+    /// already handles – there is no new `TermKind` and no new circuit – so
     /// the predicates inherit the bit-vector theory's semantics exactly.
     /// The definitions are the standard ones:
     ///
-    /// * `bvuaddo(a, b)` = `bvult(bvadd(a, b), a)` — an unsigned sum wraps iff
+    /// * `bvuaddo(a, b)` = `bvult(bvadd(a, b), a)` – an unsigned sum wraps iff
     ///   it comes out below either summand.
-    /// * `bvusubo(a, b)` = `bvult(a, b)` — an unsigned difference borrows iff
+    /// * `bvusubo(a, b)` = `bvult(a, b)` – an unsigned difference borrows iff
     ///   the minuend is the smaller.
     /// * `bvsaddo(a, b)` = the summands share a sign and the sum does not.
     /// * `bvssubo(a, b)` = the operands differ in sign and the difference does
@@ -696,7 +696,7 @@ impl Parser<'_> {
     /// Sort check shared by the chainable equality/comparison operators and
     /// `distinct`: every operand must carry the same sort (Z3: "Sorts A and
     /// B are incompatible").  `=` between different bit-vector widths is the
-    /// sighting that motivated this — the term interns with the first
+    /// sighting that motivated this – the term interns with the first
     /// operand's sort and no theory can honestly encode the comparison.
     fn check_chainable_sorts(&self, op: &str, args: &[TermId]) -> Result<()> {
         let mut expected: Option<crate::sort::SortId> = None;
@@ -707,11 +707,11 @@ impl Parser<'_> {
             let sort = data.sort;
             // `Int` and `Real` form one compatibility class: SMT-LIB
             // numerals are polymorphic (`0` reads as Real next to a Real
-            // operand — `(> x 0)` with `x : Real` is well-typed), and
+            // operand – `(> x 0)` with `x : Real` is well-typed), and
             // nixie embeds `to_real n` as the Int-sorted variable itself,
             // so a well-typed script can mix the two sorts internally.
             // Everything else (Bool, `(_ BitVec w)`, FP, arrays, …) must
-            // match exactly — the mixed-width `(_ BitVec 1)` vs
+            // match exactly – the mixed-width `(_ BitVec 1)` vs
             // `(_ BitVec 128)` equality is the sighting this check exists
             // for.
             let mixed_arith = |x: crate::sort::SortId, y: crate::sort::SortId| {
@@ -994,15 +994,15 @@ impl Parser<'_> {
                 self.check_bag_operand(op, x)?;
                 self.manager.mk_bag_setof(x)
             }
-            // `bag.choose` — some element of the bag (CVC5 `BAG_CHOOSE`):
+            // `bag.choose` – some element of the bag (CVC5 `BAG_CHOOSE`):
             // `b ≠ ∅ → count(choose(b), b) ≥ 1`, congruent in the bag.
             "bag.choose" => {
                 self.check_bag_operand(op, x)?;
                 self.manager.mk_bag_choose(x)
             }
             // `bag.map`/`bag.filter` never reach here with their function
-            // operand still unparsed — `open_named_head` intercepts the
-            // form and builds it through `build_bag_fun` — but a flattened
+            // operand still unparsed – `open_named_head` intercepts the
+            // form and builds it through `build_bag_fun` – but a flattened
             // `_`-spelling or annotation wrapper could in principle route
             // here; the honest answer is the same parse-level rejection the
             // unsupported bag operators get.
@@ -1082,7 +1082,7 @@ impl Parser<'_> {
         // SMT-LIB sort check: `mod` and `div` are Int × Int → Int.  A Real
         // operand is a sort error (the standard has no coercion *down* from
         // Real), and accepting it would intern a term whose semantics the
-        // theories do not define — z3 silently coerces via `to_int`, which
+        // theories do not define – z3 silently coerces via `to_int`, which
         // is a nonstandard extension; the standard-mandated answer is an
         // error, exactly like the bit-vector width rule above.
         if matches!(op, "mod" | "div") {
@@ -1173,7 +1173,7 @@ impl Parser<'_> {
             // `(bag e n)`: the element may be of any sort, the
             // multiplicity an `Int`. A negative literal is *accepted*, and
             // CVC5's semantics clamp it: `count(x, (bag y n)) =
-            // ite(x = y ∧ n ≥ 1, n, 0)` — so `(bag 1 -5)` is the empty
+            // ite(x = y ∧ n ≥ 1, n, 0)` – so `(bag 1 -5)` is the empty
             // bag (differential-tested: count of `(bag 1 -5)` is 0, not
             // −5, and `(bag 1 -5)` = `(bag 1 -1)`). The builder folds a
             // nonpositive literal to `bag.empty`.
@@ -1336,7 +1336,7 @@ impl Parser<'_> {
     /// constant, and the parser relativizes every `RoundingMode` quantifier
     /// binder the same way. Drop either guarantee and a sixth element of the
     /// sort would silently be *treated as* `RTZ` here while comparing distinct
-    /// from all five — the exact shape that makes `(distinct m1 .. m6)` answer
+    /// from all five – the exact shape that makes `(distinct m1 .. m6)` answer
     /// `sat` when it must be `unsat`.
     pub(super) fn expand_symbolic_rm(
         &mut self,
@@ -1882,7 +1882,7 @@ mod tests {
     /// [`operand_plan`] because its head consumes a token of its own.
     ///
     /// Both rounding-mode spellings are driven: a literal mode must reach a
-    /// builder arm, and so must a *symbolic* one — the symbolic path calls the
+    /// builder arm, and so must a *symbolic* one – the symbolic path calls the
     /// very same arms once per mode through
     /// [`Parser::expand_symbolic_rm`](super::Parser::expand_symbolic_rm), so an
     /// operator missing an arm would surface as the same "internal:" error

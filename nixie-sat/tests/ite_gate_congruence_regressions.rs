@@ -8,7 +8,7 @@
 //!    recorded when all four clauses are present; the derived equivalences
 //!    must therefore be entailed. The 2026-09-18 prototyping bug this file
 //!    pins: the canonical presentation of `(c ? t : e)` is
-//!    `(¬c ? e : t)` — then/else SWAPPED, not negated. Negating all three
+//!    `(¬c ? e : t)` – then/else SWAPPED, not negated. Negating all three
 //!    inputs produces the *complement's* swap form, which made the closure
 //!    merge an output with the output of a *different* function (a false
 //!    UNSAT on `6s299b685_Iter22`, caught by kissat disagreement).
@@ -118,7 +118,7 @@ fn ite_congruent_twins_fold() {
 }
 
 /// Complementary gates: `o2 ↔ ¬f(o1)` (both branch literals flipped). The
-/// 2026-09-18 canonicalization bug merged these as EQUAL — turning this SAT
+/// 2026-09-18 canonicalization bug merged these as EQUAL – turning this SAT
 /// family into a false UNSAT. With the fix, `o1 ≠ o2` is UNSAT (o2 ≡ ¬o1)
 /// and the unbroken formula is SAT.
 #[test]
@@ -131,7 +131,7 @@ fn ite_complement_twins_fold_as_negation_not_equality() {
     force_equal(&mut s, 6, 7);
     assert_eq!(s.solve(), SolverResult::Unsat);
 
-    // And the positive statement: o6 ≠ o7 holds — the formula with the
+    // And the positive statement: o6 ≠ o7 holds – the formula with the
     // break removed must be SAT with a total model.
     let mut s2 = congruence_solver(8);
     add_ite_gate(&mut s2, 6, 0, 1, 2, true, true, true, true);
@@ -175,7 +175,7 @@ fn ite_trivial_gate_proves_output_equals_branch() {
 fn ite_false_unsat_regression_complement_vs_plain_presentation() {
     // Gate A: o6 ↔ (c0 ? x3 : e4)
     // Gate B: o7 ↔ (c0 ? ¬x3 : ¬e4)   [= ¬o6, the Iter22 shape]
-    // Constraints: c0 and (x3 ∨ e4) — satisfiable; any model works.
+    // Constraints: c0 and (x3 ∨ e4) – satisfiable; any model works.
     // A buggy closure merging o6 ≡ o7 (instead of o6 ≡ ¬o7) plus the
     // equality clauses below flips the verdict to a false UNSAT.
     let mut s = congruence_solver(9);
@@ -239,7 +239,7 @@ fn ite_distinct_gates_do_not_fold() {
 }
 
 /// An ITE whose branches make it an XOR (`c ? t : ¬t`) is left to the XOR
-/// arm (kissat parity) — it must still be handled soundly: two such gates
+/// arm (kissat parity) – it must still be handled soundly: two such gates
 /// over the same inputs fold as XOR outputs.
 #[test]
 fn ite_xor_shaped_gate_is_sound() {

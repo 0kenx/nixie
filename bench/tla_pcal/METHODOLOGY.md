@@ -1,18 +1,18 @@
-# PlusCal translation parity — methodology
+# PlusCal translation parity – methodology
 
 ## What this measures
 
 `nixie_tla_syntax::pcal` is a PlusCal translator: it turns the
 `(* --algorithm … *)` comment a TLA+ module carries into the plain TLA+
 definitions that comment specifies. Before it existed, the front end
-*accepted* every PlusCal specification and silently ignored the algorithm —
+*accepted* every PlusCal specification and silently ignored the algorithm –
 the parity gates ran green over these files because only the surrounding
 definitions were ever seen. Nothing was broken; a whole specification layer
 was absent.
 
 This suite checks the translator against the normative one:
 `tla2tools`' `pcal.trans` (PlusCal 1.12 in the 1.7.4 jar), the translator
-SANY itself consults. The oracle is consulted, never linked — the same
+SANY itself consults. The oracle is consulted, never linked – the same
 relationship `bench/z3_parity` has to Z3. Nothing Nixie ships runs a JVM.
 
 ## The four gates
@@ -21,13 +21,13 @@ In increasing strength; each one catches what the previous cannot:
 
 | gate | catches |
 |---|---|
-| **1. TRANSLATE** — our translator must accept exactly the files the oracle accepts (32 in the default corpus; the oracle's own set, minus `.toolbox` duplicates) | a grammar that is a subset of PlusCal's |
-| **2. PARSE+LEVELS** — every translated module parses and level-checks in this front end, and SANY resolves it with matching definition levels | output that is not well-formed TLA+ |
-| **3. DEFINITIONS** — the names and levels our translation declares equal the oracle's (compared through the parser, not a grep: the oracle lays `LET`-bound names out at column 0, which a line-oriented diff miscounts) | a missing action, an undeclared variable, a mis-levelled definition |
-| **4. STATES** — TLC explores a model of the golden translation and of ours, printing every initial state and successor pair; **both** translations' `Init` and `Next` must hold on **both** dumps | a translation that is well-formed and *wrong*: label placement, `UNCHANGED` bookkeeping, self-subscripts, `pc` updates |
+| **1. TRANSLATE** – our translator must accept exactly the files the oracle accepts (32 in the default corpus; the oracle's own set, minus `.toolbox` duplicates) | a grammar that is a subset of PlusCal's |
+| **2. PARSE+LEVELS** – every translated module parses and level-checks in this front end, and SANY resolves it with matching definition levels | output that is not well-formed TLA+ |
+| **3. DEFINITIONS** – the names and levels our translation declares equal the oracle's (compared through the parser, not a grep: the oracle lays `LET`-bound names out at column 0, which a line-oriented diff miscounts) | a missing action, an undeclared variable, a mis-levelled definition |
+| **4. STATES** – TLC explores a model of the golden translation and of ours, printing every initial state and successor pair; **both** translations' `Init` and `Next` must hold on **both** dumps | a translation that is well-formed and *wrong*: label placement, `UNCHANGED` bookkeeping, self-subscripts, `pc` updates |
 
 Gate 4 is the reason this suite exists. Labels *are* the semantics of a
-PlusCal algorithm — a statement cluster between labels is one atomic step —
+PlusCal algorithm – a statement cluster between labels is one atomic step –
 and every other gate would pass a translator that placed them differently.
 The state dump is taken from TLC's `PrintT(<<vars, vars'>>)` inside a probe
 module that `EXTENDS` the spec under test, with `INIT`/`NEXT` redirected to
@@ -41,7 +41,7 @@ Current standing (tla2tools 1.7.4, 2026-09-21):
 - 32 files translated, oracle agrees on the set;
 - parse/level parity clean; SANY accepts 32/32;
 - definition parity (names + levels) 32/32;
-- state parity 5/5 models — 287,647 agreeing evaluations (DiningPhilosophers
+- state parity 5/5 models – 287,647 agreeing evaluations (DiningPhilosophers
   58, QueensPluscal 2×2 972, 2PCwithBTM 238+248, MultiPaxos 2×1 511,
   DijkstraMutex 2×282 810), 394 symmetric declines (below).
 
@@ -50,11 +50,11 @@ Current standing (tla2tools 1.7.4, 2026-09-21):
 A decline is reported with its reason and never approximated.
 
 **Shared evaluator limits (gate 4's 394 on MultiPaxos).** Both translations
-decline with the *same* error on the same state — the golden's `Next`
+decline with the *same* error on the same state – the golden's `Next`
 contains the same `CHOOSE`/`filter` constructs ours does, and `pcalsem`
 refuses them identically. A decline that both sides agree on is counted and
-reported; a *disagreement* — one translation evaluates where the other does
-not, or they evaluate differently — is the failure. The MultiPaxos define
+reported; a *disagreement* – one translation evaluates where the other does
+not, or they evaluate differently – is the failure. The MultiPaxos define
 block uses `CHOOSE` (unbounded in the evaluator's view) and LET-bound
 higher-order `filter`, which is the standing Snowcat/evaluator boundary.
 
@@ -74,13 +74,13 @@ unchanged (the output is ordinary TLA+). Smoke results on our translations:
   `Violation` at 0 steps (exit 12), **independently replayed**, ITF trace
   written.
 - DiningPhilosophers (NP = 2): `--inv=ExclusiveAccess --length=4` →
-  `NoViolationWithin` — the Chandy/Misra mutual-exclusion property holds
+  `NoViolationWithin` – the Chandy/Misra mutual-exclusion property holds
   within the bound on the handover's named classic. (Depths 5–6 stay clean
-  and complete — 6 in minutes on the 2026-09-23 solver; a 7–8-step search
+  and complete – 6 in minutes on the 2026-09-23 solver; a 7–8-step search
   for a liveness-shaped violation exceeds the smoke timeout.) Note: this
   spec's `ASSUME NP \in Nat \ {0}` cannot be evaluated
   by the trace replayer (`Nat` is free to it), so a *violation* replay on
-  this spec would report `replayed: no` for that reason — the Simple
+  this spec would report `replayed: no` for that reason – the Simple
   replay above is the clean demonstration.
 
 Walls, each checked differentially (the oracle's own translation run
@@ -88,12 +88,12 @@ through the same checker):
 
 - **Two function-valued state variables updated in the same step** (the
   standard `x[self] := …` multiprocess shape): CLOSED 2026-09-23, in three
-  stacked steps — the set-pair budget (named cap at 256), the equality-only
+  stacked steps – the set-pair budget (named cap at 256), the equality-only
   array false-`sat` fix (eager axiom-1 self-reads; see
   `docs/studies/2026-09-23-equality-only-array-false-sat.md`), and
   branch-consistent don't-care completion in the trace decoder (the model's
   store chains and aliases are walked before any default). The shape now
-  answers `Violation { step: 4 }` with a **replayed** counterexample —
+  answers `Violation { step: 4 }` with a **replayed** counterexample –
   pinned by `a_two_array_pluscal_spec_never_answers_a_false_clean` across
   all its eras (false clean → honest `Unknown` → unverified violation →
   replayed violation). Getting here *found two solver soundness bugs*
@@ -101,23 +101,23 @@ through the same checker):
   `sat` above).
 
 - QueensPluscal: `Next` hits the enumerable-domain wall (a symbolic `todo`
-  set with no candidate list) — identical on the oracle's translation.
+  set with no candidate list) – identical on the oracle's translation.
 - DijkstraMutex: fails the typechecker's occurs-check on a recursive
-  sort — identical on the oracle's.
+  sort – identical on the oracle's.
 - KVsnap: `Init` declines on our translation ("a function where a single
   value is needed"); the oracle's declines at a neighbouring conjunct
   ("a set-valued term with no enumerable members"). Both `Unknown`, no
   verdict claimed; the divergence in *which* conjunct trips first comes
   from rendering shapes (`\cup` vs `\union`, spacing), not semantics.
 - An invariant of the shape `pc[0] = "a"` reported no counterexample
-  within the bound on **both** translations — a pre-existing encoding
+  within the bound on **both** translations – a pre-existing encoding
   behaviour of the function-equality shape (see
   `bench/tla_bmc/METHODOLOGY.md` §4), not a translation property.
 
 ## What the corpus actually uses
 
 Measured, not estimated: 35 `.tla` files carry algorithm bodies (32 outside
-`.toolbox` duplicates; the handover that scoped this work counted 7 — it
+`.toolbox` duplicates; the handover that scoped this work counted 7 – it
 searched only for markers on the `(*` line, and missed the multi-line
 comment forms, among them Bakery, Boulanger, TLCMC, all of LoopInvariance
 and the byzpaxos family). The construct matrix:
@@ -128,7 +128,7 @@ and the byzpaxos family). The construct matrix:
   (including `goto Done`), `with` (nested, `=` and `\in`);
 - labels inside `if` branches, `\in`-initialized variables, bare variable
   declarations (`defaultInitValue`), label `+`/`-` fairness modifiers;
-- `pc` elision (a single `while TRUE` cluster with no labels inside —
+- `pc` elision (a single `while TRUE` cluster with no labels inside –
   Sailfish, AddTwo), with the `Terminating` disjunct elided with it.
 
 **Declined, not implemented**: `procedure`/`call`/`return` (the stack
@@ -141,7 +141,7 @@ The two existing parity suites (unchanged by this work) were re-run on the
 committed tree, per the handoff's bar that they "stay green":
 
 - `bench/tla_parity` (syntax + levels): 4 422 definitions compared,
-  0 level mismatches — PARITY OK;
+  0 level mismatches – PARITY OK;
 - `bench/tla_eval` (semantics vs TLC): 362 definitions agreeing with TLC,
   0 mismatches.
 
@@ -164,7 +164,7 @@ The oracle rewrites its input in place; it always runs on scratch copies.
 
 The first `translate → Bmc::check` test asserted a violation TLC confirms
 in four steps on a two-process translation; the checker answered
-`NoViolationWithin` — a **false clean**, the catastrophic class. Bisection
+`NoViolationWithin` – a **false clean**, the catastrophic class. Bisection
 (via `bmcdump` printing the per-depth assertion set, cross-checked with
 Z3 on the identical formula) traced it to
 `nixie-solver`'s upward aliased read-over-write loop, which iterated the
@@ -184,13 +184,13 @@ Recorded because each one is a class:
 
 - **process-local variables were not declared** when the algorithm had no
   `define` block (gate 3: `SnapshotIsolation` level Constant vs State);
-- **quantifier bound domains were dropped** by the substitution walk —
+- **quantifier bound domains were dropped** by the substitution walk –
   `\E x \in S : P` re-rendered with the domain as the body (gate 2: parse
   error);
-- **a `with` inside an `either` clause indented left of its binder** —
+- **a `with` inside an `either` clause indented left of its binder** –
   column arithmetic that made SANY read the conjunct lists as one
   (gate 2);
-- **unary minus rendered as `-.`** — the AST's distinguishing spelling,
+- **unary minus rendered as `-.`** – the AST's distinguishing spelling,
   which the lexer does not accept as one token (gate 2).
 
 The remaining known cosmetic difference: our renderer canonicalises

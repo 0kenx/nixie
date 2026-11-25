@@ -712,7 +712,7 @@ impl Solver {
             let a = 1.0 / 8.0;
             self.restart_gap_ema += a * (gap as f64 - self.restart_gap_ema);
             // Null arm (`NIXIE_RESTART_STALL_NULL=1`): a second EMA fed
-            // from a pseudo-randomly chosen RING entry of the same gaps —
+            // from a pseudo-randomly chosen RING entry of the same gaps –
             // same magnitudes and window, no current-stall alignment. The
             // PRNG is only drawn when armed, so the default path stays
             // trajectory-identical.
@@ -906,7 +906,7 @@ impl Solver {
             PhaseArray::Target => &mut self.target_phase,
             PhaseArray::Best => &mut self.best_phase,
         };
-        // Guarded grow (slack arrays are never truncated back — the
+        // Guarded grow (slack arrays are never truncated back – the
         // per-var slack policy keeps `len >= num_vars`), then a
         // min-length copy: `copy_from_slice` demands equal lengths, and
         // `self.phase` may legally carry slack rows.
@@ -1258,7 +1258,7 @@ impl Solver {
         self.stats.rephased.best += 1;
         // Guarded grows: `resize` truncates when shorter than the request
         // is absent, but a slack-carrying array would be chopped and
-        // regrown every rephase — grow only when short.
+        // regrown every rephase – grow only when short.
         if self.phase.len() < self.num_vars {
             self.phase.resize(self.num_vars, false);
         }
@@ -1309,7 +1309,7 @@ impl Solver {
 
     /// Phase-oracle diagnostic (doc-hidden): seed the saved, target, and
     /// best phase arrays with an externally supplied model (`PHASE_HINT` in
-    /// the stats harness).  Purely a measurement instrument — it answers
+    /// the stats harness).  Purely a measurement instrument – it answers
     /// "would this search find the model fast if its *decisions* guessed
     /// the model polarity first", isolating phase guidance from clause
     /// learning on model-finding instances.  Not used by any production

@@ -6,17 +6,17 @@
 precondition for any SMT pre-search collapse: BVE/ELS/purelit skip
 frozen variables, exactly like assumption freezing.  A key discovery
 shaped the design: **the SMT encoder maps every term to a SAT var**
-(And/Or gates included — `get_or_create_var(term)` throughout), so
+(And/Or gates included – `get_or_create_var(term)` throughout), so
 "freeze all term-mapped vars" would freeze everything and leave the
 passes nothing to do.  The *operational* freeze set is
-**`var_to_constraint`** — exactly the atoms the theory manager replays
+**`var_to_constraint`** – exactly the atoms the theory manager replays
 to theories via `on_assignment`.  Boolean-structure gate vars (And/Or/
 ite-condition encodings) carry no constraint entry and are what the
 passes may collapse.
 
 ## Mechanism (landed)
 
-- `Solver::freeze_theory_vars(vars)` — inserts into `frozen_vars` and
+- `Solver::freeze_theory_vars(vars)` – inserts into `frozen_vars` and
   sets `theory_vars_frozen`.
 - `destructive_preprocessing_safe() = !real_theory_attached ||
   theory_vars_frozen` replaces the raw `!real_theory_attached` gates in
@@ -24,7 +24,7 @@ passes may collapse.
   pure-literal gate.
 - Per-pass skips: `mark_elim_one` refuses frozen vars; the ELS SCC fold
   leaves any class containing a frozen var unfolded (folding would
-  stop the frozen atom from reaching the theory — the on_assignment
+  stop the frozen atom from reaching the theory – the on_assignment
   desync); pure-literal's `assigned` exclusion treats frozen as
   assigned.  Frozen entries are retained forever (conservative
   direction: the set only ever shrinks what the passes may do).
@@ -41,8 +41,8 @@ passes may collapse.
 
 | | collapse ON | OFF |
 |---|---|---|
-| verdicts vs z3 (ON arm) | **0 wrong** | — |
-| on/off verdict mismatches | — | **0** |
+| verdicts vs z3 (ON arm) | **0 wrong** | – |
+| on/off verdict mismatches | – | **0** |
 | solved | 41 | 41 |
 | geomean, >2 s files (5) | 0.914 | 1 |
 
@@ -52,7 +52,7 @@ rest ~tied; the 1.14 all-file geomean is sub-second noise.
 ## Amendment (same day): ENABLED BY DEFAULT under the relaxed enablement rule
 
 Direction received: the multi-seed PMU bar is for *improvement claims*,
-not for enabling a sound mechanism — "if it logically makes sense and
+not for enabling a sound mechanism – "if it logically makes sense and
 doesn't have obvious regress, it shall be enabled".  Codified as the
 **enablement rule** in `docs/BENCHMARKING.md` §3.  Applied here:
 
@@ -75,14 +75,14 @@ Every destructive transform remains excluded for exactly the vars the
 audit named load-bearing: theory-mapped atoms (frozen), assumption
 vars, multi-scope assertion levels, proof/LRAT tracing.  What changes
 is only that non-frozen (never theory-observed) Boolean-structure vars
-may now be eliminated/folded under a real theory — their assignments
+may now be eliminated/folded under a real theory – their assignments
 never surface to `on_assignment`, and their model values are
 reconstructed or structurally evaluated.
 
 ## Go/no-go (from the established-candidates spec)
 
 The spec's full go/no-go asks for BMC/symbolic-execution *traces* with
-push/pop trees — not yet exercised (`assertion_levels.len() <= 1`
+push/pop trees – not yet exercised (`assertion_levels.len() <= 1`
 still excludes incremental scopes from every destructive pass, so
 traces are unchanged-by-construction today).  That is the recorded
 next step for the calculus proper: versioned transformations with

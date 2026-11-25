@@ -345,10 +345,10 @@ enum Domains {
 /// Two disjoint fragments are recognised, and which one applies is decided by
 /// the bound sorts alone:
 ///
-/// 1. **Every variable is `Int`** — the box has to be *found*, in a guard the
+/// 1. **Every variable is `Int`** – the box has to be *found*, in a guard the
 ///    quantifier carries (see [`extract_bounds`]).  An `Int` is infinite, so
 ///    without such a guard there is no finite expansion.
-/// 2. **Every variable has a finite sort** (`Bool`, `(_ BitVec w)`) — the box
+/// 2. **Every variable has a finite sort** (`Bool`, `(_ BitVec w)`) – the box
 ///    *is* the sort.  Nothing has to be extracted, no guard has to exist, and
 ///    no entailment has to be established: `(forall ((i (_ BitVec 1))) C(i))`
 ///    **is** `(and C(#b0) C(#b1))`, by the meaning of the sort.
@@ -361,7 +361,7 @@ enum Domains {
 /// It is the one case where MBQI is not merely slower but *wrong about the
 /// model it publishes*.  MBQI answers `Satisfied` when no instance it chose to
 /// build is violated by the candidate, which leaves every index it did not
-/// choose unconstrained — and `(get-model)` then renders the array at those
+/// choose unconstrained – and `(get-model)` then renders the array at those
 /// indices from the sort default.  Fourteen of the 800 paired scripts in
 /// `rc5/corpus/{q,qnoite}` answered a correct `sat` and printed a model that
 /// falsifies their own quantified assertion for exactly that reason, every one
@@ -448,8 +448,8 @@ fn finite_sort_cardinality(sort: SortId, manager: &TermManager) -> Option<usize>
 
 /// Element number `index` of `sort`, counting from zero.
 ///
-/// The order is the one the sort's own values have — `false` before `true`,
-/// and unsigned increasing for a bit-vector — so the expansion of
+/// The order is the one the sort's own values have – `false` before `true`,
+/// and unsigned increasing for a bit-vector – so the expansion of
 /// `(forall ((i (_ BitVec 2))) C(i))` reads `#b00`, `#b01`, `#b10`, `#b11`.
 /// Nothing depends on the order (a conjunction is commutative), but a *fixed*
 /// order is what makes the expanded term identical on every run, which the

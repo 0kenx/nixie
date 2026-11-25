@@ -4,14 +4,14 @@
 //! variables and *records definitions* for model reconstruction; these
 //! tests pin the three soundness-critical invariants:
 //!
-//! 1. **Occurrence counting** — a variable used twice is constrained; the
+//! 1. **Occurrence counting** – a variable used twice is constrained; the
 //!    first draft of the counter counted hash-consed variables once per
 //!    DAG (visited-set skip), which made `x` in `(= x+a k) ∧ (= x+b k)`
 //!    look unconstrained at *both* sites and answered `sat` on an unsat
 //!    goal (`elim_respects_multiple_occurrences`).
-//! 2. **Equisatisfiability transfer** — both verdict directions survive
+//! 2. **Equisatisfiability transfer** – both verdict directions survive
 //!    the rewrite (`elim_unsat_transfers`, `elim_sat_certifies`).
-//! 3. **Model reconstruction** — a `Sat` verdict's model must certify
+//! 3. **Model reconstruction** – a `Sat` verdict's model must certify
 //!    against the *original* assertions with definition-reconstructed and
 //!    defaulted values (`elim_eq_diagonalization_certifies`,
 //!    `deferral_second_use_restores_the_verdict`); the completion must not
@@ -120,7 +120,7 @@ fn elim_unsat_transfers() {
 }
 
 /// The equality-diagonalization shape of `unconstrained03`: the eliminated
-/// variable's definition (`u6 := ~u9`) must beat a `0` default — the first
+/// variable's definition (`u6 := ~u9`) must beat a `0` default – the first
 /// completion defaulted defined variables and certified a *falsified*
 /// model, flipping this `sat` to a decline.
 #[test]
@@ -149,7 +149,7 @@ fn elim_eq_diagonalization_certifies() {
 /// check-time recount finds nothing to eliminate and the eager circuits
 /// are restored before the general path runs.  The goal refutes through
 /// the word-level bound (`x <u 0` folds to `false`) after the routing
-/// dance, whatever the route — the first draft of this test used a
+/// dance, whatever the route – the first draft of this test used a
 /// division-semantics contradiction instead, which the general path needs
 /// ~a minute for on BOTH the old and new binaries (pre-existing search
 /// cost, not this pass's).
@@ -221,7 +221,7 @@ fn deep_definition_chain_reconstructs() {
 /// asserted disequality collapses through the polynomial-identity check
 /// after substitution.  The staged version exercises the double-negated
 /// conflict shape (`cohencu.c_3`), where the ite-condition variable is
-/// defined twice and the ring pass owns the elimination — the stage-4
+/// defined twice and the ring pass owns the elimination – the stage-4
 /// alongside-assertion of its rewrite is what decides the goal.
 #[test]
 fn cohencu_linear_isolation_decides() {
@@ -243,7 +243,7 @@ fn cohencu_linear_isolation_decides() {
 }
 
 /// Ring-eliminated but satisfiable: `x + y = 5 ∧ y > 0` isolates `x`
-/// (odd unit pivot) and must stay `sat` — the stage-4 pass now asserts
+/// (odd unit pivot) and must stay `sat` – the stage-4 pass now asserts
 /// the ring rewrite *alongside* the originals, and a non-implied rewrite
 /// would refute this.
 #[test]
@@ -260,7 +260,7 @@ fn ring_rewrite_alongside_preserves_sat() {
 }
 
 /// Even-coefficient isolation must NOT fire: `2x + y = 1 ∧ 2x + y' = 2`
-/// with `y = y'` fixed is unsat only if `2x` stays constrained — `2` is a
+/// with `y = y'` fixed is unsat only if `2x` stays constrained – `2` is a
 /// non-unit, the equation does not determine `x`, and isolating it would
 /// be unsound.
 #[test]

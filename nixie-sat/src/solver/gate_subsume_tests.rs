@@ -1,4 +1,4 @@
-//! Tests for gate-modulo forward subsumption (`gate_subsume.rs`) — the
+//! Tests for gate-modulo forward subsumption (`gate_subsume.rs`) – the
 //! kissat `forward_subsume_matching_clauses` port inside the equivalence
 //! closure.  All arms drive the gate through `test_knobs`.
 
@@ -20,7 +20,7 @@ fn l(i: usize, positive: bool) -> Lit {
 #[test]
 fn sorted_subset_scan_is_exact() {
     // Direct pins of the merge scan (the exhausted-`big` fall-through was
-    // a real bug in the first draft — this test would have caught it).
+    // a real bug in the first draft – this test would have caught it).
     let s = |codes: &[u32]| -> SmallVec<[Lit; 8]> {
         let mut v: SmallVec<[Lit; 8]> = codes.iter().map(|&c| Lit::from_code(c)).collect();
         v.sort_unstable_by_key(|l| l.code());
@@ -49,13 +49,13 @@ fn sorted_subset_scan_is_exact() {
 
 #[test]
 fn strictly_smaller_set_subsumes_through_the_classes() {
-    // b ≡ a; d = (a ∨ x); c = (b ∨ x ∨ y) — c's canonical set is
+    // b ≡ a; d = (a ∨ x); c = (b ∨ x ∨ y) – c's canonical set is
     // {a, x, y}, d's is {a, x}: a STRICT subset, so the rewrite's
     // exact-duplicate retire leaves c behind and only the matching pass
     // retires it.  The y-fillers make y the victim's *most*-occurring
     // repr so the probe's least-occurring choice lands on the shared x
     // (the pass is deliberately incomplete: it walks one list per
-    // victim, kissat parity — see the module doc).
+    // victim, kissat parity – see the module doc).
     let build = || {
         let mut s = Solver::default();
         for _ in 0..6 {
@@ -74,7 +74,7 @@ fn strictly_smaller_set_subsumes_through_the_classes() {
     };
     test_knobs::set_gate_subsume(Some(true));
     // The volume floor guards corpus behavior; the direct fixture is far
-    // below it — bypass for the unit-level semantics pin.
+    // below it – bypass for the unit-level semantics pin.
     test_knobs::set_gate_subsume_min(Some(0));
     let mut armed = build();
     assert_eq!(
@@ -199,7 +199,7 @@ fn volume_floor_skips_the_pass_without_touching_state() {
     test_knobs::set_gate_subsume(Some(true));
     // Default floor (64) >> this fixture's candidate count.  (The
     // equivalence binaries themselves are binary-graph edges, not arena
-    // clauses, so `num_original` never counted them — the pass's zero is
+    // clauses, so `num_original` never counted them – the pass's zero is
     // the whole pin.)
     let mut guarded = build();
     assert_eq!(

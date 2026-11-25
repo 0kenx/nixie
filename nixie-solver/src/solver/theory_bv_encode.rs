@@ -15,9 +15,9 @@ use crate::prelude::FxHashSet;
 // Terms whose circuits the model-validity net found inconsistent at the
 // most recent verify pass (debug builds only), with a short reason.  The
 // unified caller drains this to dump the live core's clauses for their
-// bits — the diagnostic that resolved the false-positive mode (BVE/ELS
+// bits – the diagnostic that resolved the false-positive mode (BVE/ELS
 // elimination; see docs/studies/2026-09-11-bv-constflow-results.md,
-// appendix) — and then fails loudly.
+// appendix) – and then fails loudly.
 #[cfg(all(debug_assertions, feature = "std"))]
 thread_local! {
     pub(super) static NET_MISMATCH: std::cell::RefCell<Vec<(TermId, String)>> =
@@ -182,8 +182,8 @@ pub(super) fn encode_bv_term_recursive(
     encoded: &mut FxHashSet<TermId>,
 ) -> bool {
     // Blast-size attribution (`NIXIE_BV_BLAST_STATS=trace`): one stderr
-    // line per encoded operator term — the SAT-var delta and the term's
-    // width — so the encoding budget can be attributed per operator
+    // line per encoded operator term – the SAT-var delta and the term's
+    // width – so the encoding budget can be attributed per operator
     // class (the BBB-32 encoding-gap work item's instrument).
     let trace_blast = std::env::var("NIXIE_BV_BLAST_STATS").is_ok_and(|v| v == "trace");
     // Work-stack entry: (term_id, children_pushed)
@@ -770,7 +770,7 @@ pub(super) fn debug_verify_bv_circuits(bv: &BvSolver, root: TermId, mgr: &TermMa
         //
         // A bit the model snapshot leaves *undefined* (for instance a
         // circuit variable minted after the last `adopt_model_snapshot`, so
-        // its index is past the snapshot's end) reads as `false` by default —
+        // its index is past the snapshot's end) reads as `false` by default –
         // a fabricated value.  A node with any undetermined bit has no
         // comparable model value and is skipped (`None`), exactly like a
         // node of an unmodelled kind; comparing defaulted zeros against the
@@ -822,9 +822,9 @@ pub(super) fn debug_verify_bv_circuits(bv: &BvSolver, root: TermId, mgr: &TermMa
 
         if let (Some(actual), Some(expected), Some(w)) = (modelled, expected, width) {
             // Record (do not panic yet): the unified caller dumps the live
-            // core's clauses for the mismatching bits first — the single
+            // core's clauses for the mismatching bits first – the single
             // observation that separates "clause never emitted into this
-            // core" from "clause emitted and removed" — and then fails
+            // core" from "clause emitted and removed" – and then fails
             // loudly.
             #[cfg(feature = "std")]
             if actual != expected & width_mask(w) {

@@ -9,7 +9,7 @@
 //! `Print` and `PrintT` are unambiguous: they exist for a side effect a
 //! symbolic encoding has no business reproducing, and their *value* is written
 //! down exactly. `Assert` is the interesting one. Its `ELSE` branch is
-//! `CHOOSE v : TRUE` — a value TLA+ leaves unspecified — so a failing `Assert`
+//! `CHOOSE v : TRUE` – a value TLA+ leaves unspecified – so a failing `Assert`
 //! does not have the value `FALSE`, and encoding it as `FALSE` would report a
 //! violation the specification does not have. It is encoded as a single shared
 //! free Boolean, which is what "unspecified" means.
@@ -17,7 +17,7 @@
 //! What that buys is the right reading of a failing `Assert` in an invariant.
 //! The free Boolean is chosen by the solver *within the query*, so
 //! `Violation` comes to mean "there is a behaviour, and a reading of the
-//! unspecified value, under which the invariant fails" — which is exactly a
+//! unspecified value, under which the invariant fails" – which is exactly a
 //! failure to establish the invariant, and it is the same thing TLC reports by
 //! halting. The asymmetry is the one the rest of the encoder keeps:
 //! a `Violation` may be spurious, `NoViolationWithin` stays sound.
@@ -62,7 +62,7 @@ fn fails(vars: &str, init: &str, body: &str) {
     );
 }
 
-// ---- Print is the identity on its second argument ----
+// ======== Print is the identity on its second argument ========
 
 #[test]
 fn print_returns_its_value() {
@@ -80,7 +80,7 @@ fn print_of_a_non_boolean_is_that_value() {
 }
 
 /// The message is not encoded at all. It cannot reach the value, so a
-/// specification must not be declined because of what it would have printed —
+/// specification must not be declined because of what it would have printed –
 /// here a set, which in a value position the encoder would otherwise refuse.
 #[test]
 fn the_message_is_not_encoded() {
@@ -92,7 +92,7 @@ fn print_nests() {
     holds("x", "x = 3", r#"Print("a", Print("b", x)) = 3"#);
 }
 
-// ---- PrintT is TRUE ----
+// ======== PrintT is TRUE ========
 
 #[test]
 fn print_t_is_true() {
@@ -105,7 +105,7 @@ fn print_t_is_true_even_as_a_conjunct() {
     fails("x", "x = 3", r#"PrintT("tracing") /\ x = 4"#);
 }
 
-// ---- Assert ----
+// ======== Assert ========
 
 /// The `THEN` branch is pinned: a holding `Assert` is `TRUE`, not unspecified.
 #[test]

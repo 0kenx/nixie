@@ -2,9 +2,9 @@
 """Differential fuzz of nixie's mixed-integer arithmetic vs z3.
 
 Companion to `bench_diff.py` (the pinned-sample harness): this one GENERATES
-random small formulas targeting the arithmetic surface — mixed Int/Real
+random small formulas targeting the arithmetic surface – mixed Int/Real
 variables, div/mod by constants, strict inequalities, constants near the
-i64 boundary — and diffs every decisive verdict against z3, validating
+i64 boundary – and diffs every decisive verdict against z3, validating
 nixie's `sat` models through z3 when z3 itself is undecided.
 
 Found two soundness bugs within minutes of its first run (`/` silently
@@ -48,7 +48,7 @@ def rint():
 
 # Strict bounds at the i64 walls, Int vs Real rows (the boundary-literal
 # SHAPES the hand regressions cover; emitted here so fresh seeds hunt
-# them — `< -2^63` forces a beyond-width witness, the `i64::MIN` corner
+# them – `< -2^63` forces a beyond-width witness, the `i64::MIN` corner
 # exercises the assert-time negation).
 WALLS = [-(2**63), -(2**63) + 1, 2**63 - 1, 2**63, 2**63 + 1]
 

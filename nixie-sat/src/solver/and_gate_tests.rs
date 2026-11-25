@@ -4,7 +4,7 @@
 //! The arm recognizes `g ↔ x1∧…∧xk` from the occurrence lists (sides
 //! `(¬g ∨ xi)` + base `(g ∨ ¬x1 ∨ … ∨ ¬xk)`) and eliminates gate-defined
 //! variables through the restricted g×a + g×g resolvent products. A
-//! mis-recognized "gate" would skip a×a resolvents that are NOT entailed —
+//! mis-recognized "gate" would skip a×a resolvents that are NOT entailed –
 //! directly a false-sat/false-unsat class. These tests build random AND-gate
 //! circuits (the recognizer's exact target structure, plus noise clauses)
 //! and demand verdict agreement with the arm off, model validity for every
@@ -99,7 +99,7 @@ fn gate_circuit(rng: &mut Rng, n_in: usize, n_gates: usize, n_noise: usize) -> V
         }
         cnf.push(c);
     }
-    // Random input constraints (units) — make some instances unsat.
+    // Random input constraints (units) – make some instances unsat.
     for _ in 0..(rng.below(4)) {
         let v = rng.below(n_in as u64) as i32 + 1;
         cnf.push(vec![if rng.below(2) == 0 { v } else { -v }]);
@@ -150,7 +150,7 @@ fn and_gates_verdict_agreement_gate_circuits() {
 }
 
 /// The recognizer must NOT fire on gate-shaped-but-broken structure: drop
-/// one side clause and the variable is undefined — the arm must leave it to
+/// one side clause and the variable is undefined – the arm must leave it to
 /// plain BVE (agreement still required, and `and_gate_eliminated` must stay
 /// below the intact-circuit count to prove the tests exercise real gates).
 #[test]

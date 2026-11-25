@@ -57,7 +57,7 @@ literal-trigger totals than shuffled scores overall, below the registered 25%
 gate on both inputs. This is a prediction proxy, not measured visit/cycle savings;
 the observer is archived and no active watch-selection policy follows.
 
-## 1. Shared satisfaction across watcher groups — first experiment
+## 1. Shared satisfaction across watcher groups – first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
 [order-preserving tile kernel failed its registered cost screen](2026-09-07-watch-tiles-prototype.md).

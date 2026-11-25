@@ -1,4 +1,4 @@
-//! `pcaltrans` — translate the PlusCal algorithm in TLA+ files.
+//! `pcaltrans` – translate the PlusCal algorithm in TLA+ files.
 //!
 //! The same command shape as `pcal.trans` (the oracle this translator is
 //! checked against): given `.tla` files, rewrite each in place with the
@@ -8,7 +8,7 @@
 //!
 //! Exit codes follow the reference: 0 translated, non-zero with a
 //! diagnostic on stderr otherwise. A construct this subset does not
-//! implement is reported as such — never approximated.
+//! implement is reported as such – never approximated.
 
 use std::io::{Read, Write};
 
@@ -93,7 +93,7 @@ fn write_out(
 }
 
 fn print_help() {
-    println!("pcaltrans — translate the PlusCal algorithm in a TLA+ file");
+    println!("pcaltrans – translate the PlusCal algorithm in a TLA+ file");
     println!();
     println!("usage: pcaltrans [-nocfg] [-o FILE] SPEC.tla...");
     println!();

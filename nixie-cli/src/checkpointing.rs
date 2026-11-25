@@ -52,7 +52,7 @@ pub fn try_resume(script: &str, args: &Args) -> Option<Vec<String>> {
 /// Persist a completed-solve checkpoint (problem + config + real post-solve
 /// counters + full output) so a later `--resume` can replay it.
 ///
-/// Best-effort for the write itself — a write failure warns but never aborts
+/// Best-effort for the write itself – a write failure warns but never aborts
 /// the solve. A system clock that reads a time before the Unix epoch leaves no
 /// timestamp to name the checkpoint by; that stops the process with exit
 /// status 1 and a message, as any other unusable environment does.

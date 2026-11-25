@@ -114,7 +114,7 @@ impl Solver {
             // its post-build overflow; both are iterated by index (one
             // copied edge per step) so no borrow is held across the `&mut
             // self` calls below. Span layout and overflow length are
-            // snapshotted up front — nothing can move or append under
+            // snapshotted up front – nothing can move or append under
             // `lit` while it propagates (the single-threaded invariant the
             // old take/put-back version documented: the only mid-
             // propagation append source is hyper-binary resolution, which
@@ -144,7 +144,7 @@ impl Solver {
             let region_sample = {
                 // Computed before the stats borrow: the emptiness probe is
                 // CSR-combined under the reader gate (shadow present), the
-                // `Vec` list otherwise — identical content by the drift
+                // `Vec` list otherwise – identical content by the drift
                 // invariant.
                 let nonempty = if self.watches.csr_read_active() {
                     let (p, x) = self.watches.get_combined(lit);
@@ -245,7 +245,7 @@ impl Solver {
                         // No lazy hyper-binary resolution here: the reason is
                         // a binary clause (the BIG edge being traversed), and
                         // `check_hyper_binary_resolution` provably cannot
-                        // learn anything from one — the resolvent of a binary
+                        // learn anything from one – the resolvent of a binary
                         // clause against the conflicting clause is what the
                         // ordinary conflict path already learns.  Skipping the
                         // call removes 6-31% of all scans on BIG-heavy
@@ -372,7 +372,7 @@ impl Solver {
                         regions::record(&mut self.region_stats, region_event, regions::HIT);
                         // Kept watcher. While `write == read` (no watcher dropped
                         // yet in this scan) the write-back would be a pure
-                        // self-write — skip it; the compaction copy is only
+                        // self-write – skip it; the compaction copy is only
                         // needed once the pointers have split.
                         if write != read {
                             watches[write] = watcher;
@@ -416,7 +416,7 @@ impl Solver {
                     // normalization is kept UNCONDITIONAL (not on-demand): a
                     // pilot that left the watched pair in visit order on the
                     // satisfied/satrepl paths diverged 34/54 corpus trajectories
-                    // — stored order is observable beyond direct `lits[0]`
+                    // – stored order is observable beyond direct `lits[0]`
                     // readers (watch-rank tie-breaks, first-wins scans in
                     // vivify/probe/els), so the two arena stores stay on every
                     // miss visit. See

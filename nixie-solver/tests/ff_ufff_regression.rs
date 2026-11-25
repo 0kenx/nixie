@@ -1,4 +1,4 @@
-//! End-to-end `QF_UFFF` regressions — the Phase-6-remainder exit
+//! End-to-end `QF_UFFF` regressions – the Phase-6-remainder exit
 //! criteria from `docs/FF_THEORY_DESIGN.md` §11: FF ⊕ EUF by polite
 //! combination, every `sat` carrying a congruence-consistent model,
 //! congruence and cardinality refutations answering `unsat`, and the
@@ -86,7 +86,7 @@ fn arithmetic_over_applications_sat() {
 #[test]
 fn function_hood_model_is_consistent() {
     // f(x)=1, f(y)=2 with x, y otherwise unconstrained: a naive
-    // per-application model could print x = y with f(x) ≠ f(y) — not a
+    // per-application model could print x = y with f(x) ≠ f(y) – not a
     // function. The arrangement machinery must keep them apart.
     let out = run(r#"
         (set-logic QF_UFFF)
@@ -122,7 +122,7 @@ fn value_of(get_value_output: &str, name: &str) -> String {
 fn f2_distinct_over_applications_is_unsat() {
     // The toy-field pin from the handoff: three pairwise-distinct
     // values from a two-element field. This is the interface
-    // cardinality clause (k ≤ p) — omitting it is a false `sat`.
+    // cardinality clause (k ≤ p) – omitting it is a false `sat`.
     let out = run(r#"
         (set-logic QF_UFFF)
         (declare-fun f ((_ FiniteField 2)) (_ FiniteField 2))
@@ -172,7 +172,7 @@ fn f2_distinct_satisfiable_when_k_le_p() {
 
 #[test]
 fn arity_two_congruence() {
-    // h(x, x) = h(y, x) once x = y — but NOT with only one argument
+    // h(x, x) = h(y, x) once x = y – but NOT with only one argument
     // equal (the first solve attempt of a buggy congruence check).
     let out = run(r#"
         (set-logic QF_UFFF)
@@ -250,7 +250,7 @@ fn certified_ufff_sat_model_certifies() {
 #[test]
 fn certified_congruence_unsat_certifies_via_independent_euf_lemmas() {
     // A pure congruence refutation has no FF certificate on the
-    // combination path — but certified mode's independent Boolean
+    // combination path – but certified mode's independent Boolean
     // checker classifies FF equalities as EUF atoms and runs its own
     // VERIFIED congruence-blocking loop (certification.rs's
     // `block_theory_inconsistent_model`), which closes x = y ⟹
@@ -276,7 +276,7 @@ fn certified_congruence_unsat_certifies_via_independent_euf_lemmas() {
 fn certified_ff_arithmetic_unsat_in_ufff_downgrades_to_unknown() {
     // A refutation that needs the FIELD arithmetic (not congruence):
     // f(x)² = 2 ∧ f(x) = 0 over 𝔽7 is field-linear unsat, invisible to
-    // the checker's EUF-only blocking loop — no certificate exists, so
+    // the checker's EUF-only blocking loop – no certificate exists, so
     // certified mode fails closed by design (the §8 branch-exhaustion /
     // case-tree certificate is future work).
     let mut ctx = Context::new();
@@ -300,7 +300,7 @@ fn certified_ff_arithmetic_unsat_in_ufff_downgrades_to_unknown() {
 #[test]
 fn certified_f2_pigeonhole_certificate_accepts() {
     // The spine cardinality guard carries a checkable pigeonhole
-    // certificate — certified mode must ACCEPT this unsat.
+    // certificate – certified mode must ACCEPT this unsat.
     let mut ctx = Context::new();
     ctx.execute_script("(set-logic QF_UFFF)").expect("parse");
     ctx.execute_script(
@@ -320,7 +320,7 @@ fn certified_f2_pigeonhole_certificate_accepts() {
 #[test]
 fn uf_under_plain_qf_ff_is_a_contract_error() {
     // SMT-LIB: the FF letter does not include UF. A declared function
-    // with an FF result sort under QF_FF is a contract violation — a
+    // with an FF result sort under QF_FF is a contract violation – a
     // command error, not a silent `unknown`.
     let out = run(r#"
         (set-logic QF_FF)

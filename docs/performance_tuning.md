@@ -86,11 +86,11 @@ each logic family. Components listed as "disabled" incur no overhead.
 | `AUFLIRA` / `UFLRA` | Mixed | off | **on** | **on** | **on** | off | **on** |
 | `ALL` (default) | Mixed (Int+Real, per-variable integrality) | off | **on** | **on** | **on** | **on** | **on** |
 
-**Arithmetic modes** (`ArithSolver`): `LIA` — every variable integer; `LRA` —
-every variable continuous; `Mixed` — Z3's `theory_mi_arith` shape, per-variable
+**Arithmetic modes** (`ArithSolver`): `LIA` – every variable integer; `LRA` –
+every variable continuous; `Mixed` – Z3's `theory_mi_arith` shape, per-variable
 integrality taken from each term's sort (`Int`-sorted terms are integer
-variables, `Real`-sorted continuous). Non-integer `arith` logics — including
-the `LIRA`/`NIRA` mixed shapes and the unset-logic default — run Mixed; a
+variables, `Real`-sorted continuous). Non-integer `arith` logics – including
+the `LIRA`/`NIRA` mixed shapes and the unset-logic default – run Mixed; a
 formula with no `Int` terms behaves exactly like LRA under it, and integer
 holes (`x:Int ∧ x>3 ∧ x<4`) stay `unsat` instead of leaking the fractional LP
 point through (the historical false-`sat` class).

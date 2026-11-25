@@ -19,7 +19,7 @@
 //! a binding in scope.
 //!
 //! Every binder is renamed to a unique name on the way down (`x` becomes
-//! `x#3`), which removes variable capture as a concern entirely — an inlined
+//! `x#3`), which removes variable capture as a concern entirely – an inlined
 //! argument can mention any name at all and still cannot be captured by a
 //! binder in the body it is substituted into.
 //!
@@ -53,7 +53,7 @@ pub const DEFAULT_MAX_INLINE_DEPTH: usize = 64;
 pub const DEFAULT_STEP_BUDGET: usize = 100_000;
 
 /// The built-in operator symbol a name denotes, if it is one that can be
-/// passed as an operator argument. The AC, unambiguously-binary set —
+/// passed as an operator argument. The AC, unambiguously-binary set –
 /// Apalache's own `ToEtcExpr` accepts exactly these as first-class.
 fn builtin_operator_symbol(name: &str) -> Option<&'static str> {
     match name {
@@ -77,7 +77,7 @@ fn builtin_operator_symbol(name: &str) -> Option<&'static str> {
 #[derive(Debug, Clone)]
 struct Instantiation<'a> {
     module: &'a Module,
-    /// The module where the instance was declared — the scope an implicit
+    /// The module where the instance was declared – the scope an implicit
     /// substitution (a declared name with no `WITH`) resolves against.
     /// `None` for a `LET`-scoped instance, whose declaring scope is whatever
     /// module the lowering walk is inside at the use site.
@@ -125,7 +125,7 @@ struct Def<'a> {
     ///
     /// True for a module-level definition: TLA+ has no dynamic scoping, so a
     /// top-level body can only mention other top-level names, declared
-    /// symbols and its own binders — its lowering does not depend on where it
+    /// symbols and its own binders – its lowering does not depend on where it
     /// is used. False for a `LET` definition, whose name is scoped and may be
     /// shadowed.
     cacheable: bool,
@@ -134,7 +134,7 @@ struct Def<'a> {
 /// Skolemize positive existentials over the **standard infinite sets**.
 ///
 /// `\\E x \\in Nat : P(x)`, in a position the solver is asked to *satisfy*,
-/// becomes a fresh constant `c` with `c \\in Nat /\\ P(c)` — Apalache's
+/// becomes a fresh constant `c` with `c \\in Nat /\\ P(c)` – Apalache's
 /// `QuantRule.skolemExists` for the one domain family that needs it, since
 /// the alternative is enumerating an infinite set. Only the standard
 /// infinite sets are touched: a finite set's existential is already served
@@ -147,17 +147,17 @@ struct Def<'a> {
 /// walk tracks polarity through `Not` and `Implies` arms, and the
 /// both-polarity positions (`Equiv` arms, `Ite` conditions) are never
 /// rewritten. A negative-position `\\A` over an infinite set becomes, by
-/// the same reading, a positive `\\E` and **is** skolemized — after
+/// the same reading, a positive `\\E` and **is** skolemized – after
 /// rewriting `~\\A x : P` to `\\E x : ~P` by hand, which keeps one rule.
 ///
 /// **The root polarity is the caller's to know.** `Init`, `Next` and the
-/// constraint definitions are asserted as they stand — polarity true. An
+/// constraint definitions are asserted as they stand – polarity true. An
 /// invariant enters the solver **negated**, so its positive-position `\\E`
 /// is the query's negative-position `\\E` (a universal claim, never
 /// skolemized) and its positive-position `\\A` is the query's existential
 /// (skolemized): callers pass `false` for the invariant role. Getting this
 /// backwards was the first version of this pass, and it manufactured a
-/// counterexample out of `\\E y \\in Nat : x < y` — the witness the model
+/// counterexample out of `\\E y \\in Nat : x < y` – the witness the model
 /// picked made the *invariant* false, which is not what an existential
 /// invariant means.
 ///
@@ -171,7 +171,7 @@ pub fn skolemize_infinite_existentials_at(root: &KeraRef, root_positive: bool) -
 
 /// Which **symbolic set names** a positive existential may be skolemized
 /// over (issue #20, step 4): `\E d \in Data : P(d)` becomes
-/// `c \in Data /\ P(c)` — satisfiability-exact, the membership kept as a
+/// `c \in Data /\ P(c)` – satisfiability-exact, the membership kept as a
 /// constraint the set theory reasons about. The caller supplies the names
 /// the frame analysis could NOT derive a universe for; everything else
 /// keeps the arena's enumeration, which is stronger per witness.
@@ -214,7 +214,7 @@ pub fn skolemize_with_syms_at(root: &KeraRef, root_positive: bool, syms: &Syms) 
 /// One counter per top-level pass is load-bearing: the rewritten body of a
 /// skolemized quantifier is itself walked (through the cached form below),
 /// and independently-numbered sub-walks would mint the same `%`-fresh or
-/// `!skolem` name twice — two witnesses or binders the encoder would then
+/// `!skolem` name twice – two witnesses or binders the encoder would then
 /// read as one.
 fn skolemize_walk(
     root: &KeraRef,
@@ -244,7 +244,7 @@ fn skolemize_walk(
             Frame::Visit(t, pos) => {
                 // A lowered tree is a shared DAG: the same subterm can sit
                 // under many parents. Visiting it once per parent would redo
-                // (and re-copy) any rewrite inside it once per occurrence —
+                // (and re-copy) any rewrite inside it once per occurrence –
                 // identical binder names in several nodes, which the
                 // binder-uniqueness invariant exists to refuse. One result
                 // per (node, polarity), shared by pointer, is both the fix
@@ -314,7 +314,7 @@ fn skolemize_walk(
             Frame::Rebuild(t, pos, n) => {
                 let kids: Vec<KeraRef> = values.split_off(values.len() - n);
                 // Preserve sharing: if every child is the *same* `Rc` it was,
-                // the node is unchanged and the original is returned — not a
+                // the node is unchanged and the original is returned – not a
                 // structural copy. This is not an optimization: lowering
                 // shares one inlined definition across its uses, the
                 // binder-uniqueness invariant deduplicates by pointer, and a
@@ -338,7 +338,7 @@ fn skolemize_walk(
     values.pop().unwrap_or_else(|| Rc::clone(root))
 }
 
-/// [`skolemize_infinite_existentials_at`] at positive polarity — the form
+/// [`skolemize_infinite_existentials_at`] at positive polarity – the form
 /// for formulas asserted as they stand.
 pub fn skolemize_infinite_existentials(root: &KeraRef) -> KeraRef {
     skolemize_infinite_existentials_at(root, true)
@@ -366,16 +366,16 @@ fn skolemize_infinite_existentials_cached(
 
 /// Rename every binder in `t` to a globally new name.
 ///
-/// A skolem rewrite copies the quantifier's body — `rename_var` rebuilds
-/// the spine — and a lowered tree is a shared DAG: the same subterm can sit
+/// A skolem rewrite copies the quantifier's body – `rename_var` rebuilds
+/// the spine – and a lowered tree is a shared DAG: the same subterm can sit
 /// under the copy *and* elsewhere in the original. Both copies would carry
 /// the same binder names, and the binder-uniqueness invariant (rightly)
 /// refuses the result. Refreshing every binder in the copied side, once,
 /// with names from the pass's shared counter (`<old>%<n>`, a spelling the
 /// lowerer never mints) keeps the copy's meaning and the invariant.
 ///
-/// This is a true α-renaming — binder *fields* and their occurrences move
-/// together — which [`rename_var`] alone is not: it substitutes free
+/// This is a true α-renaming – binder *fields* and their occurrences move
+/// together – which [`rename_var`] alone is not: it substitutes free
 /// occurrences and leaves binder fields verbatim, so using it here would
 /// detach occurrences from their binders and keep the collision it was
 /// meant to remove.
@@ -412,7 +412,7 @@ fn alpha_refresh_binders(t: &KeraRef, counter: &std::cell::RefCell<usize>) -> Ke
 /// The unchanged-children shortcut above returns the original pointer, so a
 /// shared subterm stays shared. A rebuilt one is a *copy* that may coexist
 /// with the original at another position (a definition inlined at two
-/// polarities) — and the copy carries the node's binder. Renaming it, with
+/// polarities) – and the copy carries the node's binder. Renaming it, with
 /// occurrences confined to this node, restores global uniqueness.
 fn refresh_own_binders(t: KeraRef, counter: &std::cell::RefCell<usize>) -> KeraRef {
     let own: Vec<Name> = t.as_ref().binders().iter().map(|b| (*b).clone()).collect();
@@ -439,7 +439,7 @@ fn refresh_own_binders(t: KeraRef, counter: &std::cell::RefCell<usize>) -> KeraR
 /// under a *different* binder of the same spelling. The walk is explicit
 /// (user-controlled depth), memoised by pointer (a shared DAG stays
 /// shared), and returns the *original* `Rc` for any subtree with nothing to
-/// rename — so unchanged parts keep their identity with the source tree,
+/// rename – so unchanged parts keep their identity with the source tree,
 /// which is what the binder-uniqueness invariant and the encoder's term
 /// interning both rely on.
 fn alpha_rename(t: &KeraRef, renames: &std::collections::HashMap<Name, Name>) -> KeraRef {
@@ -515,7 +515,7 @@ fn rename_var(t: &KeraRef, from: &Name, to: &Name) -> KeraRef {
     // Memoised by pointer, and returning the *original* `Rc` wherever
     // nothing below changed: a lowered term is a shared DAG, and a rewrite
     // that copied per occurrence would put one binder name in several
-    // nodes — the exact shape the binder-uniqueness invariant refuses.
+    // nodes – the exact shape the binder-uniqueness invariant refuses.
     // Keeping the copy shared keeps the (unique) names unique.
     let mut memo: std::collections::HashMap<*const Kera, KeraRef> =
         std::collections::HashMap::new();
@@ -566,7 +566,7 @@ fn rename_var(t: &KeraRef, from: &Name, to: &Name) -> KeraRef {
 ///
 /// Only the binder-carrying kinds differ; everything else is [`rebuild`]
 /// exactly. Binder fields and their occurrences are renamed *together* by
-/// the caller ([`alpha_rename`]) — renaming one without the other is how a
+/// the caller ([`alpha_rename`]) – renaming one without the other is how a
 /// bound occurrence becomes a free variable wearing the wrong name.
 fn rebuild_renamed(
     t: &KeraRef,
@@ -647,7 +647,7 @@ fn rebuild_renamed(
 /// The frame-analysis instantiation step: an assignment collected under an
 /// existential binder is written per candidate of the binder's domain, and
 /// this writes the candidate in. Capture-free for the same reason
-/// the α-rename pass is — lowering's binder names are globally unique, so no
+/// the α-rename pass is – lowering's binder names are globally unique, so no
 /// occurrence of `from` can be under a binder that shadows it.
 ///
 /// Memoised by pointer and unchanged-preserving, so the shared-DAG shape of
@@ -717,7 +717,7 @@ enum VariantCall {
 }
 
 /// The `Variants` operator an application names, when the arity matches and
-/// the tag argument is a **string literal** — the shape the typed operators
+/// the tag argument is a **string literal** – the shape the typed operators
 /// require. `None` otherwise, and a local definition of the same name keeps
 /// its own meaning (the `folds_here` rule).
 fn variant_kind(name: &str, args: &[Expr]) -> Option<VariantCall> {
@@ -739,7 +739,7 @@ fn variant_kind(name: &str, args: &[Expr]) -> Option<VariantCall> {
 
 /// Whether a quantifier's domain may be skolemized at this position: the
 /// standard infinite sets always (enumerating them is impossible), and a
-/// **named symbolic set** the caller marked (issue #20 step 4 — a set the
+/// **named symbolic set** the caller marked (issue #20 step 4 – a set the
 /// frame analysis could not derive a universe for, whose enumeration the
 /// arena would decline). Everything else keeps its enumeration, which is
 /// stronger per witness.
@@ -861,7 +861,7 @@ fn rebuild(t: &KeraRef, _pos: bool, kids: &[KeraRef]) -> KeraRef {
         Kera::VariantTag(_) => Kera::VariantTag(k(0)),
         Kera::VariantGet { tag, or_else, .. } => {
             // Two children with an `or_else`, one without: the child order
-            // is [`Kera::children`]'s — `value` then `or_else`.
+            // is [`Kera::children`]'s – `value` then `or_else`.
             Kera::VariantGet {
                 tag: tag.clone(),
                 value: k(0),
@@ -926,8 +926,8 @@ fn rebuild(t: &KeraRef, _pos: bool, kids: &[KeraRef]) -> KeraRef {
 ///
 /// Lowering's invariant: each binder gets a fresh name, so substitution is
 /// capture-free and inference can key bound variables by name alone. A
-/// repeated binder breaks both silently — two independent variables read as
-/// one — which is exactly how `EmptyBag`'s fixed `bag_e#0` made every bag in
+/// repeated binder breaks both silently – two independent variables read as
+/// one – which is exactly how `EmptyBag`'s fixed `bag_e#0` made every bag in
 /// a specification share one element type. Checked over the whole tree with
 /// an explicit stack and pointer deduplication (a lowered term is a shared
 /// DAG).
@@ -977,7 +977,7 @@ pub enum ReplaceError {
 /// What a name is bound to while lowering.
 #[derive(Debug, Clone)]
 enum Binding<'a> {
-    /// A built-in operator symbol passed as an argument — `FooBar(7, +)`.
+    /// A built-in operator symbol passed as an argument – `FooBar(7, +)`.
     /// No surface body exists to inline, so the application site lowers
     /// `Op(a, b)` through the ordinary operator table under a two-name
     /// scope: the exact meaning of the symbol, with none of the guessing a
@@ -988,7 +988,7 @@ enum Binding<'a> {
     Value(KeraRef),
     /// A renamed bound variable.
     Bound(Name),
-    /// An operator passed as an argument — a named definition or a `LAMBDA`.
+    /// An operator passed as an argument – a named definition or a `LAMBDA`.
     /// Bound rather than lowered, because an operator has no value until it is
     /// applied.
     Op {
@@ -1046,13 +1046,13 @@ pub struct Lowerer<'a> {
     /// start offset, waiting for the matching `Inline` frame.
     pending_ops: HashMap<u32, Vec<(String, Binding<'a>)>>,
     /// Names declared `RECURSIVE`, plus definitions that mention
-    /// themselves — the inline limit on either is a recursion diagnostic,
+    /// themselves – the inline limit on either is a recursion diagnostic,
     /// not a depth one.
     recursive_names: std::collections::HashSet<String>,
-    /// `INSTANCE` targets that could not be resolved, with their spans —
+    /// `INSTANCE` targets that could not be resolved, with their spans –
     /// reported once, after `add_spec`, rather than silently dropped.
     missing_instances: Vec<(String, Span)>,
-    /// The module whose member the walk is lowering — the scope a
+    /// The module whose member the walk is lowering – the scope a
     /// `LET`-scoped instance's implicit substitutions resolve against when
     /// no instance context is open.
     lower_module: Option<&'a Module>,
@@ -1077,9 +1077,9 @@ enum Frame<'a> {
         /// The path lengths of the updates *before* this one, in order.
         ///
         /// Needed for both halves of what `@` means in a multi-update
-        /// `EXCEPT`. It locates the function on the shared value stack — which
+        /// `EXCEPT`. It locates the function on the shared value stack – which
         /// is not a fixed distance below the top, because each earlier update
-        /// left its own indices and value there — and it rebuilds the
+        /// left its own indices and value there – and it rebuilds the
         /// partially-updated function that `@` actually refers to.
         before: Vec<usize>,
     },
@@ -1106,7 +1106,7 @@ enum Frame<'a> {
     /// under a scope binding `F`'s parameter to the fold's element name. The
     /// result is the Apalache rewire in kernel form:
     /// `ApaFoldSet(\\partial, elem => partial (+) [y \\in {F(elem)} |-> B[elem]],
-    ///  EmptyBag, DOMAIN B)` — a fold whose step adds one singleton bag, so
+    ///  EmptyBag, DOMAIN B)` – a fold whose step adds one singleton bag, so
     /// the order of the fold is immaterial (bag addition is commutative and
     /// associative, being pointwise `+`).
     BuildBagOfAll {
@@ -1223,7 +1223,7 @@ enum Frame<'a> {
     /// arguments, and look through the instantiated module under them.
     PushInstanceCtx {
         module: &'a Module,
-        /// Names the popped substitution values belong to, in order — every
+        /// Names the popped substitution values belong to, in order – every
         /// substituted name, `WITH` and implicit alike.
         subst_names: Vec<String>,
         /// The member's own parameters, bound to the popped arguments.
@@ -1270,7 +1270,7 @@ impl<'a> Lowerer<'a> {
     /// the constant in the left-hand side with the constant expression in the
     /// right-hand side", and the difference is load-bearing rather than
     /// stylistic: an assumption `N = 3` reaches the solver, but the *encoder*
-    /// needs the value earlier than that — `1..N` has no candidate list until
+    /// needs the value earlier than that – `1..N` has no candidate list until
     /// `N` is literally `3`, and no amount of solver-level knowledge supplies
     /// one.
     ///
@@ -1285,8 +1285,8 @@ impl<'a> Lowerer<'a> {
     /// `name <- with` does.
     ///
     /// This is how a model-checking harness makes an infinite specification
-    /// finite: `MCPaxos` replaces `Ballot` — declared a `CONSTANT`, or defined
-    /// as `Nat` — with `MCBallot == 0..2`. It is a rebinding of the flat name
+    /// finite: `MCPaxos` replaces `Ballot` – declared a `CONSTANT`, or defined
+    /// as `Nat` – with `MCBallot == 0..2`. It is a rebinding of the flat name
     /// space rather than a substitution pass, which is exactly what TLC does
     /// and what makes it work for a `CONSTANT` as well as a definition: a
     /// declared constant has no entry here, so adding one turns a name that
@@ -1296,7 +1296,7 @@ impl<'a> Lowerer<'a> {
     ///
     /// Fails if `with` is not defined, or if the two have different arities.
     /// An arity mismatch is a malformed configuration, and substituting across
-    /// one would produce a term that means nothing — so it is reported rather
+    /// one would produce a term that means nothing – so it is reported rather
     /// than coerced. A `name` that is not itself defined is *not* an error: it
     /// is the ordinary case of replacing a declared `CONSTANT`.
     pub fn replace_definition(
@@ -1327,7 +1327,7 @@ impl<'a> Lowerer<'a> {
     /// Register every operator definition in `module` for inlining.
     ///
     /// Definitions are registered in source order, so a later definition can
-    /// use an earlier one — which is all TLA+ permits anyway.
+    /// use an earlier one – which is all TLA+ permits anyway.
     pub fn add_module(&mut self, module: &'a Module) {
         self.index_module(module);
         for unit in &module.units {
@@ -1341,13 +1341,13 @@ impl<'a> Lowerer<'a> {
     /// through `INSTANCE` must **not** contribute to the flat name space: its
     /// definitions mean something only under that instance's substitution, and
     /// letting them resolve directly would silently use the *unsubstituted*
-    /// body — reading the wrong module's variables.
+    /// body – reading the wrong module's variables.
     pub fn index_module(&mut self, module: &'a Module) {
         self.modules.insert(module.name.name.clone(), module);
         // Nested modules are registered in their own right, and FIRST:
         // `I == INSTANCE inner` names one, and an `INSTANCE` unit in this
         // module resolves its target while `add_instance_unit` walks the
-        // units below. Before this they were silently invisible — the
+        // units below. Before this they were silently invisible – the
         // instance target was never found and `add_instance_unit` returned
         // quietly, the exact silent-gap shape this codebase refuses
         // elsewhere. Registering is safe because an instance target
@@ -1402,10 +1402,10 @@ impl<'a> Lowerer<'a> {
         };
         let Some(target) = self.modules.get(&instance.module.name).copied() else {
             // The instantiated module was not loaded. That is an error to
-            // report *now*, at registration, with the instance's own span —
+            // report *now*, at registration, with the instance's own span –
             // a use of it would fail much later with a name error that
             // points at the use, not at the cause. (The previous behaviour
-            // — return quietly and let a use fail — is exactly the
+            // – return quietly and let a use fail – is exactly the
             // silent-fallthrough class AGENTS.md opens with.)
             self.missing_instances
                 .push((instance.module.name.clone(), unit.span));
@@ -1474,7 +1474,7 @@ impl<'a> Lowerer<'a> {
     /// Without this a spec's imports are invisible and `Sequences`' `\o`,
     /// `TLC`'s `:>` and every operator a module extends fail to lower. The
     /// order matters: `LoadedSpec::modules` is dependency-first, so the root's
-    /// own definitions are registered last and shadow anything it extends —
+    /// own definitions are registered last and shadow anything it extends –
     /// which is what TLA+ means by overriding.
     /// The \`INSTANCE\` targets that could not be resolved, with their
     /// spans. Empty is the good case; a non-empty list is the caller's to
@@ -1537,7 +1537,7 @@ impl<'a> Lowerer<'a> {
             i += 1;
         }
         // Dependency-first, so the root's own definitions are registered last
-        // and shadow anything it extends — which is what overriding means.
+        // and shadow anything it extends – which is what overriding means.
         for (name, module) in &spec.modules {
             if visible.iter().any(|v| *v == name) {
                 for unit in &module.units {
@@ -1553,7 +1553,7 @@ impl<'a> Lowerer<'a> {
     ///
     /// Returns [`LowerErrorKind::Unsupported`] if there is no such definition,
     /// or the first lowering error.
-    /// Whether `name` is a nullary member of some **unnamed** instance —
+    /// Whether `name` is a nullary member of some **unnamed** instance –
     /// visible unprefixed, which is what a role names.
     #[must_use]
     pub fn open_instances_visible(&self, name: &str) -> bool {
@@ -1564,7 +1564,7 @@ impl<'a> Lowerer<'a> {
         })
     }
 
-    /// Lower the body of the named top-level definition — a unit of this
+    /// Lower the body of the named top-level definition – a unit of this
     /// module, or a member of one of its **unnamed** instances (visible
     /// unprefixed, which is what a role names).
     ///
@@ -1583,7 +1583,7 @@ impl<'a> Lowerer<'a> {
         }
         // A member of an **unnamed** instance is visible unprefixed, so a
         // role may name it (`--inv=Safety` with `INSTANCE y2k WITH …`):
-        // lower it through the instance machinery, substitution and all —
+        // lower it through the instance machinery, substitution and all –
         // exactly what a bare use of the name inside a body does.
         let inst = self
             .open_instances
@@ -1902,7 +1902,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// The `Bags` standard-module vocabulary, desugared to the module's own
-    /// definitions (`Bags.tla`, tla2tools) as kernel nodes — the same macro
+    /// definitions (`Bags.tla`, tla2tools) as kernel nodes – the same macro
     /// expansion TLA+ itself gives these operators. What desugars here
     /// evaluates and encodes through the ordinary function machinery,
     /// because a bag IS a function whose range is the positive naturals:
@@ -1926,13 +1926,13 @@ impl<'a> Lowerer<'a> {
     ///
     /// The operators whose definitions need `CHOOSE` or recursion
     /// (`BagCardinality`'s `Sum`, `SubBag`, `BagUnion`, `BagOfAll`)
-    /// deliberately do **not** desugar — they stay opaque and are declined
+    /// deliberately do **not** desugar – they stay opaque and are declined
     /// by name downstream rather than approximated.
     /// The Apalache standard-library operators that lower exactly
     /// (`StandardLibrary.scala:59-80`).
     ///
     /// Everything not here stays `Opaque` and is typed by `standard_sig` or
-    /// declined by name. `Guess` and `Gen` are **never** lowered — see the
+    /// declined by name. `Guess` and `Gen` are **never** lowered – see the
     /// soundness note on each.
     fn apalache_op(
         &mut self,
@@ -1958,7 +1958,7 @@ impl<'a> Lowerer<'a> {
                 .rc(),
             )),
             ("@@", 2) => {
-                // `f @@ g`: g's entries win over f's where domains overlap —
+                // `f @@ g`: g's entries win over f's where domains overlap –
                 // Apalache's `__rewire_functions_in_apalache` defines it as a
                 // fold of single-entry updates; the direct kernel form is the
                 // same function, built as one definition over the union of
@@ -1985,12 +1985,12 @@ impl<'a> Lowerer<'a> {
                 ))
             }
             // `Skolem`, `Expand`, `ConstCardinality`: identity on their
-            // argument — Apalache's own rewires (`__rewire_*_in_apalache.tla`)
+            // argument – Apalache's own rewires (`__rewire_*_in_apalache.tla`)
             // make each a no-op hint to *its* encoder; this encoder's sets are
             // already exact where they are decidable at all, so the hint is the
             // value.
             ("Skolem", 1) | ("Expand", 1) | ("ConstCardinality", 1) => Ok(Some(k(0))),
-            // `SetAsFun(S)`: the function `[p[1] \\in {p[2] : p \\in S} ...]` —
+            // `SetAsFun(S)`: the function `[p[1] \\in {p[2] : p \\in S} ...]` –
             // exact as one `FunDef` over the *pairs*: domain =
             // `{p[1] : p \in S}`, value at `d` = `CHOOSE p \in S : p[1] = d`,
             // then `p[2]`. CHOOSE over a symbolic set is its own gap, so this
@@ -1998,7 +1998,7 @@ impl<'a> Lowerer<'a> {
             // decides.
             ("SetAsFun", 1) => {
                 // `[d \\in DOMAIN-of-pairs |-> CHOOSE p \\in S : p[1] = d][2]`
-                // needs `CHOOSE` in the kernel body — lowered here as such.
+                // needs `CHOOSE` in the kernel body – lowered here as such.
                 let var = self.fresh_name("apa_d");
                 let d = Kera::Var(var.clone()).rc();
                 let one = Kera::Int("1".into()).rc();
@@ -2063,7 +2063,7 @@ impl<'a> Lowerer<'a> {
             // `BagUnion(S) == ApaFoldSet((+)-as-prefix, EmptyBag, S)`: a
             // fold adding each bag to the accumulator. Bag addition is
             // pointwise `+`, so the fold's value does not depend on the
-            // order — the `ApaFoldSet` order-independence audit recognizes
+            // order – the `ApaFoldSet` order-independence audit recognizes
             // exactly this body.
             ("BagUnion", 1) => {
                 let acc = self.fresh_name("bag_acc");
@@ -2084,7 +2084,7 @@ impl<'a> Lowerer<'a> {
                     .rc(),
                 )
             }
-            // `BagCardinality(B) == \\Sigma_{e \\in DOMAIN B} B[e]` —
+            // `BagCardinality(B) == \\Sigma_{e \\in DOMAIN B} B[e]` –
             // Apalache's rewire folds `i + B[e]` from 0, and so does this.
             // A `+`-chain fold whose accumulator leaf is bare is provably
             // order-independent, which the `ApaFoldSet` audit checks.
@@ -2208,13 +2208,13 @@ impl<'a> Lowerer<'a> {
     /// undeclared symbol where a boolean was meant.
     ///
     /// Checked only after scopes and definitions, so a binding of the same
-    /// name still wins — the language reserves them, but nothing here
+    /// name still wins – the language reserves them, but nothing here
     /// depends on that.
     fn builtin_constant(&mut self, name: &str) -> Option<KeraRef> {
         match name {
             "TRUE" => Some(Kera::Bool(true).rc()),
             "FALSE" => Some(Kera::Bool(false).rc()),
-            // `Variants!UNIT` — the unit value, per the module's own
+            // `Variants!UNIT` – the unit value, per the module's own
             // annotation `@type: UNIT;`. The uninterpreted `UNIT` type and
             // the string that represents it are the module's design, kept
             // verbatim.
@@ -2222,13 +2222,13 @@ impl<'a> Lowerer<'a> {
             "BOOLEAN" => {
                 Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc())
             }
-            // The nullary `Bags` operator lowers to its definition —
-            // `SetToBag({})` is `[e \in {} |-> 1]` — so every consumer sees
+            // The nullary `Bags` operator lowers to its definition –
+            // `SetToBag({})` is `[e \in {} |-> 1]` – so every consumer sees
             // the same function it would see for the spelled-out form. The
             // binder comes from `fresh_name` like every other binder: inference
             // keys bound variables by **name**, so one fixed name here meant
             // every `EmptyBag` in a specification shared a single element type
-            // — `TestBags.tla` failed with "Str and Int" the moment a second
+            // – `TestBags.tla` failed with "Str and Int" the moment a second
             // bag appeared.
             "EmptyBag" => {
                 let var = self.fresh_name("bag_e");
@@ -2311,7 +2311,7 @@ impl<'a> Lowerer<'a> {
                 // A built-in operator symbol: `FooBar(7, +)`, `FoldSet(\\cup,
                 // 0, S)`. Only unambiguously-binary symbols (the AC set:
                 // `+ * \\cup \\cap \\/ /\\`, plus the `\\union`/
-                // `\\intersect` spellings) — unary and binary `-` must stay
+                // `\\intersect` spellings) – unary and binary `-` must stay
                 // distinct, and the token's fixity has already decided
                 // which one a bare `-` is by the time it is a Name.
                 if let Some(sym) = builtin_operator_symbol(&id.name) {
@@ -2375,7 +2375,7 @@ impl<'a> Lowerer<'a> {
                 } => {
                     // The function is the value this frame's expansion put
                     // directly beneath it: the body reads it as `fun[elem]`,
-                    // and the collection is its `DOMAIN` — or the surface
+                    // and the collection is its `DOMAIN` – or the surface
                     // index set, lowered like any other expression.
                     let Some(fun) = values.pop() else {
                         return Err(LowerError::unsupported(
@@ -2403,7 +2403,7 @@ impl<'a> Lowerer<'a> {
                 Frame::BindExceptAt { path_len, before } => {
                     // `@` in the k-th update of `[f EXCEPT !p1 = v1, !p2 = v2]`
                     // denotes the **partially updated** function applied at
-                    // this update's path — not the original `f`, and certainly
+                    // this update's path – not the original `f`, and certainly
                     // not the previous update's value.
                     //
                     // TLC settles it: `[[a |-> 1] EXCEPT !.a = 5, !.a = @ + 100].a`
@@ -2417,7 +2417,7 @@ impl<'a> Lowerer<'a> {
                     // holds only for the *first* update; by the second, the
                     // first update's indices and value sit in between, so it
                     // picked up `v1` and lowered `@` to `v1[c2]`. Silent, and
-                    // a wrong value rather than a refusal — it typed as a
+                    // a wrong value rather than a refusal – it typed as a
                     // record where a model value belonged, which is how it
                     // was found.
                     let n = values.len();
@@ -2486,7 +2486,7 @@ impl<'a> Lowerer<'a> {
                             return Err(LowerError::unsupported(
                                 &format!("the recursive operator `{name}`"),
                                 "recursive operators have no finite inlining; Apalache \
-                                 dropped them too — spell the recursion as ApaFoldSet / \
+                                 dropped them too – spell the recursion as ApaFoldSet / \
                                  ApaFoldSeqLeft, or as a recursive function",
                                 span,
                             ));
@@ -2577,8 +2577,8 @@ impl<'a> Lowerer<'a> {
                         };
                         subst.insert(n.clone(), v);
                     }
-                    // Every substituted name — `WITH` replacements and
-                    // implicit same-named symbols alike — arrives as a value
+                    // Every substituted name – `WITH` replacements and
+                    // implicit same-named symbols alike – arrives as a value
                     // pushed by `push_instance_body`; the resolution rules
                     // (enclosing instance, `.cfg` constant, definition,
                     // declared symbol, hard error) live in
@@ -2619,7 +2619,7 @@ impl<'a> Lowerer<'a> {
                 //
                 // `f[x \in S, y \in T] == e` is a function of one variable
                 // ranging over `S \X T`, exactly as the expression form
-                // `[x \in S, y \in T |-> e]` already was — the two differ
+                // `[x \in S, y \in T |-> e]` already was – the two differ
                 // only in where they are written, and lowering them
                 // differently was the whole defect. Nesting binders instead
                 // would be a different function: one that returns a function.
@@ -2661,8 +2661,8 @@ impl<'a> Lowerer<'a> {
                     // gets a fresh one and the body sees the fresh name
                     // through its scope: two recursive functions called
                     // `f` in sibling `LET`s would otherwise lower with the
-                    // *same* binder, and inference — which keys free names
-                    // by name — would fuse two unrelated functions into
+                    // *same* binder, and inference – which keys free names
+                    // by name – would fuse two unrelated functions into
                     // one variable. The binder-uniqueness check exists to
                     // make that impossible to reintroduce.
                     let rec_name = recursive.then(|| self.fresh_name(&name));
@@ -2958,7 +2958,7 @@ fn digits_to_decimal(base: nixie_tla_syntax::NumBase, digits: &str) -> Option<St
         NumBase::Hex => 16,
     };
     // Accumulate in decimal by hand so that a wide literal is exact rather
-    // than truncated through `u64` — `AGENTS.md`: wide values stay exact.
+    // than truncated through `u64` – `AGENTS.md`: wide values stay exact.
     let mut acc: Vec<u8> = vec![0];
     for c in digits.chars() {
         let d = c.to_digit(radix)? as u8;
@@ -3145,7 +3145,7 @@ impl<'a> Lowerer<'a> {
         // Every constant and variable the instantiated module declares must be
         // substituted: explicitly by `WITH`, or implicitly by the same-named
         // symbol at the instance's declaring scope. Leaving one unsubstituted
-        // would silently read the *wrong* module's symbol — and the old
+        // would silently read the *wrong* module's symbol – and the old
         // fallback here did exactly that, minting a free kernel variable for
         // any name it could not resolve, which the solver then treated as
         // unconstrained. test59.tla is the shape that exposed it: the
@@ -3202,12 +3202,12 @@ impl<'a> Lowerer<'a> {
     ///
     /// 1. an enclosing instance's substitution (nested instances compose);
     /// 2. a `.cfg`-pinned constant;
-    /// 3. a visible nullary definition — module-level, or `LET`-scoped when
+    /// 3. a visible nullary definition – module-level, or `LET`-scoped when
     ///    the instance itself sits in that `LET`;
     /// 4. a visible function definition `f[x \\in S] == e`;
     /// 5. a variable or constant the declaring module itself declares,
     ///    which lowers as the free kernel name of that symbol;
-    /// 6. nothing — a hard error. The specification is ill-formed (TLA+
+    /// 6. nothing – a hard error. The specification is ill-formed (TLA+
     ///    requires every declared name to be substituted), and inventing a
     ///    value here would fabricate a verdict.
     fn resolve_implicit(
@@ -3216,8 +3216,8 @@ impl<'a> Lowerer<'a> {
         inst: &Instantiation<'a>,
         span: Span,
     ) -> Result<SubstSource<'a>> {
-        // The declaring scope: the module the instance unit lives in, or —
-        // for a `LET`-scoped instance — the module (or instance member) the
+        // The declaring scope: the module the instance unit lives in, or –
+        // for a `LET`-scoped instance – the module (or instance member) the
         // lowering walk is currently inside.
         let source = inst
             .source
@@ -3341,8 +3341,8 @@ impl<'a> Lowerer<'a> {
     ///
     /// Shared by `[x \in S, y \in T |-> e]` and `{e : x \in S, y \in T}`:
     /// both range over every *combination*, and both must end up with a single
-    /// kernel binder. Nesting binders instead is wrong for the set map — it
-    /// yields a set of sets — and wrong for the function, whose domain is the
+    /// kernel binder. Nesting binders instead is wrong for the set map – it
+    /// yields a set of sets – and wrong for the function, whose domain is the
     /// product.
     fn expand_product_binder(
         &mut self,
@@ -3370,7 +3370,7 @@ impl<'a> Lowerer<'a> {
     /// definition that happens to share the name.
     ///
     /// The `Apa` prefix exists to reserve these names, so in practice the
-    /// answer is yes. What this guards is the one case where it is not — and
+    /// answer is yes. What this guards is the one case where it is not – and
     /// it cannot simply defer whenever a definition exists, because
     /// `Apalache.tla` defines both names itself, `RECURSIVE`, and deferring
     /// would defer to *that*. So a definition wins only when the application
@@ -3415,7 +3415,7 @@ impl<'a> Lowerer<'a> {
 
     /// The fold expansion proper, with the community modules' argument
     /// order available: their folds (`FoldSet`, `FoldSeq`, …) accumulate in
-    /// the operator's **right** parameter — `op(element, accumulator)` —
+    /// the operator's **right** parameter – `op(element, accumulator)` –
     /// where `ApaFoldSet`/`ApaFoldSeqLeft` accumulate in the left, so the
     /// rewire binds the parameters the other way around rather than
     /// synthesizing a swapped operator.
@@ -3495,7 +3495,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// `FoldFunction(op, base, fun)` / `FoldFunctionOnSet(op, base, fun,
-    /// indices)` — the community `Functions` module's folds over a
+    /// indices)` – the community `Functions` module's folds over a
     /// function's *values*, per Apalache's `__rewire_functions`: a set fold
     /// over the indices whose body reads `op(fun[x], acc)`. The mapping
     /// argument is lowered once; the scope frame that binds the operator's
@@ -3536,8 +3536,8 @@ impl<'a> Lowerer<'a> {
                 op.span,
             ));
         }
-        // The accumulator is `op`'s second parameter — these folds
-        // accumulate on the right — and the element its first, bound to
+        // The accumulator is `op`'s second parameter – these folds
+        // accumulate on the right – and the element its first, bound to
         // `fun[x]`.
         let acc = self.fresh_name(&params[1].0);
         let elem = self.fresh_name(&params[0].0);
@@ -3682,7 +3682,7 @@ impl<'a> Lowerer<'a> {
                     // A value the TLC configuration pinned (`CONSTANT N = 3`).
                     // Substituted here rather than asserted as `N = 3`
                     // downstream, because that is what the configuration
-                    // *means* — TLC replaces the constant — and because an
+                    // *means* – TLC replaces the constant – and because an
                     // equation the solver knows does not help the encoder:
                     // `1..N` needs a literal bound to have a candidate list at
                     // all, and an assumption arrives far too late for that.
@@ -3800,7 +3800,7 @@ impl<'a> Lowerer<'a> {
                 // adding `[y \\in {F(e)} |-> B[e]]` to the accumulator. A
                 // local definition of the same name still wins, exactly as
                 // for the folds.
-                // `SelectSeq(seq, F(_))` — Apalache's rewire to a left fold
+                // `SelectSeq(seq, F(_))` – Apalache's rewire to a left fold
                 // that appends the elements `F` accepts. A local definition
                 // of the same name still wins, exactly as for the folds.
                 if !head.is_qualified()
@@ -3849,7 +3849,7 @@ impl<'a> Lowerer<'a> {
                     return Ok(());
                 }
                 // `Repeat(F, N, x)`: N-fold application of F, with the step
-                // index — Apalache's `RepeatRule` — as ONE ordered fold over
+                // index – Apalache's `RepeatRule` – as ONE ordered fold over
                 // the literal sequence `<<1..N>>`, **literal N in 0..=64
                 // only** (a symbolic count has no finite unfolding, and
                 // Apalache errors on non-constant counts too). A sequence
@@ -4006,7 +4006,7 @@ impl<'a> Lowerer<'a> {
                 // The `Variants` module's operators (issue #17), intercepted
                 // where the application **looks like** the typed operator:
                 // a string-literal tag and the matching arity. The module's
-                // own untyped definitions still win otherwise — a local
+                // own untyped definitions still win otherwise – a local
                 // definition of the same name that does not look like the
                 // builtin keeps its meaning, the same rule `folds_here`
                 // applies.
@@ -4025,7 +4025,7 @@ impl<'a> Lowerer<'a> {
                             let Some(tag_lit) = self.ground_str_expr(tag) else {
                                 return Err(LowerError::unsupported(
                                     "`Variant`",
-                                    "its tag must be a string literal — a computed tag names \\
+                                    "its tag must be a string literal – a computed tag names \\
                                      no constructor",
                                     tag.span,
                                 ));
@@ -4097,13 +4097,13 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
-                // `FunAsSeq(f, len[, capacity])` — Apalache's cast of a
+                // `FunAsSeq(f, len[, capacity])` – Apalache's cast of a
                 // function's `1..len` prefix to a sequence. Lowered as one
                 // kernel operator the encoder builds exactly (a window over
                 // the function's own array), so `len` may be symbolic. The
                 // capacity is a hint Apalache's encoding needs and this one
-                // does not — the window's length already makes reads past
-                // `len` dead — so it is accepted and inert here, never
+                // does not – the window's length already makes reads past
+                // `len` dead – so it is accepted and inert here, never
                 // silently reinterpreted.
                 if !head.is_qualified()
                     && id.name == "FunAsSeq"
@@ -4132,7 +4132,7 @@ impl<'a> Lowerer<'a> {
                 //
                 // * `FoldSet(op, base, S)` (FiniteSetsExt) and
                 //   `FoldSeq(op, base, seq)` (SequencesExt) accumulate in
-                //   the operator's **right** parameter — `op(x, acc)` — so
+                //   the operator's **right** parameter – `op(x, acc)` – so
                 //   they are the kernel folds with the parameters bound the
                 //   other way around.
                 // * `FoldFunction(op, base, f)` / `FoldFunctionOnSet(op,
@@ -4140,7 +4140,7 @@ impl<'a> Lowerer<'a> {
                 //   for `x \in I` (`DOMAIN f` for the former).
                 //
                 // A local definition of the same name still wins when the
-                // application does not look like the fold — the same rule
+                // application does not look like the fold – the same rule
                 // `folds_here` applies to `ApaFoldSet`.
                 if !head.is_qualified()
                     && matches!(
@@ -4398,7 +4398,7 @@ impl<'a> Lowerer<'a> {
                 } else {
                     // `{e : x \in S, y \in T}` collects `e` over every
                     // *combination*, giving one flat set. Nesting the binders
-                    // instead produced a set of sets — `{{<<1, 2>>}}` where
+                    // instead produced a set of sets – `{{<<1, 2>>}}` where
                     // TLC gives `{<<1, 2>>}`. One variable ranges over the
                     // product and the components are projected out, the same
                     // shape a multi-variable function constructor uses.
@@ -4442,7 +4442,7 @@ impl<'a> Lowerer<'a> {
                             saved.push((name.name.clone(), None));
                         }
                         // `LET M == INSTANCE A [WITH …] IN …`: the instance is
-                        // scoped exactly like the definitions around it —
+                        // scoped exactly like the definitions around it –
                         // visible in the `IN` body, restored afterwards, and
                         // shadowing a module-level instance of the same name
                         // for that extent. test59.tla's `Next` is the case.
@@ -4486,7 +4486,7 @@ impl<'a> Lowerer<'a> {
                         // A bare `INSTANCE M` unit cannot appear inside a
                         // `LET` (its grammar is `name == INSTANCE …`), and the
                         // parser cannot produce it there. If that ever
-                        // changes, refusing is the honest outcome — dropping
+                        // changes, refusing is the honest outcome – dropping
                         // it silently would surface much later as a
                         // name-resolution error pointing at the use.
                         UnitKind::Instance { .. } => {
@@ -4540,7 +4540,7 @@ impl<'a> Lowerer<'a> {
                         match sel {
                             // One selector is one *index*, and `![i, j]` is a
                             // single application of a function of two
-                            // arguments — which in TLA+ is a function of the
+                            // arguments – which in TLA+ is a function of the
                             // pair. Flattening it into two steps reads it as
                             // `f[i][j]`, a different function and a different
                             // value; TLC gives
@@ -4568,7 +4568,7 @@ impl<'a> Lowerer<'a> {
                 stack.push(Frame::Expand(base));
             }
             // A higher-order *parameter* whose spelling is an operator
-            // symbol — `Foo(a, _--_) == a -- 0`, applied at `a -- 0` — binds
+            // symbol – `Foo(a, _--_) == a -- 0`, applied at `a -- 0` – binds
             // the operator passed at the call site (`Foo(7, +)`, `Foo(7,
             // ++)`, a `LAMBDA`). Scope wins over a module-level definition of
             // the same spelling, which is what shadowing means and what the
@@ -4657,7 +4657,7 @@ impl<'a> Lowerer<'a> {
             }
             // A user-defined operator symbol: `a \oplus b == …`, `-. z == …`.
             // The definition is registered under its spelling, so it must be
-            // consulted before the built-in rules — otherwise every spec that
+            // consulted before the built-in rules – otherwise every spec that
             // defines an infix operator fails to lower.
             ExprKind::Infix { op, lhs, rhs, .. } if self.defs.contains_key(op.as_str()) => {
                 self.push_symbol_inline(op, &[lhs, rhs], span, stack)?;
@@ -4807,7 +4807,7 @@ impl<'a> Lowerer<'a> {
                 // The Apalache standard-library operators, in Apalache's own
                 // order: `StandardLibrary` maps (module, name) to built-ins
                 // *before* user definitions are consulted, but a user's own
-                // definition of the same name still wins — checked by the
+                // definition of the same name still wins – checked by the
                 // caller's `lookup`/`defs` resolution having failed to reach
                 // here, and by `apalache_op` refusing shadowed names below
                 // at the sites that need it.
@@ -4822,8 +4822,8 @@ impl<'a> Lowerer<'a> {
                     Kera::Opaque(Name(id.name.clone()), kids).rc()
                 }
             }
-            // `A \X B \X C` is a *ternary* product in TLA+ — a set of
-            // 3-tuples — not `(A \X B) \X C`, which is a set of pairs whose
+            // `A \X B \X C` is a *ternary* product in TLA+ – a set of
+            // 3-tuples – not `(A \X B) \X C`, which is a set of pairs whose
             // first component is a pair. The parser makes `\X` associative so
             // the chain parses; flattening it is this step's job, and not
             // doing it produced `{<<<<1, 2>>, 3>>}` where TLC gives
@@ -5179,7 +5179,7 @@ fn build_infix(op: &str, a: KeraRef, b: KeraRef, span: Span, fresh: &mut usize) 
             .rc();
             // LEFT wins on a shared key: Apalache's own rewire tests
             // `x \in DOMAIN f1` first (`__rewire_tlc_in_apalache.tla:38`),
-            // and TLC's module agrees — the first test of this change had
+            // and TLC's module agrees – the first test of this change had
             // it backwards.
             let in_f = Kera::In(Rc::clone(&e), Kera::Domain(a.clone()).rc()).rc();
             let read_f = Kera::FunApp(a, Rc::clone(&e)).rc();

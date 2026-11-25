@@ -8,8 +8,8 @@
 //!   the arithmetic value of every `set.card` term, and the equality /
 //!   subset relations the reduction related, and synthesizes a **faithful
 //!   finite value** for each set-sorted term: ground members from the
-//!   member atoms, plus — where a cardinality target demands more elements
-//!   than the ground part supplies — freshly minted elements, one pool per
+//!   member atoms, plus – where a cardinality target demands more elements
+//!   than the ground part supplies – freshly minted elements, one pool per
 //!   equivalence class of set terms, propagated along committed subset
 //!   edges. This is the eager-reduction analogue of Z3's
 //!   `theory_finite_set_size::init_model`, which materializes each slack
@@ -28,8 +28,8 @@
 //! target, committed equality, committed subset and committed membership
 //! atom is re-checked against the synthesized values, and on any mismatch
 //! the whole sort's entries are rolled back. A declined sort leaves its
-//! sets unassigned, which every consumer reads as *undetermined* — the
-//! same honest non-answer these queries gave before this module existed —
+//! sets unassigned, which every consumer reads as *undetermined* – the
+//! same honest non-answer these queries gave before this module existed –
 //! so a synthesis bug can never publish a model that contradicts the
 //! assertions. The verification gate, which becomes set-aware together
 //! with this module, is the second, independent line of defense.
@@ -58,9 +58,7 @@ const MAX_MINTED_ELEMENTS: usize = 4096;
 /// enumeration-based queries decline).
 const MAX_UNIVERSE_ENUM: u64 = 1024;
 
-// =====================================================================
-// Part 1: the shared evaluator
-// =====================================================================
+// ======== Part 1: the shared evaluator ========
 
 /// A read-only view over a built model that answers set questions.
 pub(super) struct SetView<'a> {
@@ -94,7 +92,7 @@ impl<'a> SetView<'a> {
     /// The ground value of an element term, if the model pins one.
     ///
     /// A value is a constant term (numeric, bit-vector, string, field,
-    /// IEEE-754, Boolean, datatype) or — for `Set (Set T)` elements — a
+    /// IEEE-754, Boolean, datatype) or – for `Set (Set T)` elements – a
     /// canonical synthesized set-value term. Anything else (an unassigned
     /// variable, an opaque application) has no value here.
     pub(super) fn element_value(&mut self, term: TermId) -> Option<TermId> {
@@ -338,7 +336,7 @@ impl<'a> SetView<'a> {
         let value = match self.element_value(element) {
             Some(v) => Some(v),
             None => match self.manager.get(element).map(|d| d.kind.clone()) {
-                // An unvalued `choose(t)` — one that appears only in a
+                // An unvalued `choose(t)` – one that appears only in a
                 // query, never in an assertion: its value is a member of
                 // `t` whenever `t` is nonempty, so resolve through `t`'s
                 // own value. An empty or unset `t` leaves it undetermined.
@@ -387,7 +385,7 @@ impl<'a> SetView<'a> {
         }
         let mut frames: Vec<Frame> = Vec::new();
         // The root: a leaf answers directly; a compound opens a node. The
-        // root's polarity is TRUE — "is the value a member" — with `false`
+        // root's polarity is TRUE – "is the value a member" – with `false`
         // reserved for complemented subtrees (see `member_children`).
         if let Some(v) = self.open_member(value, set, true) {
             return Some(v);
@@ -622,9 +620,7 @@ fn element_sort_of(manager: &TermManager, set_sort: SortId) -> Option<SortId> {
     }
 }
 
-// =====================================================================
-// Part 2: synthesis
-// =====================================================================
+// ======== Part 2: synthesis ========
 
 /// A tiny union-find over set terms (equality classes of committed-equal
 /// sets). Path-halving `find`; no ranks needed at these sizes.
@@ -684,7 +680,7 @@ impl Solver {
     /// membership in the join): the model-build survey walks only the
     /// assertions, so such compounds have no synthesized entry. The
     /// compound is a *function* of its operands, whose values the model
-    /// already verified — composing them is not a guess. Runs the same
+    /// already verified – composing them is not a guess. Runs the same
     /// cross-sort pass, against the same verification, on the caller's
     /// model (the query path works on a clone); shapes the pass cannot
     /// verify still decline honestly (the echo).
@@ -747,7 +743,7 @@ impl Solver {
         let empty_list: Vec<TermId> = Vec::new();
         let elements: &[TermId] = survey.elements.get(&elem_sort).unwrap_or(&empty_list);
 
-        // ---- element values: resolve what the model pins ----
+        // ======== element values: resolve what the model pins ========
         let mut used: FxHashSet<TermId> = FxHashSet::default();
         let mut elem_values: FxHashMap<TermId, Option<TermId>> = FxHashMap::default();
         {
@@ -787,8 +783,8 @@ impl Solver {
             if is_choose(e) || !needs_value(e) {
                 continue;
             }
-            // One of **our own skolems** — a disequality witness or a join
-            // middle — keeps whatever value a committed-true equality pins
+            // One of **our own skolems** – a disequality witness or a join
+            // middle – keeps whatever value a committed-true equality pins
             // it to; any *default* it picked up (the arithmetic pass zeros
             // unconstrained integers, the datatype reconstruction repeats
             // its canonical tuple) is overridden with a fresh, distinct
@@ -825,13 +821,13 @@ impl Solver {
             return;
         }
 
-        // ---- tuple-element component resolution ----
+        // ======== tuple-element component resolution ========
         //
         // A tuple constructor element may spell unresolvable terms inside
         // (a join skolem, an unconstrained variable): `(1, k)`. The
         // model's value for `k` exists (minted or pinned above), so the
         // tuple's *value* is the constructor over the resolved
-        // components. Install it as the element's entry — the read-only
+        // components. Install it as the element's entry – the read-only
         // evaluator then compares values with values, and without this a
         // committed membership over such a tuple compared its spelling
         // against the synthesized value and verification rolled the whole
@@ -840,8 +836,8 @@ impl Solver {
         // Nested tuples resolve innermost-first by element order; one
         // sweep per nesting level.
         // Elements whose values the sweep derives (below) are
-        // commitment-loaded — a selector read off a witness, a component
-        // resolved through a pin — and the collision repair must treat
+        // commitment-loaded – a selector read off a witness, a component
+        // resolved through a pin – and the collision repair must treat
         // them as fixed: re-minting one trades the membership it was
         // derived to satisfy for a fresh violation.
         // **Pre-mint every unpinned join skolem first**, against a
@@ -853,7 +849,7 @@ impl Solver {
         // * `used` tracks whole *element* values (tuples), but the mint
         //   produces *components* (ints). An int constant spelling inside
         //   a resolved value is not itself in `used`, so a minted witness
-        //   could equal a genuine constant — a fresh collision the repair
+        //   could equal a genuine constant – a fresh collision the repair
         //   below refuses. The component set is seeded with every leaf of
         //   every resolved value (recursively: nested tuples contribute
         //   their inner leaves).
@@ -953,7 +949,7 @@ impl Solver {
                     }
                     // A **join skolem** is our own existential witness: its
                     // value is ours to choose, and the arithmetic pass has
-                    // already defaulted every unconstrained integer to 0 —
+                    // already defaulted every unconstrained integer to 0 –
                     // so several distinct skolems all read 0, their splits
                     // collide as equal-valued tuples with independently
                     // decided memberships, and the collision repair (rightly)
@@ -1041,10 +1037,10 @@ impl Solver {
             }
         }
 
-        // ---- value-collision repair ----
+        // ======== value-collision repair ========
         // The arithmetic pass defaults every unconstrained integer variable
         // to 0, so two element terms the formula never related can carry the
-        // same displayed value while their membership atoms disagree — an
+        // same displayed value while their membership atoms disagree – an
         // arrangement no set family realizes. If both elements' values were
         // genuinely pinned, the congruence axioms over the (chained)
         // equalities would have forced the memberships to agree, so a
@@ -1078,7 +1074,7 @@ impl Solver {
                     continue;
                 }
                 group.sort_unstable();
-                // The anchor is the first **pinned** member — its value is
+                // The anchor is the first **pinned** member – its value is
                 // the one a committed equality fixes, so every other
                 // member of the group conforms to it, not the reverse.
                 // Without a pinned member the first is the anchor and all
@@ -1126,7 +1122,7 @@ impl Solver {
             }
         }
 
-        // ---- cardinality targets (the arithmetic solver's word) ----
+        // ======== cardinality targets (the arithmetic solver's word) ========
         let mut target: FxHashMap<TermId, i64> = FxHashMap::default();
         let mut original_cards = FxHashSet::default();
         let mut pending = self.certificate_assertions.clone();
@@ -1149,7 +1145,7 @@ impl Solver {
                 continue;
             }
             // The arithmetic solver's value first; the model entry the
-            // arith pass recorded (an `IntConst`) second — the counting
+            // arith pass recorded (an `IntConst`) second – the counting
             // equations reach the tableau through the conjoined axioms,
             // and the pass may have pinned the term where `value` has no
             // entry for it.
@@ -1190,7 +1186,7 @@ impl Solver {
             }
         }
 
-        // ---- ground members ----
+        // ======== ground members ========
         let mut ground: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
         for (set, members) in &member_true {
             let mut vals: Vec<TermId> = members
@@ -1202,7 +1198,7 @@ impl Solver {
             ground.insert(*set, vals);
         }
 
-        // ---- equality classes ----
+        // ======== equality classes ========
         let mut classes = Classes::new();
         for &set in sets {
             classes.add(set);
@@ -1247,7 +1243,7 @@ impl Solver {
                 .unwrap_or_else(|| vec![t])
         };
 
-        // ---- synthesized values ----
+        // ======== synthesized values ========
         let mut values: FxHashMap<TermId, Option<Vec<TermId>>> = FxHashMap::default();
         let mut fresh: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
 
@@ -1351,7 +1347,7 @@ impl Solver {
             }
         }
 
-        // ---- the term DAG, operands first ----
+        // ======== the term DAG, operands first ========
         // Relation compounds are skipped here: their operands live in
         // other element sorts, so their values come from the cross-sort
         // pass in [`Self::extract_set_model`] instead.
@@ -1365,7 +1361,7 @@ impl Solver {
             structural_value(t, &mut values, &peers_of(t, &peers), &elem_values, manager);
         }
 
-        // ---- intersection-sharing repair ----
+        // ======== intersection-sharing repair ========
         // A compound whose target is smaller than its operands' combined
         // values needs the operands to SHARE elements (inclusion–
         // exclusion). Private pools swap: an element of `a`'s pool replaces
@@ -1496,7 +1492,7 @@ impl Solver {
                 // congruent chooses agree).
                 (Some(true), Some(members)) => members.first().copied(),
                 // Not a member (the set is empty) or no value: any fresh
-                // element of the sort — `choose` of an empty set is
+                // element of the sort – `choose` of an empty set is
                 // underspecified, and an unset set makes the query
                 // undetermined anyway.
                 _ => self.mint_element_value(elem_sort, &mut used, manager),
@@ -1513,7 +1509,7 @@ impl Solver {
             }
         }
 
-        // ---- publish: opaque terms only (compounds fold structurally) ----
+        // ======== publish: opaque terms only (compounds fold structurally) ========
         let mut installed: Vec<TermId> = Vec::new();
         for &t in sets {
             if !is_opaque_set(t, manager) {
@@ -1525,7 +1521,7 @@ impl Solver {
                 // reconstruction defaults tuple-sorted variables with
                 // constructors of the wrong arity (an internally-declared
                 // tuple sort resolved by prefix), and printing such a
-                // value would publish an ill-sorted — wrong — model.
+                // value would publish an ill-sorted – wrong – model.
                 // Declining is the honest answer.
                 let well_sorted = elems
                     .iter()
@@ -1550,7 +1546,7 @@ impl Solver {
             }
         }
 
-        // ---- verify, then roll back on any definite mismatch ----
+        // ======== verify, then roll back on any definite mismatch ========
         // Commitments first (the atoms are cheap to read while `manager`
         // is freely borrowable); the view second.
         let mut member_checks: Vec<(TermId, TermId, bool)> = Vec::new();
@@ -1639,7 +1635,7 @@ impl Solver {
     /// transposed, paired, joined or diagonalized tuple sorts), so these
     /// run after every sort's opaque values are installed, reading the
     /// operands through [`SetView`] (which resolves installed entries,
-    /// including rel entries from earlier fixpoint rounds — nesting) and
+    /// including rel entries from earlier fixpoint rounds – nesting) and
     /// building the compound's canonical value with the tuple builders.
     /// Every installed entry is verified against its arithmetic
     /// cardinality target and its committed membership atoms; a definite
@@ -1650,7 +1646,7 @@ impl Solver {
         model: &mut Model,
         manager: &mut TermManager,
     ) {
-        // The rel terms of the survey, outermost-last is unnecessary — a
+        // The rel terms of the survey, outermost-last is unnecessary – a
         // bounded fixpoint handles any nesting order.
         let rel_terms: Vec<TermId> = survey
             .sets
@@ -1774,7 +1770,7 @@ impl Solver {
             }
         }
 
-        // ---- verify the installed rel entries ----
+        // ======== verify the installed rel entries ========
         // Targets: the arithmetic solver's word for the compound's size.
         let int_entry = |t: TermId, manager: &TermManager| -> Option<i64> {
             match manager.get(t).map(|d| &d.kind) {
@@ -1855,7 +1851,7 @@ impl Solver {
     /// surjectivity axioms state `e = (sel₁ e, sel₂ e)` for every
     /// tuple-sorted term, and treating that self-referential equality as
     /// a pin made the collision repair refuse to re-mint skolems whose
-    /// stale default collided with a genuine element — the whole sort's
+    /// stale default collided with a genuine element – the whole sort's
     /// display then declined (found on a tuple-variable join: the
     /// extensionality witness `@set_ext` sat "pinned" to its own
     /// selector rebuild beside `t = (1,2)`). Explicit-stack walk: the
@@ -1886,12 +1882,12 @@ impl Solver {
 
     /// Whether an element's *value* is genuinely pinned by a constraint:
     ///
-    /// * a **committed-true equality** mentioning it — an asserted or
+    /// * a **committed-true equality** mentioning it – an asserted or
     ///   derived `e = v` fixes the value (a *refuted* equality fixes
     ///   nothing; the counting guards are exactly this shape, and every
     ///   derived tuple element sits in one, so treating guards as pins
     ///   made the collision repair decline the whole sort);
-    /// * any **order/disequality constraint** mentioning it — those bound
+    /// * any **order/disequality constraint** mentioning it – those bound
     ///   arithmetic values and only exist for numeric elements.
     fn element_value_is_pinned(&self, e: TermId, manager: &TermManager) -> bool {
         for (&var, constraint) in &self.var_to_constraint {
@@ -1899,7 +1895,7 @@ impl Solver {
                 super::types::Constraint::Eq(l, r) => {
                     if (*l == e || *r == e) && self.sat.model_value(var) == nixie_sat::LBool::True {
                         // A self-referential equality (`e = (sel₁ e, …)`,
-                        // the surjectivity axiom) pins nothing — see
+                        // the surjectivity axiom) pins nothing – see
                         // [`Self::genuine_pin_target`].
                         let partner = if *l == e { *r } else { *l };
                         if self.genuine_pin_target(partner, e, manager).is_some() {
@@ -2006,7 +2002,7 @@ impl Solver {
             let mut parts: Vec<TermId> = Vec::with_capacity(fields.len());
             for &field in &fields {
                 // Each minted component enters `used` before the next, so
-                // consecutive mints differ componentwise — without this
+                // consecutive mints differ componentwise – without this
                 // every minted tuple was `(0, 0)` and the second collision
                 // repair mint failed outright (found as the join model's
                 // `repair mint fail`).
@@ -2291,7 +2287,7 @@ fn concat_values(u: TermId, v: TermId, manager: &mut TermManager) -> Option<Term
 }
 
 /// The join glue of two values: `u`'s components except the last, then
-/// `v`'s except the first — when the boundary components match. The outer
+/// `v`'s except the first – when the boundary components match. The outer
 /// `None` marks a malformed value; the inner `None` a non-matching pair.
 fn join_glue_values(u: TermId, v: TermId, manager: &mut TermManager) -> Option<Option<TermId>> {
     let us = value_components(u, manager);

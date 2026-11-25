@@ -1,4 +1,4 @@
-//! `@type:` annotations — the Type1 grammar and the seeding of inference.
+//! `@type:` annotations – the Type1 grammar and the seeding of inference.
 //!
 //! Apalache *requires* annotations on almost every spec it checks, so a
 //! drop-in has to read them. The grammar is Apalache's Type1
@@ -43,7 +43,7 @@ pub struct ParsedSignature {
     pub result: Type,
 }
 
-/// Parse an operator-signature annotation, `(a, b) => c` — or the
+/// Parse an operator-signature annotation, `(a, b) => c` – or the
 /// single-parameter form without its parentheses, `P => R`, which is how
 /// the corpus writes most of them (`Seq({x: Int, ..}) => Bool`).
 ///
@@ -83,8 +83,8 @@ pub fn parse_signature1(src: &str) -> Result<Option<ParsedSignature>, Annotation
 }
 
 /// One parameter of a signature: an ordinary type, or an **operator
-/// parameter** `(A) => B` — the higher-order case, `ChooseOne(S, P(_))`'s
-/// `P` — which is a function type at the kernel level (the parameter is
+/// parameter** `(A) => B` – the higher-order case, `ChooseOne(S, P(_))`'s
+/// `P` – which is a function type at the kernel level (the parameter is
 /// applied in the body, and application typing is already `Fun`).
 fn parse_sig_param(p: &mut Parser) -> Result<Type, AnnotationError> {
     let first = p.parse_fun()?;
@@ -111,7 +111,7 @@ pub fn parse_type1(src: &str) -> Result<ParsedType, AnnotationError> {
     let ty = if p.toks.get(p.at) == Some(&Tok::Pipe) {
         // A top-level `|` alternation continues a **variant row** whose
         // first arm `parse_atom` already read (issue #17):
-        // `Tag(a) | Tag2(b) | ...` — the `@typeAlias` spelling.
+        // `Tag(a) | Tag2(b) | ...` – the `@typeAlias` spelling.
         let mut tags = match &ty {
             Type::Variant { tags, open: false } => tags.clone(),
             _ => {
@@ -151,7 +151,7 @@ pub fn parse_type1(src: &str) -> Result<ParsedType, AnnotationError> {
             what: "an operator signature (`(a, b) => c`)",
         });
     }
-    // Everything after the type is trailing junk — except that the caller
+    // Everything after the type is trailing junk – except that the caller
     // strips the `;` Apalache's annotations often end with.
     if p.at < p.toks.len() && !matches!(&p.toks[p.at], Tok::Semi) {
         return Err(AnnotationError::Parse {
@@ -298,14 +298,14 @@ impl Parser {
                     self.expect(&Tok::RParen, "after the element type")?;
                     Ok(Type::Seq(Box::new(e)))
                 }
-                // Lowercase: a type variable. Variables are *parametric* —
-                // two occurrences of `a` are the same `a` — which the
+                // Lowercase: a type variable. Variables are *parametric* –
+                // two occurrences of `a` are the same `a` – which the
                 // seeding side handles by interning them per name.
                 other if other.chars().next().is_some_and(char::is_lowercase) => {
                     Ok(Type::Var(u32::MAX))
                 }
                 // A **tag arm** of a variant row (issue #17):
-                // `RequestVote({ term: Int, from: Str })` — an uppercase
+                // `RequestVote({ term: Int, from: Str })` – an uppercase
                 // identifier applied to one type. The one-tag row it builds
                 // is open until the `|` chain at the top level closes it.
                 other
@@ -321,7 +321,7 @@ impl Parser {
                 }
                 // Uppercase: an uninterpreted type, its own base. There is
                 // no `Type` constructor for it, so it is carried as a
-                // zero-field *open record is wrong* — see the seeding side:
+                // zero-field *open record is wrong* – see the seeding side:
                 // the name is interned there.
                 _ => Ok(Type::Uninterpreted(name)),
             },
@@ -344,7 +344,7 @@ impl Parser {
                 let mut fields = std::collections::BTreeMap::new();
                 // A trailing **bare identifier** is a row variable:
                 // `{ from: Str, term: Int, a }` names a record that has
-                // these fields and maybe more — Apalache's annotation
+                // these fields and maybe more – Apalache's annotation
                 // spelling for an open row (Bug1682's `IsOk` writes it).
                 let mut row_tail: Option<String> = None;
                 while let Some(Tok::Ident(field)) = self.peek().cloned() {
@@ -385,7 +385,7 @@ impl Parser {
                     // check operator instantiations against annotated
                     // signatures (the remaining piece of the annotations
                     // issue), so the *seeding* side skips it with a note
-                    // rather than failing the spec — a wrong annotation on
+                    // rather than failing the spec – a wrong annotation on
                     // an operator body is caught by ordinary inference.
                     return Err(AnnotationError::Unsupported {
                         what: "an operator signature (`(a, b) => c`)",
@@ -417,8 +417,8 @@ impl Parser {
 /// Type variables are interned **per name within one annotation**, so
 /// `(a, a) => a`-style polymorphism inside a single signature holds, while
 /// different annotations do not accidentally share variables. Uninterpreted
-/// types intern per name across the whole specification — one `T` is one
-/// type and one opaque sort — through the `uninterpreted` table the caller
+/// types intern per name across the whole specification – one `T` is one
+/// type and one opaque sort – through the `uninterpreted` table the caller
 /// owns and passes in.
 ///
 /// # Errors
@@ -439,7 +439,7 @@ pub fn assume(
 /// an alias defines resolves to the aliased type, so
 /// `@typeAlias: M = R({x: Int});` followed by `@type: Set(M);` seeds the
 /// variant row. Aliases resolve recursively, with a depth bound in place of
-/// a cycle check — a self-referential alias is a defect in the
+/// a cycle check – a self-referential alias is a defect in the
 /// specification, reported as the parse error it effectively is.
 pub fn assume_with_aliases(
     inf: &mut Inference,
@@ -498,7 +498,7 @@ fn resolve_aliases(
     })
 }
 
-/// Intern one parsed type for the signature check — the same interning
+/// Intern one parsed type for the signature check – the same interning
 /// [`assume`] does, exposed for a caller that checks an operator's *body*
 /// against a signature rather than seeding a name.
 ///
@@ -568,7 +568,7 @@ fn intern(
                 tail: None,
             })?
         }
-        // A type variable: one slot per name within the annotation — the
+        // A type variable: one slot per name within the annotation – the
         // name itself is erased, which is what "parametric within one
         // signature" means.
         Type::Var(_) => {
@@ -583,8 +583,8 @@ fn intern(
         }
         Type::Uninterpreted(name) => {
             // An uninterpreted base type: a never-unified inference variable
-            // is exactly that — its own opaque sort, distinct from Int and
-            // Str — interned per NAME so one `T` is one type everywhere in
+            // is exactly that – its own opaque sort, distinct from Int and
+            // Str – interned per NAME so one `T` is one type everywhere in
             // the specification.
             if let Some(&id) = uninterpreted.get(name) {
                 id

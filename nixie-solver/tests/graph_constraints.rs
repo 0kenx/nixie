@@ -404,7 +404,7 @@ fn partial_assignments_match_bruteforce() {
 }
 
 /// Positive and negative reachability through chains, cycles, self-loops,
-/// disconnected vertices — small directed scenarios.
+/// disconnected vertices – small directed scenarios.
 #[test]
 fn reachability_scenarios() {
     // Path a->b->c: reach(a,c) holds, reach(c,a) does not, graph acyclic.
@@ -1016,8 +1016,8 @@ fn multiple_registrations_are_enforced() {
 
 /// A term and its negation can both appear as edge atoms (they encode to
 /// one SAT variable with opposite phases). The multi-entry `by_var`
-/// routing must deliver both terms' fixations — the graph `0 --x--> 1
-/// --¬x--> 2` reaches 2 only under the contradiction `x ∧ ¬x` — and the
+/// routing must deliver both terms' fixations – the graph `0 --x--> 1
+/// --¬x--> 2` reaches 2 only under the contradiction `x ∧ ¬x` – and the
 /// returned model must carry values for both terms. (Registration used to
 /// reject this shape; FSM guards `g`/`¬g` need it, and the routing now
 /// keeps every watch entry per variable.)
@@ -1067,7 +1067,7 @@ fn negated_duplicate_watch_terms_both_route() {
     );
 
     // And symmetrically with x pinned FALSE: the x edge is out, the ¬x
-    // edge may be in, but v0 has no live out-edge — rejecting reach is sat.
+    // edge may be in, but v0 has no live out-edge – rejecting reach is sat.
     let mut tm3 = TermManager::new();
     let mut model3 = GraphModel::new(&tm3);
     let g3 = model3.new_graph();
@@ -1093,7 +1093,7 @@ fn negated_duplicate_watch_terms_both_route() {
 fn mixed_cp_and_graph_certifications() {
     use nixie_theories::cp::CpModel;
     let mut tm = TermManager::new();
-    // CP: x in {0,1}, y in {0,1}, alldifferent — unsat.
+    // CP: x in {0,1}, y in {0,1}, alldifferent – unsat.
     let mut cp = CpModel::new(&tm);
     let mut mk = |name: &str| tm.mk_var(name, tm.sorts.bool_sort);
     let x0 = mk("x0");
@@ -1107,7 +1107,7 @@ fn mixed_cp_and_graph_certifications() {
         .variable(vec![(0.into(), y0), (1.into(), y1)], &mut tm)
         .unwrap();
     cp.alldifferent(vec![x, y]).unwrap();
-    // Graph: 0 -> 1 with edge atom x0 — reach must hold when x0 holds.
+    // Graph: 0 -> 1 with edge atom x0 – reach must hold when x0 holds.
     let mut graph = GraphModel::new(&tm);
     let g = graph.new_graph();
     let a = graph.add_vertex(g).unwrap();
@@ -1123,7 +1123,7 @@ fn mixed_cp_and_graph_certifications() {
     solver.assert(y1, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
     solver.push();
-    // y0 too: y=0 ∧ y=1 breaks the exactly-one domain — and x0 ∧ y0
+    // y0 too: y=0 ∧ y=1 breaks the exactly-one domain – and x0 ∧ y0
     // breaks alldifferent regardless: Unsat under the scope.
     solver.assert(y0, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Unsat);

@@ -1,14 +1,14 @@
 //! `Solver::add_clause_at_root`: a clause that survives every `pop`.
 //!
-//! The directed tests pin the four cases the module documentation names —
+//! The directed tests pin the four cases the module documentation names –
 //! registration below the open scopes, a root unit (which lives only on the
 //! trail), a root clause the scoped facts falsify, and a clause added while the
 //! trail is above decision level 0.  The differential test drives random
 //! interleavings of `push`, `pop`, scoped and root clauses and `solve` against
 //! a brute-force oracle over at most twelve variables.  The LRAT tests at the
-//! end check that a root clause is an *original* of the proof — registered
+//! end check that a root clause is an *original* of the proof – registered
 //! once, never deleted by a `pop`, and still justifying a root unit that a
-//! `pop` re-asserts — with `nixie_proof::lrat_check`'s pure-Rust checker.
+//! `pop` re-asserts – with `nixie_proof::lrat_check`'s pure-Rust checker.
 
 use nixie_proof::lrat_check::check_lrat_proof;
 use nixie_sat::{LBool, Lit, Solver, SolverResult, Var};
@@ -232,9 +232,9 @@ fn random_interleavings_agree_with_brute_force() {
     }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // LRAT tracing through `add_clause_at_root`.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// A fresh, uniquely named LRAT output path under `std::env::temp_dir()`.
 fn unique_lrat_path(tag: &str) -> PathBuf {

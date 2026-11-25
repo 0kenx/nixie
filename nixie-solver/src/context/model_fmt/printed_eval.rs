@@ -6,18 +6,18 @@
 //! uninterpreted function by its printed table (`printed_check`), the only
 //! symbols an assertion still has are bound variables.  The certificate's
 //! queries (`solver::array_completion_certify::printed`) decide most goals;
-//! this module decides the ones they leave open — a vacuous binder over a
+//! this module decides the ones they leave open – a vacuous binder over a
 //! datatype, an `exists` whose witness no named point gives, a negated
 //! universal, a nonlinear body over a bounded integer box, a small
-//! bit-vector domain — by evaluation alone, three-valued:
+//! bit-vector domain – by evaluation alone, three-valued:
 //!
 //! * every maximal closed sub-term (no bound variable in it) is folded to its
 //!   value first, so a body's array reads and table lookups are literals;
 //! * a quantifier over `Bool`, a bit-vector sort of at most 2^12 values, or
 //!   an `Int` a universal's guard bounds to a finite box is enumerated
-//!   exhaustively — decided `true` or `false`;
+//!   exhaustively – decided `true` or `false`;
 //! * an `exists` over `Int` / `Real` is witnessed at the body's own literals
-//!   and their neighbours — decided `true` when one holds, open otherwise;
+//!   and their neighbours – decided `true` when one holds, open otherwise;
 //! * a universal over an unbounded domain is decided `true` only by
 //!   `mbqi::model_certify`'s region enumeration, which checks its own
 //!   fragment first, and is open otherwise;
@@ -117,7 +117,7 @@ impl Context {
     }
 
     /// One assertion of the goal, closed by `printed`, shown true by exact
-    /// evaluation — the per-assertion form of
+    /// evaluation – the per-assertion form of
     /// [`Self::certified_by_evaluation`].
     pub(in crate::context) fn assertion_certified_by_evaluation(
         &mut self,

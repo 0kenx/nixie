@@ -119,7 +119,7 @@ fn real_division_stays_in_arithmetic() {
     );
     // `(/ x 3.0)` over a NUMERAL divisor now linearizes at construction into
     // `(* x (1/3))` (Z3's `arith_rewriter` policy), which is still an
-    // arithmetic node — the test's actual claim — and is decidable where a
+    // arithmetic node – the test's actual claim – and is decidable where a
     // bare real `Div` is deliberately left undefined by `arith_axioms`.  A
     // SYMBOLIC divisor keeps the `Div` node.
     let _ = eq_side_matching(&m, asserts[0], |k| {
@@ -350,7 +350,7 @@ fn nested_minus(depth: usize) -> String {
 /// depths 2..=n+1 and its innermost `0` sits at depth n+2. The deepest chain
 /// that fits is therefore n = 1022.
 // Mirrors `smtlib::parser::terms::MAX_PARSE_DEPTH` (which this test cannot
-// import — it is private).  Updated in step with the budget: the limit is a
+// import – it is private).  Updated in step with the budget: the limit is a
 // resource bound, not a semantic one, and was raised from 1024 to 65536 so
 // the deeply-nested industrial translations (Fischer n≥10, ~17k-deep
 // left-nested `and` chains) parse instead of erroring.

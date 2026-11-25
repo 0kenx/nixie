@@ -5,7 +5,7 @@
 Asked "did you dig to the root cause of the false sat?", the honest
 answer at the time was **no**: I bisected to the flipping commit,
 characterized the *class* (trajectory-dependent coverage), and built an
-exit gate that converted the wrong answer into an honest `Unknown` — a
+exit gate that converted the wrong answer into an honest `Unknown` – a
 backstop that (as flagged in review) **hid the real bug** and duplicated
 the verification certified mode already performs.  This study records
 the completed dig, the fix, and the backstop removal.
@@ -14,19 +14,19 @@ the completed dig, the fix, and the backstop removal.
 
 1. **Reproduce**: clean rebuild of the flipping commit answers `sat`.
 2. **Scanners** (`NIXIE_SCAN_VIOL`, debug build): the false model carries
-   an `[viol]` — an equality atom whose operands the arithmetic model
-   maps to equal values, assigned false — and a stack of
+   an `[viol]` – an equality atom whose operands the arithmetic model
+   maps to equal values, assigned false – and a stack of
    `[cgap] PROPAGATION GAP`s: apps whose args are arith-equal in the
    model but EUF-distinct.  Extending the scanner to dump the args
    reduced the whole stack to ONE root pair: **`t1031 ≡ t945` (both at
    model value 1, never merged)**; every gap is a congruence cascade
    from it.
 3. **Round instrumentation** (`NIXIE_ARR_TRACE`): the round ran on every
-   candidate — the defect was inside it:
+   candidate – the defect was inside it:
    * 6 value-groups, **~790 candidate pairs**, Phase 1 probes only **64**
      (cap), in `FxHashMap` group iteration order.
    * The fatal pair was probed **only against other partners**
-     (`x=1297 y=1031`, `x=1145 y=945`, …) — never `(1031, 945)`
+     (`x=1297 y=1031`, `x=1145 y=945`, …) – never `(1031, 945)`
      itself: the `i<j` double loop truncates before generating it.
    * Phase 2 (full-arrangement check) is *also* truncated: 32-merge cap
      plus a **break at the first conflict during accumulation**
@@ -38,16 +38,16 @@ the completed dig, the fix, and the backstop removal.
 **Why the perturbation flipped it**: term-id shifts change `FxHashMap`
 iteration order → a different 64-of-790 subset.  The good trajectory
 enumerated the fatal pair; the bad one didn't.  Any clause-DB change is
-such a perturbation — the same class as the wisas wall-clock bug.
+such a perturbation – the same class as the wisas wall-clock bug.
 
 ## The fix
 
 Phase 2 now merges a **spaning chain per value-group** (consecutive
 terms; a chain realizes the same partition as all-pairs merging at
-O(group) cost) — **no caps, no early break**.  Verified on the *false*
+O(group) cost) – **no caps, no early break**.  Verified on the *false*
 build first: with trie-vivify still present, cxs-bp answers `unsat`
 with the chain fix alone.  Phase 1 (per-pair diseq derivation) keeps its
-cap — it is an optimization; completeness comes from Phase 2.
+cap – it is an optimization; completeness comes from Phase 2.
 
 ## Backstops removed (per review)
 
@@ -75,4 +75,4 @@ The exit gate was the wrong reflex even as a temporary measure: it
 removed the failing canary (`sat` → `unknown`) while leaving the bug,
 and its "honesty" made the suite greener.  When a differential flags a
 wrong answer, the next step is the scanner/instrumentation dig to the
-specific pair/atom — the backstop reflex converts evidence into noise.
+specific pair/atom – the backstop reflex converts evidence into noise.

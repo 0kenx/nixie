@@ -316,11 +316,11 @@ no standardized logic string yet; cvc5 accepts `ALL`)
 ### Solver Components
 
 - **Ground reduction** (`nixie-solver/src/solver/set_theory`): every
-  membership atom gets its defining axioms at assert time — `x ∈ a ∪ b
+  membership atom gets its defining axioms at assert time – `x ∈ a ∪ b
   ⇔ x ∈ a ∨ x ∈ b`, extensionality witnesses for disequalities, congruence
   of membership over equal elements
 - **Cardinality** (`set_theory/cardinality.rs`): the Venn-region/slack
-  encoding — counting equations with equivalence-class de-duplication,
+  encoding – counting equations with equivalence-class de-duplication,
   inclusion–exclusion over twin terms (`a ∪ b`'s missing `a ∩ b` is
   created), slack monotonicity, subset↔size rules, and finite-universe
   bounds for Bool/bit-vector/float/finite-field/datatype element sorts

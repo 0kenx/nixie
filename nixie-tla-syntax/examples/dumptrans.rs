@@ -1,4 +1,4 @@
-//! `dumptrans` — translate one PlusCal file and print the module (debug).
+//! `dumptrans` – translate one PlusCal file and print the module (debug).
 fn main() {
     let Some(path) = std::env::args().nth(1) else {
         eprintln!("usage: dumptrans SPEC.tla");

@@ -47,10 +47,10 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // A1: a negated arithmetic equality buried in a shape the syntactic
 //     pre-pass never enumerated.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The seven-line A1 minimal repro: no `let`, no UF, no arrays.
 ///
@@ -181,10 +181,10 @@ fn arithmetic_equality_under_xor_is_refuted() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // The trichotomy itself: a disequality must reach the tableau as a strict
 // ordering constraint.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The mechanism in isolation. `x` is pinned to `5`, and `(+ x 1)` is
 /// asserted *different* from `6`. Refuting this requires the disequality to
@@ -248,12 +248,12 @@ fn disequality_split_does_not_force_a_disequality_in_a_disjunctive_context() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // A2: an unused `let` wrapper must not change the verdict.
 //
 // Each pair below is the SAME formula with and without a binding whose
 // variable never occurs in the body. Both must agree.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// A2 in its most direct form: the disequality itself sits under a `let`.
 #[test]
@@ -401,9 +401,9 @@ fn a_used_let_binding_still_solves_and_yields_a_model() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // The model-verification gate.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// The gate's trail-polarity half, exercised end-to-end.
 ///
@@ -524,7 +524,7 @@ fn real_sorted_disequality_is_handled_without_over_constraining() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Lazy theory mode must agree with eager mode.
 //
 // `:theory-mode lazy` batches theory assignments and processes them at
@@ -544,8 +544,8 @@ fn real_sorted_disequality_is_handled_without_over_constraining() {
 // Every case below is checked in BOTH modes: the verdicts must agree, which
 // is the property that actually matters. A mode that answers `unknown` where
 // the other proves `unsat` is a completeness bug; one that answers `sat`
-// there is a soundness bug — defect 1 produced exactly that.
-// ---------------------------------------------------------------------
+// there is a soundness bug – defect 1 produced exactly that.
+// ========  ========
 
 /// Run the same formula under both theory modes and require the same verdict.
 fn run_both_modes(body: &str) -> Vec<String> {
@@ -562,7 +562,7 @@ fn run_both_modes(body: &str) -> Vec<String> {
 ///
 /// `x = 2` and `y = x + 1` force `y = 3`, contradicting `y != 3`. Deriving it
 /// needs *both* equalities, and defect 1 dropped whichever of them landed
-/// below the SAT core's backtrack point — after which lazy mode answered a
+/// below the SAT core's backtrack point – after which lazy mode answered a
 /// wrong `sat`.
 #[test]
 fn lazy_mode_refutes_an_arithmetic_chain_like_eager_mode() {
@@ -651,12 +651,12 @@ fn lazy_mode_refutes_the_a1_shape_like_eager_mode() {
     );
 }
 
-// ===== the empty-xor parity lemma (a false `unsat` on a three-liner) =====
+// ======== the empty-xor parity lemma (a false `unsat` on a three-liner) ========
 
 /// An ite whose branches agree in parity (both even: `ite(cond, 2, 0)`)
 /// makes its column's image the *constant* `false`; folding it into a
 /// parity row left an empty xor chain, and the lemma builder returned
-/// the bare rhs constant as the lemma — asserting `false` as a ground
+/// the bare rhs constant as the lemma – asserting `false` as a ground
 /// unit and refuting **every** containing goal. Found by the bags fuzz
 /// campaign (the both-even signature was the tell); reproduced on
 /// `4ade3b1e`, before any bags work.

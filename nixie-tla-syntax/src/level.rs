@@ -3,7 +3,7 @@
 //! # What levels are for
 //!
 //! TLA+ stratifies expressions into four levels, and the stratification is not
-//! decoration — it is what makes `Init /\ [][Next]_vars` meaningful. A prime
+//! decoration – it is what makes `Init /\ [][Next]_vars` meaningful. A prime
 //! may only be applied to something that describes a *state*; `ENABLED` may
 //! only be applied to something that describes an *action*; the subscript of
 //! `[A]_v` must be a state expression. Violating any of these produces a
@@ -233,7 +233,7 @@ impl LevelReport {
     /// depend on an unresolved name.
     ///
     /// Returns `None` both for an unknown definition and for one whose level
-    /// could not be established — the caller must handle "we do not know"
+    /// could not be established – the caller must handle "we do not know"
     /// rather than receive a plausible default.
     #[must_use]
     pub fn trusted_level_of(&self, name: &str) -> Option<Level> {
@@ -260,7 +260,7 @@ impl LevelReport {
 /// Listing them keeps ordinary arithmetic and sequence use out of the
 /// unresolved set, which is what makes the taint rule selective enough to
 /// still catch real violations. Anything absent here is simply unresolved,
-/// which is safe — it suppresses reporting rather than inventing a level.
+/// which is safe – it suppresses reporting rather than inventing a level.
 const STANDARD_CONSTANT_OPERATORS: &[&str] = &[
     // Naturals / Integers / Reals
     "Nat",
@@ -342,7 +342,7 @@ const STANDARD_CONSTANT_OPERATORS: &[&str] = &[
 /// Names imported into a module, with the levels they were established at.
 ///
 /// Built by [`check_spec`] from the modules a spec extends. `EXTENDS` does no
-/// substitution, so an extended definition's level carries over exactly —
+/// substitution, so an extended definition's level carries over exactly –
 /// which is why this is worth doing rather than approximating.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Imports {
@@ -462,7 +462,7 @@ pub fn check_module_in(module: &Module, imports: &Imports) -> LevelReport {
 /// its arguments: `SVGElemToString(elem) == TRUE` *ignores* its parameter and
 /// stays constant however high the argument goes, while `B(d) == ENABLED d`
 /// caps it at state level. `param_fns[i][L]` is the body's level when
-/// parameter `i` has level `L` — an exact function on the four-element chain,
+/// parameter `i` has level `L` – an exact function on the four-element chain,
 /// obtained by evaluating the body once per level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Binding {
@@ -500,7 +500,7 @@ struct Checker {
 ///
 /// `AGENTS.md` forbids new unbounded native recursion over user-controlled
 /// input, and an AST built from a user's `.tla` file is exactly that, so the
-/// walk carries its own stack with resume state in the frame — the
+/// walk carries its own stack with resume state in the frame – the
 /// `Expand` / `Combine` shape the rule prescribes.
 enum Frame<'a> {
     Expand(&'a Expr),
@@ -572,7 +572,7 @@ impl Checker {
                 // A TLA+ function definition is recursive: `f[i \in S] == …f[j]…`
                 // refers to itself, so `f` must be in scope while its own body
                 // is checked. Its level is the least fixpoint, reached by
-                // Kleene iteration — the lattice is a four-element chain, so
+                // Kleene iteration – the lattice is a four-element chain, so
                 // four rounds suffice and the loop is bounded.
                 let mut lvl = Lvl::known(Level::Constant);
                 for _ in 0..=(Level::Temporal as usize) {
@@ -647,7 +647,7 @@ impl Checker {
     ///
     /// Evaluates the body once per (parameter, level) pair, with the other
     /// parameters held at constant level. Four levels and usually one or two
-    /// parameters, so the cost is small and bounded — and it is what makes
+    /// parameters, so the cost is small and bounded – and it is what makes
     /// `SVGElemToString(elem) == TRUE` come out constant when applied to a
     /// state expression, and `B(d) == ENABLED d` come out state when applied
     /// to an action.
@@ -708,7 +708,7 @@ impl Checker {
             .or_else(|| builtin_operator_binding(name))
     }
 
-    /// A binding introduced by a scope or an import — never a built-in.
+    /// A binding introduced by a scope or an import – never a built-in.
     ///
     /// The distinction matters: an operator *parameter* named `-.` shadows the
     /// built-in rule for `-.` and must be applied through its level function,
@@ -725,8 +725,8 @@ impl Checker {
     /// Look up a possibly-qualified name.
     ///
     /// `I!Op` resolves through the final segment, which is right whenever the
-    /// module was reached by `EXTENDS`. When it is not — an unresolved
-    /// `INSTANCE`, or a subexpression selector such as `A!1` or `R!+` — the
+    /// module was reached by `EXTENDS`. When it is not – an unresolved
+    /// `INSTANCE`, or a subexpression selector such as `A!1` or `R!+` – the
     /// result is unknown, and the *whole path* is what gets reported. Keying
     /// the diagnostic on the last segment alone listed `1` and `+` as
     /// unresolved "names", which is noise rather than information.
@@ -917,7 +917,7 @@ impl Checker {
             // `ASSUME NEW T, NEW s \in Seq(T), P PROVE Q` declares names that
             // the later assumptions and the goal can use. Without binding
             // them, `Seq(T)` leaves `T` unresolved and taints the whole
-            // sequent — which is what the corpus showed for the allocator
+            // sequent – which is what the corpus showed for the allocator
             // proof modules.
             ExprKind::AssumeProve { assumptions, .. } => {
                 let scope: Vec<(String, Lvl)> = assumptions
@@ -1085,7 +1085,7 @@ impl Checker {
             // An operator *parameter* invoked in operator position:
             // `BoxTest(-._) == -(x = 0)` applies its parameter, so
             // `BoxTest([])` is temporal. The spelling is a bound name here,
-            // not a built-in, so its level function applies — the built-in
+            // not a built-in, so its level function applies – the built-in
             // rules below would silently ignore the parameter.
             ExprKind::Prefix { op, .. }
             | ExprKind::Infix { op, .. }
@@ -1343,9 +1343,9 @@ fn child_exprs(expr: &Expr) -> Vec<&Expr> {
 ///
 /// It fails in two ways, both seen in the corpora:
 ///
-/// * the body **caps** a level — `ENABLED A` is a state predicate however high
+/// * the body **caps** a level – `ENABLED A` is a state predicate however high
 ///   `A` is, and `\cdot` yields an action;
-/// * the body **ignores** a parameter — `SVGElemToString(elem) == TRUE` stays
+/// * the body **ignores** a parameter – `SVGElemToString(elem) == TRUE` stays
 ///   constant however high `elem` goes. SANY gets this right and the max rule
 ///   does not, which is how it was found.
 fn max_rule_is_exact(params: &[OpDecl], body: &Expr) -> bool {
@@ -1411,7 +1411,7 @@ fn body_lowers_level(body: &Expr) -> bool {
 
 /// The level function of a built-in operator *used as a value*.
 ///
-/// TLA+ lets an operator be passed as an argument — `BoxTest([])` hands the
+/// TLA+ lets an operator be passed as an argument – `BoxTest([])` hands the
 /// temporal `[]` to an operator that applies it. Treating such an argument as
 /// an ordinary constant loses exactly the information that decides the
 /// result's level, so the built-ins carry their own level functions:

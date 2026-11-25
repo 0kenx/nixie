@@ -108,8 +108,8 @@ pub(super) fn extract(high: u32, low: u32, value: &BigInt, width: u32) -> EvalOu
 ///   agreement (the checked addition is what keeps a pathological pair of
 ///   widths from wrapping `u32` into a narrow result);
 /// * **every other operator, the three shifts included, requires the two
-///   widths to agree.**  SMT-LIB requires it of all of them — a shift distance
-///   is a bit-vector of the shifted operand's own sort — so a disagreement
+///   widths to agree.**  SMT-LIB requires it of all of them – a shift distance
+///   is a bit-vector of the shifted operand's own sort – so a disagreement
 ///   means the term was never well sorted and no answer for it would be
 ///   meaningful.  This is deliberately stricter than
 ///   [`super::check_array::eval_bv`], which folds a mismatched shift from the
@@ -183,8 +183,8 @@ pub(super) fn compare(
 
 /// `=` between two bit-vector operands.
 ///
-/// Definite in both directions at equal widths — see the module documentation
-/// for why a bit-vector collision is evidence where a numeric one is not — and
+/// Definite in both directions at equal widths – see the module documentation
+/// for why a bit-vector collision is evidence where a numeric one is not – and
 /// [`EvalOutcome::Undetermined`] at unequal widths, which is an ill-sorted term
 /// and therefore the parser's problem rather than the gate's.
 pub(super) fn equal(
@@ -244,7 +244,7 @@ mod tests {
     //! `parse_value_term` could not read a `BitVecConst` witness and every
     //! `Bv*` term fell into `open_in_model`'s closing `_ =>` arm.  Each
     //! operator test below therefore had *no* answer to check before this
-    //! module, and every gate test below answered "the model is fine" —
+    //! module, and every gate test below answered "the model is fine" –
     //! including `the_u01_model_is_refused`, where 0.3.3 and 0.3.4 reported
     //! `sat` with exactly the `a = #b00001111` model built there.
 
@@ -257,9 +257,9 @@ mod tests {
     use nixie_core::ast::{TermId, TermManager};
     use num_bigint::BigInt;
 
-    // ─────────────────────────────────────────────────────────────────
+    // ========  ========
     // A reference implementation, independent of `bv_fold`
-    // ─────────────────────────────────────────────────────────────────
+    // ========  ========
     //
     // Every rule below is written directly on `u128`, so it shares no code
     // with the `BigInt` implementation under test.  `u128` covers every width
@@ -394,7 +394,7 @@ mod tests {
     ];
 
     /// The widths the design names: 1 (degenerate), 7 (odd, sub-byte), 8, 64
-    /// (the limb boundary), 65 (one bit past it — where the 0.3.3/0.3.4
+    /// (the limb boundary), 65 (one bit past it – where the 0.3.3/0.3.4
     /// `encode_add_const` shift bug lived) and 128.
     const WIDTHS: [u32; 6] = [1, 7, 8, 64, 65, 128];
 
@@ -468,7 +468,7 @@ mod tests {
 
     /// Every binary operator, at every width, against the `u128` reference.
     ///
-    /// Before this evaluator existed the gate had no bit-vector arm at all —
+    /// Before this evaluator existed the gate had no bit-vector arm at all –
     /// OxiZ 0.3.3/0.3.4 answered `Undetermined` for every one of these terms,
     /// which is why `u01` came back `sat` with a model that falsifies it.
     #[test]
@@ -635,7 +635,7 @@ mod tests {
     /// Shifting by at least the width is specified, not undefined: `bvshl` and
     /// `bvlshr` vanish, `bvashr` saturates to the sign bit.  The distance is
     /// itself a full-width bit-vector, so at width 65 and 128 it can be far
-    /// larger than any `u32` — the shape that broke a duplicate folder in this
+    /// larger than any `u32` – the shape that broke a duplicate folder in this
     /// crate before (`bvshl x (_ bv2^64 65)` folded to `x`).
     #[test]
     fn shifts_at_and_beyond_the_width_saturate() {
@@ -682,8 +682,8 @@ mod tests {
     ///
     /// The expectations are written structurally (`2^200 - 1`, `2^199`) rather
     /// than computed, so they do not restate the implementation.  A 64-bit
-    /// window onto these values — the shape of every wide-BV bug this crate
-    /// has fixed — gets all four of them wrong.
+    /// window onto these values – the shape of every wide-BV bug this crate
+    /// has fixed – gets all four of them wrong.
     #[test]
     fn wide_widths_are_not_truncated_to_64_bits() {
         const WIDTH: u32 = 200;
@@ -801,7 +801,7 @@ mod tests {
     }
 
     /// Every rule declines rather than guesses when the two operand widths
-    /// disagree — `concat`, whose operands need not agree, excepted.
+    /// disagree – `concat`, whose operands need not agree, excepted.
     #[test]
     fn unequal_widths_produce_no_value() {
         let a = BigInt::from(3u8);
@@ -858,9 +858,9 @@ mod tests {
         assert_eq!(all_distinct(&[bv(1, 8)]), EvalOutcome::Undetermined);
     }
 
-    // ─────────────────────────────────────────────────────────────────
+    // ========  ========
     // The gate itself
-    // ─────────────────────────────────────────────────────────────────
+    // ========  ========
 
     /// A solver holding exactly `assertions` and `model`, ready for the gate.
     fn solver_with(assertions: Vec<TermId>, model: Model) -> Solver {
@@ -891,7 +891,7 @@ mod tests {
 
     /// The `u01` model OxiZ 0.3.3/0.3.4 reported: `a = #b00001111`.  Both
     /// `bvule`s hold (15 <= 15 and 15 <=u 16), so the conjunction is true and
-    /// the assertion is **false** — the model provably violates it and the
+    /// the assertion is **false** – the model provably violates it and the
     /// gate must refuse the verdict.
     ///
     /// Before this evaluator the gate answered `false` here: `EvalVal` had no
@@ -950,7 +950,7 @@ mod tests {
     }
 
     /// An equality between operands of *different* widths is an ill-sorted
-    /// term, and the gate has nothing to say about it — never a refutation.
+    /// term, and the gate has nothing to say about it – never a refutation.
     ///
     /// Built through the manager rather than the parser, which rejects it.
     #[test]

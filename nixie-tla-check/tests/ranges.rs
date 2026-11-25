@@ -1,8 +1,8 @@
 //! Non-literal ranges, structural membership, and range cardinality
 //! (issue #22).
 //!
-//! `a..b` used to demand ground ends — the arena needs to *count* the
-//! elements — which blocked every specification whose bound is a `CONSTANT`
+//! `a..b` used to demand ground ends – the arena needs to *count* the
+//! elements – which blocked every specification whose bound is a `CONSTANT`
 //! or arithmetic on one. Membership is a comparison (`a <= x /\ x <= b`),
 //! Apalache's own rewrite, and needs nothing of the sort; only a candidate
 //! list built *from* a range still needs the ends.
@@ -39,10 +39,10 @@ fn fails(body: &str) {
     assert_eq!(claim(body), Outcome::Violation { step: 0 }, "`{body}`");
 }
 
-// ---- membership over a symbolic range ----
+// ======== membership over a symbolic range ========
 
 /// The issue's own regression: `x \in 0..(y+1)` with a symbolic `y`, correct
-/// in both directions — a membership that holds for every `y`, and one that
+/// in both directions – a membership that holds for every `y`, and one that
 /// fails for some `y` and must be reported.
 #[test]
 fn range_membership_with_a_symbolic_bound() {
@@ -51,11 +51,11 @@ fn range_membership_with_a_symbolic_bound() {
     holds(r"\E y \in 0..3 : 0 \in 0..(y + 1)");
     // And 4 is never in 0..(y+1) for y \in 0..3.
     fails(r"\A y \in 0..3 : 4 \in 0..(y + 1)");
-    // An empty range — the TLA+ rule is `a > b` gives `{}`, not an error.
+    // An empty range – the TLA+ rule is `a > b` gives `{}`, not an error.
     holds(r"\A e \in 5..3 : FALSE");
 }
 
-/// A state variable bounded by a range over a *constant* — the `Nodes == 0..N-1`
+/// A state variable bounded by a range over a *constant* – the `Nodes == 0..N-1`
 /// shape that blocked `EWD840.tla` and ~20 corpus specifications.
 #[test]
 fn a_state_variable_may_range_over_a_constant() {
@@ -95,7 +95,7 @@ Inv == p \in 0..(N - 1)
     );
 }
 
-// ---- cardinality of a range ----
+// ======== cardinality of a range ========
 
 #[test]
 fn range_cardinality_is_arithmetic() {
@@ -107,9 +107,9 @@ fn range_cardinality_is_arithmetic() {
     fails(r"\E y \in 0..3 : Cardinality(0..y) = y");
 }
 
-// ---- structural membership over record sets and products ----
+// ======== structural membership over record sets and products ========
 
-/// `r \in [f : S, g : T]` is the conjunction of the field memberships — the
+/// `r \in [f : S, g : T]` is the conjunction of the field memberships – the
 /// cartesian product is never enumerated.
 #[test]
 fn record_set_membership_is_structural() {

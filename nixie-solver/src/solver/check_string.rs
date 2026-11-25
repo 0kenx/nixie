@@ -841,7 +841,7 @@ impl Solver {
     /// [`Self::extract_string_model`] for the soundness argument.
     ///
     /// Classes matter because a decided equality merges the two terms in EUF
-    /// *before* the model is built — including the conditional equalities a
+    /// *before* the model is built – including the conditional equalities a
     /// lifted `ite` contributes (`v = t` once `c` is decided).  A completion
     /// that ignored them would publish two different values for one EUF
     /// class, contradicting an equality the search itself decided: the
@@ -1002,7 +1002,7 @@ mod tests {
     /// beside it) used to reach the search as an EUF-opaque leaf: the ground
     /// string path declines mixed problems, the honesty gate fires only on
     /// `Str*` atoms, and the published model then invented a value for what
-    /// the `ite` defined — the TLA+ front end's `EWD840.tla` token colour.
+    /// the `ite` defined – the TLA+ front end's `EWD840.tla` token colour.
     /// The fix is two layers, both pinned here: the ite is lifted to a fresh
     /// constant with conditional equalities (so EUF merges the selected
     /// branch), and string model completion publishes the **EUF class**

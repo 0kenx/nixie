@@ -52,7 +52,7 @@ pub enum ModelValue {
         id: u64,
     },
     /// A prime-field element: its residue in `[0, p)` and its field. Exact
-    /// (`BigInt`) — the ZK moduli are 254 bits wide, and this value feeds
+    /// (`BigInt`) – the ZK moduli are 254 bits wide, and this value feeds
     /// the certified-mode evaluator, where a fixed-width payload would
     /// truncate the very values being certified.
     FiniteField {

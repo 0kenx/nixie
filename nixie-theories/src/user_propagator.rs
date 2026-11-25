@@ -249,7 +249,7 @@ pub struct UserPropagatorManager {
     /// replays backward to the recorded mark. This restores precisely the
     /// same state a full snapshot would (including overwritten fixations
     /// and retracted watches) while costing O(changes) instead of
-    /// O(total state) per push — the snapshot design cloned every watched
+    /// O(total state) per push – the snapshot design cloned every watched
     /// term per SAT decision level, which dominated solving once models
     /// registered thousands of watches (graph constraints).
     context_stack: Vec<PropagatorMark>,

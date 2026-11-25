@@ -2,7 +2,7 @@
 //!
 //! # Why this shape
 //!
-//! `nixie-theories::set` exists but is not a CDCL(T) theory — there is no
+//! `nixie-theories::set` exists but is not a CDCL(T) theory – there is no
 //! `SortKind::Set`, no set term kinds and no Nelson-Oppen dispatch, so nothing
 //! a `TermManager` can build reaches it (see
 //! `docs/studies/2026-09-13-set-theory-not-reachable-from-solver.md`). SMT
@@ -43,7 +43,7 @@
 //! graph. [`Value::Fun`] carries both: the graph as an array, so `f[x]` and
 //! `[f EXCEPT ![i] = v]` cost a select and a store, and the domain as a
 //! set-sorted term, so `DOMAIN f` is exact and equality is domain-relative.
-//! Keeping only the array was not merely imprecise — array equality compares
+//! Keeping only the array was not merely imprecise – array equality compares
 //! every index, so two functions that differ *only* in their domain read as
 //! equal, which hides a counterexample rather than manufacturing one.
 //!
@@ -51,7 +51,7 @@
 //!
 //! Candidate members are **not** distinct. `{x, y}` has two candidates that
 //! may be the same value, and `A \cup B` concatenates two lists that may
-//! overlap. Membership and quantification do not care — a duplicate just
+//! overlap. Membership and quantification do not care – a duplicate just
 //! satisfies the disjunct twice. **Cardinality does**, and counting candidates
 //! would over-count `Cardinality({x, y})` as 2 when `x = y`. So a candidate is
 //! counted only when no *earlier* candidate is present and equal to it, which
@@ -67,7 +67,7 @@ use std::rc::Rc;
 /// Only [`Value::Scalar`] has an SMT sort. The others are *structural*: they
 /// exist in the encoder and are taken apart before anything reaches the
 /// solver, which is what lets TLA+'s heterogeneous tuples and records be
-/// encoded at all — an SMT array would force every component to one sort.
+/// encoded at all – an SMT array would force every component to one sort.
 #[derive(Debug, Clone)]
 pub enum Value {
     /// Anything with an SMT sort of its own: `Int`, `Bool`, `Str`, an
@@ -91,7 +91,7 @@ pub enum Value {
     /// function is.
     ///
     /// The graph is an SMT array, so `f[x]` is a select and
-    /// `[f EXCEPT ![i] = v]` a store — both free, because the array theory is
+    /// `[f EXCEPT ![i] = v]` a store – both free, because the array theory is
     /// already in Nelson-Oppen. The domain is a *set-sorted term*, which is
     /// the part an array alone cannot carry, and carrying it is what makes
     /// `DOMAIN f` exact and equality domain-relative.
@@ -159,7 +159,7 @@ impl SetCell {
 ///
 /// Returns `None` when the two values have different shapes. That is a type
 /// error the inferencer should already have caught, so it is reported rather
-/// than papered over with `FALSE` — a silent `FALSE` here would make a genuine
+/// than papered over with `FALSE` – a silent `FALSE` here would make a genuine
 /// equality unsatisfiable and could hide a counterexample.
 pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
     match (a, b) {
@@ -199,8 +199,8 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
         //
         // The graphs are compared by *array* equality, which also compares
         // points outside the domain. That is stricter than TLA+ in one
-        // direction only — it can report two TLA+-equal functions unequal,
-        // never two unequal ones equal — so it can manufacture a
+        // direction only – it can report two TLA+-equal functions unequal,
+        // never two unequal ones equal – so it can manufacture a
         // counterexample and can never hide one. It is *exact* whenever both
         // graphs are built by the encoder, because both store over the same
         // canonical base array and therefore already agree everywhere they do
@@ -222,8 +222,8 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
         ) => {
             // `mk_eq` does not check sorts, so two functions with different
             // domain or range sorts would build a well-formed-looking term
-            // that no theory can decide. Reported as a shape clash — which is
-            // what it is — rather than handed to the solver.
+            // that no theory can decide. Reported as a shape clash – which is
+            // what it is – rather than handed to the solver.
             let sort = |t: &TermId| tm.get(*t).map(|d| d.sort);
             if sort(da) != sort(db) || sort(aa) != sort(ab) {
                 return None;
@@ -232,8 +232,8 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
             let same_graph = tm.mk_eq(*aa, *ab);
             Some(tm.mk_and([same_domain, same_graph]))
         }
-        // A tuple **is** a function on `1..n` — TLA+ has no separate sequence
-        // type — so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one value.
+        // A tuple **is** a function on `1..n` – TLA+ has no separate sequence
+        // type – so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one value.
         // The evaluator normalises the two into one representation; the
         // encoder cannot, because a function-typed state variable has no
         // candidate list to turn into a tuple. So the crossing is done here,
@@ -266,7 +266,7 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
         }
         // A structural tuple or record against the *same value reified* as a
         // datatype term. The encoder keeps the structural form wherever it can
-        // — it is what makes a literal index and an exact `DOMAIN` work — so a
+        // – it is what makes a literal index and an exact `DOMAIN` work – so a
         // comparison routinely has one of each: `<<a, b>> \in msgs`, where
         // `msgs` is a set of tuples and its members are datatype terms.
         //
@@ -342,7 +342,7 @@ pub fn member_of(v: &Value, set: &SetCell, tm: &mut TermManager) -> Option<TermI
         let same = eq_values(v, &m.value, tm)?;
         disj.push(tm.mk_and([m.present, same]));
     }
-    // An empty set yields an empty disjunction, which is `FALSE` — exactly
+    // An empty set yields an empty disjunction, which is `FALSE` – exactly
     // right, and it needs no special case.
     Some(tm.mk_or(disj))
 }
@@ -351,7 +351,7 @@ pub fn member_of(v: &Value, set: &SetCell, tm: &mut TermManager) -> Option<TermI
 ///
 /// `mk_ite` alone only covers [`Value::Scalar`]. The rest need the conditional
 /// pushed *inside* the structure, because a tuple, a record and a set are not
-/// single SMT terms — and for a set it is not even a matter of pushing it
+/// single SMT terms – and for a set it is not even a matter of pushing it
 /// down: the result's candidate list is the two lists concatenated, each
 /// candidate kept under the branch it came from. That is exact, and it is why
 /// duplicate candidates have to be tolerated everywhere else (they already
@@ -359,7 +359,7 @@ pub fn member_of(v: &Value, set: &SetCell, tm: &mut TermManager) -> Option<TermI
 ///
 /// # Errors
 ///
-/// `None` when the two values have different shapes — a tuple against a
+/// `None` when the two values have different shapes – a tuple against a
 /// record, or two tuples of different lengths. That is a type error the
 /// inferencer should have caught, and it is reported rather than resolved:
 /// picking one side would answer a question nobody asked.
@@ -425,8 +425,8 @@ pub fn ite_values(cond: TermId, a: &Value, b: &Value, tm: &mut TermManager) -> O
 /// `Cardinality(set)`, as an integer term.
 ///
 /// Counts a candidate only when it is present **and** no earlier candidate is
-/// both present and equal to it. Candidates are not distinct — `{x, y}` has
-/// two of them and they may denote one value — so a plain sum of indicators
+/// both present and equal to it. Candidates are not distinct – `{x, y}` has
+/// two of them and they may denote one value – so a plain sum of indicators
 /// would report `Cardinality({x, y}) = 2` even when `x = y`.
 ///
 /// # Errors
@@ -456,7 +456,7 @@ pub fn cardinality(set: &SetCell, tm: &mut TermManager) -> Option<TermId> {
 ///
 /// Sharing it is load-bearing rather than a saving. Two functions built with
 /// the same domain and the same values must come out **equal**, and array
-/// equality compares every index — including the ones neither domain mentions.
+/// equality compares every index – including the ones neither domain mentions.
 /// Storing over a common base makes them agree there by construction; a fresh
 /// base per function would leave two identical function literals free to
 /// differ, which is a counterexample the specification does not have.
@@ -470,7 +470,7 @@ pub fn fun_base(array_sort: SortId, tm: &mut TermManager) -> TermId {
 
 /// A function with a *known* graph: every pair present, no guards.
 ///
-/// This is the literal form — what a concrete function value looks like once
+/// This is the literal form – what a concrete function value looks like once
 /// the encoder or an evaluator has already worked out each point. The encoder
 /// builds conditional graphs of its own for a domain whose membership is not
 /// yet decided, but both go over the same [`fun_base`], which is what makes

@@ -281,14 +281,14 @@ fn php_clauses(n: usize, m: usize) -> (usize, Vec<Vec<i32>>) {
 /// 2026-09 shrink-with-chains regression (port of cadical's direct-LRAT
 /// shrink, `shrink.cpp`'s `old_clause_lrat` scheme): with an LRAT proof
 /// attached the solver must run the SAME block-UIP shrink as the unproven
-/// path — the proof must not weaken the learned-clause postprocess — and the
+/// path – the proof must not weaken the learned-clause postprocess – and the
 /// emitted chains must stay checker-verifiable. Before the port, LRAT mode
 /// fell back to plain recursive minimization, silently reshuffling the whole
 /// search trajectory (0.7–8.3× conflict multipliers across files; see
 /// `docs/studies/2026-09-02-lrat-default-path.md`).
 ///
 /// Gate 1 (structural): with a deterministic base config the conflict count
-/// under LRAT equals the unproven count exactly — the two modes share one
+/// under LRAT equals the unproven count exactly – the two modes share one
 /// search shape, the property the port exists to restore.
 /// Gate 2 (soundness): the LRAT proof verifies against `lrat-check`.
 #[test]
@@ -361,7 +361,7 @@ fn lrat_shrink_keeps_plain_search_shape() {
 /// that point (strictly weaker elimination); now the unit is emitted as a
 /// derived unit clause whose RUP chain is `[parents]` (under `¬2` both
 /// parents are unit on their pivot literal → conflict), recorded in the unit
-/// table, and applied — the elimination cascade then shrinks `(-2 3)` and
+/// table, and applied – the elimination cascade then shrinks `(-2 3)` and
 /// `(-2 -3)` to contradictory units and the empty clause follows. The whole
 /// derivation, including the two-unit empty-clause chain, must verify.
 #[test]
@@ -419,7 +419,7 @@ fn lrat_bve_unit_resolvent_provenance() {
 /// 2026-09 subsume-under-proof regression: `subsume_round` now runs with an
 /// attached LRAT tracer (deletions by clause id; each self-subsuming
 /// strengthen emits the resolution pair `[c, subsumer]` as the RUP chain).
-/// `(1 2 3)` self-subsumes against `(-3 1 2)` — the round must drop the
+/// `(1 2 3)` self-subsumes against `(-3 1 2)` – the round must drop the
 /// `3`/`-3` side and emit a derived clause `{1, 2}` whose chain references
 /// both parents; the checker must accept the whole proof. Before the fix
 /// the entire round was skipped under proofs (the strengthen had no

@@ -341,7 +341,7 @@ pub fn collect_subterms(term_id: TermId, manager: &TermManager) -> Vec<TermId> {
             // `traverse`'s dedup already guarantees exactly one post-visit
             // per distinct term (a shared child's re-pre-visit continues
             // without pushing another post frame), so no second visited
-            // set is needed here — the historical one was dead weight.
+            // set is needed here – the historical one was dead weight.
             self.subterms.push(term_id);
         }
     }

@@ -69,7 +69,7 @@ pub struct TermPolyTranslator<'a> {
     /// Fresh poly var per real-division term, keyed by the operand pair
     /// (hashconsing makes equal `(Div a b)` nodes one TermId, so the pair is
     /// a faithful term key): identical division terms share one quotient
-    /// variable — the term's value is a function of the term, which is what
+    /// variable – the term's value is a function of the term, which is what
     /// congruence over `(/ a 0)` needs).
     rdiv_cache: HashMap<(TermId, TermId), u32>,
     /// Guarded defining clauses `rhs = 0 ∨ rhs·t − lhs = 0` for real
@@ -594,7 +594,7 @@ pub fn term_is_nonlinear(term_id: TermId, manager: &TermManager) -> bool {
             // dispatcher encodes it exactly (fresh quotient variable under
             // the guarded defining clause). Flag it so dispatch engages.
             // Int-sorted `div`/`mod` stay unflagged: the Euclidean axiom
-            // path in the CDCL(T) layer owns those — but their operands are
+            // path in the CDCL(T) layer owns those – but their operands are
             // still walked, so a product hidden under a `div` is detected.
             TermKind::Div(lhs, rhs) => {
                 if term.sort == manager.sorts.real_sort {
@@ -2103,7 +2103,7 @@ pub(crate) fn solve_conjunction_nia(
         translator.nlsat.nlsat_mut().add_clause(vec![lit]);
     }
     // Real-division guarded defining clauses (`rhs = 0 ∨ rhs·t − lhs = 0`):
-    // two-literal clauses, never units — each is a disjunction by
+    // two-literal clauses, never units – each is a disjunction by
     // construction (the defining identity binds only when the divisor is
     // nonzero).
     for (first, second) in &translator.pending_clauses {
@@ -2591,7 +2591,7 @@ impl<'a> RealPolyTranslator<'a> {
 fn extract_nra_model(translator: &RealPolyTranslator<'_>) -> HashMap<TermId, BigRational> {
     // All-or-nothing (upstream v0.3.3): a variable holding an algebraic point
     // answers None from `arith_value`, and a partial rational map would be
-    // completed with sort defaults by whatever renders the model — an
+    // completed with sort defaults by whatever renders the model – an
     // assignment that satisfies nothing. Refusing wholesale keeps the
     // modelless-but-correct `sat` of old, always safe; the algebraic channel
     // carries the case this declines.
@@ -2657,7 +2657,7 @@ fn algebraic_witness_from_real_translator(
 /// form: integer coefficients indexed by degree, primitive, positive leading
 /// coefficient. `None` when not a univariate polynomial of degree >= 1.
 /// (Ported from upstream v0.3.3; the normalisation-is-sound argument lives
-/// there — clearing denominators / dividing content / sign flipping reorder
+/// there – clearing denominators / dividing content / sign flipping reorder
 /// no root.)
 fn root_obj_coefficients(
     poly: &nixie_math::polynomial::Polynomial,
@@ -2750,7 +2750,7 @@ impl PolyVarSource for RealPolyTranslator<'_> {
         let t_poly = Polynomial::from_var(t);
         // Guarded defining clause `(b = 0) ∨ (b·t − a = 0)`; a constant ZERO
         // divisor keeps `t` a free variable (`(/ a 0)` is uninterpreted
-        // per SMT-LIB — constraining `a` through the degenerate clause
+        // per SMT-LIB – constraining `a` through the degenerate clause
         // would be wrong). The guard literal is the POSITIVE Eq `b = 0`
         // (see `TermPolyTranslator::rdiv_leaf` for the direction argument).
         if !(b.is_constant() && b.constant_value().is_zero()) {
@@ -2908,7 +2908,7 @@ pub fn dispatch_nra_constraints(
     // Eq atoms stay distrusted for Unsat here (the historical guard of this
     // dispatcher); a real-division side clause is Eq-bearing by construction,
     // so any goal that used real division inherits the same conservative
-    // decline — its `Unsat` falls through to CDCL(T) rather than being
+    // decline – its `Unsat` falls through to CDCL(T) rather than being
     // reported on the strength of the defining clauses.
     let unsat_is_trustworthy = poly_atoms.iter().all(|atom| atom.kind != AtomKind::Eq)
         && translator.pending_clauses.is_empty();

@@ -9,8 +9,8 @@ pub use lasso::{Key, Spur};
 /// The solver-wide string interner: lasso `Rodeo` keyed with FxHash.
 ///
 /// lasso's default hasher is std's SipHash `RandomState` (its `ahash`
-/// feature is off in this build); symbol resolution — every sort alias
-/// lookup during parsing, every term symbol intern — was paying SipHash
+/// feature is off in this build); symbol resolution – every sort alias
+/// lookup during parsing, every term symbol intern – was paying SipHash
 /// on each lookup (7% of a large-CNF front-end profile; scan #3 item
 /// #2a).  lasso stores strings in an insertion-ordered `Vec` and the map
 /// is lookup-only, so the hasher swap changes no `Spur` assignment
@@ -137,8 +137,8 @@ mod no_std_interner {
         ///
         /// Mirrors `lasso::Rodeo::try_resolve`, so a caller holding a key of
         /// uncertain provenance can ask instead of crashing. This codebase
-        /// runs **two** interners — a `TermManager`'s and its `SortManager`'s
-        /// — and a key from one is an out-of-range index in the other.
+        /// runs **two** interners – a `TermManager`'s and its `SortManager`'s
+        /// – and a key from one is an out-of-range index in the other.
         pub fn try_resolve(&self, spur: &Spur) -> Option<&str> {
             self.strings.get(spur.index()).map(String::as_str)
         }

@@ -1,4 +1,4 @@
-//! Tests for the BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP`) —
+//! Tests for the BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP`) –
 //! the 2026-09-21 slice of the SSR-binaries study §5
 //! (`docs/studies/2026-09-18-ssr-binaries.md`): when the pre-search ELS
 //! fixpoint collapsed the formula beyond the threshold, the unconditional
@@ -125,7 +125,7 @@ fn fold_entry_is_recorded_by_the_els_arm() {
     // so the solve reaches the arm's block.  What this pins: the arm
     // records its accounting (the entry denominator); the retirements that
     // drive the ratio are formula-dependent (this toy fixture folds
-    // without retiring) — the numerator is exercised end-to-end by the
+    // without retiring) – the numerator is exercised end-to-end by the
     // powered experiment on the gate-dense corpus (bv_ILA), where the
     // study measured the fold retiring hundreds of thousands of clauses.
     let cfg = SolverConfig {
@@ -152,7 +152,7 @@ fn fold_entry_is_recorded_by_the_els_arm() {
     assert_eq!(s.solve(), crate::SolverResult::Sat);
     assert!(
         s.fold_orig_at_entry >= 7,
-        "the ELS arm recorded the originals at entry (got {}) — did the solve reach the arm?",
+        "the ELS arm recorded the originals at entry (got {}) – did the solve reach the arm?",
         s.fold_orig_at_entry
     );
     test_knobs::set_els_presearch(None);

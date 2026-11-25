@@ -129,7 +129,7 @@ const fn postfix(canonical: &'static str, lo: u8, hi: u8) -> OpInfo {
 /// Look up the infix meaning of a canonical operator spelling.
 ///
 /// Returns `None` when the symbol has no infix form, which the parser reads as
-/// "this token cannot continue an expression" — never as a reason to guess.
+/// "this token cannot continue an expression" – never as a reason to guess.
 #[must_use]
 pub fn infix_info(canonical: &str) -> Option<OpInfo> {
     let info = match canonical {

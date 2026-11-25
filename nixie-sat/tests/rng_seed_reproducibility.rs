@@ -1,4 +1,4 @@
-//! `Solver::set_rng_seed` — reproducibility and variation guarantees.
+//! `Solver::set_rng_seed` – reproducibility and variation guarantees.
 //!
 //! The benchmarking discipline (docs/BENCHMARKING.md) treats a single solve
 //! of a chaotic CDCL system as one sample; seed replication needs a seed
@@ -15,7 +15,7 @@
 use nixie_sat::{DimacsParser, Solver, SolverConfig, SolverResult};
 use std::io::Cursor;
 
-/// Deterministic LCG 3-CNF: `vars` variables, `cls` clauses, ratio 4.0 —
+/// Deterministic LCG 3-CNF: `vars` variables, `cls` clauses, ratio 4.0 –
 /// inside the searchable band: real conflict work (~0.4 k conflicts) at
 /// ~0.1 s per solve, and seed-sensitive (verified: seeds 1/2/3 give
 /// 387/395/766 conflicts).  Sized deliberately below the phase-transition
@@ -68,7 +68,7 @@ fn same_seed_reproduces_the_same_trajectory() {
 fn different_seeds_move_the_trajectory() {
     let text = lcg_cnf(0x5DEECE66D, 160, 640);
     // Two seeds *occasionally* coincide on one formula (chaotic, not
-    // bijective) — require that some pair from a small set differs.
+    // bijective) – require that some pair from a small set differs.
     let mut any_differs = false;
     for (s1, s2) in [(1u64, 2u64), (3, 5), (7, 11), (13, 17)] {
         let a = solve_with(s1, &text);
@@ -80,7 +80,7 @@ fn different_seeds_move_the_trajectory() {
     }
     assert!(
         any_differs,
-        "seeds are supposed to reshape the trajectory — a knob that never \
+        "seeds are supposed to reshape the trajectory – a knob that never \
          moves the counters cannot support seed replication"
     );
 }
@@ -91,9 +91,9 @@ fn restart_strategy_is_live_under_stabilization() {
     // `enable_stabilize` (every preset sets it), making the whole knob facade.
     // It now selects the focused-mode firing rule. Glucose is the config
     // default and must keep the EMA rule; Luby must produce a *different*
-    // trajectory (the legacy cadence) — identical counters would mean the
+    // trajectory (the legacy cadence) – identical counters would mean the
     // knob went inert again.
-    // 300 vars / 1200 clauses (ratio 4.0): ~2-5 k conflicts — enough
+    // 300 vars / 1200 clauses (ratio 4.0): ~2-5 k conflicts – enough
     // restart activity for the strategies to diverge (verified: Glucose
     // 5516 vs Luby 2114 conflicts), solves in ~0.1 s.  The 160-var
     // instance above finishes in 25 conflicts without ever restarting.
@@ -107,7 +107,7 @@ fn restart_strategy_is_live_under_stabilization() {
     assert_ne!(
         (glucose.1, glucose.2),
         (luby.1, luby.2),
-        "Luby vs Glucose must reshape the trajectory under stabilization — \
+        "Luby vs Glucose must reshape the trajectory under stabilization – \
          identical counters mean `restart_strategy` is inert again"
     );
 }

@@ -4,16 +4,16 @@
 //! The pinned search (`pinned`) proposes points and values with one fill
 //! query and is confined to finite index sorts, because over `Int` that
 //! query cost seconds.  So an `Int`- or `Real`-indexed goal no *constant*
-//! array satisfies — `∀i. a[i] ≥ 3` beside `a[5] = 4`, `a[6] = 3` (recheck
-//! 13, `d01`) — was declined, and the `sat` published the candidate's reads
+//! array satisfies – `∀i. a[i] ≥ 3` beside `a[5] = 4`, `a[6] = 3` (recheck
+//! 13, `d01`) – was declined, and the `sat` published the candidate's reads
 //! over the sort default `0`, false at every point no term names.
 //!
 //! The candidate already holds the values the ground assertions need at the
 //! points they name; what it lacks is a default the universals accept.  So
 //! this search keeps each array's candidate reads at literal indices as the
-//! pinned points and tries defaults drawn from the script's constants — the
+//! pinned points and tries defaults drawn from the script's constants – the
 //! candidate's values of the element sort, the literals the assertions spell,
-//! and each of those `± 1` — in a deterministic order.  Every proposal goes
+//! and each of those `± 1` – in a deterministic order.  Every proposal goes
 //! through the same evaluation pre-filter and the same certificate as every
 //! other search (over an infinite index the certificate splits the universal
 //! into the named points and the unnamed region, `split`), so a wrong

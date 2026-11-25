@@ -12,8 +12,8 @@
 //! (a = lit1) ∧ (b = lit2) → fp.pred(rm, a, b)          when it evaluates true
 //! ```
 //!
-//! which is an *unconditionally valid* theory lemma — it is the operation's
-//! defining property at concrete operands — so the pass's soundness never
+//! which is an *unconditionally valid* theory lemma – it is the operation's
+//! defining property at concrete operands – so the pass's soundness never
 //! depends on the e-graph state that guided the choice of fold; the EUF pins
 //! only decide *which* lemmas are worth emitting.  The guard of an operand is
 //! always the single atom `(operand = literal)`, never the transitive
@@ -34,8 +34,8 @@
 //! folded literal and `c2`, and the two distinct bit patterns collide in one
 //! e-graph class (a distinguished-value conflict).
 //!
-//! Evaluation is exact and total on the folded shapes — the engine is the
-//! same bit-exact core the concrete model builder trusts — and any operand
+//! Evaluation is exact and total on the folded shapes – the engine is the
+//! same bit-exact core the concrete model builder trusts – and any operand
 //! that cannot be resolved to a literal (free variable, a `to_fp` from a
 //! Real, a subnormal field wider than 64 bits, …) simply leaves the operation
 //! unfolded: no fold, no clause, no verdict risk.  Chains
@@ -44,7 +44,7 @@
 //! it) with the folded value, so downstream operations fold against it.
 //!
 //! All quantities are capped ([`MAX_FP_FOLD_OPS`]); a cap tripping defers the
-//! remaining folds to the next `check` — it never fabricates a partial fold.
+//! remaining folds to the next `check` – it never fabricates a partial fold.
 //! `fp.roundToIntegral` is not folded (the engine has no exact
 //! implementation); those operations stay with the pattern checks and the
 //! model builder.
@@ -64,8 +64,8 @@ use super::Solver;
 const MAX_FP_FOLD_OPS: usize = 512;
 
 /// The bit-pattern key of an [`FpValue`]: `(eb, sb, sign, biased exponent,
-/// significand)`.  Two floats are `=` — datum identity, the SMT-LIB `=` on
-/// Floats — exactly when this tuple is equal.
+/// significand)`.  Two floats are `=` – datum identity, the SMT-LIB `=` on
+/// Floats – exactly when this tuple is equal.
 pub(super) type FpConstKey = (u32, u32, bool, u64, u64);
 
 /// One resolved pin: an exact value, the literal term that carries it (the
@@ -101,7 +101,7 @@ pub(super) fn fp_const_value(term: TermId, manager: &TermManager) -> Option<FpVa
             // NaN canonicalization: SMT-LIB `=` on floats treats every NaN
             // of a format as ONE datum (z3: `(= nan1 nan2)` over different
             // payloads is `sat`), and the payload-less `(_ NaN e s)` literal
-            // carries no sign — so every NaN bit pattern decodes to the
+            // carries no sign – so every NaN bit pattern decodes to the
             // same canonical value.  Without this, two NaN spellings got
             // distinct value keys and their equality was refuted (false
             // `unsat`).
@@ -130,7 +130,7 @@ pub(super) fn fp_const_value(term: TermId, manager: &TermManager) -> Option<FpVa
         }
         TermKind::FpNaN { eb, sb } => {
             // The payload-less NaN literal decodes to the canonical NaN of
-            // its format — the one datum every NaN bit pattern shares (see
+            // its format – the one datum every NaN bit pattern shares (see
             // the FpLit arm).  Sign false: the literal carries no sign bit,
             // and `fp.isNegative` of it is false in the reference solvers.
             let format = FpFormat::new(*eb, *sb);
@@ -145,9 +145,9 @@ pub(super) fn fp_const_value(term: TermId, manager: &TermManager) -> Option<FpVa
     }
 }
 
-/// The bit-pattern key of a decoded value.  Every spelling of one datum —
+/// The bit-pattern key of a decoded value.  Every spelling of one datum –
 /// `FpLit` with those bits, the dedicated zero/infinity/NaN kinds, a literal
-/// minted by this pass — decodes to the same key.
+/// minted by this pass – decodes to the same key.
 pub(super) fn fp_const_key(value: &FpValue) -> FpConstKey {
     (
         value.format.exponent_bits,
@@ -324,7 +324,7 @@ impl FpOpShape {
                     ClassOp::IsNaN => class.is_nan(),
                     // The sign bit.  NaN decodes with the canonical sign
                     // `false` above, so `isNegative (NaN)` is false and
-                    // `isPositive (NaN)` is true — the reference semantics of
+                    // `isPositive (NaN)` is true – the reference semantics of
                     // the payload-less `(_ NaN e s)` literal.
                     ClassOp::IsNegative => sign && !class.is_nan(),
                     ClassOp::IsPositive => !sign && !class.is_nan(),
@@ -341,7 +341,7 @@ enum FpValueOrBool {
 }
 
 /// Classify a collected term into its foldable shape, or `None` for the
-/// deliberately unfolded kinds (`FpRoundToIntegral` — no exact engine
+/// deliberately unfolded kinds (`FpRoundToIntegral` – no exact engine
 /// implementation) and non-operations.
 fn fp_op_shape(kind: &TermKind) -> Option<FpOpShape> {
     match kind {
@@ -422,9 +422,9 @@ impl Solver {
 
         // ======== resolve operands and fold, iterating to a fixpoint ========
         // Pins come from three sources, in order: the *definitional*
-        // assertions of this scope — `(= t lit)` conjuncts at positive
+        // assertions of this scope – `(= t lit)` conjuncts at positive
         // polarity, and `(= t op)` conjuncts whose op folds later in this
-        // pass — a fold already recorded here, or (on re-checks after a
+        // pass – a fold already recorded here, or (on re-checks after a
         // search has run) the e-graph class of the operand.  The first
         // source is what makes the pass work at `check_core` *entry*: the
         // early instantiation phase runs before any propagation, so the
@@ -433,7 +433,7 @@ impl Solver {
         let mut added_any = false;
         let mut engine = Ieee754Engine::new();
         let mut pinned: FxHashMap<TermId, FpPin> = FxHashMap::default();
-        // Folded operations only — NOT `pinned.contains_key`: the define pass
+        // Folded operations only – NOT `pinned.contains_key`: the define pass
         // legitimately pins an OPERATION term contextually (`(= y op)` with
         // `y` pinned equates them under the assertions), and that contextual
         // pin must not suppress folding the operation to its true value (the
@@ -485,8 +485,8 @@ impl Solver {
     ) -> bool {
         let mut progress = false;
         // Positive-polarity walk to equality leaves (iterative; `and`-spines
-        // of an assertion are conjuncts, everything else — `or`, `ite`, `not`
-        // — carries no definitional fact).
+        // of an assertion are conjuncts, everything else – `or`, `ite`, `not`
+        // – carries no definitional fact).
         let mut stack: Vec<TermId> = self.assertions.clone();
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         while let Some(term) = stack.pop() {
@@ -567,7 +567,7 @@ impl Solver {
         // FP → bit-vector: round the pinned operand's exact value to the
         // INTEGER grid under `rm` and encode at the target width.  The
         // SMT-LIB semantics are UNDERSPECIFIED when the rounded value does
-        // not fit the width (z3: any probe satisfiable) — out-of-range,
+        // not fit the width (z3: any probe satisfiable) – out-of-range,
         // NaN and infinity operands DECLINE, leaving the conversion's atom
         // free, which is exactly that semantics.
         if let FpOpShape::ToBv(rm, width, arg, signed) = shape {
@@ -605,7 +605,7 @@ impl Solver {
         // A bit-vector conversion folds on the operand's exact integer
         // value: a literal operand is its own witness (unit clause); a
         // variable operand resolves through its e-graph class's
-        // distinguished BV constant, guarded by `(operand = witness)` — a
+        // distinguished BV constant, guarded by `(operand = witness)` – a
         // bit-vector atom, arithmetically inert (no `div`/`mod` hazard like
         // the real path).
         if let FpOpShape::FromBv(rm, eb, sb, arg, signed) = shape {
@@ -643,7 +643,7 @@ impl Solver {
                 added,
             ));
         }
-        // `RealToFp` folds on the operand's exact RATIONAL value — the FP
+        // `RealToFp` folds on the operand's exact RATIONAL value – the FP
         // pin machinery never sees its (Real-sorted) operand.  The guard is
         // the atom `(operand = literal-of-value)` when the operand is a
         // compound expression (a literal operand is its own witness).
@@ -658,7 +658,7 @@ impl Solver {
                 let Some(r64) = rat64(&rational) else {
                     // Compound operand whose value cannot be spelled as a
                     // `Rational64` literal: no valid guard atom exists, and
-                    // a guardless clause would be conditional on nothing —
+                    // a guardless clause would be conditional on nothing –
                     // skip (the model builder still decides the sat side
                     // exactly).
                     return None;
@@ -667,7 +667,7 @@ impl Solver {
                     // The guard atom `(operand = literal)` would mention a
                     // `div`/`mod`/numeric-`ite` sub-term, and those carry
                     // defining axioms only in integer mode (real-mode `/`
-                    // is deliberately axiom-less — see
+                    // is deliberately axiom-less – see
                     // `instantiate_arith_axioms`); an axiom-bearing-less
                     // atom trips `arith_defs_incomplete` and downgrades the
                     // whole verdict to `Unknown`.  Skip the fold; the sat
@@ -740,7 +740,7 @@ impl Solver {
         if self.fp_fold_lemmas.insert(lemma) {
             added_any = true;
             // Journal the dedup entry so `pop` retracts it in lockstep with
-            // the clause the SAT scope drops — a later scope re-emits the
+            // the clause the SAT scope drops – a later scope re-emits the
             // (still valid) lemma if the shape is still there.
             self.trail
                 .push(super::trail::TrailOp::FpFoldLemmaAdded { term: lemma });
@@ -752,12 +752,12 @@ impl Solver {
 
     /// Resolve `term` to a concrete pin: its exact value, the literal TERM
     /// that carries it (the guard atom's right-hand side), and the guard
-    /// atoms that jointly force `term` to that value *in the theory* — so a
+    /// atoms that jointly force `term` to that value *in the theory* – so a
     /// downstream clause built from them is valid on its own, never leaning
     /// on another fold clause being present.
     ///
     /// Sources, in order: the term is itself a literal (no guards); a pin
-    /// recorded in this pass (directly, or through an EUF-equal alias —
+    /// recorded in this pass (directly, or through an EUF-equal alias –
     /// `(= y (fp.add …))` puts `y` in the folded operation's class); or the
     /// distinguished FP constant of its e-graph class.  `None` = unpinned.
     fn resolve_fp_operand(
@@ -778,7 +778,7 @@ impl Solver {
             return Some(pin.clone());
         }
         // A pinned operation's EUF-equal alias resolves through the direct
-        // pin (guard set unchanged — the link `(= alias op)` reaches the
+        // pin (guard set unchanged – the link `(= alias op)` reaches the
         // pins through the define pass, which adds it explicitly).
         if !pinned.is_empty()
             && let Some(node) = self.euf.term_to_node(term)
@@ -806,7 +806,7 @@ impl Solver {
 }
 
 /// Assemble `¬g1 ∨ … ∨ ¬gk ∨ conclusion` (just `conclusion` when no guard
-/// survives — the operation's operands were all class-pinned constants).
+/// survives – the operation's operands were all class-pinned constants).
 fn build_fold_lemma(guards: &[TermId], conclusion: TermId, manager: &mut TermManager) -> TermId {
     if guards.is_empty() {
         return conclusion;
@@ -829,17 +829,15 @@ fn engine_rm(rm: RoundingMode) -> FpRoundingMode {
     }
 }
 
-// ===========================================================================
-// Exact rational → IEEE-754 conversion (the `RealToFp` semantics)
-// ===========================================================================
+// ======== Exact rational → IEEE-754 conversion (the `RealToFp` semantics) ========
 //
 // `((_ to_fp eb sb) RM real-expr)` must round the *exact rational* value of
-// `real-expr` to the target grid under `RM` — a single rounding step.  The
+// `real-expr` to the target grid under `RM` – a single rounding step.  The
 // concrete model builder previously evaluated the real expression as an
 // `f64` first (an RNE rounding of its own!) and then converted, which makes
 // every directed mode a no-op on the already-rounded value: `RTZ` of
 // `1 + 2^-52 + 2^-53` pinned `1 + 2·2^-52` (the RNE value) instead of the
-// true truncation `1 + 2^-52` — a **false-`sat`** on the wrong-datum probe
+// true truncation `1 + 2^-52` – a **false-`sat`** on the wrong-datum probe
 // (z3: `unsat`).  Everything below is exact `BigInt`/`BigRational`
 // arithmetic; no `f64` participates in any converted value.
 
@@ -848,7 +846,7 @@ use num_traits::{Signed, Zero};
 
 /// The exact rational value of an Int/Real-sorted ground term: numeric
 /// literals and the exact arithmetic connectives.  `None` for anything else
-/// (variables, `div`/`mod`, quantifiers, …) — the callers fold/refine
+/// (variables, `div`/`mod`, quantifiers, …) – the callers fold/refine
 /// honestly without it.  Iterative post-order walk (the explicit-stack rule
 /// over user-controlled DAG depth), memoized on `TermId`.  The combine step
 /// re-derives its operand ids from the term kind and reads their values
@@ -968,7 +966,7 @@ pub(super) fn eval_rational(root: TermId, manager: &TermManager) -> Option<BigRa
     memo.get(&root).cloned().flatten()
 }
 
-/// The `Rational64` view of an exact rational, when both parts fit — used
+/// The `Rational64` view of an exact rational, when both parts fit – used
 /// only to MINT guard atoms (`mk_real` takes a `Rational64`); the rounding
 /// itself always stays on `BigRational`.
 fn rat64(r: &BigRational) -> Option<num_rational::Rational64> {
@@ -978,7 +976,7 @@ fn rat64(r: &BigRational) -> Option<num_rational::Rational64> {
 }
 
 /// Round the exact rational `r` to the IEEE-754 `(eb, sb)` grid under `rm`
-/// — a single correctly-rounded step, from first principles (the exact
+/// – a single correctly-rounded step, from first principles (the exact
 /// `BigInt` analogue of the generator-side oracle in `bench/obligation`'s
 /// `fpboundary` family). Every rational has a correctly-rounded image for
 /// supported formats (2–15 exponent bits, 2–64 significand bits), including
@@ -1020,7 +1018,7 @@ pub(super) fn rational_to_fp(
         bin_exp -= 1;
     }
 
-    // Far overflow: beyond max normal + 1 full exponent step — no rounding
+    // Far overflow: beyond max normal + 1 full exponent step – no rounding
     // can come back inside more than one ulp, so saturate per mode.
     if bin_exp > e_max + 1 {
         return Some(saturate_overflow(neg, rm, format));
@@ -1147,7 +1145,7 @@ fn saturate_overflow(neg: bool, rm: RoundingMode, format: FpFormat) -> FpValue {
 }
 
 /// Whether a Real/Int-sorted ground term contains no `div` / `mod` /
-/// numeric-`ite` sub-term — the kinds whose defining axioms exist only in
+/// numeric-`ite` sub-term – the kinds whose defining axioms exist only in
 /// integer mode.  Iterative structural scan.
 fn real_term_arith_clean(root: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![root];
@@ -1164,7 +1162,7 @@ fn real_term_arith_clean(root: TermId, manager: &TermManager) -> bool {
             TermKind::Ite(..) => {
                 // Only NUMERIC ites are axiom-bearing kinds; a Bool ite
                 // (e.g. a rounding-mode case split) is harmless, but
-                // distinguishing needs the sort — treat any ite under a
+                // distinguishing needs the sort – treat any ite under a
                 // real term as numeric (the conservative, honest choice).
                 return false;
             }
@@ -1200,8 +1198,8 @@ pub(super) fn bv_term_rational(
 impl Solver {
     /// The `BitVecConst` term a bit-vector operand is pinned to: its
     /// e-graph class's distinguished BV constant (on re-checks, after a
-    /// search has merged the assertions), or — at `check_core` entry,
-    /// before any propagation — a definitional `(= operand const)` conjunct
+    /// search has merged the assertions), or – at `check_core` entry,
+    /// before any propagation – a definitional `(= operand const)` conjunct
     /// of the assertions at positive polarity.
     fn bv_pin_witness(&self, term: TermId, manager: &TermManager) -> Option<TermId> {
         if let Some(w) = self.euf.class_const_witness(term) {
@@ -1407,7 +1405,7 @@ mod rational_value_tests {
 }
 
 /// Round a finite fp value's exact rational to the INTEGER grid under
-/// `rm` — the single rounding step of `fp.to_sbv`/`fp.to_ubv`.
+/// `rm` – the single rounding step of `fp.to_sbv`/`fp.to_ubv`.
 pub(super) fn fp_value_rounded_to_integer(v: &FpValue, rm: RoundingMode) -> Option<BigInt> {
     let r = fp_value_rational(v)?;
     let neg = r.is_negative();

@@ -142,8 +142,8 @@ No cell was rerun, and no measured configuration or seed was selected afterward.
 | permutation-16 | 261.07 (11/11) | 261.98 (11/11) | 256.18 (11/11) |
 | negative-2 | 253.45 (11/11) | 253.65 (11/11) | 242.61 (11/11) |
 | negative-4 | 642.84 (11/11) | 388.24 (11/11) | 243.11 (11/11) |
-| negative-8 | — (0/11) | — (0/11) | 244.06 (11/11) |
-| negative-16 | — (0/11) | — (0/11) | 245.97 (11/11) |
+| negative-8 | – (0/11) | – (0/11) | 244.06 (11/11) |
+| negative-16 | – (0/11) | – (0/11) | 245.97 (11/11) |
 
 Millions of user instructions; median among completed runs. Partial Unknown costs excluded.
 

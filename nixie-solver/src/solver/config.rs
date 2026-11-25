@@ -66,7 +66,7 @@ impl Solver {
     /// Bound the total number of MBQI rounds for a single solve
     /// invocation (A/B work units for MBQI-phase measurement; the default
     /// 100 is unchanged when never called).  Reaching the bound makes MBQI
-    /// report `Unknown` — an honest resource limit, never a verdict.
+    /// report `Unknown` – an honest resource limit, never a verdict.
     pub fn set_mbqi_max_rounds(&mut self, max: usize) {
         self.mbqi.set_max_rounds_hard(max);
     }
@@ -147,7 +147,7 @@ impl Solver {
     /// never from name substrings.  Known-header semantics per the SMT-LIB
     /// catalog entry; `ALL`/unknown names keep the constructor defaults and
     /// route structurally at check time (`check_nlsat`'s open-logic shape
-    /// detection) — matching the historical `ALL` behavior exactly, so
+    /// detection) – matching the historical `ALL` behavior exactly, so
     /// trajectory parity holds for headerless inputs.
     ///
     /// Substring bugs this replaces: `QF_NIRA` contains neither "LIA" nor
@@ -162,7 +162,7 @@ impl Solver {
         self.mbqi.set_logic_hint(logic);
 
         // `Err` (unknown name) reaches here only via direct
-        // `Solver::set_logic` calls — the Context layer rejects unknown
+        // `Solver::set_logic` calls – the Context layer rejects unknown
         // names at the script surface.  Route as `ALL` (defaults + shape
         // detection) rather than partially reconfiguring.
         let spec = crate::solver::logic_contract::lookup(logic).ok().flatten();
@@ -214,7 +214,7 @@ impl Solver {
         // gated on `matches!(logic, "QF_UFIDL")` is applied from the
         // *features* of the asserted formula in [`Self::apply_feature_routing`]
         // (`is_diff_logic() && has_uf()`), the `CFG_AUTO` analogue of Z3's
-        // `setup_QF_UFIDL(static_features&)` — it cannot run here because
+        // `setup_QF_UFIDL(static_features&)` – it cannot run here because
         // the assertions are not available at `set-logic` time.
     }
 

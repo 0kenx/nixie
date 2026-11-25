@@ -1,4 +1,4 @@
-# Perf-opportunity implementation batches — 2026-11-10/11 (follow-up to the opportunity scan)
+# Perf-opportunity implementation batches – 2026-11-10/11 (follow-up to the opportunity scan)
 
 ## Registered task
 
@@ -6,7 +6,7 @@ Baseline the HEAD `660166ad` binary, then implement each opportunity from
 [`2026-11-10-perf-opportunity-scan.md`](2026-11-10-perf-opportunity-scan.md),
 benchmark, and keep or revert. Landing bar per AGENTS.md (build, nextest,
 clippy, fmt, doc, Z3 4.16.0 parity, perf gate) for every kept batch;
-counters must stay **bit-identical** (equivalent-work class) — any drift
+counters must stay **bit-identical** (equivalent-work class) – any drift
 reclassifies the change as heuristic.
 
 ## Method notes (what the baseline taught)
@@ -30,11 +30,11 @@ reclassifies the change as heuristic.
   arctic while helping everything else. Portfolio geomean + CPU-share
   evidence is the only honest arbiter here.
 - nia-100 is natively bimodal (0.11s/1.1s clusters at identical counters)
-  — excluded from geomeans.
+  – excluded from geomeans.
 
 ## Batches
 
-### LANDED — A: simplex `find_violating` deferred clone + term-list probes (`6abc321a`)
+### LANDED – A: simplex `find_violating` deferred clone + term-list probes (`6abc321a`)
 
 Clone the winning `Bound` once at return instead of per violating row;
 `terms_len`/`any_var` answer the two list-materializing probes without
@@ -42,7 +42,7 @@ building lists. CPU share of `find_violating` on sll's late phase:
 14.3% → 12.9%. Wall: sll/wisa/wisas 0.95–0.96; arctic +6–10% (layout;
 counters identical, CPU equal-or-lower). Gate 1.000.
 
-### LANDED — B: DL bound-propagator fused single pass (`91e9f6fc`)
+### LANDED – B: DL bound-propagator fused single pass (`91e9f6fc`)
 
 The headline win of the scan: `derive_arith_bound_propagations` scanned
 `var_to_constraint` + probed `var_to_parsed_arith` per entry + collected
@@ -50,23 +50,23 @@ an intermediate Vec, per arith assertion, then re-probed per candidate.
 Now one probe-free pass over `var_to_parsed_arith` with an
 `eq_placeholder` flag set at the `TermKind::Eq` encode site. **vlsat3_f77:
 14.42s → 9.01s (0.62×)** at identical counters (decision budget 3000).
-Non-DL instances pay only layout (arctic 1.15, 25959 1.12 — the
+Non-DL instances pay only layout (arctic 1.15, 25959 1.12 – the
 propagator never runs there). An intermediate variant (iterate
-`var_to_constraint`, one probe) measured 11.7s — the flag variant is
+`var_to_constraint`, one probe) measured 11.7s – the flag variant is
 strictly better and chosen.
 
-### LANDED — C: EUF congruence buffer reuse + signature match without key builds (`b593a1be`)
+### LANDED – C: EUF congruence buffer reuse + signature match without key builds (`b593a1be`)
 
 Per-merge-event `args_buf` (the `canon_buf` pattern extended to raw
-args) and — replacing the per-hit `canon_buf.clone()` + `sig_table`
-probe — an exact scan of the small fingerprint bucket against each
+args) and – replacing the per-hit `canon_buf.clone()` + `sig_table`
+probe – an exact scan of the small fingerprint bucket against each
 node's current `node_sig_key`. Content-identical matching; `sig_table`
 and its pop trail untouched. vs B: sll 0.95, bv-sage 0.92, arctic 0.93,
 25959 0.93. uf-peq improves vs the args-only build (12.34→12.05s) but
 retains +13% vs baseline (cross-crate layout; strictly less work per
 entry at identical counters).
 
-### LANDED — E: nl_eval FxHashMap (`a76709df`)
+### LANDED – E: nl_eval FxHashMap (`a76709df`)
 
 SipHash → FxHash for `Interpretation`'s maps and the eval memo maps
 (lookup-only semantics; the entries() iterators are documented
@@ -74,7 +74,7 @@ unspecified-order with no callers). SipHash-touching CPU on nia-4:
 22.0% → 3.6%. **nia-4 (VeryMax/SAT14/4) end-to-end: 14.2s → 8.9s
 (0.63×; 16.6s→9.0s in the pre-batch environment), same verdict.**
 
-### REVERTED — D: SAT `shrink_block` buffer hoist
+### REVERTED – D: SAT `shrink_block` buffer hoist
 
 Implemented exactly as designed (two `SmallVec<[Var;32]>` per block per
 conflict → solver-state buffers). Counters identical, but SAT targets
@@ -83,7 +83,7 @@ capacity of 32, so the "allocations" never left the stack) and the
 portfolio paid 1.02 via layout. Honest keep/revert verdict: **revert**
 (`git checkout`, no landing).
 
-### REVERTED — #5: EUF `expl_cache` epoch invalidation
+### REVERTED – #5: EUF `expl_cache` epoch invalidation
 
 Implemented (epoch-stamped LRU entries, five clear-sites → epoch bumps,
 observable behaviour provably identical). Measured **exactly 1.000**
@@ -91,18 +91,18 @@ geomean: the LRU-1024 clear was effectively free in practice. No
 demonstrated benefit → reverted to keep the diff minimal (same
 discipline as D).
 
-### LANDED (follow-up session) — #3b: O(1) column removal via slot back-pointers (`f5fb11ef`)
+### LANDED (follow-up session) – #3b: O(1) column removal via slot back-pointers (`f5fb11ef`)
 
 The deferral above was revisited: the side-table design does NOT need
 to track slots inside rows at all.  `column_slots: FxHashMap<(var,
 row), u32>` names each entry's position in `columns[var]`; drops read
 the slot, verify it against the vector, `swap_remove` that position
-and fix up exactly one displaced slot — Z3's `static_matrix`
+and fix up exactly one displaced slot – Z3's `static_matrix`
 discipline with the back-pointer in a side map (nixie's rows are
 immutable `Arc` values, so in-row offsets were never an option).
 The mutation surface is provably closed: `column_drop_known`,
 `column_push_known` and `reset`'s `columns.clear()` are the ONLY
-writers (pop restores nothing — the Dutertre–de Moura contract makes
+writers (pop restores nothing – the Dutertre–de Moura contract makes
 bounds the sole backtrackable state), `Simplex` is not `Clone`, and
 `debug_verify_columns` now pins slot↔position consistency in both
 directions after every pivot in dev builds.  Because `swap_remove`
@@ -111,22 +111,22 @@ are identical by construction.
 
 Measured vs the untouched `660166ad` baseline, identical counters:
 arctic 600k-decisions 8.49→7.73s (0.91×) and 1M-decisions
-29.6→24.2s (**0.82×**, the win grows with column density — the
+29.6→24.2s (**0.82×**, the win grows with column density – the
 asymptotic O(len)→O(1) effect, not layout); wisa 0.93, wisas 0.95,
 sll 0.96; portfolio geomean 0.963 (from 0.969).  This is the first
-change of the campaign to land arctic BELOW its untouched baseline —
+change of the campaign to land arctic BELOW its untouched baseline –
 the O(1) drop beats the per-crate layout tax that every previous
 simplex edit paid.
 
-### DEFERRED (with evidence, not attempted-blind) — #8, #9
+### DEFERRED (with evidence, not attempted-blind) – #8, #9
 
-- **#3b** — landed above (kept here for history: the original deferral
+- **#3b** – landed above (kept here for history: the original deferral
   feared side-table maintenance would break on row rebuilds; the
-  insight that slots are per-(var,row) COLUMN positions — rebuilt
-  wholesale by the same push/drop calls that rebuild rows — removed
+  insight that slots are per-(var,row) COLUMN positions – rebuilt
+  wholesale by the same push/drop calls that rebuild rows – removed
   the obstacle).
 - **#8 gate-subsume arena fetches**: the canonical sets are already
-  materialized (`sets` map) — the arena `get` is one-per-clause per
+  materialized (`sets` map) – the arena `get` is one-per-clause per
   round, diluted end-to-end (bv-sage budget 0.99–1.00). No contained
   fix with demonstrable end-to-end win; D's precedent says neutral
   SAT-side changes get reverted anyway.
@@ -180,4 +180,4 @@ clippy, fmt, doc, parity 171/0/6 = the tracked record, perf gate
 3. The repo's deterministic-counter discipline is what made all of this
    decidable: every keep/revert call above rests on bit-identical
    trajectories, so wall differences could be attributed to real work
-   or layout — never to search reshuffling.
+   or layout – never to search reshuffling.

@@ -3,35 +3,35 @@
 //! z3's default preprocessing shape: every assertion runs through the
 //! core rewriter before the search sees it.  Nixie's encoder pipeline
 //! rewrites structurally (`expand_lets`, `flatten_eq_ite_tables`,
-//! `eliminate_nonbool_ite`, …) but had no VALUE-level folder — the
+//! `eliminate_nonbool_ite`, …) but had no VALUE-level folder – the
 //! nec-smt class (2537-deep let/ite/`=` spines encoding a
 //! priority-select) reached the encoder structurally intact, tripped
 //! `ENCODE_DEPTH_LIMIT`, and answered an instant spurious `Unknown`,
 //! while z3's rewriter folds the same goal to `false` outright.
 //!
 //! The fold composes the two `TermManager` passes that now carry the
-//! guard-equality solve rules (z3 `bool_rewriter`'s ite-eq family —
+//! guard-equality solve rules (z3 `bool_rewriter`'s ite-eq family –
 //! `2026-09-20-solve-eqs-guard-elimination.md`): the memoized
 //! bottom-up `simplify`, then the context walk `ctx_simplify`.  Both
 //! are explicit-stack and fuel-bounded, so a deep spine is stack-safe,
-//! and every rule is an unconditional equivalence — the folded
+//! and every rule is an unconditional equivalence – the folded
 //! assertion is satisfied by exactly the same models.
 //!
 //! Placement contract (see `Solver::assert`):
-//! * AFTER `expand_lets` — the fold does not descend into `Let` nodes,
+//! * AFTER `expand_lets` – the fold does not descend into `Let` nodes,
 //!   and the let-expanded DAG is where the select-chains become
 //!   visible to the solve rules;
-//! * BEFORE the encode-depth guard and the set/bag survey — a folded
+//! * BEFORE the encode-depth guard and the set/bag survey – a folded
 //!   spine collapses to a constant (or a much smaller residual), so
 //!   the guard measures the folded term and the survey walks fewer
 //!   nodes;
 //! * the caller's EXACT term is already captured in
-//!   `certificate_assertions` — certified mode never trusts the fold.
+//!   `certificate_assertions` – certified mode never trusts the fold.
 
 use nixie_core::ast::{TermId, TermManager};
 
 /// Whether the fold pass is armed.  DEFAULT ON (the measurement
-/// campaign's verdict — see `2026-09-21-assert-fold-default.md`): the
+/// campaign's verdict – see `2026-09-21-assert-fold-default.md`): the
 /// nec-smt corpus flips 69+ `unknown`→`unsat` cells with zero verdict
 /// disagreements against z3 4.16.0, the standing table's non-fold cells
 /// hold their verdicts, and the ite structural gate keeps non-ite goals
@@ -52,7 +52,7 @@ pub(super) fn enabled() -> bool {
 /// Fold one let-expanded assertion: bottom-up simplify, then the
 /// context walk.  Pure function of the term (no solver state).
 ///
-/// DEPTH CONTRACT — the caller must NOT route a depth-exceeding term
+/// DEPTH CONTRACT – the caller must NOT route a depth-exceeding term
 /// here: `simplify` is explicit-stack (heap frames), but `ctx_simplify`'s
 /// `ctx_walk` is mutually-recursive NATIVE code, and a 2500-deep spine
 /// walked on a small thread stack (the 128 KiB encode threads) overflows
@@ -71,7 +71,7 @@ mod tests {
     /// The fold closes the nec-smt member shape: the self-referential
     /// priority select `(= 5 (ite (= x 5) 3 x))` refutes by pure value
     /// reasoning (x=5 selects 3; x≠5 selects x≠5), so the assertion
-    /// folds to `false` outright — the class the depth guard used to
+    /// folds to `false` outright – the class the depth guard used to
     /// refuse with a spurious instant `Unknown`.
     #[test]
     fn fold_refutes_the_self_referential_select() {
@@ -122,7 +122,7 @@ mod tests {
         }
         let out = fold(t, &mut m);
         // The result must exist and be well-formed (any of: a constant,
-        // or a residual ite) — the regression is the process not
+        // or a residual ite) – the regression is the process not
         // overflowing, plus idempotence of a second fold.
         let again = fold(out, &mut m);
         assert_eq!(out, again, "the fold is idempotent on its result");

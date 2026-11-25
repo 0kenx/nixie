@@ -536,7 +536,7 @@ impl NlsatSolver {
             }
             let pos = coeff.is_positive();
 
-            // --- single-variable bound: coeff·v + k OP 0 ⇔ v OP −k/coeff ---
+            // ======== single-variable bound: coeff·v + k OP 0 ⇔ v OP −k/coeff ========
             if vars.len() == 1 && vars[0].1 == 1 {
                 let v = vars[0].0;
                 let bound = -&constant / &coeff;

@@ -62,7 +62,7 @@ pub(super) fn elim_dtl_enabled() -> bool {
 }
 
 /// `NIXIE_ELIM_ONESIDED=1`: eliminate one-sided (pure) variables inside
-/// BVE, cadical parity — see the one-sided branch in `elim_try_variable`.
+/// BVE, cadical parity – see the one-sided branch in `elim_try_variable`.
 pub fn elim_onesided_enabled() -> bool {
     #[cfg(feature = "std")]
     {
@@ -78,7 +78,7 @@ pub fn elim_onesided_enabled() -> bool {
 
 /// `NIXIE_ELIM_RESET_PHASES=<n>` (diagnostic, amplitude→trajectory study):
 /// after an elimination phase retires ≥ n variables, reset the carried
-/// phase tables (`phase`/`best`/`target`) — the ghost-attractor probe.
+/// phase tables (`phase`/`best`/`target`) – the ghost-attractor probe.
 /// `None` when unset.
 #[cfg(feature = "std")]
 fn elim_reset_phases_threshold() -> Option<u64> {
@@ -154,8 +154,8 @@ impl ElimRank {
 /// bins: ~28 M occurrences on worker-class instances is ~111 MB of ~600 B
 /// chunks, and every byte freed at round end stays resident in bin memory
 /// forever (measured: the ~180 MB gap between live search structures and
-/// the actual RSS floor). The CSR primary is one exact-size `Vec` — an
-/// mmap-scale allocation the allocator returns on drop — while mid-round
+/// the actual RSS floor). The CSR primary is one exact-size `Vec` – an
+/// mmap-scale allocation the allocator returns on drop – while mid-round
 /// additions (resolvents connecting as they are learned) go to lazily
 /// allocated per-literal overflow `Vec`s, which stay tiny relative to the
 /// primary. The combined view (primary span, then overflow) has exactly the
@@ -209,7 +209,7 @@ impl RoundOccs {
     }
 
     /// Append `cid` to literal `code`'s primary span (connect pass only,
-    /// while spans still have room — mid-round additions use `push`).
+    /// while spans still have room – mid-round additions use `push`).
     #[inline]
     fn connect(&mut self, code: usize, cid: ClauseId) {
         let end = &mut self.prim_end[code];
@@ -231,7 +231,7 @@ impl RoundOccs {
         self.extra[code].push(cid.0);
     }
 
-    /// Literal `code`'s list as one owned `Vec`, primary-then-overflow —
+    /// Literal `code`'s list as one owned `Vec`, primary-then-overflow –
     /// exactly the historical `Vec<ClauseId>` contents and order.
     fn combined(&self, code: usize) -> Vec<ClauseId> {
         let start = code_span_start(&self.span_end, code);
@@ -272,7 +272,7 @@ impl RoundOccs {
                 if epos < self.extra[code].len() {
                     self.extra[code][epos] = last;
                 }
-                // else `pos` addressed the popped slot itself — nothing to
+                // else `pos` addressed the popped slot itself – nothing to
                 // fill.
             }
         } else {
@@ -461,7 +461,7 @@ impl Eliminator {
 impl Solver {
     /// The `real_theory_attached` relaxation: destructive preprocessing is
     /// safe under a real theory **iff** the caller froze the theory-mapped
-    /// variables first — the passes skip frozen variables, so they only
+    /// variables first – the passes skip frozen variables, so they only
     /// transform Boolean-structure variables the theory never observes.
     pub(super) fn destructive_preprocessing_safe(&self) -> bool {
         !self.real_theory_attached || self.theory_vars_frozen
@@ -473,7 +473,7 @@ impl Solver {
             && self.assertion_levels.len() <= 1
             && self.destructive_preprocessing_safe()
             // Proof-attached runs are now admitted (LRAT/DRAT): every
-            // mutation the round makes is emitted as a proof event —
+            // mutation the round makes is emitted as a proof event –
             // resolvent additions carry the resolving pair as their RUP
             // chain (negating a resolvent falsifies both parents, so unit
             // propagation on the pair conflicts), deletions are emitted as
@@ -520,12 +520,12 @@ impl Solver {
         // the mid-search schedule: every mutation carries a checker-valid
         // justification (resolvent chains lead with the units of dropped
         // level-0 literals, then the parents; deletions are justification-
-        // free; refuses cover the unprovable cases — see the study).
+        // free; refuses cover the unprovable cases – see the study).
         if self.stats.conflicts < self.lim_elim {
             return false;
         }
         // Conflict scheduling (cadical parity): the first phase fires
-        // unconditionally once the conflict limit is crossed — the pre-search
+        // unconditionally once the conflict limit is crossed – the pre-search
         // fixpoint that normally arms it via mark-all is skipped unless
         // `presearch_collapse` is set.
         if self.elim_phases == 0 && !self.config.presearch_collapse {
@@ -549,8 +549,8 @@ impl Solver {
         // BVE-after-fold skip policy (2026-09-21 slice of the
         // SSR-binaries study §5): the pre-search ELS fold collapsed the
         // formula beyond the policy threshold, so the unconditional
-        // phase-1 elimination — the 36M-resolution re-entangler on
-        // gate-dense families — is skipped.  Later phases still arm on
+        // phase-1 elimination – the 36M-resolution re-entangler on
+        // gate-dense families – is skipped.  Later phases still arm on
         // genuinely new level-0 units or fresh marks (cadical's
         // subsequent-phase semantics).
         if self.elim_phases == 0 && !self.config.presearch_collapse && self.fold_bve_skip_armed() {
@@ -578,7 +578,7 @@ impl Solver {
     /// Consume the unconditional phase-1 trigger without eliminating:
     /// mirror a completed zero-yield phase's bookkeeping (the same
     /// end-of-phase updates `eliminate_phase` performs) so subsequent
-    /// phases arm only on genuinely new level-0 units or fresh marks —
+    /// phases arm only on genuinely new level-0 units or fresh marks –
     /// a bare `return false` in `eliminating()` would leave the trigger
     /// re-firing on every conflict.
     fn skip_elim_phase_one(&mut self) {
@@ -640,8 +640,8 @@ impl Solver {
     }
 
     /// Controlled-differential formula dump (phase-1 yield-gap study and
-    /// its successors): the exact formula the eliminator is about to see —
-    /// live original clauses plus every level-0 trail literal as a unit —
+    /// its successors): the exact formula the eliminator is about to see –
+    /// live original clauses plus every level-0 trail literal as a unit –
     /// written to `path`.  Feeding this CNF to another engine puts both on
     /// identical state, so per-variable divergences become true semantic
     /// differences rather than upstream contamination.
@@ -716,7 +716,7 @@ impl Solver {
         } else {
             // Same controlled-differential dump at any later phase entry
             // (`NIXIE_DUMP_ELIM_PHASE=<n>`): the formula the eliminator is
-            // about to see at phase n — the amplitude→trajectory study's
+            // about to see at phase n – the amplitude→trajectory study's
             // fresh-search decomposition (post-elimination formula vs the
             // search state carried across the elimination boundary).
             #[cfg(feature = "std")]
@@ -766,7 +766,7 @@ impl Solver {
         // subsume ()`).
         let (mut subsumed, mut strengthened) = self.subsume_round();
         // Fixpoint arm (`NIXIE_ELIM_SUBFIX`): keep subsuming until nothing
-        // changes (bounded) — the strengthening cascade compounds within
+        // changes (bounded) – the strengthening cascade compounds within
         // the phase, and every retirement/strengthening re-marks its
         // variables as elimination candidates. The dirty-set scheduling
         // makes later rounds incremental (only touched literals are
@@ -873,8 +873,8 @@ impl Solver {
 
             // Prioritize subsumption (cadical: `if (subsume_round ())
             // continue;`).  cadical's `subsume_round` returns whether it
-            // **marked new elimination candidates** — not whether it
-            // subsumed anything — and only that continues the phase's
+            // **marked new elimination candidates** – not whether it
+            // subsumed anything – and only that continues the phase's
             // round loop; block/cover finding nothing then completes the
             // phase (growing the bound).  The port previously continued on
             // `subsumed > 0` too, which (together with the persistent
@@ -887,7 +887,7 @@ impl Solver {
             // rounds now.  A bare `elim_mark_count > 0` here conflated the
             // two and (with the round now creating none of its own marks,
             // any residue the subsume pass retires still counts) keeps
-            // round 2 running forever — the bound-growth blocker.
+            // round 2 running forever – the bound-growth blocker.
             let marks_before = self.elim_mark_count;
             let (s, st) = self.subsume_round();
             #[cfg(feature = "std")]
@@ -920,8 +920,8 @@ impl Solver {
         // Diagnostic probe (`NIXIE_ELIM_RESET_PHASES=<min-eliminated>`, the
         // amplitude→trajectory study): reset the carried phase state at the
         // elimination boundary when the phase retired at least that many
-        // variables.  Tests the ghost-attractor hypothesis — stale phases
-        // steering the search into a region the elimination just removed —
+        // variables.  Tests the ghost-attractor hypothesis – stale phases
+        // steering the search into a region the elimination just removed –
         // by making the search re-derive polarities the way a fresh solve
         // would (activities, learned DB and restart state are untouched,
         // so any recovery isolates the phase tables as the poison).
@@ -1056,17 +1056,17 @@ impl Solver {
         // Exact-capacity presize for the occurrence lists (2026-09-05):
         // the connect pass below pushes into per-literal `Vec`s whose
         // doubling growth leaves up to 2x the live occurrence volume in
-        // capacity — on clause-dense instances (worker-class: ~28 M
+        // capacity – on clause-dense instances (worker-class: ~28 M
         // occurrences, ~111 MB live) that was ~100+ MB of pure transient
         // overshoot per elimination round, half of which the allocator
         // retains after the round. This counting pass applies the *same*
-        // filters the connect pass applies (same `ctx.lit_val` snapshot —
+        // filters the connect pass applies (same `ctx.lit_val` snapshot –
         // nothing derives new units between here and there) and presizes
         // each list to its exact final entry count, so the connect pushes
         // land at capacity and never double. Contents and per-literal
-        // order are unchanged — trajectory-neutral by construction.
+        // order are unchanged – trajectory-neutral by construction.
         {
-            // Single-pass live scan (one view per id — see the
+            // Single-pass live scan (one view per id – see the
             // `iter_views` doc for the double-construction waste).
             for (_cid, c) in self.clauses.iter_views() {
                 if c.learned || c.lits.len() < 2 {
@@ -1249,16 +1249,16 @@ impl Solver {
             );
         }
         if raw_pos == 0 || raw_neg == 0 {
-            // Pure/one-sided variable — cadical ELIMINATES it inside BVE
+            // Pure/one-sided variable – cadical ELIMINATES it inside BVE
             // (`elim_resolvents_are_bounded` returns `lim.elimbound >= 0`,
             // true from the first phase): zero resolvents (one side is
             // empty), then `mark_eliminated_clauses_as_garbage` retires
             // the non-empty side with the pure literal as the extension
-            // witness (v true satisfies every dropped clause — they are
+            // witness (v true satisfies every dropped clause – they are
             // the only clauses containing v).  Measured on the controlled
             // differential (same formula, both eliminators): cadical
             // eliminates 123 841 to our 74 757 in round 1, and our
-            // 17 572 one-sided skips are the cascade starter — retiring
+            // 17 572 one-sided skips are the cascade starter – retiring
             // them in-round re-marks their clause variables and feeds the
             // rest of the schedule.  The extension-stack reconstruction
             // (2026-09-13) covers the witness exactly; the old
@@ -1269,7 +1269,7 @@ impl Solver {
             // amplitude is real (Timetable round 1: 74 757 -> 91 788,
             // matching cadical's own-pipeline 91 067) and the aggregate
             // conflicts IMPROVE (0.974 geomean, the best of every
-            // elimination variant tried) — but the 60 s corpus screen
+            // elimination variant tried) – but the 60 s corpus screen
             // loses 8 cap-conversion cells (229 -> 221, 0 disagreements),
             // so the mechanism ships default-off as the sixth amplitude
             // arm.  The 60 s cap's anti-correlation with elimination
@@ -1316,18 +1316,18 @@ impl Solver {
 
         // kissat `kissat_find_gates`' final catch-all: prove a functional
         // definition of the pivot with the embedded sub-solver and, when
-        // one exists, eliminate gate-aware (g×a + g×g resolvents only —
+        // one exists, eliminate gate-aware (g×a + g×g resolvents only –
         // the a×a cross product is entailed by the gate). Runs before the
         // bounded cross product; armed via `NIXIE_DEFINITIONS` (default
         // off until characterized) and proof-free runs only: the core's
         // resolution proof has no cheap LRAT provenance here, so under an
-        // attached proof the path stays off (weaker, sound — same policy
+        // attached proof the path stays off (weaker, sound – same policy
         // as the sweep).
         // Structural AND-gate recognition (cadical `find_and_gate`): the
         // cheap occurrence-pattern path to the same gate-aware bounded
         // resolution the sub-solver definition path uses below. A hit means
         // `pivot ↔ x1∧…∧xk` is definitional, so the a×a resolvent products
-        // are entailed and skipped — many more variables pass the
+        // are entailed and skipped – many more variables pass the
         // elimination bound (the measured Timetable_C amplitude gap:
         // cadical 147 478 vars eliminated vs our 80 862). Armed via
         // `NIXIE_AND_GATES`, proof-free runs only (same policy as the
@@ -1512,12 +1512,12 @@ impl Solver {
                         self.diag_pair_unit += 1;
                         // LRAT unit-resolvent provenance (2026-09): the unit
                         // resolvent {u} of C(v) and D(¬v) is RUP with the
-                        // resolvent shape — under ¬u every parent literal is
+                        // resolvent shape – under ¬u every parent literal is
                         // false (dropped literals via their level-0 unit
                         // hints, u by the negation itself), C is unit on v,
                         // D is unit on ¬v → conflict. Emit the derived unit,
                         // record its id in the unit table (later chains may
-                        // hint it), then apply it — full-strength BVE, no
+                        // hint it), then apply it – full-strength BVE, no
                         // more pivot abort under proofs. A missing unit id
                         // skips derivation AND assignment (weaker, sound);
                         // a unit contradicting an earlier elim unit ends the
@@ -1634,7 +1634,7 @@ impl Solver {
         // and reused across the round (cadical's member `clause`/`marked`);
         // per-call SmallVecs here spilled to the heap on every long-antecedent
         // resolution and dominated the whole phase.
-        // (No separate marking bookkeeping is kept — cadical `unmark(c)`
+        // (No separate marking bookkeeping is kept – cadical `unmark(c)`
         // re-derives the set from the clause; the marked literals are the
         // `res_resolvent` prefix captured as `marked_n` after the c-scan.)
         ctx.res_resolvent.clear();
@@ -1649,7 +1649,7 @@ impl Solver {
         // even when a satisfied c-side stops after a partially marked
         // prefix: no later resolution may inherit those marks.
         let marked_n;
-        // ---- pure marking phase (immutable arena borrows only) ----
+        // ======== pure marking phase (immutable arena borrows only) ========
         'phases: {
             let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) else {
                 missing = true;
@@ -1712,7 +1712,7 @@ impl Solver {
             }
         }
 
-        // ---- effect phase ----
+        // ======== effect phase ========
         // Unmark inlined over the disjoint ctx fields: the marked literals
         // are `res_resolvent[0..marked_n]` (the c-scan's prefix; the d-scan
         // only appends below it and never writes marks). Clearing writes 0
@@ -1737,12 +1737,12 @@ impl Solver {
         if size == 0 {
             // LRAT: with every non-pivot parent literal falsified at level
             // 0, both parents are unit on their pivot literal under those
-            // units — the empty clause is RUP over `[unit ids] ++ [C, D]`.
+            // units – the empty clause is RUP over `[unit ids] ++ [C, D]`.
             // Seed `lrat_chain` here (the trivially-unsat exit emits the
             // empty clause through `drat_emit_empty(None)`, which keeps a
             // non-empty chain intact); a missing unit id leaves the chain
-            // empty (the verdict stays correct — search rediscovers the
-            // conflict — but the proof would not verify).
+            // empty (the verdict stays correct – search rediscovers the
+            // conflict – but the proof would not verify).
             if self.lrat && self.lrat_chain.is_empty() {
                 let mut ok = true;
                 let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
@@ -1797,7 +1797,7 @@ impl Solver {
         // rewrite, or a live-reason guard) still owes this pair's resolvent:
         // the self-subsumption Skip above is only equivalent to *having
         // performed* the shrink. Returning Skip without either leaves a hole
-        // in the resolution closure — model reconstruction then extends a
+        // in the resolution closure – model reconstruction then extends a
         // partial assignment that violates a retired original (a false Sat;
         // reproduced on crn_11_99_u under weakened elimination, 2026-09-02).
         // Fall through and add the ordinary resolvent instead: exactly the
@@ -1826,14 +1826,14 @@ impl Solver {
                 continue;
             }
             // Proof emission: a resolvent R of C(v) and D(¬v) is RUP via
-            // its parents — negating R falsifies every *retained* literal
+            // its parents – negating R falsifies every *retained* literal
             // of both parents except v/¬v, so unit propagation derives v
             // from C and ¬v from D, a conflict. The parents are retired
             // only *after* all resolvents of the pivot are added, so parent
             // hints are verifiable at addition time. The subtlety: the
             // resolvent DROPS every parent literal falsified at level 0
             // (unit-simplified away), and an LRAT checker replays each
-            // addition from a fresh assignment — it does not know those
+            // addition from a fresh assignment – it does not know those
             // units. Each dropped literal's level-0 unit must therefore be
             // a hint BEFORE the parents, or the parent clause has two
             // undetermined literals and the chain fails ("hint is not
@@ -1856,7 +1856,7 @@ impl Solver {
                                 // A level-0 literal without a recorded unit:
                                 // impossible since the flush invariant holds
                                 // (see `assert_learned_clause`), but never
-                                // emit an unverifiable chain — drop this
+                                // emit an unverifiable chain – drop this
                                 // resolvent entirely (weaker elimination,
                                 // sound proof).
                                 proof_skip = true;
@@ -1986,13 +1986,13 @@ impl Solver {
             // elimination's own retirements re-armed the cross-phase
             // candidate set, so `elim_mark_count > 0` held forever, round 2
             // of every phase always ran, phases always exited at the round
-            // limit with `phase_complete = false` — and the elimination
+            // limit with `phase_complete = false` – and the elimination
             // bound NEVER grew past 0 (measured on Timetable: 7 phases,
             // bound=0 throughout, yields collapsing 74 k → 21; cadical
             // completes phases and eliminates 21 k more at bound 1).
             // Duplicate heap entries are benign: the pop-side gates skip
             // assigned/eliminated/frozen vars, and a var that newly fits
-            // under the occurrence limit after the drop gets its retry —
+            // under the occurrence limit after the drop gets its retry –
             // the exact rescheduling cadical's `schedule.update` does.
             let v = lit.var();
             if !self.trail.is_assigned(v)
@@ -2044,7 +2044,7 @@ impl Solver {
         // falsifiers without a proof unit (e.g. lucky-phase decisions) and
         // elimination-local falsifiers are not proof-active, and
         // unit/empty strengthenings have the same provenance problem as
-        // unit resolvents. Abort the strengthen in those cases — the
+        // unit resolvents. Abort the strengthen in those cases – the
         // clause keeps its literals, strictly weaker, never unprovable.
         if self.proof.is_some() {
             let provable = new_lits.len() >= 2
@@ -2106,7 +2106,7 @@ impl Solver {
         }
         // Reschedule the surviving variables **round-locally** (cadical's
         // OTF self-subsumption routes through `elim_update_removed_clause`
-        // on the pre-shrink clause — a schedule push, never the persistent
+        // on the pre-shrink clause – a schedule push, never the persistent
         // mark; see the note in `elim_retire_clause_lits`).
         for v in vars {
             if !self.trail.is_assigned(v)
@@ -2138,7 +2138,7 @@ impl Solver {
                 // The elimination derived a unit contradicting an earlier
                 // one. Under LRAT both unit clauses are in the proof stream
                 // with ids (every elim unit emission records its id), so the
-                // empty clause is RUP over exactly those two units — the
+                // empty clause is RUP over exactly those two units – the
                 // first propagates its literal, the second conflicts. Seed
                 // the chain for `drat_emit_empty(None)`; a missing id leaves
                 // it empty (verdict still correct, proof degraded).
@@ -2359,14 +2359,14 @@ impl Solver {
                         self.elim_retire_clause(ctx, did);
                     } else if let Some(u) = unit.filter(|_| !ambiguous) {
                         // LRAT: this hyper-unary derivation is RUP with the
-                        // same shape as a resolvent — under ¬u, the level-0
+                        // same shape as a resolvent – under ¬u, the level-0
                         // units of d's falsified literals make d unit on
                         // `neg`, propagating it, and the subsumer c (which
                         // contains ¬neg and only literals shared with d)
                         // conflicts. Emit BEFORE `elim_assign_unit` retires
                         // d as satisfied (its deletion is a separate,
                         // justification-free line). A missing unit id would
-                        // make the chain unverifiable — skip the derivation
+                        // make the chain unverifiable – skip the derivation
                         // instead (weaker, sound).
                         let mut ok_to_assign = true;
                         if self.proof.is_some() {
@@ -2558,7 +2558,7 @@ mod round_occs_tests {
 // The final catch-all of kissat's `kissat_find_gates`: prove with the
 // embedded sub-solver that the pivot literal is *functionally defined* by
 // its neighborhood, then eliminate it with gate-aware resolution (g×a and
-// g×g products only — the a×a cross product is entailed by the gate, see
+// g×g products only – the a×a cross product is entailed by the gate, see
 // the completeness argument below). The structural gate detectors
 // (equivalences/ands/if-then-else) run first in kissat; nixie ports the
 // definition path only, which subsumes them semantically at the cost of
@@ -2570,7 +2570,7 @@ mod round_occs_tests {
 // of the other variables some gate clause fires (forces the pivot one
 // way). If Y falsifies a0−pivot AND a1−¬pivot (the pair whose resolvent
 // we skip), then every resolvent Res(g0,a1) is falsified at Y *because
-// the a1 part alone is false* — so Y is excluded by the g×a resolvents
+// the a1 part alone is false* – so Y is excluded by the g×a resolvents
 // regardless of the gate. The g0×g1 product excludes the both-sides-fire
 // assignments. Hence the resolvent set + non-pivot clauses is equivalent
 // to ∃pivot.(original), and the SatELite model-reconstruction invariant
@@ -2612,11 +2612,11 @@ impl Solver {
     /// find_and_gate`, the SATeLite SAT'05 scheme): the pivot `g` is
     /// **defined** by `g ↔ x1 ∧ … ∧ xk` exactly when its original
     /// occurrence lists contain the sides `(¬g ∨ xi)` and the base
-    /// `(g ∨ ¬x1 ∨ … ∨ ¬xk)` (false literals dropped — the gate holds
+    /// `(g ∨ ¬x1 ∨ … ∨ ¬xk)` (false literals dropped – the gate holds
     /// modulo the level-0 assignment, which is all elimination needs).
     /// Returns the gate sets for the bounded gate-aware resolution:
     /// `gates0 = [base]` (contains `g`), `gates1 = [sides]` (contain
-    /// `¬g`). No sub-solver — this is pure occurrence-list pattern
+    /// `¬g`). No sub-solver – this is pure occurrence-list pattern
     /// matching, cheap enough to try for every scheduled variable
     /// (cadical measured 17 009 gates on Timetable_C, the recorded
     /// elimination-amplitude gap).
@@ -2634,7 +2634,7 @@ impl Solver {
         // Both orientations: `elim_round` flips the pivot to its
         // less-occurring polarity, so an AND gate `g ↔ x1∧…∧xk` reaches
         // here either as `pivot = g` (sides in occs(¬pivot)) or as
-        // `pivot = ¬g` — the same clauses read as the OR gate
+        // `pivot = ¬g` – the same clauses read as the OR gate
         // `¬g ↔ ¬x1∨…∨¬xk` with sides in occs(pivot) and base in
         // occs(¬pivot). Trying `base_lit = pivot` then `base_lit = ¬pivot`
         // covers both; the returned sets are mapped back to the pivot's
@@ -2737,12 +2737,12 @@ impl Solver {
     }
 
     /// Prove (or refute) a functional definition of `pivot` with the
-    /// embedded sub-solver — kissat `kissat_find_definition` (definition.c).
+    /// embedded sub-solver – kissat `kissat_find_definition` (definition.c).
     /// Exports both polarity occurrence clauses with the pivot-polarity
     /// occurrence erased, solves under `definitionticks`, and on UNSAT
     /// extracts (and shrinks) the core; core ids map back to clauses
     /// through the export table (kissat maps them to dense watch
-    /// positions — the occurrence lists play that role here).
+    /// positions – the occurrence lists play that role here).
     fn elim_find_definition(&mut self, ctx: &mut Eliminator, pivot: Lit) -> DefOutcome {
         if ctx.def_ticks >= DEFINITION_PHASE_TICKS {
             return DefOutcome::None;
@@ -2778,7 +2778,7 @@ impl Solver {
         if let crate::kitten::KittenResult::Inconsistent = kitten.solve() {
             let mut learned = 0u64;
             let _reduced = kitten.compute_clausal_core(&mut learned);
-            // Shrinking rounds (kissat: `for i in 2..=definitioncores`) —
+            // Shrinking rounds (kissat: `for i in 2..=definitioncores`) –
             // keep only the core, shuffle, re-prove UNSAT, re-extract. An
             // Unknown re-solve aborts the *whole* extraction (kissat
             // `ABORT`); a Satisfied re-solve is structurally impossible
@@ -2820,7 +2820,7 @@ impl Solver {
                     }
                 });
                 match (gates0.is_empty(), gates1.is_empty()) {
-                    // Both sides empty: no original clauses in the core —
+                    // Both sides empty: no original clauses in the core –
                     // no usable definition (kissat asserts this away).
                     (true, true) => {}
                     // One-sided core: the gate clauses force this unit.
@@ -2838,7 +2838,7 @@ impl Solver {
 
     /// Gate-aware resolvent generation (kissat resolve.c's `gates` branch
     /// of `eliminate_variable`): products gates0×a1, a0×gates1 and
-    /// gates0×gates1 under the same bound as the full cross product —
+    /// gates0×gates1 under the same bound as the full cross product –
     /// `pos + neg + elim_bound`. The antecedent×antecedent product is
     /// skipped (entailed by the proved definition, see the module-level
     /// completeness argument). Returns `true` when all resolvents fit and
@@ -2988,7 +2988,7 @@ mod definition_tests {
     }
 
     /// A one-sided core (the ¬x-side clauses alone are contradictory
-    /// without ¬x) proves ¬x is forced — kissat's `definition_units`.
+    /// without ¬x) proves ¬x is forced – kissat's `definition_units`.
     /// The helper `a` is protected with 10+10 non-eliminable occurrences
     /// so the cheap-first schedule reaches `x` (rank 3) before `a` could
     /// be resolution-eliminated (which would derive the same unit through
@@ -3006,10 +3006,10 @@ mod definition_tests {
         // Freeze the protection variables: they are one-sided (only
         // positive occurrences), and the in-round one-sided elimination
         // (cadical parity, 2026-09-13) would retire the protection clauses
-        // before the definition extractor reaches `x` — the old fixture
+        // before the definition extractor reaches `x` – the old fixture
         // relied on one-sided variables surviving to the pure-literal
         // pass.  Frozen variables are refused by every elimination gate.
-        // `b` (var 3) is one-sided too — eliminating it would empty `x`'s
+        // `b` (var 3) is one-sided too – eliminating it would empty `x`'s
         // positive side and turn `x` itself one-sided before the
         // definition extractor runs.
         s.freeze_theory_vars((3..=13).map(|i| Var::new(i - 1)));

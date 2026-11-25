@@ -530,7 +530,7 @@ The highest-quality research brief for this task. It uses direct references, lim
 scope, phrases novelty as a collision review rather than proof, gives exact mechanisms,
 and makes each proposal falsifiable. Its four hypotheses are more useful than its SOTA
 summary. Two cautions remain: PDM's hardware-cost terms may only be offline-calibrated
-constants—live hardware timing/counters cannot affect Nixie's decisions—and the official
+constants–live hardware timing/counters cannot affect Nixie's decisions–and the official
 SMT-COMP page's implausible “30720 GB” memory label should not be repeated as a literal
 resource fact without resolving the site's unit error.
 

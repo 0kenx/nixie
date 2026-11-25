@@ -13,7 +13,7 @@ literal, and only if that list is ≤ `subsumeocclim` (100). A 4-in-4-out LUT cu
 has ≥240 occurrences per variable, so **none of the 168k original cubes ever
 connect**. `self_subsumed` stayed ~5k (learned-clause noise). Z3
 `back_subsumption1` walks every occurrence of the min-occ variable, both
-polarities — 465k self-subsuming resolutions.
+polarities – 465k self-subsuming resolutions.
 
 Pre-search elim is also off by default (`presearch_collapse`, cadical conflict
 scheduling). That is a separate, measured-negative full-elim lever
@@ -33,8 +33,8 @@ clauses). `NIXIE_PRESUB=1` forces; `NIXIE_PRESUB=0` skips;
 | `NIXIE_PRESUB=0` | 231,596 | 85,245 | 366,030 |
 | auto (wide-uniform, fixpoint) | **110,180** | 85,245 (did not fire) | 366,030 (did not fire) |
 | auto + failed-literal probe, 3 rounds | **65,539** | (did not fire) | (did not fire) |
-| auto + probe, **1 round (default)** | **44,894** | did not fire (44,381 on this tree) | — |
-| auto + `SAT_CACHING=1` | 128,573 (fixpoint) | — | — |
+| auto + probe, **1 round (default)** | **44,894** | did not fire (44,381 on this tree) | – |
+| auto + `SAT_CACHING=1` | 128,573 (fixpoint) | – | – |
 | Z3 4.16.0 | 23,149 | 19,381 | 272,037 |
 
 `self_subsumed` on circuit: 5,084 → **547,517**. Auto did not fire on the two

@@ -1,7 +1,7 @@
 //! Semantic boundary distinctions (production `Boundary`).
 //!
 //! The answer hinges on exact SMT-LIB `div`/`mod` (Euclidean: remainder
-//! always non-negative for positive divisors) — distinctions that a
+//! always non-negative for positive divisors) – distinctions that a
 //! sloppy rewrite, truncation, or C-style semantics would erase.
 //!
 //! * `identity` (UNSAT): `(div (m*x) m)` vs `(div (m*x + m) m) - 1` are

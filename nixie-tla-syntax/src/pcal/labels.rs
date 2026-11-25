@@ -1,22 +1,22 @@
-//! Label placement — the pass that decides what a PlusCal *step* is.
+//! Label placement – the pass that decides what a PlusCal *step* is.
 //!
 //! Everything a specification claims depends on this: a statement cluster
 //! between labels is one atomic step, and the same variable may not be
 //! assigned twice inside one. This module is a direct port of the three
 //! `ParseAlgorithm` passes that establish it, in their order:
 //!
-//! 1. [`add_labels`] — `InnerAddLabels`: insert the labels the grammar
+//! 1. [`add_labels`] – `InnerAddLabels`: insert the labels the grammar
 //!    requires (`while`, statements after `goto`/`call`/`return`, and a
 //!    second assignment to a variable already assigned in the step) and
 //!    reject the placements the grammar forbids (a label inside `with`).
 //!    Like the reference's default options, auto-insertion is an **error**,
 //!    not a service: a label the author did not write changes what the
 //!    atomic steps are, and a silent one is a silent wrong answer.
-//! 2. [`split`] — `MakeLabeledStmtSeq` + `FixStmtSeq` + `ClassifyStmtSeq`:
+//! 2. [`split`] – `MakeLabeledStmtSeq` + `FixStmtSeq` + `ClassifyStmtSeq`:
 //!    cut the statement sequence into [`LabeledStmt`] clusters, and inside
 //!    every branch keep the unlabeled prefix (part of the enclosing step)
 //!    apart from the labeled remainder (its own steps).
-//! 3. [`check_body`] — `checkBody`: whether the whole body is one
+//! 3. [`check_body`] – `checkBody`: whether the whole body is one
 //!    `while TRUE` cluster with no labels inside, the one shape whose `pc`
 //!    and `Terminating` the reference generator elides.
 
@@ -270,7 +270,7 @@ fn union_into(target: &mut Vec<String>, from: &[String]) {
     }
 }
 
-// ---- splitting ------------------------------------------------------------
+// ======== splitting ========
 
 /// Cut a labeled statement sequence into clusters, splitting branch bodies
 /// into their unlabeled prefixes and labeled remainders.
@@ -417,14 +417,14 @@ fn branch(mut stmts: Vec<Stmt>) -> Result<(Vec<FlatStmt>, Vec<LabeledStmt>)> {
     Ok((prefix, labeled))
 }
 
-// ---- pc elision -------------------------------------------------------------
+// ======== pc elision ========
 
 /// `checkBody`: whether `pc` (and `Terminating`) can be elided for this
-/// body — true only for a single cluster that is exactly one `while TRUE`
+/// body – true only for a single cluster that is exactly one `while TRUE`
 /// with no labels inside.
 #[must_use]
 pub fn check_body(body: &[LabeledStmt]) -> (bool, bool) {
-    // (omit_pc, omit_stuttering_when_done) — both start true and survive
+    // (omit_pc, omit_stuttering_when_done) – both start true and survive
     // only the narrowest shape.
     if body.len() != 1 || body[0].stmts.len() != 1 {
         return (false, false);

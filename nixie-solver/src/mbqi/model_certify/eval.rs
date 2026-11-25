@@ -35,17 +35,17 @@ const MAX_DOMAIN: usize = 256;
 const MAX_INT_BITS: u64 = 4096;
 
 /// Cap on the magnitude (in bits) of an intermediate rational's numerator and
-/// denominator combined — the `Real` twin of [`MAX_INT_BITS`].
+/// denominator combined – the `Real` twin of [`MAX_INT_BITS`].
 const MAX_RAT_BITS: u64 = 4096;
 
 /// The arithmetic domain a node's RESULT lives in, read from its sort.
 ///
 /// The evaluator is sort-driven, never value-driven: a Real-sorted `Div` over
 /// two Int-valued operands is exact RATIONAL division (the SMT-LIB `/`,
-/// `(/ 7 2)` is `7/2` — never the Euclidean `3`), while an Int-sorted `Div`
+/// `(/ 7 2)` is `7/2` – never the Euclidean `3`), while an Int-sorted `Div`
 /// is Euclidean `div`. Deciding by operand value types instead would floor a
 /// real quotient whenever both operands happen to carry integer model values
-/// — a different value than the term denotes.
+/// – a different value than the term denotes.
 #[derive(Clone, Copy, PartialEq)]
 enum ArithDomain {
     Int,
@@ -258,7 +258,7 @@ fn combine(
             .and_then(CertValue::as_int)
             .ok_or(EvalError::Unsupported)
     };
-    // Exact rational read with `Int` promotion — the value semantics of
+    // Exact rational read with `Int` promotion – the value semantics of
     // mixed SMT-LIB arithmetic.
     let rat_at = |i: usize| -> Result<num_rational::BigRational, EvalError> {
         args.get(i)
@@ -369,10 +369,10 @@ fn combine(
             // SMT-LIB Euclidean integer division (the exact semantics the
             // builder's constant folder and `arith_axioms` use: the unique
             // `q` with `m = n·q + r`, `0 ≤ r < |n|`) for an Int-sorted
-            // node, or exact rational division for a Real-sorted one —
+            // node, or exact rational division for a Real-sorted one –
             // decided by the node's SORT, never by the operand values
             // (see `ArithDomain`). A zero divisor is UNINTERPRETED per
-            // SMT-LIB — decline rather than invent a value, so a model
+            // SMT-LIB – decline rather than invent a value, so a model
             // resting on it stays uncertified (`Unknown`), never wrongly
             // trusted.
             match domain {
@@ -397,7 +397,7 @@ fn combine(
             }
         }
         TermKind::Mod(_, _) => {
-            // Euclidean remainder, `0 ≤ r < |n|` — Int-sort only (a
+            // Euclidean remainder, `0 ≤ r < |n|` – Int-sort only (a
             // Real-sorted `Mod` is not an SMT-LIB term).  Zero divisor:
             // uninterpreted, decline.
             let (a, b) = (int_at(0)?, int_at(1)?);

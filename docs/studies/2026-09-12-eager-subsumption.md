@@ -1,4 +1,4 @@
-# Eager subsumption: landed, screened — corpus-neutral, circuit-class conversion (2026-09-12)
+# Eager subsumption: landed, screened – corpus-neutral, circuit-class conversion (2026-09-12)
 
 The amplitude diagnosis's lever #3 (`docs/studies/
 2026-09-12-inproc-amplitude-diagnosis.md`): cadical's
@@ -10,15 +10,15 @@ retirements on Timetable_C = 48 % of its total subsumed).  Ported as
 
 After each conflict's driving clause is installed, walk the learned
 clauses **newest-first** for at most `eagersubsumelim = 20` candidates
-(every visit consumes budget — garbage and self included — so the walk
+(every visit consumes budget – garbage and self included – so the walk
 is exactly the newest ≤ 20 entries, snapshotted before the mutable
 retirements) and retire any clause subsuming-contained by the fresh one.
 Learned-by-learned only: both are formula consequences and the subsumer
-is strictly stronger — sound by construction; `retire_clause` handles
+is strictly stronger – sound by construction; `retire_clause` handles
 the watch/BIG purges and re-points live trail reasons to `Decision`.
 
 This is **not** the removed unbounded `check_subsumption` scan (the crn
-lesson: ~30 % of instructions in an O(learned) walk) — a constant ≤
+lesson: ~30 % of instructions in an O(learned) walk) – a constant ≤
 20-probe walk, cadical's exact shape, which is why the old NOTE's
 cadical-parity claim was subtly wrong: cadical *does* subsume per
 learned clause, just budgeted.
@@ -33,14 +33,14 @@ learned clause, just budgeted.
 
 | winners | | losers | |
 |---|---|---|---|
-| **circuit_64in64out 0/5 → 4/5** | — | mp1-Nb7T42 | 1.98× |
-| 170058440 0/5 → 1/5 | — | FmlaEquivChain | 1.42× |
+| **circuit_64in64out 0/5 → 4/5** | – | mp1-Nb7T42 | 1.98× |
+| 170058440 0/5 → 1/5 | – | FmlaEquivChain | 1.42× |
 | x9-09054 3/5 → 4/5 | ~1.0× | ITC2021 | 1.40× |
 | shuffling-2 4/5 → 5/5 | ~1.0× | constraints_17 | 1.33× |
-| rbsat (conflicts) | **0.48×** | rbsat (solved) 4/5 → 2/5 | — |
-| stable-300 | 0.67× | mp1-klieber 3/5 → 1/5 | — |
-| qwh.50 | 0.69× | af-synthesis 3/5 → 1/5 | — |
-| worker_550 | 0.80× | frb45 1/5 → 0/5, pb_300 −1 | — |
+| rbsat (conflicts) | **0.48×** | rbsat (solved) 4/5 → 2/5 | – |
+| stable-300 | 0.67× | mp1-klieber 3/5 → 1/5 | – |
+| qwh.50 | 0.69× | af-synthesis 3/5 → 1/5 | – |
+| worker_550 | 0.80× | frb45 1/5 → 0/5, pb_300 −1 | – |
 
 ## Verdict
 
@@ -50,20 +50,20 @@ the documented-negative-as-default infrastructure with a real
 winner-class conversion.
 
 The circuit-class result is the session's signal: **circuit_64in64out
-(0/5, cadical solves @ 373 k) now converts under three different arms —
-tiered (0→2), OTFS (0→1), eager-sub (0→4)** — three different
+(0/5, cadical solves @ 373 k) now converts under three different arms –
+tiered (0→2), OTFS (0→1), eager-sub (0→4)** – three different
 mechanisms (schedule, antecedent rewriting, learned-DB hygiene), the
 same winner.  The restart-hungry loser set is equally constant
 (mp1/rbsat/af-synthesis/ITC).  Combined with the four-family record,
 the corpus genuinely factors into two demand classes, and the circuit
 class is reachable by *any* sufficiently strong perturbation of the DB
-state — consistent with its diagnosis profile (99.7 % of its mass is
+state – consistent with its diagnosis profile (99.7 % of its mass is
 redundant and removable; whichever arm starts removing it, compounds).
 
 ## The remaining eliminator item (unchanged)
 
 Eager-sub does not feed the elimination marked sets (learned-only
-retirements mark nothing) — the Timetable phase-yield starvation
+retirements mark nothing) – the Timetable phase-yield starvation
 (anatomy in `2026-09-12-and-gate-elimination.md`) needs original-clause
 removal between phases: cadical's elim-side absorption (backward
 subsumption of *originals* during elimination, `elimotfstr`-class

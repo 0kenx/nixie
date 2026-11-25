@@ -75,7 +75,7 @@ type BinderSubstPrep = (FxHashMap<TermId, TermId>, SmallVec<[(Spur, SortId); 2]>
 /// effective substitution is in force, not just its `TermId`, so caches
 /// must not be shared across scopes with different substitutions.
 /// Dense-slab memo for substitution caches ([`SubstCache`]'s slab arm):
-/// one `TermId` slot per term id, `u32::MAX` marking absence — a probe is
+/// one `TermId` slot per term id, `u32::MAX` marking absence – a probe is
 /// an array read, not a hash.  For the LONG-LIVED caller-owned caches
 /// (`SubstitutionBuilder`) whose walks cover a large fraction of the
 /// term-id space this beats the hashed form outright (the
@@ -95,7 +95,7 @@ impl SubstMemo {
     pub(in crate::ast::manager) fn clear(&mut self) {
         self.slab.clear();
     }
-    /// Occupied (non-sentinel) entries — the size statistic the old
+    /// Occupied (non-sentinel) entries – the size statistic the old
     /// `FxHashMap::len` reported.
     pub(in crate::ast::manager) fn len(&self) -> usize {
         self.slab
@@ -150,7 +150,7 @@ struct SubstContext<C: SubstCache = FxHashMap<TermId, TermId>> {
     cache: C,
     /// Shared over-approximation of `subst`'s domain (see
     /// `SubstitutionBuilder::domain_bits`); `None` disables the
-    /// prefilter.  A set bit does NOT promise membership — the exact map
+    /// prefilter.  A set bit does NOT promise membership – the exact map
     /// probe decides; a clear bit provably misses (every scope's map is a
     /// subset of the mapping the bitmap was built from).
     domain: Option<std::rc::Rc<[u64]>>,
@@ -163,7 +163,7 @@ impl<C: SubstCache> SubstContext<C> {
     /// checks used) or an already-memoized `cache` entry.
     fn resolved(&self, id: TermId) -> Option<TermId> {
         // Domain prefilter: a clear bit means no scope map built from the
-        // bitmap's mapping holds `id` — skip the hashed probe.  A set bit
+        // bitmap's mapping holds `id` – skip the hashed probe.  A set bit
         // (or no bitmap) probes exactly as before.
         if let Some(bits) = &self.domain {
             let idx = id.0 as usize;
@@ -254,12 +254,12 @@ impl TermManager {
     }
 
     /// [`Self::substitute`], except the terms in `keep` resolve to
-    /// themselves **wherever** they occur — a per-call shield used by the
+    /// themselves **wherever** they occur – a per-call shield used by the
     /// solver's numeric-argument purifier to keep bag-theory element
     /// positions on one spelling (see the caller's doc: a proxy minted in
     /// a later assert split the count spellings across assertions and the
     /// element-congruence tie died to the same substitution). The keep set
-    /// must contain only binder-free leaves (constants) — a bound variable
+    /// must contain only binder-free leaves (constants) – a bound variable
     /// in `keep` would be shielded past its binder's alpha-renaming.
     pub fn substitute_keeping(
         &mut self,
@@ -334,7 +334,7 @@ impl TermManager {
     /// [`Self::substitute_cached_keep`] with the caller's domain-membership
     /// prefilter (see `SubstitutionBuilder::domain_bits`): consulted before
     /// the per-node substitution-map probe.  Semantics are identical with
-    /// or without the bitmap — it only skips probes that provably miss.
+    /// or without the bitmap – it only skips probes that provably miss.
     pub(in crate::ast::manager) fn substitute_cached_keep_domain<C: SubstCache>(
         &mut self,
         id: TermId,
@@ -362,8 +362,8 @@ impl TermManager {
         // The keep-shield, applied where it actually binds: `resolved()`
         // consults the substitution map *before* the cache, so caching an
         // identity for a shielded leaf would never win. Filtering the kept
-        // keys out of the (cloned) map instead makes every lookup — entry,
-        // rebuild, binder scope (all of which clone this map) — resolve
+        // keys out of the (cloned) map instead makes every lookup – entry,
+        // rebuild, binder scope (all of which clone this map) – resolve
         // them to themselves.
         let mut filtered = subst.clone();
         if !keep.is_empty() {
@@ -410,7 +410,7 @@ impl TermManager {
                 // before the substitution map is consulted, so every parent
                 // rebuilds with the original spelling. Sound only for
                 // binder-free leaves (constants), which no binder scope can
-                // shadow — enforced by the caller's construction.
+                // shadow – enforced by the caller's construction.
                 if keep.contains(&id) {
                     contexts[ctx].cache.memo_insert(id, id);
                     return;
@@ -651,7 +651,7 @@ impl TermManager {
             cache: C::default(),
             // NO inherited prefilter: `prepare_binder_subst` may ADD
             // entries to a scope's map (alpha-renaming old_var->fresh_var)
-            // that the parent's bitmap does not cover — a clear bit would
+            // that the parent's bitmap does not cover – a clear bit would
             // skip their probe and silently capture.  Binder scopes probe
             // exactly.
             domain: None,
@@ -863,7 +863,7 @@ impl TermManager {
         self.rebuild_children_with(kind, sort, &sub)
     }
 
-    /// Rebuild one node applying `sub` to every child position — the
+    /// Rebuild one node applying `sub` to every child position – the
     /// exhaustive per-`TermKind` rebuild of the substitution walk,
     /// factored out so other passes can remap a node's children without
     /// a full substitution call (whose per-call map clone is quadratic

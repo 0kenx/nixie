@@ -197,8 +197,8 @@ impl VMTF {
     }
 
     /// kissat `reset_search_of_queue` (`queue.c`, called on every switch to
-    /// focused mode): point the search cursor at the queue's tail again —
-    /// the most-recently-bumped variable — instead of wherever the stable
+    /// focused mode): point the search cursor at the queue's tail again –
+    /// the most-recently-bumped variable – instead of wherever the stable
     /// phase's (non-)use of the queue left it. Purely a scheduling-refresh;
     /// no list order is touched.
     pub fn reset_search_cursor(&mut self) {
@@ -227,11 +227,11 @@ impl VMTF {
     }
 
     /// kissat `adjust_scores_and_phases_of_fresh_variables` (factor.c): move
-    /// each var to the **head** (oldest end — the *last* decided), then
+    /// each var to the **head** (oldest end – the *last* decided), then
     /// restamp the whole list in head→tail order and point `search` at the
     /// tail.  kissat uses this to make freshly introduced factor-hub
     /// variables the LEAST prominent decisions in both VMTF (oldest end)
-    /// and VSIDS (score 0) — see `solver/factor.rs`'s port notes: the list's
+    /// and VSIDS (score 0) – see `solver/factor.rs`'s port notes: the list's
     /// tail is the *next* decision (`bump` moves conflict vars there), so
     /// linking the fresh vars at the head schedules them last, not first.
     pub fn enqueue_oldest_and_restamp(&mut self, vars: &[Var]) {
@@ -263,7 +263,7 @@ impl VMTF {
             self.head = v;
         }
         // Restamp: btab order = list order (head = 1 … tail = n), search at
-        // the tail — exactly kissat's restamp loop.  This keeps
+        // the tail – exactly kissat's restamp loop.  This keeps
         // `notify_unassigned`'s timestamp comparison consistent with the
         // relinked order.
         let mut stamp = 0u64;

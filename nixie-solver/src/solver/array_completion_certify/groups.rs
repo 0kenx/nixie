@@ -8,9 +8,9 @@
 //! searches, and declining the goal because it holds four arrays kept a
 //! candidate model that printed all four as `#b0` beside `∀i. a[i] = #b1`.
 //!
-//! So the arrays are partitioned by co-occurrence — two arrays are in one
+//! So the arrays are partitioned by co-occurrence – two arrays are in one
 //! group when one assertion mentions both (an array equality `a = b` links
-//! them like a shared universal does) — the bound applies to the size of a
+//! them like a shared universal does) – the bound applies to the size of a
 //! group, and each group is searched on its own sub-goal (the assertions that
 //! mention it).  The searches only *propose*: the union of their completions
 //! goes through the one certificate over every assertion before anything is

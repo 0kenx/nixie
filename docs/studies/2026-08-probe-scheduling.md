@@ -9,7 +9,7 @@ implication-graph **roots**, ranked by negated-occurrence count, with
 (`probe.cpp`). Does adopting the cadical selection discipline improve
 instructions-to-verdict?
 
-## What was implemented (kept, off by default — sound infrastructure)
+## What was implemented (kept, off by default – sound infrastructure)
 
 `solver/probe.rs`: `probe_round` schedules roots exactly as cadical's
 `generate_probes` (one-polarity-only binary occurrences; probe the
@@ -22,7 +22,7 @@ brute-force `failed_literal_probing`/`probe_hyper_binary` remain (pre-search
 path, flag-gated as before).
 
 A matched-null switch ships with it: `NIXIE_PROBE_NULL=1` reverses the rank
-order (same roots, same schedule, same budgets — only the semantic content
+order (same roots, same schedule, same budgets – only the semantic content
 under test, best-first ordering, is destroyed).
 
 ## Experiment
@@ -31,8 +31,8 @@ under test, best-first ordering, is destroyed).
 2 arms, CRN-paired, metric instructions-to-verdict (wall-clock invalid:
 foreign load 5-18 during the window). 429 valid cells.
 
-**Result: geomean(treatment/null) = 1.0091** — the treatment *loses* to its
-own null by 0.9%, despite winning 325/429 cells (wins small, losses large —
+**Result: geomean(treatment/null) = 1.0091** – the treatment *loses* to its
+own null by 0.9%, despite winning 325/429 cells (wins small, losses large –
 the noise signature). Per-file: one real win (ak128booth 0.767), one real
 loss (ITC2021_Early_3 1.529), everything else within ±7%.
 
@@ -47,7 +47,7 @@ power. Do not tune parameters against this measurement.
    not reproduce on the freshly-built binary (5× timeout, no verdict) and
    6k differential-fuzz iterations across the probing variants were clean.
    Root cause: a `grep -cE "^error"` whose zero-match exit code short-
-   circuited `&&` and masked a failed rebuild — the same trap noted twice
+   circuited `&&` and masked a failed rebuild – the same trap noted twice
    before in this repo's history. `touch src/main.rs && cargo build 2>&1 |
    tail -1` before any verdict-bearing run.
 2. **`env` cannot appear as an argv element under `perf stat`** (perf execs
@@ -77,7 +77,7 @@ selection. Remaining hypotheses, in order of expected leverage:
 
 1. **Dominator hyper-binary resolution** (`derive_hyper_binaries_dominator`):
    the port of cadical's `hyper_binary_resolve` + `probe_dominator`, applied
-   post-hoc in trail order — parents reconstructed from reasons (binary
+   post-hoc in trail order – parents reconstructed from reasons (binary
    reasons give the implier directly; long reasons get the dominator of
    their level-1 false literals), the binary derived is `(¬dom ∨ q)` (the
    backbone) instead of `(¬probe ∨ q)`, and the subsumption case retires the
@@ -88,10 +88,10 @@ selection. Remaining hypotheses, in order of expected leverage:
    `enable_equiv_substitution && !real_theory_attached`.
 3. **Deleted-reason hygiene, made structural**: `Solver::retire_clause` /
    `remove_clause` purge binary-graph edges, re-point live trail reasons to
-   `Decision`, then retire — routed through every in-solver deletion site
+   `Decision`, then retire – routed through every in-solver deletion site
    (subsume, BVE, ELS, eliminator, probe case-(B), learned-subsumption), and
    the pure-literal pass's post-hoc bookkeeping (whose hygiene loop had been
-   dead code: the DRAT-gated literal snapshot is empty without proofs — now
+   dead code: the DRAT-gated literal snapshot is empty without proofs – now
    an always-on id-only snapshot).
 
 The soundness fixes, each caught by a real reproducer (`Break_unsat_06_07`,
@@ -103,7 +103,7 @@ The soundness fixes, each caught by a real reproducer (`Break_unsat_06_07`,
   reduction deleted the only remaining (weaker) constraint, and UNSAT
   flipped to SAT. Fix: `clear_learned` promotion.
 - **Live-reason deletion (debug invariant)**: retired clauses were still
-  recorded reasons — binary reasons escape the `lits[0]` invariant (the
+  recorded reasons – binary reasons escape the `lits[0]` invariant (the
   binary-graph path records either position), so the reduce-style O(1)
   guard misses them. Fix: re-point to `Decision` (exact for level-0 facts;
   cadical `v.reason = level ? … : 0`).
@@ -124,15 +124,15 @@ instructions-to-verdict, verdicts cross-checked:
 **Verdict: decisively net-negative as a default, again.** With probing and
 ELS in place the elimination-friendly files still improve (6s167 −57.5%),
 but the aggregate is far worse than the earlier no-probing measurement
-(53/94 → 1.74× geomean). Whatever amortizes this stack in CaDiCaL — the
+(53/94 → 1.74× geomean). Whatever amortizes this stack in CaDiCaL – the
 decompose/transred interplay, the schedule constants, or search quality we
-have not ported — is still missing. Per the methodology: recorded, not
+have not ported – is still missing. Per the methodology: recorded, not
 tuned against.
 
 ### qwh.50.1250 regression (user-reported: sat 2.19s → timeout)
 
 Bisected by instructions-to-verdict across b6398d0 → cc72823 → 5e61d37 →
-3ef9086 → HEAD: the flip is **cc72823 (the reuse_trail fix)** — 126.5G →
+3ef9086 → HEAD: the flip is **cc72823 (the reuse_trail fix)** – 126.5G →
 non-terminating; f32+blocker later restored solving at 263G (2.1× baseline
 work; HEAD 269G). No bug: the faithful-but-diverging reuse fix (measured
 aggregate-neutral, 11/10 wins/losses over 31 files × 8 seeds) landed on qwh
@@ -142,12 +142,12 @@ partially back. Recorded as a tracked casualty of the accepted trade-off.
 ## transred (the last named amortizer): implemented, and the hypothesis rejected too
 
 Ported CaDiCaL `transred.cpp` (`solver/transred.rs`, wired into `inprocess()`
-after vivify): transitive reduction of the binary implication graph — a
+after vivify): transitive reduction of the binary implication graph – a
 binary `(¬src ∨ dst)` is retired when an alternative `src→dst` path exists
 through other binaries, with the soundness rules from the source and the
 inprocessing-rules paper: **original candidates only via original-only
 paths** (a learned justification is transient; deleting an original on it
-under-constrains — the same class as the promotion bugs), the candidate's
+under-constrains – the same class as the promotion bugs), the candidate's
 own edge excluded from the search, hyper-derived binaries skipped as
 candidates (flagged `clause_hyper` at both HBR sites), failed literals from
 signed-mark BFS forced as units, retirements through `retire_clause` (BIG
@@ -156,7 +156,7 @@ retirement via an original chain, non-retirement of an original through a
 learned path, failed-literal forcing.
 
 **Full-stack re-measure with transred**: 67 files, paired
-instructions-to-verdict — geomean(full+transred/default) = **1.7729** vs
+instructions-to-verdict – geomean(full+transred/default) = **1.7729** vs
 1.74 without transred (0 mismatches; 63/67 vs 62/67 solved).
 Indistinguishable. The "missing amortizer" hypothesis for CaDiCaL's
 inprocessing stack is now exhausted along every named dimension in its
@@ -164,14 +164,14 @@ source: probe scheduling ✗ (1.0091 vs its null), HBR dominator + ELS
 interleaving ✗ (1.74), transred ✗ (1.77). Whatever makes the stack pay in
 CaDiCaL is not a single named pass this port can add; the remaining deltas
 are the schedule constants themselves (round intervals, effort fractions)
-and search quality — and tuning constants against a 1.7× gap that four
+and search quality – and tuning constants against a 1.7× gap that four
 semantic ports failed to move is exactly the trajectory-reshuffling trap
 the methodology forbids. The stack stays opt-in (`INPROCESS`/`BVE`/…).
 
 ## HEAD tracking number (post all six commits)
 
 94-file differential vs cadical, 25 s cap: **19/94 above 1.5×, 0
-disagreements** — the session's best (22 start → 18 post-throughput → 23
+disagreements** – the session's best (22 start → 18 post-throughput → 23
 post-reuse → 24 post-f32/blocker → 19 now). `6s167-opt` now solves under
 default (12.9 s) where it timed out at session start.
 
@@ -179,7 +179,7 @@ default (12.9 s) where it timed out at session start.
 
 Two waves of orphaned solvers (a forgotten Miri run and five
 `perf`-wrapped sat-runners whose Python `subprocess(timeout=)` parents died
-first — Python does not kill children when the parent is killed) burned
+first – Python does not kill children when the parent is killed) burned
 cores for hours and contaminated wall-clock measurements. All harnesses now
 wrap children in the `timeout` binary directly (self-terminating orphans);
 post-mortem recorded here because the load pattern (one stale 97% CPU

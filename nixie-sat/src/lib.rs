@@ -321,10 +321,10 @@ pub fn kitten_sweep_rand_enabled() -> bool {
 }
 
 /// Whether kitten-based definition extraction arms the eliminator
-/// (`NIXIE_DEFINITIONS=1`) — kissat's `definitions` option, port of
+/// (`NIXIE_DEFINITIONS=1`) – kissat's `definitions` option, port of
 /// `definition.c` (`kissat_find_definition`). kissat defaults this on;
 /// nixie defaults **off** until the arm clears the benchmarking
-/// discipline (`docs/BENCHMARKING.md`) — the structural gate detectors
+/// discipline (`docs/BENCHMARKING.md`) – the structural gate detectors
 /// (equivalences/ands/if-then-else) that front-run the kitten in kissat
 /// are not ported, so every candidate pays one bounded kitten solve
 /// (≤ `definitionticks` = 1e6 ticks, ≤ 64 M ticks per elimination phase).
@@ -377,10 +377,10 @@ pub fn kitten_sweep_null_enabled() -> bool {
 }
 
 /// Sweep round effort override in per-mille of the round window
-/// (`NIXIE_SWEEP_EFFORT`). Default **400** — the 2026-09-08 effort
+/// (`NIXIE_SWEEP_EFFORT`). Default **400** – the 2026-09-08 effort
 /// calibration: at kissat's nominal 100 ‰ our sweep was budget-starved
 /// relative to the reference (53 equivalences / 948 k kitten ticks on
-/// 6s167 vs kissat's 162 / 3.5 M — our window currency is propagations,
+/// 6s167 vs kissat's 162 / 3.5 M – our window currency is propagations,
 /// not ticks). 400 ‰ matches kissat's absolute price where the sweep
 /// finds content, and the yield-delay feedback (kissat `delays.sweep`)
 /// keeps inert files BELOW the 100 ‰ total cost (qwh: 6 firing rounds,
@@ -531,7 +531,7 @@ pub fn walk_strip_fixed_enabled() -> bool {
 
 /// Matched-null switch for the walk-warmup study
 /// (`docs/studies/2026-09-06-walk-warmup-study.md`): when set, the warmup
-/// pass runs identically but inverts every phase bit it writes — the same
+/// pass runs identically but inverts every phase bit it writes – the same
 /// full-array rewrite at the same schedule with no propagation-derived
 /// information. Consumes no RNG draws, so the treatment/null arms keep
 /// identical random streams.
@@ -584,7 +584,7 @@ pub fn chrono_reuse_null_enabled() -> bool {
 /// block-UIP shrinking from its cost and trajectory reshuffling.
 /// Reduce used-shield (cadical `reduce.cpp` parity port): shield
 /// recently-used learned clauses from tier-percentage deletion.
-/// **Default OFF** — corpus-negative in screening (23 vs 25 solved on a
+/// **Default OFF** – corpus-negative in screening (23 vs 25 solved on a
 /// 60-file satcomp sample, 0 verdict mismatches; our tier promotions
 /// already reward use, so the shield over-retains under the
 /// tier-percentage policy).  `NIXIE_REDUCE_USED_SHIELD=1` enables for A/B
@@ -598,7 +598,7 @@ pub fn reduce_used_shield_enabled() -> bool {
 
 /// Cached `NIXIE_VIVIFY_OTF=0` (disable on-the-fly vivify subsumption).
 /// OnceLock: this is checked per subsumption candidate during vivify
-/// rounds — an uncached `env::var` there measured as double-digit
+/// rounds – an uncached `env::var` there measured as double-digit
 /// percentages of runtime in `getenv` (profiled 2026-08-21, noL).
 #[doc(hidden)]
 pub fn vivify_otf_disabled() -> bool {
@@ -669,7 +669,7 @@ pub fn bump_mode_gate_null_enabled() -> bool {
 /// (`NIXIE_KISSAT_REDUCE`, follow-up #3 of
 /// `docs/studies/2026-09-07-inproc-effort-schedule.md`): rides the cadical
 /// reduce port's schedule/candidate machinery with kissat's two structural
-/// deltas — dynamic usage-quantile tier bounds (`tier1`/`tier2` at the 50 %/
+/// deltas – dynamic usage-quantile tier bounds (`tier1`/`tier2` at the 50 %/
 /// 90 % points of the per-mode used-by-glue histogram, kissat `tiers.c`) and
 /// a deletion fraction growing 50 %→90 % with the reduction count (kissat
 /// `reducelow`/`reducehigh`). Fixed 2/6 glue bounds and the flat 75 % target
@@ -810,7 +810,7 @@ pub fn tiered_enabled() -> bool {
 /// accumulated 1-UIP resolvent is smaller than the antecedent being
 /// resolved, the antecedent is rewritten in place with its pivot literal and
 /// level-0-falsified literals dropped (self-subsumption against the partial
-/// resolvent — every model of the formula satisfies the strengthened clause)
+/// resolvent – every model of the formula satisfies the strengthened clause)
 /// and the analysis restarts from it (cadical `analyze.cpp` OTFS, 1.9
 /// events/conflict on circuit_64in64out per the 2026-09-12 amplitude
 /// diagnosis). Skipped entirely while a proof (DRAT/LRAT) is attached: the
@@ -824,7 +824,7 @@ pub fn otfs_enabled() -> bool {
 }
 
 /// Structural AND-gate recognition during elimination (`NIXIE_AND_GATES=1`):
-/// cadical `gates.cpp::find_and_gate` (SATeLite SAT'05) — the pivot is
+/// cadical `gates.cpp::find_and_gate` (SATeLite SAT'05) – the pivot is
 /// defined by `g ↔ x1∧…∧xk` when its occurrence lists contain the sides
 /// `(¬g ∨ xi)` and the base `(g ∨ ¬x1 ∨ … ∨ ¬xk)`; gate-defined variables
 /// eliminate through the restricted g×a + g×g resolvent products (a×a is
@@ -832,7 +832,7 @@ pub fn otfs_enabled() -> bool {
 /// = bit-identical.
 /// Eager subsumption of recently learned clauses (`NIXIE_EAGER_SUB=1`):
 /// cadical `analyze.cpp::eagerly_subsume_recently_learned_clauses` (default
-/// ON there) — after each conflict, walk the learned clauses newest-first
+/// ON there) – after each conflict, walk the learned clauses newest-first
 /// for at most `eagersubsumelim = 20` candidates and retire any subsumed by
 /// the fresh driving clause. Learned-by-learned only, constant cost.
 /// Default off = bit-identical.
@@ -846,7 +846,7 @@ pub fn eager_sub_enabled() -> bool {
 /// Subsume fixpoint in the elimination phase (`NIXIE_ELIM_SUBFIX=1`):
 /// cadical `elim()` forces a full subsume PHASE (rounds until nothing
 /// changes) before eliminating when none ran since the last phase; we run
-/// a single round. Repeated rounds mine the strengthening cascade — each
+/// a single round. Repeated rounds mine the strengthening cascade – each
 /// strengthened clause both subsumes more and re-marks its variables as
 /// elimination candidates (the phase-feeder for the starved later
 /// phases). Bounded at 8 rounds. Default off = bit-identical.
@@ -863,7 +863,7 @@ pub fn elim_subfix_enabled() -> bool {
 /// fixpoint (`NIXIE_ELS_PRESEARCH`) retired at least the threshold share
 /// of the originals it started from, the unconditional phase-1 elimination
 /// is consumed without running (`try_scheduled_elimination` →
-/// `skip_elim_phase_one`) — on gate-dense families the phase's mass
+/// `skip_elim_phase_one`) – on gate-dense families the phase's mass
 /// resolution re-entangles what the fold untangled (bv_ILA: 355K conflicts
 /// with the phase vs 155-172K without any BVE on the same folded formula;
 /// `docs/studies/2026-09-18-ssr-binaries.md` §4-5). Default off =
@@ -910,9 +910,9 @@ pub(crate) const GATE_SUBSUME_MIN_CANDIDATES: usize = 64;
 
 /// Default candidate-volume floor for the gate-subsumption pass
 /// (`NIXIE_GATE_SUBSUME_MIN` overrides at runtime; the test knob too).
-/// Below the floor the pass skips entirely — measured rationale
+/// Below the floor the pass skips entirely – measured rationale
 /// (2026-09-21): the pass's value tracks its retirement volume (WS
-/// retires 510/round and wins 5.3×; frb retires zero — its win is the
+/// retires 510/round and wins 5.3×; frb retires zero – its win is the
 /// fold's; Carry_Bits_Fast retires 1-3/round and pays 2.2×: micro-rounds
 /// are pure trajectory perturbation with no structural payoff).
 #[cfg(test)]
@@ -1121,7 +1121,7 @@ visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps=
 
 /// T1 stall-restart multiplier (`NIXIE_RESTART_STALL=<k>`): when armed, a
 /// focused-mode restart also fires if the gap since the last restart
-/// exceeds `k`× the recent restart-gap EMA (floor 200 conflicts) — the
+/// exceeds `k`× the recent restart-gap EMA (floor 200 conflicts) – the
 /// cadical Glucose trigger has no max-gap fallback, so a uniform-huge glue
 /// stream silences it (2026-09-07 tier-1 diagnosis). Diagnostic study arm;
 /// unset by default.
@@ -1139,18 +1139,18 @@ pub fn restart_stall_multiplier() -> Option<f64> {
 
 /// Max-gap fallback arm (`NIXIE_RESTART_MAXGAP=<n>`): a focused-mode
 /// restart also fires when the gap since the last restart reaches `n`
-/// conflicts — the MiniSAT-lineage restart floor the Glucose condition
+/// conflicts – the MiniSAT-lineage restart floor the Glucose condition
 /// lacks. Simpler than the stall trigger (no EMA); the T1 study's proper
 /// null measured the generic-cadence share of the tail effect at 1.26×
 /// with effective thresholds in the 200–800 range, and the max-gap matrix
 /// (2026-09-07 campaign) found the operating point at 1000: tail geomean
-/// 1.46× — equal to the stall trigger — with a better per-file profile
+/// 1.46× – equal to the stall trigger – with a better per-file profile
 /// (worker_550 2.18×, 6s167 0.99×). Default off; see the study for the
 /// no-flip differential.
 /// Drought-gated max-gap floor (`NIXIE_RESTART_DROUGHT_MAXGAP=<n>`; config
 /// field `restart_drought_maxgap` for portfolio arms).  Fires the flat
 /// restart floor at `n` conflicts **only while the fast glue EMA exceeds
-/// the drought glue gate (fast glue EMA above 100)** — the uniform-huge-glue
+/// the drought glue gate (fast glue EMA above 100)** – the uniform-huge-glue
 /// signature of the restart-drought class.  Measured separation
 /// (2026-09-11 conflicts program): avg learned LBD 762 (worker_550) and
 /// 224 (qwh) on the class the floor fixes, ≤26 on every file the ungated
@@ -1184,7 +1184,7 @@ pub fn restart_maxgap() -> Option<u64> {
 /// treatment machinery with the multiplier from
 /// [`restart_stall_multiplier`], default 8 when only the null flag is set):
 /// the stall threshold is computed from a pseudo-randomly *reordered*
-/// history of the same restart gaps — same physical trigger, same gap
+/// history of the same restart gaps – same physical trigger, same gap
 /// magnitudes and window, no current-stall information
 /// (docs/studies/2026-09-07-throughput-campaign.md, T1).
 #[doc(hidden)]

@@ -75,7 +75,7 @@ fn operators_get_the_right_sorts() {
     assert_eq!(tm.get(card).expect("built").sort, tm.sorts.int_sort);
 }
 
-/// Terms are hash-consed, so the same set expression is the same node — which
+/// Terms are hash-consed, so the same set expression is the same node – which
 /// is what makes congruence over set operators meaningful.
 #[test]
 fn set_terms_are_interned() {
@@ -101,7 +101,7 @@ fn set_terms_are_interned() {
 /// existed, `set.member` was an opaque Boolean nothing constrained, and the
 /// honesty gate had to stop a wrong `sat`. `solver::set_theory` now supplies
 /// the defining axioms, so the right answer is available and the gate no
-/// longer fires for membership. The gate itself is still load-bearing — see
+/// longer fires for membership. The gate itself is still load-bearing – see
 /// `cardinality_still_degrades_to_unknown` in `finite_sets_decision.rs`, which
 /// covers the one construct the reduction does not.
 #[test]

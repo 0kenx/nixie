@@ -1,14 +1,14 @@
 //! Regression: non-convex Nelson–Oppen arrangement (QF_UFIDL false-SATs).
 //!
 //! `nelson_oppen_combine` merges only *entailed* equalities into EUF.  When a
-//! refutation instead needs the model-suggested arrangement — UF arguments the
+//! refutation instead needs the model-suggested arrangement – UF arguments the
 //! arithmetic model merely co-locates, whose congruent results a negated `=`
-//! atom keeps apart — the merge never happens, congruence never fires, and a
+//! atom keeps apart – the merge never happens, congruence never fires, and a
 //! full assignment whose arrangement was never jointly checked is accepted.
 //!
 //! Reproducer family: `smt-lib/non-incremental/QF_UFIDL/pete` (`5s`, `cxs-bp`,
 //! `cxs-bp-ex`, `cxs-bp-safety`, `cxs-bp-ex-inp-safety`, and `6stage-flush`,
-//! which was a timeout before the fix) — all UNSAT per z3, all answered `sat`.
+//! which was a timeout before the fix) – all UNSAT per z3, all answered `sat`.
 //! z3-certified: `F ∧ (= pc0 -1)` alone is UNSAT while nixie's model pinned
 //! `pc0 = -1` (see `docs/studies/2026-08-arithmetic-negated-atoms-false-sat.md`).
 //!
@@ -36,7 +36,7 @@ fn run_script(script: &str) -> SolverResult {
 }
 
 /// Minimal non-convex shape: `f(a)` and `f(b)` with `a`, `b` both pinned to 3
-/// by arithmetic (never *entailed* equal — each is pinned independently), and
+/// by arithmetic (never *entailed* equal – each is pinned independently), and
 /// a negated `=` between the results.  No single theory sees the contradiction
 /// without the arrangement merge: EUF has no reason to merge `a` and `b`
 /// (different terms, no asserted equality), arithmetic holds both pins
@@ -63,8 +63,8 @@ fn nonconvex_ufidl_arrangement_is_checked() {
 
 /// A genuinely-satisfiable counterpart: the pins entail `a = b`, and the
 /// asserted result equality `f(a) = f(b)` is exactly what congruence derives
-/// — the arrangement round must not fabricate a conflict.  (Note the
-/// tempting variant with `(not (= (f a) (f b)))` here is UNSAT — the pins
+/// – the arrangement round must not fabricate a conflict.  (Note the
+/// tempting variant with `(not (= (f a) (f b)))` here is UNSAT – the pins
 /// *entail* `a = b`, so congruence forces equal results; nixie and z3 agree
 /// on that too.)
 #[test]
@@ -85,7 +85,7 @@ fn nonconvex_ufidl_arrangement_stays_sat_when_consistent() {
 /// The real family instance (`pete/5s.smt2`, UNSAT per z3): a
 /// microprocessor-verification refinement goal over `IMem0`/`rf0`/… whose
 /// refutation runs pinned-constant → ite resolution → congruence on UF
-/// applications → a contradictory equality — exactly the chain the atom-level
+/// applications → a contradictory equality – exactly the chain the atom-level
 /// scans cannot see.  Slow-ish in debug; still well under a minute.
 #[test]
 fn pete_5s_family_instance_is_unsat() {
@@ -97,12 +97,12 @@ fn pete_5s_family_instance_is_unsat() {
 /// The trajectory-dependence canary (2026-08-24): a clause-DB
 /// perturbation (trie-vivify) steered the search onto a candidate the
 /// arrangement round's caps/pair-enumeration missed, reopening the
-/// false-SAT the round had closed — the same instance answered `unsat`
+/// false-SAT the round had closed – the same instance answered `unsat`
 /// on one trajectory and `sat` on another.  The final congruence honesty
 /// gate (model-level, trajectory-independent) closes the class: this
 /// fixture pins `unsat` for the exact instance that flipped.
 ///
-/// `#[ignore]`d out of the *default* suite run — NOT deleted — because it
+/// `#[ignore]`d out of the *default* suite run – NOT deleted – because it
 /// is a known-slow DEBUG-profile soundness guard (~330 s debug, ~25 s
 /// release) whose runtime exceeds the verification gate harness's budget
 /// for `cargo nextest run --workspace --all-features`, and one slow test

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Paired instruction-count corpus — trap 23's required check for any
+# Paired instruction-count corpus – trap 23's required check for any
 # landing that claims cost-neutrality (or a win) on the solving path.
 #
 # Why: the perf gate's wall band and its trajectory-identity counters are
 # BOTH blind to a uniform instruction-cost change (the CSR flip shipped a
-# geomean 1.16x instruction regression through both gates —
+# geomean 1.16x instruction regression through both gates –
 # docs/studies/2026-09-20-csr-slice6-load-path.md, addendum 7).  This
 # script measures the cost directly: deterministic instruction counts
 # (`perf stat -e cpu_core/instructions/u`), every gate-corpus cell, both
@@ -90,7 +90,7 @@ for f in "${FILES[@]}"; do
     [ "$bi" -gt 0 ] && [ "$ci" -gt 0 ] && echo "$bi $ci" >> "$tmp/pairs"
 done
 if [ "$fail" -ne 0 ]; then
-    echo "PAIRING FAILURE: verdicts/conflicts are not identical — the instruction comparison is void." >&2
+    echo "PAIRING FAILURE: verdicts/conflicts are not identical – the instruction comparison is void." >&2
     exit 1
 fi
 awk '{ if ($1 > 0 && $2 > 0) { lr += log($2/$1); n++ } }

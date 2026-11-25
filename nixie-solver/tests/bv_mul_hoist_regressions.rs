@@ -1,14 +1,14 @@
 //! Z3 `bv_rewriter::mk_mul_hoist` regressions: a `bvshl` operand factors
-//! out of a `bvmul` — `x · shl(z, u) → shl(x · z, u)` (multiplication is
+//! out of a `bvmul` – `x · shl(z, u) → shl(x · z, u)` (multiplication is
 //! associative in ℤ/2ʷ, so the shift-as-multiplication hoists outside).
 //!
 //! The rule closes the Noetzli rewrite-rule identities
 //! (`20190311-bv-term-small-rw-Noetzli`: +52 family files decided, zero
 //! regressions) whose shapes are pure mul/shl reassociations:
 //!
-//! * `bv-term-small-rw_1300`: `shl(s·t, s<<s) = s · shl(t, s<<s)` — both
+//! * `bv-term-small-rw_1300`: `shl(s·t, s<<s) = s · shl(t, s<<s)` – both
 //!   sides hoist to the same form (`bv-term-small-rw_1300_identity`).
-//! * `bv-term-small-rw_1104`: `t·(s·shl(t,s)) = s·(t·shl(t,s))` — pure
+//! * `bv-term-small-rw_1104`: `t·(s·shl(t,s)) = s·(t·shl(t,s))` – pure
 //!   commutativity **after** hoisting; the hoist must flatten the
 //!   shift's multiplicand into the product's factor list, or the two
 //!   sides rebuild with different nesting and stop folding
@@ -51,7 +51,7 @@ fn bv_term_small_rw_1300_identity() {
 
 /// Pure commutativity after hoisting: the hoisted shift's multiplicand is
 /// itself a product (`t · shl(s·t, u)`), whose factors must join the
-/// outer product's factor list — not nest.
+/// outer product's factor list – not nest.
 #[test]
 fn hoist_flattens_the_shift_multiplicand() {
     assert_eq!(
@@ -94,7 +94,7 @@ fn nested_shifts_hoist_completely() {
 #[test]
 fn shl_result_is_not_hoisted() {
     // (s·t) << s = s·(t << s) holds; but a NON-identity stays sat-able:
-    // (s·t) << 1 ≠ s·t in general (overflow) — the hoist may not prove
+    // (s·t) << 1 ≠ s·t in general (overflow) – the hoist may not prove
     // more than associativity does.
     assert_eq!(
         verdict(

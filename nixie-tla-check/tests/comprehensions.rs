@@ -1,8 +1,8 @@
 //! Native-mode set comprehensions and `SUBSET` (issue #21).
 //!
 //! The set theory *is* wired into the solver; what these tests pin is that a
-//! comprehension or a powerset is built whenever its base is enumerable — the
-//! base's candidate list is the only thing the construction needs — and that
+//! comprehension or a powerset is built whenever its base is enumerable – the
+//! base's candidate list is the only thing the construction needs – and that
 //! membership in `SUBSET T` is decided structurally, with no 2^n expansion.
 
 use nixie_core::TermManager;
@@ -37,7 +37,7 @@ fn fails(body: &str) {
     assert_eq!(claim(body), Outcome::Violation { step: 0 }, "`{body}`");
 }
 
-// ---- comprehensions over an enumerable base ----
+// ======== comprehensions over an enumerable base ========
 
 #[test]
 fn a_filter_comprehension_over_a_literal() {
@@ -56,7 +56,7 @@ fn a_map_comprehension_over_a_literal() {
 
 /// A comprehension over a **framed** set variable now checks (issue #20's
 /// candidate universes): `{y \in s : y > 0} = s` has a real answer. A base
-/// with no derivable universe — the pre-frames condition — is still declined
+/// with no derivable universe – the pre-frames condition – is still declined
 /// by name, never approximated.
 #[test]
 fn a_comprehension_over_a_framed_base_checks() {
@@ -81,7 +81,7 @@ Inv  == {y \in s : y > 0} = s
     );
 }
 
-// ---- SUBSET ----
+// ======== SUBSET ========
 
 /// Membership in a powerset is subset-or-equal, decided by the set theory
 /// with no expansion at all.
@@ -100,7 +100,7 @@ fn membership_in_a_powerset_is_structural() {
 fn a_powerset_as_a_value_enumerates() {
     // Exactly the subsets of {1, 2} contain 2: {2} and {1, 2}.
     holds(r"Cardinality({S \in SUBSET {1, 2} : 2 \in S}) = 2");
-    // And no subset of {1, 2} contains 3 — the issue's own regression.
+    // And no subset of {1, 2} contains 3 – the issue's own regression.
     fails(r"\E S \in SUBSET {1, 2} : 3 \in S");
     holds(r"\E S \in SUBSET {1, 2} : 1 \in S /\ 2 \in S");
 }

@@ -1,21 +1,21 @@
-//! Kitten — the embedded small CDCL solver (faithful port of kissat
+//! Kitten – the embedded small CDCL solver (faithful port of kissat
 //! `kitten.c`, the sub-solver behind SAT sweeping).
 //!
 //! Kitten is deliberately **not** the main solver: no arena, no
 //! inprocessing, no proofs, no phase saving beyond a plain phase array.
 //! It exists to answer bounded, assumption-driven satisfiability queries
 //! over a *copy* of a fragment of the main formula (the sweep
-//! environment), under a **tick budget** — a deterministic work counter,
+//! environment), under a **tick budget** – a deterministic work counter,
 //! never wall clock. Its API surface mirrors `kitten.h`:
 //!
 //! * lifecycle: [`Kitten::new`] / [`Kitten::clear`] (reset trail and
-//!   clauses, keep capacities) — release is Rust `Drop`;
+//!   clauses, keep capacities) – release is Rust `Drop`;
 //! * problem: [`Kitten::unit`], [`Kitten::binary`], [`Kitten::clause`],
 //!   [`Kitten::clause_with_id_and_exception`] (the id+exception form is
 //!   how a caller maps kitten antecedents back to main-solver clauses),
 //!   [`Kitten::assume`];
 //! * budget: [`Kitten::set_ticks_limit_delta`] /
-//!   [`Kitten::no_ticks_limit`] — [`Kitten::solve`] returns
+//!   [`Kitten::no_ticks_limit`] – [`Kitten::solve`] returns
 //!   [`KittenResult::Unknown`] when the budget runs out (C returns 0);
 //! * answers: [`Kitten::solve`] / [`Kitten::status`] /
 //!   [`Kitten::value`] / [`Kitten::fixed`] / [`Kitten::failed`];
@@ -25,9 +25,9 @@
 //!   [`Kitten::compute_clausal_core`] + [`Kitten::traverse_core_clauses`]
 //!   / [`Kitten::traverse_core_ids`] (clause-id view for callers that
 //!   tagged originals via `clause_with_id_and_exception`), and
-//!   [`Kitten::shrink_to_clausal_core`] (keep only the core originals —
+//!   [`Kitten::shrink_to_clausal_core`] (keep only the core originals –
 //!   the standalone `-O` shrinking loop);
-//! * cooperative cancellation: [`Kitten::set_termination`] — `solve`
+//! * cooperative cancellation: [`Kitten::set_termination`] – `solve`
 //!   returns `Unknown` from the next decision once the flag is raised
 //!   (kissat `TERMINATED(kitten_terminated_1)` in `decide`).
 //!
@@ -42,8 +42,8 @@
 //!
 //! Soundness notes that matter for the port:
 //!
-//! * Learned clauses are resolvents of database clauses only — assumption
-//!   literals are decisions and never appear as reasons — so every learned
+//! * Learned clauses are resolvents of database clauses only – assumption
+//!   literals are decisions and never appear as reasons – so every learned
 //!   clause is entailed by the clause set alone, which is what makes the
 //!   extracted core (see [`Kitten::compute_clausal_core`]) sound to reuse.
 //! * All walks (analysis, failed-assumption analysis, core computation)
@@ -51,12 +51,12 @@
 //!   structure (see AGENTS.md).
 //! * Klause-arena overflow (`>= 2³²` words, where kissat aborts the
 //!   process) latches [`Kitten::solve`] to `Unknown` forever: original
-//!   klauses are refused (a *weaker* environment — sound), learned
-//!   klauses are refused (a weaker solver — sound), and no answer is
+//!   klauses are refused (a *weaker* environment – sound), learned
+//!   klauses are refused (a weaker solver – sound), and no answer is
 //!   ever fabricated from a wrapped reference.
 //! * API-contract violations that kissat treats as fatal
 //!   (`REQUIRE_STATUS`/`INVALID_API_USAGE`) surface as `debug_assert!`
-//!   plus an honest neutral result ("no value", "no core", no-op) —
+//!   plus an honest neutral result ("no value", "no core", no-op) –
 //!   never a fabricated answer.
 //! * `INVALID` (`u32::MAX`) is never dereferenced: every path that can
 //!   observe it is structured as an explicit check, and structurally
@@ -92,24 +92,24 @@ const LEARNED_FLAG: u32 = 2;
 /// Result of [`Kitten::solve`] (kissat status codes 10/20/0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KittenResult {
-    /// Formula (under current assumptions) satisfied — C status 10.
+    /// Formula (under current assumptions) satisfied – C status 10.
     Satisfied,
-    /// Formula (under current assumptions) inconsistent — C status 20.
+    /// Formula (under current assumptions) inconsistent – C status 20.
     Inconsistent,
-    /// Tick budget exhausted — C status 0.
+    /// Tick budget exhausted – C status 0.
     Unknown,
 }
 
 /// Internal solver status (kissat codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Status {
-    /// No result yet — 0.
+    /// No result yet – 0.
     Unsolved,
-    /// Last solve returned SAT — 10.
+    /// Last solve returned SAT – 10.
     Satisfied,
-    /// Last solve returned UNSAT — 20.
+    /// Last solve returned UNSAT – 20.
     Inconsistent,
-    /// UNSAT and the clausal core was computed — 21.
+    /// UNSAT and the clausal core was computed – 21.
     InconsistentCore,
 }
 
@@ -167,7 +167,7 @@ pub(crate) struct Kitten {
     /// an answer, and refusing to learn can only weaken it).
     exhausted: bool,
     /// Cooperative cancellation flag (kissat `TERMINATED`): `decide`
-    /// aborts as `Unknown` while raised. Survives `clear` — it is a
+    /// aborts as `Unknown` while raised. Survives `clear` – it is a
     /// solver-level condition, not problem state.
     terminated: Option<Arc<AtomicBool>>,
 
@@ -324,7 +324,7 @@ impl Kitten {
     /// Reset trail, assignments and every klause, keeping capacities and
     /// the tick/stat counters (`kitten_clear`). The import/export map is
     /// reset; the decision queue is emptied. Antecedent tracking is
-    /// disarmed and must be re-armed explicitly — same contract as the C.
+    /// disarmed and must be re-armed explicitly – same contract as the C.
     pub(crate) fn clear(&mut self) {
         self.assumptions.clear();
         self.core.clear();
@@ -562,7 +562,7 @@ impl Kitten {
         // kissat fatals when the flat arena outgrows the `u32` ref space
         // (`kissat_fatal ("maximum number of literals exhausted")`). A
         // sub-solver embedded in a library must not abort the process:
-        // latch `exhausted` instead — every producer refuses to add
+        // latch `exhausted` instead – every producer refuses to add
         // klauses and `solve` reports `Unknown` (refusing to learn only
         // weakens the sub-solver; dropping a not-yet-added *original*
         // klause is sound too, see `new_original_klause`).
@@ -607,7 +607,7 @@ impl Kitten {
         // Kitten clauses are *entailed restrictions* of the caller's
         // formula (the sweep copies of original clauses): omitting one
         // weakens the restriction and can only lose candidates, never
-        // fabricate an UNSAT — the honest outcome given the ref space
+        // fabricate an UNSAT – the honest outcome given the ref space
         // is gone (kissat aborts the process here).
         if self.exhausted {
             return;
@@ -670,7 +670,7 @@ impl Kitten {
     ///
     /// Bit-exact with the C: each full 64-variable block consumes one
     /// 64-bit draw, and within a block the C's word trick writes
-    /// `phase[64k + 8m + j] = bit(k + 8j)` — an 8×8 transposition of the
+    /// `phase[64k + 8m + j] = bit(k + 8j)` – an 8×8 transposition of the
     /// naive `bit(64k + n)` mapping (kitten.c `p[j] = (random >> j) &
     /// 0x0101..01`); the tail (< 64) consumes bits 0.. of the *last* draw.
     /// Matching the exact mapping keeps phase policies bit-identical to
@@ -728,7 +728,7 @@ impl Kitten {
     /// (`TERMINATED(kitten_terminated_1)`): while raised, `solve` gives
     /// up at the next decision and reports `Unknown`. The flag is shared
     /// with the owning solver, so an external interrupt reaches into a
-    /// single kitten solve — exactly the embedded-kissat contract.
+    /// single kitten solve – exactly the embedded-kissat contract.
     pub(crate) fn set_termination(&mut self, flag: Arc<AtomicBool>) {
         self.terminated = Some(flag);
     }
@@ -756,7 +756,7 @@ impl Kitten {
         if let Some(&last) = self.queue.last.as_ref() {
             self.update_search(last);
         }
-        // Array shuffles draw `j = pick_random(0, i)` — **exclusive**
+        // Array shuffles draw `j = pick_random(0, i)` – **exclusive**
         // upper bound, i.e. `j ∈ [0, i-1]` and a no-op only at `i == 0`
         // (kitten.c `shuffle_unsigned_array`: the loop is *not*
         // Fisher–Yates's `[0, i]`; matching it keeps the draws and the
@@ -810,7 +810,7 @@ impl Kitten {
             if !external_literal_sane(elit) {
                 // A sentinel/garbage code would resize the import table
                 // by billions of entries; skip the literal (weakening the
-                // clause, never strengthening it — sound).
+                // clause, never strengthening it – sound).
                 continue;
             }
             let ilit = self.import_literal(elit);
@@ -819,7 +819,7 @@ impl Kitten {
                 // Duplicate variable in one clause: the C aborts. The
                 // sweeper never produces duplicates (its clause copies
                 // come from watched clauses, which are duplicate-free);
-                // keep the first occurrence — a duplicate never changes a
+                // keep the first occurrence – a duplicate never changes a
                 // clause's meaning.
                 continue;
             }
@@ -876,7 +876,7 @@ impl Kitten {
                 // carrying the antecedents, so core extraction can walk
                 // through it (kitten.c `assign`). On arena exhaustion the
                 // wrap is skipped: the raw klause stays the reason, core
-                // extraction loses at most this hop — never soundness.
+                // extraction loses at most this hop – never soundness.
                 if !self.exhausted {
                     if self.antecedents {
                         self.resolved.push(reason);
@@ -911,7 +911,7 @@ impl Kitten {
 
     /// Watch-list surgery for one propagated literal; returns the
     /// conflicting klause ref if any (`propagate_literal`). Compacts the
-    /// list in place with the C's two-pointer scan (`q`/`p`) — moved
+    /// list in place with the C's two-pointer scan (`q`/`p`) – moved
     /// watches are dropped in O(1), not `Vec::remove`'s O(n) shift.
     fn propagate_literal(&mut self, lit: u32) -> Option<u32> {
         debug_assert!(self.values[lit as usize] > 0);
@@ -1054,7 +1054,7 @@ impl Kitten {
             self.unassign(lit);
         }
         // Root facts flushed off the trail by `flush_trail` (decide)
-        // survive in `values` — every level-0 assignment has its unit
+        // survive in `values` – every level-0 assignment has its unit
         // klause in `units` (units themselves, and level-0 propagations
         // wrapped as learned units by `assign`). Unassign them too
         // (kitten.c `completely_backtrack_to_root_level`): without this,
@@ -1335,7 +1335,7 @@ impl Kitten {
                 self.failing = Some(learned);
             }
             // On exhaustion `failing` stays `None` and `decide` aborts
-            // the solve as `Unknown` — the failed-assumption flags set
+            // the solve as `Unknown` – the failed-assumption flags set
             // above are cleared by `reset_assumptions` on that path.
         }
         self.resolved.clear();
@@ -1362,7 +1362,7 @@ impl Kitten {
             if value < 0 {
                 self.failing();
                 // The core klause allocation may have exhausted the ref
-                // space — abort as Unknown instead of claiming UNSAT
+                // space – abort as Unknown instead of claiming UNSAT
                 // without a usable `failing` ref.
                 if self.exhausted {
                     return -1;
@@ -1386,7 +1386,7 @@ impl Kitten {
 
         // Cooperative cancellation (kissat `TERMINATED
         // (kitten_terminated_1)`): give up at the next decision, never
-        // between propagations — the same granularity as the reference.
+        // between propagations – the same granularity as the reference.
         if let Some(flag) = &self.terminated
             && flag.load(Ordering::Relaxed)
         {
@@ -1433,7 +1433,7 @@ impl Kitten {
         }
         debug_assert!(self.analyzed.is_empty());
         debug_assert!(self.resolved.is_empty());
-        // The root conflict klause itself — the fallback `inconsistent`
+        // The root conflict klause itself – the fallback `inconsistent`
         // ref if the arena exhausts while wrapping the resolution chain.
         let root_conflict = reference;
         let mut next = 0usize;
@@ -1638,7 +1638,7 @@ impl Kitten {
     #[allow(dead_code)]
     pub(crate) fn failed(&self, elit: u32) -> bool {
         // `REQUIRE_STATUS (20)`: outside an inconsistent solve there are
-        // no failed assumptions — `false` is the honest answer.
+        // no failed assumptions – `false` is the honest answer.
         debug_assert!(
             self.status == Status::Inconsistent,
             "kitten_failed requires an inconsistent kitten"
@@ -1664,7 +1664,7 @@ impl Kitten {
         // `REQUIRE_STATUS (0)` + "can not start tracking antecedents
         // after learning" abort in the C; a no-op is the honest
         // non-aborting equivalent (tracking stays disarmed, cores stay
-        // sound — untracked learned klauses are resolution leaves).
+        // sound – untracked learned klauses are resolution leaves).
         debug_assert!(
             self.status == Status::Unsolved && !self.learned,
             "kitten_track_antecedents contract violated"
@@ -1803,7 +1803,7 @@ impl Kitten {
     }
 
     /// Keep only the original core klauses, dropping every learned one,
-    /// and reset to unsolved (`kitten_shrink_to_clausal_core` — the
+    /// and reset to unsolved (`kitten_shrink_to_clausal_core` – the
     /// standalone `-O` shrinking round, also used by kissat's
     /// definition extraction). Requires status 21 and an `inconsistent`
     /// ref; afterwards the kitten solves exactly the core.
@@ -1820,7 +1820,7 @@ impl Kitten {
             return;
         }
         // Without an `inconsistent` ref (assumptions-mutually-inconsistent
-        // path) there is no empty core klause to keep — the C aborts on
+        // path) there is no empty core klause to keep – the C aborts on
         // its `assert (kitten->inconsistent != INVALID)`; an honest
         // no-op keeps the status quo instead of shrinking to a formula
         // that would solve differently than the original.
@@ -1904,7 +1904,7 @@ impl Kitten {
     /// off it (`flip_literal` / `kitten_flip_literal`). Only valid while
     /// satisfied (status 10).
     pub(crate) fn flip_literal(&mut self, elit: u32) -> bool {
-        // `REQUIRE_STATUS (10)`: no model to flip in — refuse.
+        // `REQUIRE_STATUS (10)`: no model to flip in – refuse.
         debug_assert!(
             self.status == Status::Satisfied,
             "kitten_flip_literal requires a satisfied kitten"
@@ -2178,7 +2178,7 @@ mod flip_chain_tests {
     }
 
     /// On a uniform-true equivalence fragment, flipping any member must
-    /// FAIL (each member is the sole satisfier of its guard clause) —
+    /// FAIL (each member is the sole satisfier of its guard clause) –
     /// this is what forces real equivalence tests instead of flips.
     #[test]
     fn flip_fails_on_equivalence_witness() {
@@ -2284,7 +2284,7 @@ mod flip_env2_tests {
 }
 
 /// Audit-closure tests (2026-09-09): each pins a divergence found between
-/// this port and kissat `kitten.c` at the bit level — the units-flush
+/// this port and kissat `kitten.c` at the bit level – the units-flush
 /// reset, the transposed phase-randomization mapping, the exclusive-bound
 /// shuffle draws, core-id traversal, arena shrinking, and the two new
 /// honest-abort paths (ref-space exhaustion, cooperative termination).
@@ -2316,7 +2316,7 @@ mod audit_tests {
         // Replay the reference generator: a fresh kitten starts at
         // generator = initialized = 0, and randomize draws one value per
         // 64-block (the first before the block loop, the next after each
-        // full block) — the port must consume identically.
+        // full block) – the port must consume identically.
         let mut generator = 0u64;
         for block in 0..vars / 64 {
             let random = next_random64(&mut generator);
@@ -2350,11 +2350,11 @@ mod audit_tests {
         }
     }
 
-    /// `shuffle_clauses` draws `j = pick_random(0, i)` — **exclusive**
+    /// `shuffle_clauses` draws `j = pick_random(0, i)` – **exclusive**
     /// upper bound (kitten.c `shuffle_unsigned_array`): `j ∈ [0, i-1]`,
     /// a no-op only at `i == 0`. The resulting watch/units order must
     /// match a simulation of exactly those draws, and the shuffled
-    /// lists must be permutations of the originals (no watch lost — the
+    /// lists must be permutations of the originals (no watch lost – the
     /// compaction rewrite could have dropped entries).
     #[test]
     fn shuffle_clauses_matches_kissat_draws() {
@@ -2413,7 +2413,7 @@ mod audit_tests {
 
     /// After a solve that flushed root-level units off the trail
     /// (`flush_trail` in `decide` keeps their values), a complete
-    /// backtrack must unassign them too — via the units list, exactly
+    /// backtrack must unassign them too – via the units list, exactly
     /// like kitten.c. Otherwise root values persist across solves and
     /// every later solve hot-starts.
     #[test]
@@ -2423,7 +2423,7 @@ mod audit_tests {
         k.clause(&[elit(1), elit(2)]); // needs a decision for x2 → flush fires
         assert_eq!(k.solve(), KittenResult::Satisfied);
         // The root trail was flushed by `decide` (values kept, trail
-        // emptied) — the model value must be present before backtracking.
+        // emptied) – the model value must be present before backtracking.
         assert_ne!(k.value(elit(1)), 0, "model value present before backtrack");
         k.completely_backtrack_to_root_level();
         for i in 0..k.lits {
@@ -2476,7 +2476,7 @@ mod audit_tests {
         k.unit(elit(1));
         k.exhausted = true;
         assert_eq!(k.solve(), KittenResult::Unknown);
-        // Further clauses are refused (weaker formula — sound)…
+        // Further clauses are refused (weaker formula – sound)…
         k.clause(&[elit(2), elit(3)]);
         assert_eq!(k.solve(), KittenResult::Unknown);
         // …and a clear restores a working solver.

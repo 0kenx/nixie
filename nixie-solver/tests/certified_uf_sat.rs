@@ -6,7 +6,7 @@
 //! `CachedEvaluator` could not evaluate an assertion containing `(f x)`.
 //! The certificate now completes uninterpreted-sort constants and
 //! applications with EUF-class witnesses (`@uc_S_n`, exactly the
-//! `get-model` synthesis) and — before accepting — independently verifies
+//! `get-model` synthesis) and – before accepting – independently verifies
 //! the resulting function table is well-defined (congruent arguments map to
 //! equal results). See `nixie-solver/src/solver/certification.rs`.
 //!
@@ -135,7 +135,7 @@ fn certified_qfuf_distinct_transitivity_unsat_certifies() {
 /// (`verify_lia_lemma`): `(= x 1) ∧ (= x 2)` is LP-infeasible by exact
 /// substitution, so the recorded lemma verifies and the gate refutes
 /// skeleton + lemma. (Before the LIA slice this failed closed to
-/// `unknown` — congruence closure cannot verify arithmetic.)
+/// `unknown` – congruence closure cannot verify arithmetic.)
 #[test]
 fn certified_qflia_eq_unsat_certifies() {
     let r = check_certified(
@@ -169,7 +169,7 @@ fn certified_qflia_bound_conflict_certifies() {
 
 /// The LP verifier's documented completeness boundary: parity-only
 /// infeasibility (`x = 2y+1 ∧ x = 2z`) is rational-feasible, so the
-/// lemmas cannot verify and certified mode fails closed to `unknown` —
+/// lemmas cannot verify and certified mode fails closed to `unknown` –
 /// never a wrong verdict.
 #[test]
 fn certified_qflia_parity_boundary_stays_unknown() {
@@ -236,7 +236,7 @@ fn certified_qflia_sat_and_boolean_unsat_unchanged() {
 /// A Bool-returning function's congruence contradiction (the eq_diamond /
 /// NEQ family shape): `a = b` forces `p(a) = p(b)` as Booleans, so
 /// `p(a) ∧ ¬p(b) ∧ a=b` is unsat. The lemma atoms are Bool-sorted
-/// applications — recordable since the 2026-09 extension that treats them
+/// applications – recordable since the 2026-09 extension that treats them
 /// as equalities against the Boolean constants.
 #[test]
 fn certified_qfuf_bool_function_congruence_unsat_certifies() {
@@ -256,8 +256,8 @@ fn certified_qfuf_bool_function_congruence_unsat_certifies() {
 }
 
 /// A refutation that needs a disequality fact (`distinct x 5` splits the
-/// integers): the LP verifier branches over the disequality — both sides
-/// infeasible — and certified mode accepts `unsat`.
+/// integers): the LP verifier branches over the disequality – both sides
+/// infeasible – and certified mode accepts `unsat`.
 #[test]
 fn certified_qflia_disequality_refutation_certifies() {
     let r = check_certified(

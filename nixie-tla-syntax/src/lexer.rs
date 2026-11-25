@@ -1,7 +1,7 @@
 //! The TLA+ lexer.
 //!
 //! Produces a flat [`Token`] stream plus the retained [`Comment`] list. Layout
-//! is **not** handled here — see [`crate::parser`] for why junction lists need
+//! is **not** handled here – see [`crate::parser`] for why junction lists need
 //! expression-position context that a lexical pass does not have.
 //!
 //! Two subtleties worth naming, because both are easy to get silently wrong:
@@ -344,7 +344,7 @@ impl<'a> Lexer<'a> {
         self.lex_symbol(c, start)
     }
 
-    // ---- character plumbing -------------------------------------------------
+    // ======== character plumbing ========
 
     fn peek(&self, n: usize) -> Option<char> {
         self.chars.get(self.idx + n).map(|&(_, c)| c)
@@ -402,7 +402,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // ---- trivia -------------------------------------------------------------
+    // ======== trivia ========
 
     fn skip_trivia(&mut self) -> Result<()> {
         loop {
@@ -487,7 +487,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // ---- literals -----------------------------------------------------------
+    // ======== literals ========
 
     fn lex_string(&mut self, start: Pos) -> Result<Token> {
         self.bump(); // opening quote
@@ -596,7 +596,7 @@ impl<'a> Lexer<'a> {
         }
 
         if run.is_empty() {
-            // Bare `\` — set difference.
+            // Bare `\` – set difference.
             self.bump();
             return Ok(self.finish(TokenKind::Sym, "\\".to_string(), start));
         }

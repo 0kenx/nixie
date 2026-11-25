@@ -116,7 +116,7 @@ impl Z3Sort {
             // `RoundingMode` reports `Other` rather than folding into
             // `Uninterpreted`: a caller switching on the kind to decide
             // whether the sort's domain is user-defined would otherwise be
-            // lied to — this one is a reserved five-element built-in.
+            // lied to – this one is a reserved five-element built-in.
             // (Ported from upstream v0.3.3.)
             Some(
                 SortKind::String

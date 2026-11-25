@@ -3,7 +3,7 @@
 //!
 //! The gate (`Solver::model_refutes_assertions`) is the last thing between a
 //! candidate assignment and a reported `sat`. When it fired, `check_core` threw
-//! the model away and answered `unknown` on the spot — even though the search
+//! the model away and answered `unknown` on the spot – even though the search
 //! was nowhere near exhausted and the formula might well have another model one
 //! decision away. Two things changed:
 //!
@@ -19,7 +19,7 @@
 //! by the assertions: it restricts the search rather than adding knowledge. So
 //! while any such clause is live, an `unsat` from the SAT core is surfaced as
 //! `unknown`. The verdict lattice is `unknown -> {sat, unknown}` and never
-//! anything worse — which is what the negative cases below are for.
+//! anything worse – which is what the negative cases below are for.
 //!
 //! Every formula here is written in-house from the diagnosis; none is copied
 //! from an upstream benchmark.
@@ -34,7 +34,7 @@ fn run(script: &str) -> Vec<String> {
 
 /// `2^62` is a fine `i64`; `2^62 + 2^62` is not. The evaluator's `EvalVal::Num`
 /// is a `Rational64`, so the model `x = 2^62` makes `(+ x x)` report
-/// `Unrepresentable` and the gate refuses to certify it — while `x = 1` is a
+/// `Unrepresentable` and the gate refuses to certify it – while `x = 1` is a
 /// model it certifies without complaint.
 const BIG: &str = "4611686018427387904";
 
@@ -80,7 +80,7 @@ fn no_certifiable_candidate_concedes_unknown() {
 /// turn and the loop still terminates inside its budget rather than spinning.
 #[test]
 fn several_refuted_candidates_still_terminate() {
-    // Every candidate satisfies the sum bound and now certifies exactly —
+    // Every candidate satisfies the sum bound and now certifies exactly –
     // the loop terminates by CERTIFYING (the width-limit refutations this
     // fixture relied on retired with the exact evaluator).
     let out = run(&format!(
@@ -120,7 +120,7 @@ fn ordinary_sat_is_unaffected() {
 }
 
 /// Blocking clauses are added at the SAT core's live scope, so `(pop)` retracts
-/// them along with the assertions that provoked them — and the solver is free to
+/// them along with the assertions that provoked them – and the solver is free to
 /// report `unsat` again afterwards.
 ///
 /// If the counter that tracks live blocking clauses were not rolled back by

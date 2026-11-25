@@ -3,8 +3,8 @@
 //! # The problem
 //!
 //! A set-valued `VARIABLE` encodes to one opaque set-sorted SMT variable per
-//! step. The set theory reasons about it exactly — membership, union,
-//! equality — but a **bounded quantifier** over it has nothing to instantiate
+//! step. The set theory reasons about it exactly – membership, union,
+//! equality – but a **bounded quantifier** over it has nothing to instantiate
 //! with: the encoder needs a candidate list, and an opaque variable has none.
 //! That single gap is the corpus's largest blocker class.
 //!
@@ -18,21 +18,21 @@
 //! * `U_v` starts as the elements of the value `Init` assigns (or the set an
 //!   `v \in S` initial conjunct names).
 //! * every assignment `v' = rhs` in `Next` contributes the elements of
-//!   `rhs` — where reading a set-valued variable yields *its* universe, so
+//!   `rhs` – where reading a set-valued variable yields *its* universe, so
 //!   `v' = v \ {t}` inherits and `v' = v \cup {..}` extends it; and
 //!   existential binders over enumerable domains are instantiated per
 //!   candidate, so `\E t \in v : v' = v \ {t}` stays inside `U_v`.
 //! * the assignment set is iterated to a fixpoint (or the candidate budget,
 //!   whichever comes first) and a variable whose fixpoint does not exist is
-//!   simply **not framed** — it keeps today's honest refusal.
+//!   simply **not framed** – it keeps today's honest refusal.
 //!
 //! # Why that is sound
 //!
 //! Membership is never taken on faith: a frame candidate is offered to the
 //! solver guarded by `candidate \in v@k` on the **real** variable term, so an
 //! over-approximate universe changes nothing about which behaviours exist.
-//! What the universe must guarantee is the *other* direction — that no member
-//! of `v@k` is missing — because a `\A x \in v` instantiated over a universe
+//! What the universe must guarantee is the *other* direction – that no member
+//! of `v@k` is missing – because a `\A x \in v` instantiated over a universe
 //! that misses a member would skip it. The fixpoint guarantees it by
 //! induction: `v@0`'s elements are `Init`'s assignment's elements, and every
 //! `rhs`'s elements are in `U_v` by construction, so `v@k \subseteq U_v`
@@ -51,7 +51,7 @@ use nixie_tla::kera::{Kera, KeraRef};
 use nixie_tla::lower::subst_term;
 
 /// The analysis result: for each framable set-valued variable, its candidate
-/// universe as kernel terms (state reads left symbolic — the solver ties
+/// universe as kernel terms (state reads left symbolic – the solver ties
 /// them; only *binder* variables are instantiated, and only over enumerable
 /// domains).
 #[derive(Debug, Default, Clone)]
@@ -64,12 +64,12 @@ pub struct Frames {
     /// `elements(S)`, `b' = [b EXCEPT ![k] = v]` contributes the inherited
     /// keys plus `k`, `b' \in [S -> T]` contributes `elements(S)`. A
     /// bounded quantifier over `DOMAIN b` then instantiates over these,
-    /// guarded by membership in the **real** domain term — the same
+    /// guarded by membership in the **real** domain term – the same
     /// solver-mediated presence the set frames use.
     pub fun_universe: HashMap<String, Vec<KeraRef>>,
 }
 
-/// Why a variable could not be framed. Not an error — an unframed variable
+/// Why a variable could not be framed. Not an error – an unframed variable
 /// keeps the previous behaviour, and the decline it produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NoFrame {
@@ -85,7 +85,7 @@ pub struct Input<'a> {
     pub next: &'a KeraRef,
     /// The set-valued state variables, by name.
     pub set_vars: Vec<String>,
-    /// The function-valued state variables, by name — the subjects of the
+    /// The function-valued state variables, by name – the subjects of the
     /// domain-key universes.
     pub fun_vars: Vec<String>,
     /// The candidate budget, the same ceiling the arena respects.
@@ -112,10 +112,10 @@ pub fn analyze(input: &Input<'_>) -> Frames {
             VarKind::Set
         }
     };
-    // The initial assignment's elements seed every universe — into the same
+    // The initial assignment's elements seed every universe – into the same
     // map the element walk reads, so a transition's `v' = v \cup {..}`
     // inherits them. An `Init` that never mentions a set variable leaves it
-    // at the empty universe, which is a frame — a weak one, grown by the
+    // at the empty universe, which is a frame – a weak one, grown by the
     // transition's assignments.
     let mut seeded = HashMap::new();
     collect_assignments(
@@ -181,7 +181,7 @@ enum VarKind {
 }
 
 /// Merge one round's collected candidates into the fixpoint state. `false`
-/// when nothing changed — the fixpoint is reached.
+/// when nothing changed – the fixpoint is reached.
 fn merge_into(
     state: &mut HashMap<String, Result<Vec<KeraRef>, NoFrame>>,
     grown: HashMap<String, Vec<KeraRef>>,
@@ -242,7 +242,7 @@ fn collect_assignments(
             // An enumerable binder is instantiated per candidate: each
             // candidate's body is a behaviour the quantifier admits, so its
             // assignments are assignment sites. A binder over a domain with
-            // no enumerable reading is left alone — its body is still walked
+            // no enumerable reading is left alone – its body is still walked
             // structurally, and any assignment under it that does not depend
             // on the binder is still collected (the symbolic reads stay
             // symbolic; presence is solver-mediated either way).
@@ -266,7 +266,7 @@ fn collect_assignments(
             }
             // Both branches of an `IF` are behaviours; their assignments are
             // collected unconditionally, which only ever over-approximates
-            // the universe — the guards are the solver's business.
+            // the universe – the guards are the solver's business.
             Kera::Ite(_, a, b) => {
                 work.push(a);
                 work.push(b);
@@ -278,7 +278,7 @@ fn collect_assignments(
             Kera::In(member, set) => {
                 // The nondeterministic assignment shape `v' \in S` (in an
                 // action) or `v \in S` (in `Init`): the candidates are the
-                // domain's elements — for a function variable over
+                // domain's elements – for a function variable over
                 // `[S -> T]`, the keys are `S`'s elements (the `\in`
                 // `[S -> T]` encoding pins the domain to exactly `S`).
                 if let Some(v) = primed_or_plain_var(member, next_state) {
@@ -395,7 +395,7 @@ fn offer(
 /// The candidate elements of a set-valued kernel term, or `None` when the
 /// term has no enumerable reading.
 ///
-/// Over-approximations are sound in one direction only — the universe may
+/// Over-approximations are sound in one direction only – the universe may
 /// offer candidates that are not members (presence is solver-mediated), so
 /// an intersection keeps one side's candidates and a filter keeps its base's.
 /// What it may never do is *miss* an element, which is why a shape without a
@@ -429,7 +429,7 @@ fn elements(
                 Some(Ok(u)) => out.extend(u.iter().map(Rc::clone)),
                 _ => return None,
             },
-            // `DOMAIN f` in a set position: the function's domain keys —
+            // `DOMAIN f` in a set position: the function's domain keys –
             // the same extractor a function variable's assignment uses, so
             // `v' = v \cup DOMAIN b` and `b' = [x \in DOMAIN b |-> ..]`
             // read one table.
@@ -442,12 +442,12 @@ fn elements(
             Kera::Filter { set, .. } => work.push(set),
             // A variant filter (issue #17) keeps the payloads of one tag.
             // The binder it feeds ranges over **payloads**, so each
-            // **same-tag** base candidate is wrapped in the tag's getter —
+            // **same-tag** base candidate is wrapped in the tag's getter –
             // the kernel term for `VariantGetUnsafe(tag, candidate)`, which
             // the encoder reads through the datatype selector exactly as a
             // filtered member would be. Wrapping a wrong-tag candidate
             // instead would type the getter's payload as a fresh open
-            // record — the merged row then carries a payload `sort_of`
+            // record – the merged row then carries a payload `sort_of`
             // refuses, and the frame dies at its own over-approximation.
             // The tag a `Variant` candidate carries is exactly the tag the
             // filter keeps, so selecting on it is exact, not a guess.
@@ -472,7 +472,7 @@ fn elements(
                 }
             }
             // A map's elements are the mapped body per candidate of the
-            // domain — instantiated, so the body's reads become concrete
+            // domain – instantiated, so the body's reads become concrete
             // where the binder made them symbolic.
             Kera::Map { var, set, expr } => {
                 let dom = elements(set, state, max_candidates)?;
@@ -504,8 +504,8 @@ fn elements(
                     }
                 }
             }
-            // Anything else — a function set, a powerset, a flattened union,
-            // an opaque operator — has no certain-superset reading here.
+            // Anything else – a function set, a powerset, a flattened union,
+            // an opaque operator – has no certain-superset reading here.
             _ => return None,
         }
         if out.len() > max_candidates {
@@ -519,7 +519,7 @@ fn elements(
 ///
 /// An arithmetic element like `1 + 1` collected under an instantiated binder
 /// is a *term* distinct from the literal `2` it equals, and pointer
-/// deduplication keeps both — the fixpoint then grows a universe of
+/// deduplication keeps both – the fixpoint then grows a universe of
 /// syntactically-distinct, value-identical candidates (`(1+1)+1` beside
 /// `2+1`), which the solver pays for at every membership. Evaluating what
 /// evaluates collapses them to their literals; what stays symbolic stays a
@@ -568,7 +568,7 @@ pub fn framed_vars(frames: &Frames) -> Vec<String> {
 ///
 /// The same one-directional contract as [`elements`]: the keys offered may
 /// over-approximate the true domain (presence is solver-mediated, guarded by
-/// membership in the real domain term), but may never miss one — which is
+/// membership in the real domain term), but may never miss one – which is
 /// why an unreadable shape is `None` and the variable stays unframed.
 fn dom_keys(
     t: &KeraRef,

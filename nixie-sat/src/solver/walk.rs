@@ -50,7 +50,7 @@ impl Solver {
         }
         // cadical runs `garbage_collection()` before its walk rounds; this
         // port's equivalent for the transient the round is about to
-        // allocate is a capacity-only arena trim — the doubling overshoot
+        // allocate is a capacity-only arena trim – the doubling overshoot
         // otherwise stacks under the round's occurrence structures exactly
         // when the RSS high-water mark is set. Trajectory-neutral (ids,
         // bytes, orders untouched).
@@ -62,7 +62,7 @@ impl Solver {
     /// assignment, IGNORING conflicts, and seed the saved phases with it.
     ///
     /// Local search is bad at following propagation chains; CDCL propagation
-    /// is nothing but.  Each conflict is counted and skipped — the queue
+    /// is nothing but.  Each conflict is counted and skipped – the queue
     /// literal is consumed by `next_to_propagate` before its watchers are
     /// scanned, so re-invoking `propagate` after an ignored conflict drains
     /// onward without spinning.  Values never flip mid-pass (assignment is
@@ -76,7 +76,7 @@ impl Solver {
             return;
         }
         self.stats.walk.warmups += 1;
-        // Decision order: a flat index cursor, NOT the decision queues —
+        // Decision order: a flat index cursor, NOT the decision queues –
         // `pick_branch_var` pops the VMTF/VSIDS heaps destructively and
         // falls back to an O(num_vars) scan once they drain, which is
         // quadratic over a full-assignment pass.  cadical decides by score
@@ -108,7 +108,7 @@ impl Solver {
         }
         // Study-B matched null (`NIXIE_WARMUP_NULL=1`, see
         // docs/studies/2026-09-06-walk-warmup-study.md): the identical pass
-        // — same decisions, same propagation work, same schedule — but every
+        // – same decisions, same propagation work, same schedule – but every
         // phase bit it writes is inverted. The physical perturbation (a
         // full phase-array rewrite before the walk round) is unchanged and
         // consumes no RNG draws; only the propagation-derived information is
@@ -179,12 +179,12 @@ impl Solver {
         // Packed objective (CSR): slot literals and occurrence lists live in
         // two flat buffers with cumulative end offsets. The previous
         // `Vec<Vec<_>>` shapes paid one heap `Vec` per clause (~40 B of
-        // header + block overhead each) and one per literal — on
+        // header + block overhead each) and one per literal – on
         // clause-dense instances (worker-class, 10M originals) that was
         // ~500 MB of *transient* allocation per walk round and the entire
         // search-time RSS climb (measured: peak 1387 MB base vs 814 MB with
         // the walk off; see the standing-gap study's memory map). Packing
-        // preserves contents and per-literal order exactly — the flip loop
+        // preserves contents and per-literal order exactly – the flip loop
         // reads identical data in identical order, so the trajectory is
         // untouched (54-file identity gate applies verbatim).
         // Walk-objective representation. Two shapes, chosen by the
@@ -200,21 +200,21 @@ impl Solver {
         //   binaries) the previous packed-copy shape paid ~120 MB of
         //   per-round transient (`slot_buf` of every literal + per-slot end
         //   offsets) purely to duplicate arena bytes; this shape removes it.
-        //   Slot values are clause ids instead of dense indices — every
+        //   Slot values are clause ids instead of dense indices – every
         //   consumer below is position- or content-driven (broken-list
         //   membership via `in_broken`, occurrence order via `occ_buf`,
         //   literals via the arena), so the RNG stream and every decision
         //   are identical; the 54-file identity gate applies verbatim.
         // * **Strip-fixed knob on**: the slot's literals are the clause's
         //   *flippable* literals (fixed literals stripped), which do NOT
-        //   match the arena bytes — the packed-copy CSR is retained for
+        //   match the arena bytes – the packed-copy CSR is retained for
         //   that path (correctness over footprint; the knob is off by
         //   default and exists to keep the fixed-literal study
         //   reproducible).
         //
         // Participation filter (identical in both shapes): original,
         // non-deleted, >= 2 literals, not permanently satisfied by a fixed
-        // true literal, and — on the default path — containing no fixed
+        // true literal, and – on the default path – containing no fixed
         // literal at all (flipping can never repair a fixed-false literal).
         let mut occ_end: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
@@ -328,7 +328,7 @@ impl Solver {
             occ_buf = fill;
         } else {
             // Default (BIG-merged) path. The occurrence structure for
-            // binary participants is the BIG itself — every binary clause
+            // binary participants is the BIG itself – every binary clause
             // (a ∨ b) already holds exactly one edge per literal under the
             // trigger of that literal's negation (edge ¬a → b keyed at
             // code(¬a) IS occ_of(a)'s entry for the clause), so rebuilding
@@ -337,7 +337,7 @@ impl Solver {
             // ascending at all times (rebuilds iterate ids ascending,
             // incremental edges append strictly larger ids, removals
             // `retain`), so a by-id merge with the non-binary CSR below
-            // reproduces the packed CSR's per-literal order EXACTLY — the
+            // reproduces the packed CSR's per-literal order EXACTLY – the
             // RNG stream and every flip decision are unchanged; the
             // 54-file identity gate applies verbatim. What disappears is
             // the per-round transient: on worker_550 the packed path
@@ -349,7 +349,7 @@ impl Solver {
             //
             // Binary true-counts are never stored: for a live binary
             // (x ∨ y), true_count == 1 ⟺ exactly one of x,y true, which
-            // the flip conditions read straight off `values` — the derived
+            // the flip conditions read straight off `values` – the derived
             // predicate equals the stored value by definition, so scoring
             // and broken-list updates behave identically.
             let n_ids = self.clauses.num_slots();
@@ -365,7 +365,7 @@ impl Solver {
             // Debug-only parity check: per literal, the participating BIG
             // edges must equal the participating binary occurrences counted
             // during the scan below (catches duplicate/stale/mis-keyed
-            // edges — states propagation tolerates but the walk's identity
+            // edges – states propagation tolerates but the walk's identity
             // contract does not).
             #[cfg(debug_assertions)]
             let mut bin_expect: Vec<u32> = vec![0; self.num_vars * 2];
@@ -481,7 +481,7 @@ impl Solver {
         };
 
         // Broken clauses were seeded during the build above (true_count == 0
-        // participants, in visit order) — `in_broken` gives O(1) lazy removal.
+        // participants, in visit order) – `in_broken` gives O(1) lazy removal.
         let mut broken_count: u64 = broken.len() as u64;
         let mut minimum = broken_count;
         // cadical records the starting assignment as the first best
@@ -514,7 +514,7 @@ impl Solver {
 
         // Split-borrow the fields the flip loop touches simultaneously:
         // occurrence reads go through `binary_graph` while RNG draws mutate
-        // `rng_state` and counters mutate `stats` — one `&mut self` method
+        // `rng_state` and counters mutate `stats` – one `&mut self` method
         // call would serialise those borrows for no benefit.
         let num_vars = self.num_vars;
         let Solver {
@@ -580,7 +580,7 @@ impl Solver {
                     let Some(clause) = clauses.get(ClauseId(picked)) else {
                         // A broken-list entry whose clause vanished: nothing
                         // is deleted during a round, so this is unreachable
-                        // by construction — bail out of the round rather
+                        // by construction – bail out of the round rather
                         // than fabricate literals (the phase write-back
                         // below still runs on the best assignment so far).
                         break;
@@ -693,7 +693,7 @@ impl Solver {
                 ticks = ticks.saturating_add(occ_of(t.negate()).len() as u64);
             } else {
                 // Binary (t ∨ y): t turned false, so the clause's count
-                // reaches 0 exactly when y is false — the stored value the
+                // reaches 0 exactly when y is false – the stored value the
                 // packed path decremented to. Non-binary: the CSR entry
                 // carries its dense count index.
                 let mut dec_len = 0u64;
@@ -819,7 +819,7 @@ enum OccEnt {
 /// ¬a → b is the clause (a ∨ b) containing a) filtered by the round's
 /// participation bitset, merged by ascending clause id with the non-binary
 /// CSR slice for `occ_lit`. Both streams are id-ascending by construction,
-/// so the merge yields EXACTLY the per-literal order the packed CSR held —
+/// so the merge yields EXACTLY the per-literal order the packed CSR held –
 /// the trajectory contract of the port.
 ///
 /// `f(cid, entry)` is called once per occurrence in that order; the
@@ -849,7 +849,7 @@ fn merged_big_occ<F>(
     let ce = ce as usize;
     while bi < big_list.len() || ci < ce {
         // Skip non-participating edges (learned binaries, stale edges,
-        // gate-congruence sentinels) — order-preserving by construction.
+        // gate-congruence sentinels) – order-preserving by construction.
         while bi < big_list.len() && !participate.get(big_list[bi].1.0 as usize) {
             bi += 1;
         }
@@ -896,7 +896,7 @@ fn rand_f64(state: &mut u64) -> f64 {
 /// `Vec<bool>` costs a byte per *allocated clause id* (10+ MB on
 /// clause-dense instances) every walk round, most of which the allocator
 /// retains after the round; a packed bitset is 1/8th of that transient.
-/// Purely a representation change — the flip loop consults exactly the
+/// Purely a representation change – the flip loop consults exactly the
 /// same membership relation.
 struct BrokenBits {
     words: Vec<u64>,

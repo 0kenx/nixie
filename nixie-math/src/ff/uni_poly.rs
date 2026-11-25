@@ -63,7 +63,7 @@ impl UniPoly {
     }
 
     /// The degree; the zero polynomial has degree `None` (it has no
-    /// monomial of highest degree — reporting `0` would confuse it with
+    /// monomial of highest degree – reporting `0` would confuse it with
     /// the nonzero constant).
     #[must_use]
     pub fn degree(&self) -> Option<usize> {
@@ -193,7 +193,7 @@ impl UniPoly {
 
     /// Polynomial division with remainder: `(self) = q·(divisor) + r`,
     /// `deg r < deg divisor`. Panics never; dividing by zero returns
-    /// `None` (an honest refusal — no quotient exists).
+    /// `None` (an honest refusal – no quotient exists).
     #[must_use]
     pub fn divrem(&self, f: &FieldCtx, divisor: &Self) -> Option<(Self, Self)> {
         let d = divisor.degree()?;
@@ -287,8 +287,8 @@ impl UniPoly {
     /// in characteristic `p` **only when** handled carefully: in
     /// characteristic p a polynomial can have a zero derivative
     /// (`x^p`), and then `gcd(f, f') = f` and the quotient is 1. That
-    /// case is *not* an error — it says every root has multiplicity
-    /// divisible by p — and the caller (root finding) treats it via the
+    /// case is *not* an error – it says every root has multiplicity
+    /// divisible by p – and the caller (root finding) treats it via the
     /// Frobenius. Here we return the honest quotient, which for `f = g^p`
     /// is `1`.
     #[must_use]

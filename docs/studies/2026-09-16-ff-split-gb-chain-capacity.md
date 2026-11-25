@@ -1,11 +1,11 @@
-# Split Gröbner bases for the FF chain corpus — the Phase-7 pre-registered experiment
+# Split Gröbner bases for the FF chain corpus – the Phase-7 pre-registered experiment
 
 **Date:** 2026-09-16
 **Scope:** `docs/HANDOFF_FF_THEORY.md` open-work item 1 (Phase 7 capacity),
 pre-registered twice over (by both flattening studies). cvc5's
 `split_gb.{h,cpp}` consulted as the reference ([split-GB] paper's SplitGb /
 admit discipline).
-**Verdict:** **ship** — the chain corpus solves at 16×24 and 32×48 (every
+**Verdict:** **ship** – the chain corpus solves at 16×24 and 32×48 (every
 size answered `unknown` before), the sparse family improves across the
 board, and no previously-solved goal regressed. The capacity frontier
 moves to chain ≥64×96, still honest `unknown`.
@@ -15,12 +15,12 @@ moves to chain ≥64×96, still honest `unknown`.
 `grobner_path` (`nixie-theories/src/ff_theory.rs`), per connected
 component, in order:
 
-1. **The monolithic basis first** — exactly the pre-split computation and
+1. **The monolithic basis first** – exactly the pre-split computation and
    budget semantics. Nothing that used to complete loses anything.
 2. **On the monolithic budget-out, the split fallback**: the component's
    generators partition by degree into a LINEAR ideal and a NONLINEAR
    ideal; each gets its own Gröbner basis; cvc5's `admit` discipline
-   exchanges consequences to a fixpoint — the linear ideal accepts every
+   exchanges consequences to a fixpoint – the linear ideal accepts every
    linear consequence of either basis (it stays linear under Buchberger:
    S-pairs of linear polynomials are linear), the nonlinear ideal accepts
    only **linear binomials** (`x − c`, `x − y`), so dense linear content
@@ -28,7 +28,7 @@ component, in order:
    exact re-expansion failure both flattening studies root-caused, closed
    by construction.
 3. **FindZero over the merged union** (not itself a basis; every element
-   is an ideal member, which is all the branchers consume — with one
+   is an ideal member, which is all the branchers consume – with one
    exception, below), with two changes:
    * **Lazy honest round-robin**: the positive-dimensional brancher no
      longer refuses p > 10⁶ outright; it enumerates 0, 1, 2, … up to a
@@ -37,13 +37,13 @@ component, in order:
      die in one node (the branch literal contradicts a product row), so
      the effective branch factor is tiny though the theoretical one is p.
    * **Element-bootstrapped children**: each branch recomputes its basis
-     from the node's REDUCED basis elements plus the branch literal —
+     from the node's REDUCED basis elements plus the branch literal –
      same ideal, but the branch avoids re-running the original cascade.
      This also accelerates the monolithic path (sparse 128×192: 38 s →
      8 s release; the old per-branch recompute from raw generators was
      the hidden cost).
 
-## Measurements (release build, shared machine — treat near-threshold deltas as noise)
+## Measurements (release build, shared machine – treat near-threshold deltas as noise)
 
 | goal | before | after |
 |---|---|---|
@@ -65,10 +65,10 @@ the verdict column is the load-stable fact.
 
 The first cut of the lazy round-robin dropped the truncation gate: the
 search stack emptied over branches that had enumerated only 256 of p
-values and reported `Exhausted` — a **false `unsat` on the
+values and reported `Exhausted` – a **false `unsat` on the
 planted-satisfiable `bn254_sparse_planted_8x12`** (the landed pre-split
 binary answers `sat`). The tiny-prime exhaustive oracle cannot see this
-class (p ≤ 256 never truncates — the horizon always covers p), which is
+class (p ≤ 256 never truncates – the horizon always covers p), which is
 exactly why the planted-BN254 corpus is a standing gate. Pinned by two
 regressions in `ff_solver_regression.rs`: the reproducer file itself
 (`planted_bn254_sparse_8x12_is_never_unsat`) and a minimal all-solutions-
@@ -81,11 +81,11 @@ beyond-the-horizon shape (`all_big_solutions_stay_honest`).
   named products are pairwise coprime in their leading monomials, the
   Gebauer–Möller criteria skip exactly those S-pairs, and the cheap
   linear consequences (`k_{i+1}·xᵢ − kᵢ·x_{i+2}` from products that
-  SHARE a variable) never appear — the split fixpoint deadlocks with
+  SHARE a variable) never appear – the split fixpoint deadlocks with
   nothing exchanged and FindZero falls to round-robin at a 254-bit
   prime. Variable sharing between products IS the asset; flattening
   destroys it structurally (this is the third flattening variant
-  measured across the studies — all three lose).
+  measured across the studies – all three lose).
 * **Split-first** (run the split before any monolithic attempt): starves
   goals the monolithic path completes (sparse 64×96 at BN254 and
   Goldilocks regressed `sat` → `unknown`), because the separated ideals
@@ -93,20 +93,20 @@ beyond-the-horizon shape (`all_big_solutions_stay_honest`).
   univariates) the brancher feeds on. The split is a FALLBACK, not a
   replacement.
 * **A ⅛-budget completion slice** (one bounded monolithic run over the
-  merged elements between split and search): regresses the same goals —
+  merged elements between split and search): regresses the same goals –
   the slice is smaller than the budget they need. Superseded by
   monolithic-first.
 
 ## Soundness accounting
 
 Every exchanged polynomial is a member of the ideal its basis generates,
-and inductively of the component's ideal — a constant in either basis
+and inductively of the component's ideal – a constant in either basis
 refutes the component. The merged union is consumed only by rules that
 need ideal membership (univariate branching, linear univariates,
 whole-ring detection); the minimal-polynomial rule (whose quotient
 arithmetic needs a true basis) is gated on `is_gb`, true only for
 monolithic or per-branch recomputed bases. Split-path refutations carry
-the component's origins as the core and **no certificate** — certified
+the component's origins as the core and **no certificate** – certified
 mode honestly downgrades those (the monolithic path keeps its traced
 certificates unchanged). All oracle suites green: exhaustive tiny-prime
 (10/10), planted fuzz at Goldilocks/BN254/BLS12-381, 51 solver FF
@@ -116,7 +116,7 @@ regressions, 88 theory FF tests, Z3 parity 177 (100% decisive, Z3
 ## What remains open
 
 Chain ≥64×96 (the completion AND the split's lazy search both budget
-out — genuine MQ hardness at this frontier), F4-style batched reduction,
+out – genuine MQ hardness at this frontier), F4-style batched reduction,
 NTT. The next lever for the chain is branch-variable selection in the
 round-robin (currently first-unassigned; a product-variable-first order
 would propagate earlier), which is a heuristic change inside a chaotic

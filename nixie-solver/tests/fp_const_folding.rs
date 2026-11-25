@@ -4,13 +4,13 @@
 //! `docs/studies/2026-09-08-fp-const-folding.md`):
 //!
 //! 1. **Bit-pattern value marks on FP literals**: SMT-LIB `=` on floats is
-//!    *datum identity* — `(_ +zero e s) ≠ (_ -zero e s)`, distinct finite
-//!    literals are never equal — while every NaN of a format is ONE datum.
+//!    *datum identity* – `(_ +zero e s) ≠ (_ -zero e s)`, distinct finite
+//!    literals are never equal – while every NaN of a format is ONE datum.
 //!    Equalities between distinct data were previously free Booleans
 //!    (false-`sat` class; z3 answered `unsat`).
 //! 2. **Constant folding through EUF class pins** (`solver/fp_fold.rs`):
 //!    `x = c ∧ y = (fp.op … x …) ∧ y = c2` refutes by unit propagation when
-//!    `fold(c) ≠ c2`, including chains and predicates — the unsat direction
+//!    `fold(c) ≠ c2`, including chains and predicates – the unsat direction
 //!    the pattern checks and the concrete model builder leave open.
 //!
 //! Every expectation here is z3-verified (4.16.0).
@@ -31,9 +31,7 @@ fn run_script(script: &str) -> SolverResult {
     SolverResult::Unknown
 }
 
-// ===========================================================================
-// `=` on floats is datum identity (value marks)
-// ===========================================================================
+// ======== `=` on floats is datum identity (value marks) ========
 
 /// `+0 = -0` is FALSE: asserted true, the formula is unsat (z3: unsat; was a
 /// false-`sat`).  Both spellings and the variable-mediated form.
@@ -134,9 +132,7 @@ fn infinity_data_identity() {
     );
 }
 
-// ===========================================================================
-// Constant folding through EUF class pins
-// ===========================================================================
+// ======== Constant folding through EUF class pins ========
 
 /// The headline shape: `x = c ∧ y = (fp.add RNE x x) ∧ y = c2` with
 /// `fold(c, c) ≠ c2` (z3: unsat; was `unknown`).
@@ -304,9 +300,7 @@ fn fold_lemmas_retract_on_pop() {
     );
 }
 
-// ===========================================================================
-// Real → FP conversions: exact single-rounding (`((_ to_fp e s) RM real)`)
-// ===========================================================================
+// ======== Real → FP conversions: exact single-rounding (`((_ to_fp e s) RM real)`) ========
 
 /// The double-rounding false-`sat` this fixed: `RTZ` of `1 + 2^-52 + 2^-53`
 /// is the truncation `1 + 2^-52`, NOT the RNE value `1 + 2·2^-52`.  The old
@@ -409,12 +403,10 @@ fn real_to_fp_one_third_rounds_correctly() {
     assert_ne!(run_script(wrong), SolverResult::Sat);
 }
 
-// ===========================================================================
-// Conversion-surface parsing and bit-vector → FP conversions
-// ===========================================================================
+// ======== Conversion-surface parsing and bit-vector → FP conversions ========
 
 /// `Int` literals convert with real semantics (SMT-LIB Int ⊆ Real; z3
-/// coerces — this was a parse error before).
+/// coerces – this was a parse error before).
 #[test]
 fn to_fp_accepts_integer_literals() {
     assert_eq!(
@@ -476,7 +468,7 @@ fn to_fp_from_pinned_bv_variable_folds() {
 }
 
 /// A small value spelled with a long fraction: the raw decimal digits
-/// exceed i64, the reduced rational fits — the widened decimal path.
+/// exceed i64, the reduced rational fits – the widened decimal path.
 #[test]
 fn long_fraction_decimals_parse_exactly() {
     // 0.50000000000000000000 (20 fraction digits): raw numerator 5·10^19.
@@ -493,7 +485,7 @@ fn long_fraction_decimals_parse_exactly() {
 }
 
 /// Genuinely-unrepresentable decimals (reduced rational outside i64/i64)
-/// still refuse — never a verdict on a garbled value.
+/// still refuse – never a verdict on a garbled value.
 #[test]
 fn oversized_decimals_error_not_garble() {
     let mut ctx = Context::new();
@@ -508,15 +500,13 @@ fn oversized_decimals_error_not_garble() {
             !out.iter().any(|t| matches!(t.trim(), "sat" | "unsat")),
             "a refused literal must not produce a verdict: {out:?}"
         );
-    } // Err = refused at the script level — equally honest
+    } // Err = refused at the script level – equally honest
 }
 
-// ===========================================================================
-// FP → bit-vector conversions (`((_ fp.to_sbv m) RM x)` / `fp.to_ubv`)
-// ===========================================================================
+// ======== FP → bit-vector conversions (`((_ fp.to_sbv m) RM x)` / `fp.to_ubv`) ========
 
 /// In-range conversions round to the integer grid under the mode and encode
-/// exactly — both verdict polarities (z3-verified probes).
+/// exactly – both verdict polarities (z3-verified probes).
 #[test]
 fn fp_to_bv_rounds_and_decides_both_ways() {
     // 3.7: RTP → 4 (unsigned), RTZ → 3 (signed).
@@ -566,7 +556,7 @@ fn fp_to_sbv_negative_two_complement() {
 }
 
 /// Underspecified conversions (the rounded value does not fit the width)
-/// leave the atom FREE — any probe stays satisfiable, matching z3's
+/// leave the atom FREE – any probe stays satisfiable, matching z3's
 /// underspecification semantics; never a fabricated refutation.
 #[test]
 fn fp_to_bv_overflow_is_free_not_fabricated() {
@@ -583,11 +573,9 @@ fn fp_to_bv_overflow_is_free_not_fabricated() {
     }
 }
 
-// ===========================================================================
-// FP congruence: operand merges propagate through fp operations
-// ===========================================================================
+// ======== FP congruence: operand merges propagate through fp operations ========
 
-/// `(= a b) → (= (fp.abs a) (fp.abs b))` — congruence through fp ops (z3:
+/// `(= a b) → (= (fp.abs a) (fp.abs b))` – congruence through fp ops (z3:
 /// unsat; was an honest `unknown` when fp ops were opaque EUF leaves).
 #[test]
 fn fp_ops_are_congruence_applications() {

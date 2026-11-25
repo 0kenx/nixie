@@ -1,13 +1,13 @@
 //! Tests for the corrected XOR-gate congruence (2026-09-18, second landing):
 //! sign-complete extraction (all four input-sign presentations per base
-//! clause — the signs-as-written scan found zero of bv_ILA's 2,534 complete
+//! clause – the signs-as-written scan found zero of bv_ILA's 2,534 complete
 //! parity sets) and the signed-input presentation algebra in the closure.
 //!
 //! The pinned bug (minimized from fuzz seed 500089 to 56 clauses): the
 //! first XOR closure keyed the affine relation over all three gate vars,
 //! so one parity definition read three ways (any var as the output) merged
-//! its inputs with its outputs — `37 ≡ 41 ≡ 122 ≡ 123` from a single
-//! `122 ↔ 37⊕41` / `123 ↔ ¬(37⊕41)` pair — a false UNSAT.  A second
+//! its inputs with its outputs – `37 ≡ 41 ≡ 122 ≡ 123` from a single
+//! `122 ↔ 37⊕41` / `123 ↔ ¬(37⊕41)` pair – a false UNSAT.  A second
 //! variant parity-folded the input signs into the key, merging a
 //! definition's `o` with its own `¬o`.  The sound algebra mirrors ITE:
 //! `f = a⊕b` has presentations `(a,b)` and `(¬a,¬b)`; `¬f` has `(¬a,b)`
@@ -42,7 +42,7 @@ fn force_distinct_dimacs(s: &mut Solver, a: i32, b: i32) {
 }
 
 /// Emit the 4-clause parity set for `o ↔ (a ⊕ b)` with `flip` selecting the
-/// constant (`false`: XOR, `true`: XNOR — both are complete presentations
+/// constant (`false`: XOR, `true`: XNOR – both are complete presentations
 /// the extractor must recognize).
 fn add_parity_gate(s: &mut Solver, o: usize, a: usize, b: usize, flip: bool) {
     let (o, a, b) = (l(o, true), l(a, true), l(b, true));
@@ -130,7 +130,7 @@ fn xor_complement_output_polarity_readings_self_cancel() {
     s.add_clause([l(1, true), l(3, true)]);
     assert_eq!(s.solve(), SolverResult::Sat);
     // o4 ≡ o5 must be UNSAT (with gate4 an XNOR over congruent inputs,
-    // o4 ≡ ¬(2⊕3) ≡ ¬o5 — complements).
+    // o4 ≡ ¬(2⊕3) ≡ ¬o5 – complements).
     let mut s2 = congruence_solver(6);
     add_parity_gate(&mut s2, 5, 0, 1, false);
     add_parity_gate(&mut s2, 4, 2, 3, true);
@@ -163,7 +163,7 @@ fn xor_false_unsat_regression_minimized() {
         s.add_clause_dimacs(c);
     }
     assert_eq!(s.solve(), SolverResult::Sat);
-    // And the true relation the closure may derive: 122 ≡ ¬123 — so
+    // And the true relation the closure may derive: 122 ≡ ¬123 – so
     // forcing 122 ≡ 123 must be UNSAT.
     let mut s2 = congruence_solver(124);
     for c in clauses {

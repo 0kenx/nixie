@@ -10,7 +10,7 @@
 //!   below must actually reach it (an over-cautious driver that answered
 //!   `unknown` everywhere would be useless);
 //! * a definition that does not terminate must answer `unknown` **in finite
-//!   time** — the `loop` test fails by timing out, which is exactly the
+//!   time** – the `loop` test fails by timing out, which is exactly the
 //!   regression it guards.
 //!
 //! `(get-assertions)` byte-identity has its own test: the driver asserts
@@ -44,9 +44,9 @@ const PARITY: &str = "(define-funs-rec \
                       ((ite (<= n 0) true (is-odd (- n 1))) \
                        (ite (<= n 0) false (is-even (- n 1)))))";
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Ground recursion: the answer is decided by the definition alone
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn fact_5_is_120() {
@@ -84,9 +84,9 @@ fn fib_bounded_sat_and_unsat() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Mutual recursion
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn mutual_parity_even_four() {
@@ -106,9 +106,9 @@ fn mutual_parity_cannot_be_both() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Symbolic argument
-// ---------------------------------------------------------------------
+// ========  ========
 
 const SUM: &str = "(define-fun-rec sum ((n Int)) Int (ite (<= n 0) 0 (+ n (sum (- n 1)))))";
 
@@ -117,7 +117,7 @@ fn symbolic_argument_requires_withdrawn_function_refinement() {
     // Structural unfolding alone never decides this: whatever depth it reaches,
     // the solver can satisfy `sum(k) = 6` by giving the *boundary* application
     // whatever value the arithmetic needs, for any `k`. Reaching `sat` here
-    // depends on the refinement loop — the certifier computes `sum` at the
+    // depends on the refinement loop – the certifier computes `sum` at the
     // rejected model's `k`, and those concrete instances rule that `k` out.
     let script = format!(
         "{SUM}(declare-const k Int)\
@@ -141,7 +141,7 @@ fn nonlinear_symbolic_argument_is_honestly_unknown() {
     // The `fact` analogue of the test above multiplies two unknowns, and this
     // workspace's integer arithmetic does not solve that: writing the same
     // unfolding out by hand, with no recursive definition anywhere, is
-    // `unknown` too. So this pins a *solver* limitation, not a driver one — and
+    // `unknown` too. So this pins a *solver* limitation, not a driver one – and
     // it pins that the driver reports it honestly instead of publishing the
     // uncertified `sat` the relaxation offers it.
     let script = format!(
@@ -152,15 +152,15 @@ fn nonlinear_symbolic_argument_is_honestly_unknown() {
     assert_eq!(verdict(&script), "unknown");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Non-termination and inconsistency: honest verdicts, never a hang
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn non_terminating_definition_answers_unknown_without_hanging() {
     // `loop` has no base case, so no finite unfolding decides it and no
     // evaluation of `loop(0)` terminates. Both budgets are finite, so the
-    // driver must still return — this test fails by *timing out* if either
+    // driver must still return – this test fails by *timing out* if either
     // budget is ever removed.
     let script = "(define-fun-rec loop ((x Int)) Int (loop (+ x 1)))\
                   (assert (= (loop 0) 5))(check-sat)";
@@ -176,9 +176,9 @@ fn inconsistent_definition_is_unsat() {
     assert_eq!(verdict(script), "unsat");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // State hygiene: instances must stay out of the user-visible state
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn get_assertions_is_unchanged_by_a_recfun_check() {
@@ -232,14 +232,14 @@ fn unsat_core_query_after_a_recfun_unsat_does_not_panic() {
     assert!(!out[1].is_empty(), "a core response must be produced");
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Assumption-guarded solves
-// ---------------------------------------------------------------------
+// ========  ========
 //
 // `(check-sat-assuming ..)` and `(get-consequences ..)` do not go through
 // `check_sat`; they funnel through the context's assumption-guarded check.
 // That path has to run the unfolding driver too, or these two commands answer
-// with the definition dropped — the same silent-wrong-answer the parser's old
+// with the definition dropped – the same silent-wrong-answer the parser's old
 // hard rejection existed to prevent, one command over.
 
 #[test]
@@ -262,7 +262,7 @@ fn check_sat_assuming_respects_the_definition() {
 
 #[test]
 fn check_sat_assuming_sees_applications_only_the_assumption_mentions() {
-    // `(fact 5)` appears in no assertion at all — only in the assumption — so
+    // `(fact 5)` appears in no assertion at all – only in the assumption – so
     // this fails unless the assumptions are unfolded as roots too.
     let out = run(&format!(
         "{FACT}(declare-const q Bool)\
@@ -287,9 +287,9 @@ fn get_consequences_respects_the_definition() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Model output
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn get_model_reports_the_recursive_definition() {
@@ -317,14 +317,14 @@ fn get_value_of_a_recursive_application() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Nullary recursive definition
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn nullary_recursive_definition_saturates() {
     // `c = c + 1` is unsatisfiable on its own, and its unfolding closes after
-    // one instance — a nullary definition has exactly one application. The
+    // one instance – a nullary definition has exactly one application. The
     // script never mentions `c` again, so this also pins that a nullary
     // definition's axiom is instantiated unconditionally rather than only when
     // some assertion happens to name it.

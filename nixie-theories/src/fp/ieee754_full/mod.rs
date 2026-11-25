@@ -651,12 +651,12 @@ impl Ieee754Engine {
         // When the exact result lands at or below the smallest normal
         // exponent, the representable grid is coarser than the normal
         // significand grid, so rounding must be decided at the *subnormal*
-        // ulp — re-extracting guard/round/sticky at that position (plus every
+        // ulp – re-extracting guard/round/sticky at that position (plus every
         // bit below the 128-bit window as sticky).  Deciding on the normal
         // grid first and then truncating (the previous code: `significand >>=
         // shift_amount` with the dropped bits never consulted) rounded every
         // mode toward zero, and the `shift_amount >= precision` arm returned
-        // ±0 unconditionally — so `fp.mul RTN (-min_subnormal) (+min_subnormal)`
+        // ±0 unconditionally – so `fp.mul RTN (-min_subnormal) (+min_subnormal)`
         // produced -0 where IEEE requires -min_subnormal (round toward -inf),
         // a false-`sat` on the `= -0` refutation (z3: unsat).
         let biased_exp_pre = exponent + format.bias();
@@ -1475,7 +1475,7 @@ impl Ieee754Engine {
     ///
     /// The SMT-LIB FloatingPoint theory defines
     /// `fp.min(x,y) = ite(fp.lt x y, x, ite(fp.lt y x, y, ite(isNaN x, y,
-    /// ite(isNaN y, x, ite(isNegative x, x, y)))))` — NOT IEEE 754 `minNum`:
+    /// ite(isNaN y, x, ite(isNegative x, x, y)))))` – NOT IEEE 754 `minNum`:
     /// a NaN operand yields the *other* operand, and a tie (equal values or
     /// mixed-sign zeros) prefers the negative one, so `fp.min(+0,-0) = -0`
     /// (z3 agreement).  The previous `Ordering::Equal => a` returned the
@@ -1508,7 +1508,7 @@ impl Ieee754Engine {
         }
     }
 
-    /// Maximum of two values (SMT-LIB `fp.max` semantics — the dual of
+    /// Maximum of two values (SMT-LIB `fp.max` semantics – the dual of
     /// [`Self::min`]): a NaN operand yields the *other* operand, and a tie
     /// prefers the positive one, so `fp.max(-0,+0) = +0` (z3 agreement).
     pub fn max(&mut self, a: &FpValue, b: &FpValue) -> FpValue {

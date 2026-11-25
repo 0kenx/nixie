@@ -50,7 +50,7 @@ fn certified_mode_verifies_a_boolean_unsat_result() {
 fn certified_mode_fails_closed_for_unsupported_theory_unsat() {
     // Linear bound contradictions have been certifiable since the
     // LP-lemma verifier landed (2026-09); the fail-closed example is now
-    // a conflict outside both verifiers' fragments — parity reasoning
+    // a conflict outside both verifiers' fragments – parity reasoning
     // (`x = 2y+1 ∧ x = 2z` is integer-infeasible but LP-feasible, and
     // congruence closure cannot see arithmetic at all).
     let script = common::TempPath::write(

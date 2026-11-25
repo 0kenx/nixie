@@ -20,24 +20,24 @@
 //!    the entry table written out as an `ite` chain (Z3's "macro" expansion of
 //!    a `func_interp`) whose final leaf is the `else`.  The result `body'` is
 //!    a formula over the bound variables, value literals and the theories'
-//!    operators only — no uninterpreted function reaches the solver free.
+//!    operators only – no uninterpreted function reaches the solver free.
 //!
 //! 3. **Skolemize and refute.**  Assert `not body'[sk1..skn]` (fresh Skolem
 //!    constants for the bound variables) into a fresh, budgeted, nested
 //!    [`Solver`] and run a complete CDCL(T) check:
-//!    * `unsat` — no way to falsify the body under the completed
+//!    * `unsat` – no way to falsify the body under the completed
 //!      interpretation, so the completed model satisfies `q`.  Because the
 //!      completed model is a *total* interpretation that extends the ground
 //!      model (entries are exactly the ground solver's pinned values), `q`
 //!      being satisfied makes the whole assertion set satisfiable in the
 //!      ordinary semantic sense.
-//!    * `sat` — the nested model's values for the Skolem constants are
+//!    * `sat` – the nested model's values for the Skolem constants are
 //!      falsifying terms; the caller instantiates `q` with them.  The lemma
 //!      `body[x := t]` is a logical consequence of `q` for *any* ground `t`,
 //!      so a "spurious" counterexample (one the nested solver found using an
 //!      `else` choice that later rounds revise) is always sound: the outer
 //!      solver re-checks the lemma against the real constraints.
-//!    * `unknown` / budget exhausted — decline; the caller keeps its existing
+//!    * `unknown` / budget exhausted – decline; the caller keeps its existing
 //!      counterexample-search path.  Declining can only cost completeness.
 //!
 //! # Soundness of the `else` choice
@@ -49,7 +49,7 @@
 //! `Bool`, ...) the `ite` chain covers the whole domain: each point either
 //! hits an entry (the chain says so) or falls through to the `else`.  So
 //! evaluating `not body'[sk]` decides the quantifier over the *entire* domain
-//! of every bound variable, not a sample — that is what makes an `unsat`
+//! of every bound variable, not a sample – that is what makes an `unsat`
 //! verdict a genuine satisfaction proof rather than "no counterexample was
 //! found among the candidates".
 //!
@@ -64,7 +64,7 @@
 //! decides both in one call.  Z3 pays exactly this cost per quantifier per
 //! MBQI round (`model_checker::check`); we bound it with conflict budgets
 //! and a nesting-depth guard (the nested solver's own quantifier loop runs
-//! the legacy engines only — never a second nested check).
+//! the legacy engines only – never a second nested check).
 //!
 //! Reference: `src/smt/smt_model_checker.cpp` in Z3 (`assert_neg_q_m`,
 //! `model_checker::check`, `add_instance`), and the model evaluator's
@@ -109,7 +109,7 @@ const TOTAL_CHECK_BUDGET: usize = 512;
 ///
 /// Truncating a chain would misrepresent the completed model (an entry
 /// argument would silently evaluate to the `else`), so an over-budget
-/// function *declines the quantifier* instead — never a partial chain.
+/// function *declines the quantifier* instead – never a partial chain.
 const MAX_ENTRIES_PER_FUNC: usize = 1024;
 
 /// Maximum universe size for the finite-sort Skolem restriction clause.
@@ -130,16 +130,16 @@ const MAX_VETO_CHECKS: usize = 32;
 const MAX_CHECKS_PER_QUANTIFIER: u32 = 2;
 
 /// Hard *total* bound on nested solves per quantifier per solve (no
-/// reset): see the streak comment at its use site — a converging
+/// reset): see the streak comment at its use site – a converging
 /// quantifier may reset its wasted-solve streak, but never past this
 /// many solves in one `ModelChecker` lifetime.
 const MAX_TOTAL_CHECKS_PER_QUANTIFIER: u32 = 4;
 
 /// Nesting depth guard: the nested solver's own quantifier loop must never
-/// recurse without bound.  Depth 2 allows exactly one level of re-entry —
+/// recurse without bound.  Depth 2 allows exactly one level of re-entry –
 /// the aux goal of a `forall`-`exists` body (e.g. the set-theory axiom
 /// `~subset(s1,s2) => exists x. ...` negates to a nested `forall` that the
-/// aux solver's own MBQI must decide) — while a deeper nest still declines.
+/// aux solver's own MBQI must decide) – while a deeper nest still declines.
 /// Every level keeps its own conflict/check budgets, so the added depth is
 /// work-bounded, not unbounded recursion.
 static NESTED_DEPTH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
@@ -188,7 +188,7 @@ pub(crate) struct MinedFalsifier {
     /// demonstrably fails the quantifier, so excluding it from the next
     /// candidate model is sound (see `fully_pinned`).
     pub(crate) commitments: Vec<(TermId, TermId)>,
-    /// Whether the evaluation consumed *only* recorded commitments — every
+    /// Whether the evaluation consumed *only* recorded commitments – every
     /// function application resolved through an entry or an assignment hit,
     /// no `else` fallthrough, macro expansion, sort default or universe
     /// fold.  Only then is the falsification a function of the commitments
@@ -208,7 +208,7 @@ pub(crate) enum ModelCheckOutcome {
     Satisfied,
     /// The falsifying assignments found by the nested check; the maps carry
     /// bound-variable names to ground falsifying terms (Z3 enumerates several
-    /// per round with blocking clauses — see `add_blocking_clause` — so one
+    /// per round with blocking clauses – see `add_blocking_clause` – so one
     /// round exhausts the current model's falsifier set instead of re-finding
     /// the same already-instantiated pair until the round budget dies).  The
     /// caller builds the (always sound) instantiation lemmas from them.
@@ -235,7 +235,7 @@ pub(crate) struct ModelChecker {
     /// budget (the model moved, so the previous verdicts say nothing); a
     /// re-check against the *same* model re-pays a nested solve for an
     /// outcome that is already known, and those are what the signature gate
-    /// below refuses — the re-checked-goal (verdict-cache bypass) and
+    /// below refuses – the re-checked-goal (verdict-cache bypass) and
     /// thrashing-round cases.
     last_model_signature: FxHashMap<TermId, u64>,
     /// Wasted-solve streak per quantifier (see [`MAX_CHECKS_PER_QUANTIFIER`]):
@@ -243,7 +243,7 @@ pub(crate) struct ModelChecker {
     /// instantiation (the caller refunds via [`ModelChecker::mark_productive`])
     /// nor a satisfaction verdict; reset by either.
     checks_of: FxHashMap<TermId, u32>,
-    /// Total nested solves per quantifier (never reset — see
+    /// Total nested solves per quantifier (never reset – see
     /// [`MAX_TOTAL_CHECKS_PER_QUANTIFIER`]).
     total_checks_of: FxHashMap<TermId, u32>,
     /// Whether constructor/hint tables are active (see
@@ -253,15 +253,15 @@ pub(crate) struct ModelChecker {
     /// quantifier (the aux-`unsat` verdict, possibly via the closed-world
     /// else retry).  The dual of [`ModelChecker::falsified_at`]: a
     /// certification is model-relative, so it is remembered per signature
-    /// — a later round against the *same* completed model reuses it
+    /// – a later round against the *same* completed model reuses it
     /// without re-paying the nested solve, and a moved model re-earns it.
     certified_at: FxHashMap<TermId, Vec<u64>>,
     /// Model signatures at which the nested refutation *found a falsifier*
     /// for a quantifier (the aux `sat` verdict, with the Skolems confined
     /// to the finite universe).  A legacy "satisfied on the whole universe"
     /// claim for the same quantifier under the same model is then
-    /// demonstrably wrong — the falsifier lives at a domain point the tuple
-    /// check missed or mis-evaluated — and `is_vetoed` lets the caller
+    /// demonstrably wrong – the falsifier lives at a domain point the tuple
+    /// check missed or mis-evaluated – and `is_vetoed` lets the caller
     /// refuse the verdict.  The memory is per-signature, so a genuinely
     /// moved model re-earns its certification.
     falsified_at: FxHashMap<TermId, Vec<u64>>,
@@ -298,7 +298,7 @@ impl ModelChecker {
     /// counterexample became a fresh instantiation): the fruitless streak
     /// resets and the model signature is forgotten, so a later round may
     /// ask again (the fresh lemma perturbs the ground model, so the next
-    /// completed model will differ anyway — the signature reset is
+    /// completed model will differ anyway – the signature reset is
     /// belt-and-braces for the case where it does not).
     /// Record that `quantifier` was falsified under the current model (the
     /// aux-`sat` verdict).  See [`ModelChecker::falsified_at`].
@@ -316,9 +316,9 @@ impl ModelChecker {
     ///
     /// This bypasses the cost caps by design: it runs only in the rare
     /// moment the sampling engines are about to certify the whole goal from
-    /// their own tuple evaluations — an evaluation with a documented liar
+    /// their own tuple evaluations – an evaluation with a documented liar
     /// in its lookup path (stale-entry TermId matches, the Rodin
-    /// false-`sat`) — so this is the second opinion that either clears the
+    /// false-`sat`) – so this is the second opinion that either clears the
     /// verdict (`false`) or vetoes it (`true`, including on an
     /// undetermined check: a wrong `unknown` costs completeness, an
     /// unvetted liar costs soundness).  Results are memoized per
@@ -340,7 +340,7 @@ impl ModelChecker {
         // Lifetime bound on second opinions: a forced rerun moves the model
         // (fresh signatures) on every rerun, so an unbounded veto budget
         // would be re-paid hundreds of times.  Once spent, the veto is
-        // answered conservatively (`true` — refuse the legacy verdict),
+        // answered conservatively (`true` – refuse the legacy verdict),
         // which costs completeness only.
         if self.veto_checks >= MAX_VETO_CHECKS {
             return true;
@@ -406,7 +406,7 @@ impl ModelChecker {
     }
 
     /// The convergence dividend: a round that produced *no* fresh
-    /// instantiation anywhere is the static-model signal — the per-
+    /// instantiation anywhere is the static-model signal – the per-
     /// quantifier caps exist to bound waste on a *moving* model (the
     /// chase), and by now their remaining budget is exactly what silences
     /// the certification wave that would close the search.  Refund both
@@ -428,7 +428,7 @@ impl ModelChecker {
     /// integration from `active_table_quantifiers`).  The budget-refund
     /// mechanics below exist to let a *table-driven* convergence run its
     /// certification waves; on goals with no tables the old cap behaviour
-    /// stands (the refunds there only stretched re-checked goals — the
+    /// stands (the refunds there only stretched re-checked goals – the
     /// scope-rebase convergence pins).
     pub(crate) fn set_table_mode(&mut self, active: bool) {
         self.table_mode = active;
@@ -445,14 +445,14 @@ impl ModelChecker {
         // single solve.
         self.checks_of.insert(quantifier, 0);
         // ...and of the per-quantifier *total* (table mode only): the
-        // total exists to bound waste, not work — a check whose falsifiers
+        // total exists to bound waste, not work – a check whose falsifiers
         // became fresh lemmas (or whose certification landed, below) moved
         // the search forward, and charging it would silence exactly the
         // converging quantifiers (the set family: every round's pin wave
         // moves the model, every re-check is productive, and a hard total
         // of four stops the loop mid-convergence).  The global budgets
         // remain the real bound.  Without tables the old cap behaviour
-        // stands — the refund there only stretched re-checked goals.
+        // stands – the refund there only stretched re-checked goals.
         if self.table_mode
             && let Some(count) = self.total_checks_of.get_mut(&quantifier)
         {
@@ -489,13 +489,13 @@ impl ModelChecker {
         // change the search) on every one of its hundreds of reruns, each
         // move re-arming the same-model gate.  Only *wasted* solves count
         // (a duplicate-falsifier solve, a liar's empty counterexample);
-        // fresh lemmas and certifications reset the streak — a converging
+        // fresh lemmas and certifications reset the streak – a converging
         // quantifier never hits the cap, a doomed one stops re-paying.
         //
         // The landed accounting is a streak with a *hard total* underneath
         // (`MAX_TOTAL_CHECKS_PER_QUANTIFIER`): a pure streak (no total)
         // was measured to multiply the heaviest convergence pin's cost by
-        // ~2.3x on top of everything else — a quantifier that keeps
+        // ~2.3x on top of everything else – a quantifier that keeps
         // mining semantically-fresh-but-unproductive lemmas on a moving
         // model (the set family's compound-closure chase) resets its own
         // streak forever, and a re-checked goal re-pays that hundreds of
@@ -544,10 +544,10 @@ impl ModelChecker {
         }
 
         // Total interpretation: an else value for every function we may
-        // need — the base choice merged with the globally accepted
+        // need – the base choice merged with the globally accepted
         // revision (see [`ModelChecker::accepted_else`]).  The entry cap
-        // counts *chain-relevant* entries — those whose result differs
-        // from the function's else — because the ite-chain construction
+        // counts *chain-relevant* entries – those whose result differs
+        // from the function's else – because the ite-chain construction
         // (see `fold_apply`) skips the rest: the enumerative seeder's
         // thousands of default-valued pins must not bury the structural
         // ones.
@@ -611,7 +611,7 @@ impl ModelChecker {
         }
 
         // Evaluation-only certification: the completed body folded to the
-        // literal `true` — the ite chains and value literals already cover
+        // literal `true` – the ite chains and value literals already cover
         // every point of every bound variable's domain, so the completed
         // interpretation satisfies the quantifier outright.  No nested
         // solve is needed, and none is paid for: this branch consumes no
@@ -628,7 +628,7 @@ impl ModelChecker {
             if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
                 eprintln!("[mc] certified by evaluation (body' = true)");
             }
-            // Refund the per-quantifier total (table mode only — see
+            // Refund the per-quantifier total (table mode only – see
             // `mark_productive`): no nested solve ran, and the caps exist
             // to bound *search*, not evaluation.
             if self.table_mode
@@ -667,7 +667,7 @@ impl ModelChecker {
             Ok(SolverResult::Unsat) => {
                 // A certification for this exact model: remembered so later
                 // rounds against the same completed model reuse it, and a
-                // productive outcome (resets the wasted-solve streak — and
+                // productive outcome (resets the wasted-solve streak – and
                 // refunds the per-quantifier total; see `mark_productive`).
                 self.certified_at.entry(q.term).or_default().push(signature);
                 if self.table_mode
@@ -683,9 +683,9 @@ impl ModelChecker {
                 // A falsifier exists (the unrestricted nested check proved
                 // it).  Mine *relevant* ones term-level, Z3-style
                 // (`restrict_sks_to_inst_set` + `value2expr`): enumerate
-                // combinations of the instantiation set — the values the
+                // combinations of the instantiation set – the values the
                 // current model already distinguishes (entry arguments and
-                // results, assigned values) — evaluate the completed body
+                // results, assigned values) – evaluate the completed body
                 // under each with this module's own evaluator, and keep the
                 // combinations that evaluate to `false` (up to a small cap,
                 // the multi-cex role of Z3's `add_blocking_clause`).  The
@@ -708,7 +708,7 @@ impl ModelChecker {
                 const MAX_COMBO_PRODUCT: usize = 256;
 
                 // The combo domain per bound variable: for an *uninterpreted*
-                // sort the finite universe itself — the restriction clause
+                // sort the finite universe itself – the restriction clause
                 // confines the Skolem to it, so the aux falsifier lives
                 // there, and inst-set-only mining misses points the seeding
                 // never referenced (a `seteq(z,z) = (z=z)` axiom fails at
@@ -730,7 +730,7 @@ impl ModelChecker {
                         }
                         // Table mode: every axis of every quantifier
                         // ranges over the frozen table domain (see the
-                        // seeder's twin note) — the raw universe grows
+                        // seeder's twin note) – the raw universe grows
                         // with every witness the ground solver mints
                         // (nested Skolem applications among them), and
                         // mining the fresh points re-moves the model
@@ -750,7 +750,7 @@ impl ModelChecker {
                             // One representative per *model value*: two
                             // elements the model assigns the same value are
                             // the same domain point, and a falsifier at one
-                            // is a falsifier at the other — mining both
+                            // is a falsifier at the other – mining both
                             // emits a semantically-redundant lemma that
                             // keeps the rounds "productive" while the model
                             // never moves (the productive-spin shape; see
@@ -771,21 +771,21 @@ impl ModelChecker {
                     .collect();
                 // The literal-binding channel's odometer points (armed
                 // table mode only): the goal's own assertion-mentioned
-                // compounds — the *self-representative* ones, the terms
-                // the structure has not collapsed — join the frozen
+                // compounds – the *self-representative* ones, the terms
+                // the structure has not collapsed – join the frozen
                 // domain as candidate bindings.  The table confinement
                 // exists to stop mining *fresh ground* points (the
                 // chase); these are the goal's fixed terms, and the
                 // refutation side needs the instance at the literal
-                // tuple — `(w, (union a b), b)` — which the
+                // tuple – `(w, (union a b), b)` – which the
                 // semantic-domain collapse erases from every collapsed
                 // view (the extensional family's residual).  Arming
                 // rides the assertion gate's materialization (a
-                // persistent equality violation — the goal's equality
+                // persistent equality violation – the goal's equality
                 // semantics are load-bearing): on goals whose
                 // equalities the row algebra honors alone, the
                 // compound-tuple instances are semantically redundant
-                // but syntactically fresh keys — the productive-spin
+                // but syntactically fresh keys – the productive-spin
                 // shape (measured on set9/set19: `sat` -> `unknown`).
                 let sets: Vec<Vec<TermId>> = if model.literal_channel_armed {
                     sets.into_iter()
@@ -840,20 +840,20 @@ impl ModelChecker {
                     // completion's choices (macro unfoldings, ite-chain
                     // shapes, else leaves) in places the walk cannot see,
                     // so a "fully pinned" verdict over it counts choices
-                    // as pins — and a blocking clause built from it
+                    // as pins – and a blocking clause built from it
                     // refutes satisfiable goals (the 2026-09-15
                     // re-derivation of the original removal's false-
                     // `unsat`: quant_fuzz seeds 41-46, six disagreements).
                     // On the raw body every completion choice the walk
                     // consumes passes through `fold_apply`'s macro/computed/
-                    // else arms, which flag it — the transfer argument's
+                    // else arms, which flag it – the transfer argument's
                     // recording is then complete.
                     let substituted = manager.substitute(q.body, &subst);
                     // The mining evaluation's symbolic set is the
                     // tracked bound-variable NAMES, not the empty set:
                     // the substitution has replaced every legitimate
                     // bound variable, so nothing legitimate turns
-                    // symbolic — but an *artifact* variable (an encoder
+                    // symbolic – but an *artifact* variable (an encoder
                     // binder constant that leaked through a completion
                     // entry chain) does, which declines the
                     // universe-distinctness fold for it instead of
@@ -900,12 +900,12 @@ impl ModelChecker {
                     // the restriction clause) DID: the completed model fails
                     // this quantifier at a domain point the sampling tuple
                     // check never saw or mis-evaluated.  There is no useful
-                    // lemma to mine, so report the empty counterexample —
+                    // lemma to mine, so report the empty counterexample –
                     // the caller treats an aux-`sat` verdict as a veto on
                     // any legacy "satisfied on the whole universe" claim
                     // (the Rodin false-`sat` shape).
                     self.last_decline = Some("no relevant falsifier");
-                    // A wasted solve (no minable falsifier at all — the
+                    // A wasted solve (no minable falsifier at all – the
                     // liar shape): counts toward the streak unless the
                     // caller's veto path learns something fresh.
                     *self.checks_of.entry(q.term).or_insert(0) += 1;
@@ -963,7 +963,7 @@ impl ModelChecker {
         let mut aux = Solver::new();
         aux.debug_tag = Some("-aux");
         aux.set_logic(logic.unwrap_or("ALL"));
-        // The aux solver exists to decide one goal: `not body'[sk]` —
+        // The aux solver exists to decide one goal: `not body'[sk]` –
         // with the bounded-quantifier expansion this goal is
         // quantifier-free, and where a binder survived (a sampled sort,
         // an over-cap product) the aux's *own* MBQI loop adds nothing
@@ -973,14 +973,14 @@ impl ModelChecker {
         // churn: the nested rounds' conflicts are charged to THIS
         // checker's global budget through `aux.stats()`, and a handful
         // of main-level checks whose aux went digging burned the whole
-        // 50k budget from the inside — every later main-level check then
+        // 50k budget from the inside – every later main-level check then
         // declined silently on the global gate (the set family's
         // cap-starvation stall).
         // Table mode only (see below): on goals *with* tables the aux's
         // own MBQI added nothing but budget churn; on goals without
         // them it occasionally contributed the refutation the outer
         // loop could not reach alone (wisas/xs_8_13 lost its `unsat`
-        // when this was unconditional — the nested search inside an aux
+        // when this was unconditional – the nested search inside an aux
         // check found it).
         if !model.constructor_sources.is_empty() {
             aux.mbqi.set_max_rounds(0);
@@ -990,13 +990,13 @@ impl ModelChecker {
         // sorts qualify: their completed model *is* the finite universe
         // (finite-model semantics), so the restriction loses no points.
         // An interpreted sort's universe entry is merely a *sample* of the
-        // model's values — restricting an Int/Real Skolem to it would
+        // model's values – restricting an Int/Real Skolem to it would
         // fabricate an unsat verdict out of values the skolem was never
         // allowed to take (the false-`Satisfied` on `2v+1 = y` with the
         // falsifier outside the sample).
         for &(_name, sort, sk) in skolem_terms {
             // A tabled sort's completed structure has its own (frozen,
-            // semantic) domain — the restriction confines the Skolems to
+            // semantic) domain – the restriction confines the Skolems to
             // exactly that, the points the interpretation is defined over.
             let finite_universe = manager
                 .sorts
@@ -1012,14 +1012,14 @@ impl ModelChecker {
                     universe.iter().map(|&u| manager.mk_eq(sk, u)).collect();
                 aux.assert(manager.mk_or(restriction), manager);
                 // The domain elements are pairwise distinct *by
-                // construction* — the universe is the set of the model's
-                // distinguished values — and without telling the aux, a
+                // construction* – the universe is the set of the model's
+                // distinguished values – and without telling the aux, a
                 // Skolem restricted to `{a, b}` may satisfy its restriction
                 // by *merging* `a` and `b` (both disjuncts true under the
                 // merge): a degenerate point that is not an element of the
                 // structure, where the ite-chain branch of `(b, a)` fires
                 // with `member(x, s1)` and `member(x, s2)` collapsed to the
-                // same term — `p ∧ ¬p` — and every witness axiom falsifies
+                // same term – `p ∧ ¬p` – and every witness axiom falsifies
                 // at it.  Z3's model values are distinct by the same
                 // construction; this is that, told to the aux.
                 let distinct = manager.intern_term(
@@ -1030,7 +1030,7 @@ impl ModelChecker {
             }
         }
 
-        // not body[sk]  — refute the completed interpretation.
+        // not body[sk]  – refute the completed interpretation.
         let substitution = skolem_var_map(skolem_terms, manager);
         let skolemized = manager.substitute(body, &substitution);
         let goal = manager.mk_not(skolemized);
@@ -1038,11 +1038,11 @@ impl ModelChecker {
 
         // The goal's Set-sorted ite chains are Tseitin-abstracted into
         // fresh `__nixie_ite_*` variables by the encoder, and a *nested*
-        // chain's condition mentions them (`(= sk __nixie_ite_N)`) — a
+        // chain's condition mentions them (`(= sk __nixie_ite_N)`) – a
         // condition the Skolem restriction does not decide, so the aux
         // could set the abstraction freely and falsify through the hole:
         // every chain value IS a domain element (an entry result or the
-        // else — both drawn from the structure), so confining the ite
+        // else – both drawn from the structure), so confining the ite
         // variables to the same domain is exactly the chain's semantics,
         // not an extra assumption.
         {
@@ -1097,7 +1097,7 @@ impl ModelChecker {
     /// every function entry's (normalized) arguments of this sort and its
     /// results, plus the values of the model's assignments of this sort.
     /// The map prefers, for each value, the entry-argument term it is the
-    /// value of, then a compound assigned term, then any assigned term —
+    /// value of, then a compound assigned term, then any assigned term –
     /// falling back to the value itself.
     fn build_instantiation_set(
         &mut self,
@@ -1111,7 +1111,7 @@ impl ModelChecker {
         let _ = skolem_terms;
 
         // The model's assignment table and entry arguments can contain
-        // *encoding artifacts* — terms whose free variables are named like
+        // *encoding artifacts* – terms whose free variables are named like
         // quantifier bound variables (the encoder internalized the body
         // with its binders as constants).  Such a term is not a ground
         // domain element; instantiating with it emits a lemma about a
@@ -1160,7 +1160,7 @@ impl ModelChecker {
                     // position's declared sort: the two coincide on a
                     // well-typed entry, and an ill-typed one (a harvested
                     // artifact) must not seed this sort's instantiation
-                    // set with a foreign-sorted value — that is the
+                    // set with a foreign-sorted value – that is the
                     // ill-typed-instantiation vector (`?s1 := u!4` with
                     // `u!4` an Elem term in a Set position).
                     let norm = model.assignments.get(&arg).copied().unwrap_or(arg);
@@ -1184,7 +1184,7 @@ impl ModelChecker {
                 continue;
             }
             // A cross-sorted assignment (a harvested artifact) is not a
-            // value of this sort — skip it rather than seed the
+            // value of this sort – skip it rather than seed the
             // instantiation set with a foreign-sorted term.
             if manager.get(value).is_some_and(|v| v.sort != node.sort) {
                 continue;
@@ -1206,12 +1206,12 @@ impl ModelChecker {
         }
 
         // The readback's assertion-mentioned compounds (the literal-
-        // binding channel — see `CompletedModel::compound_values`): each
+        // binding channel – see `CompletedModel::compound_values`): each
         // pair registers the *compound* as the value's term, so a
         // falsifier mined at the value binds the compound and the
         // instance lands at the literal tuple.  Compounds beat the bare
         // constants the map may already hold (the `assigned` pass below
-        // only sees terms the readback assigned — on table goals the
+        // only sees terms the readback assigned – on table goals the
         // compounds deliberately have no assignment, or they would
         // become never-overridden pins).
         for &(compound, value) in &model.compound_values {
@@ -1244,11 +1244,11 @@ impl ModelChecker {
 /// of the product of the bound variables' finite domains, or `None` when
 /// any bound variable's sort is not finitely restrictable (not an
 /// uninterpreted sort, no non-empty domain, over the restriction bound, or
-/// the product over the expansion cap) — the binder then stays symbolic
+/// the product over the expansion cap) – the binder then stays symbolic
 /// and the nested check decides it, exactly as before.
 ///
-/// The domain source is [`CompletedModel::table_domain`] — the *same*
-/// source the nested check's Skolem restriction reads — so the expansion
+/// The domain source is [`CompletedModel::table_domain`] – the *same*
+/// source the nested check's Skolem restriction reads – so the expansion
 /// and the restriction always agree on what the binder ranges over.
 fn quantifier_tuples(
     vars: &SmallVec<[(Spur, SortId); 2]>,
@@ -1369,7 +1369,7 @@ pub(crate) fn completed_function_body(
 /// Evaluate a *ground* term under the completed model **structurally**
 /// (see `CompletionEval::structural_only`): composite terms fold through
 /// the interpretation; only application atoms and bare constants may
-/// answer from the assignment table.  The assertion gate's evaluator —
+/// answer from the assignment table.  The assertion gate's evaluator –
 /// the completed structure is on trial, not the ground solver's
 /// committed polarities.
 pub(crate) fn eval_completed_structural(
@@ -1397,7 +1397,7 @@ pub(crate) fn eval_completed_structural(
 }
 
 /// Whether the completed body still applies some *Bool-valued* function at
-/// a position whose arguments mention a bound variable — the vacuity shape
+/// a position whose arguments mention a bound variable – the vacuity shape
 /// the closed-world else-search exists for (`member(x, s)` with symbolic
 /// `x`).  Cheap structural scan over the already-built body, so the retry
 /// costs nothing on arithmetic goals.
@@ -1441,7 +1441,7 @@ fn body_uses_bool_fn_at_symbolic_position(
 }
 
 /// Whether `term` contains any `Var` node (an over-approximation of
-/// "mentions a bound variable" — see [`body_uses_bool_fn_at_symbolic_position`]).
+/// "mentions a bound variable" – see [`body_uses_bool_fn_at_symbolic_position`]).
 fn term_mentions_var(term: TermId, manager: &TermManager) -> bool {
     let mut stack = vec![term];
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -1484,7 +1484,7 @@ fn completed_model_signature(model: &CompletedModel) -> u64 {
 /// One function's else value:
 ///
 /// 1. an `else_value` the completion pass already fixed;
-/// 2. the most frequent entry result (first occurrence on ties) — Z3's
+/// 2. the most frequent entry result (first occurrence on ties) – Z3's
 ///    default when it builds a `func_interp` else;
 /// 3. the model's sort default, or a structural fallback.
 fn choose_else(
@@ -1802,13 +1802,13 @@ struct CompletionEval<'a> {
     /// universe fold) rather than a ground-model fact.
     free_choice: bool,
     /// Structural mode (see [`eval_completed_structural`]): the
-    /// whole-term assignment lookup is disabled for *composite* terms —
+    /// whole-term assignment lookup is disabled for *composite* terms –
     /// only application atoms and bare constants answer from the
     /// assignment table; every connective, equality and binder folds
     /// through the completed interpretation itself.
     structural_only: bool,
     /// Functions whose `else` default this evaluation consulted (the
-    /// revision targets for the bounded else-search — Z3's
+    /// revision targets for the bounded else-search – Z3's
     /// `smt_model_finder` "search, verify, revise": a falsified body whose
     /// evaluation leaned on a function's default is repaired by revising
     /// *that* default, not by pinning every compound point).
@@ -2040,7 +2040,7 @@ impl<'a> CompletionEval<'a> {
                     //
                     // A *binder* node is never a ground-model fact either:
                     // its assignment-table row is the SAT core's wrapper
-                    // Boolean for the quantified subformula — a commitment
+                    // Boolean for the quantified subformula – a commitment
                     // the search chose to dodge the subformula's
                     // consequences, not the subformula's truth value.
                     // Reading it fabricated `(forall z. true) -> false`
@@ -2049,7 +2049,7 @@ impl<'a> CompletionEval<'a> {
                     let is_binder =
                         matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. });
                     // Structural mode: a composite term (a connective,
-                    // equality, binder — anything that is not an
+                    // equality, binder – anything that is not an
                     // application atom or a bare constant) must FOLD
                     // through the completed interpretation, never answer
                     // from the assignment table: the assignment for a
@@ -2057,7 +2057,7 @@ impl<'a> CompletionEval<'a> {
                     // polarity, and reading it lets a stale ground word
                     // shadow the structure (the assertion gate's first
                     // cut certified a violated equality through exactly
-                    // this hole — the persistent structure's whole point
+                    // this hole – the persistent structure's whole point
                     // is that its word, not the ground's, is on trial).
                     let structural_blocked = self.structural_only
                         && !matches!(node.kind, TermKind::Apply { .. } | TermKind::Var(_));
@@ -2097,9 +2097,9 @@ impl<'a> CompletionEval<'a> {
                             // Bounded-quantifier expansion (Z3's model
                             // evaluator does exactly this over its finite
                             // model universes): when every bound variable
-                            // ranges over a finite *restrictable* domain —
+                            // ranges over a finite *restrictable* domain –
                             // the very domains the nested check's Skolem
-                            // restriction confines that variable to — the
+                            // restriction confines that variable to – the
                             // binder is replaced by the pointwise fold
                             // (`forall x. phi` -> `and(phi[d])`), making
                             // the completed body quantifier-free.  This is
@@ -2107,7 +2107,7 @@ impl<'a> CompletionEval<'a> {
                             // solve decides exactly the expanded reading,
                             // and doing it at completion time turns a
                             // nested full-solve (whose own quantifier loop
-                            // burns budgets per check — the set family's
+                            // burns budgets per check – the set family's
                             // certification stall) into a plain chain
                             // solve.  Binders over sampled/infinite sorts
                             // (Int, Real, ...) stay symbolic, as before.
@@ -2174,8 +2174,8 @@ impl<'a> CompletionEval<'a> {
                     // which elements exist is the interpretation's own
                     // decision (the frozen table domain), not a ground
                     // fact.  A falsifier whose falsity needed the
-                    // expansion — `not subset => exists x. ...` with no
-                    // witness *among the chosen elements* — is not a
+                    // expansion – `not subset => exists x. ...` with no
+                    // witness *among the chosen elements* – is not a
                     // function of its recorded commitments alone: a model
                     // agreeing on every pin but carrying the missing
                     // element satisfies the quantifier.  The blocking
@@ -2199,7 +2199,7 @@ impl<'a> CompletionEval<'a> {
                     done.push(value);
                     let result = if decided {
                         // Short-circuit: `forall` found a false point /
-                        // `exists` found a witness — no further tuple can
+                        // `exists` found a witness – no further tuple can
                         // change the fold.
                         value
                     } else if next + 1 < tuples.len() {
@@ -2306,10 +2306,10 @@ impl<'a> CompletionEval<'a> {
                                 // Boolean-valued operands fold through
                                 // `value_equal` (the Bool-constant cases):
                                 // a body' whose one side folded to `true`
-                                // and the other to the `false` literal —
+                                // and the other to the `false` literal –
                                 // the difference axiom at a pinned tuple,
                                 // `(= (M w (difference a b)) (and ...))`
-                                // — left `(= true false)` SYMBOLIC with
+                                // – left `(= true false)` SYMBOLIC with
                                 // only `compare_numeric` here, and the
                                 // mining never recognized the falsifier
                                 // the aux had found ("no relevant
@@ -2344,7 +2344,7 @@ impl<'a> CompletionEval<'a> {
                                             // terms (entry args harvested by
                                             // `collect_universes_from_model`),
                                             // and folding symbolic operands
-                                            // fabricates `?s1 != ?s2` — with
+                                            // fabricates `?s1 != ?s2` – with
                                             // it both a fake falsifier and, on
                                             // `(distinct s1 s2) \/ psi`-shaped
                                             // bodies, a fabricated pointwise
@@ -2530,7 +2530,7 @@ impl<'a> CompletionEval<'a> {
         let reduced = manager.substitute(body, &subst);
         // Evaluate the reduced body to a value with the same machine.
         // Bound-name hygiene: the macro's own binders were substituted away;
-        // any *other* free names in the body are the enclosing scope's —
+        // any *other* free names in the body are the enclosing scope's –
         // exactly what `self.bound` tracks.
         self.nodes_visited += 1;
         if self.nodes_visited > MAX_EVALUATED_BODY_SIZE {
@@ -2551,7 +2551,7 @@ impl<'a> CompletionEval<'a> {
         // (`seteq(s1,s2) = (s1 = s2)`) is interpreted by beta-reducing its
         // body at the (already evaluated) arguments and evaluating the
         // result under the same completion.  Entries stay authoritative
-        // when present — the macro fills the *rest* of the domain, which is
+        // when present – the macro fills the *rest* of the domain, which is
         // exactly what per-element pinning could never close (a definitional
         // axiom fails at every unpinned reflexive point, however many pins
         // the seeding adds).
@@ -2587,7 +2587,7 @@ impl<'a> CompletionEval<'a> {
                     if args_match(entry, evaluated_args, self.model, manager) {
                         // An entry hit is a ground-model fact (the table is
                         // harvested from the ground solver's pinned
-                        // applications): commit the atom `f(args) = result` —
+                        // applications): commit the atom `f(args) = result` –
                         // and, for the blocking clause's transfer argument,
                         // every assignment normalization the match leaned on
                         // (`entry_arg` read through its model value): a
@@ -2614,8 +2614,8 @@ impl<'a> CompletionEval<'a> {
                 }
             }
             // Computed constructor entries (see `constructor_tables`):
-            // consulted after the ground pins — the table's whole design
-            // is "never override a pin" — and before the `else`.  A hit is
+            // consulted after the ground pins – the table's whole design
+            // is "never override a pin" – and before the `else`.  A hit is
             // an interpretation *choice*, not a ground fact.
             if let Some(computed) = self.model.computed_entries.get(&func) {
                 for entry in computed {
@@ -2648,7 +2648,7 @@ impl<'a> CompletionEval<'a> {
 
         // Symbolic argument: the entry table as an ite chain, else leaf.
         if self.recording {
-            // The chain encodes entries under symbolic conditions — not a
+            // The chain encodes entries under symbolic conditions – not a
             // ground pin the blocking clause can lean on.
             self.free_choice = true;
             self.else_consulted.insert(func);
@@ -2664,7 +2664,7 @@ impl<'a> CompletionEval<'a> {
             }
         };
         // The chain covers the computed constructor entries too (see
-        // `constructor_tables`): ground entries shadow computed ones — the
+        // `constructor_tables`): ground entries shadow computed ones – the
         // chained iteration processes the computed entries first so the
         // ground pins nest outermost and win, mirroring the concrete
         // path's priority.
@@ -2688,7 +2688,7 @@ impl<'a> CompletionEval<'a> {
             // by it.  The enumerative seeder pins the function at every
             // fresh candidate point (each round's new Real index terms),
             // and when those pins agree with the closed-world default they
-            // are pure noise — thousands of `member(x, s) = false` entries
+            // are pure noise – thousands of `member(x, s) = false` entries
             // that bury the structural pins and blow the ite chain past
             // every cap (the set16 divergence).
             if value_equal(entry.result, else_leaf, manager) == Some(true) {
@@ -2710,12 +2710,12 @@ impl<'a> CompletionEval<'a> {
                     .unwrap_or(entry_arg);
                 // Semantic normalization: a compound entry argument (a
                 // minted `union(a,a)`-keyed pin from the search era)
-                // denotes the same domain point as its semantic value —
-                // the completed structure identifies them — so the chain
+                // denotes the same domain point as its semantic value –
+                // the completed structure identifies them – so the chain
                 // must compare the Skolem against the *representative*,
-                // not the compound.  Without this, the nested check —
+                // not the compound.  Without this, the nested check –
                 // which may legitimately merge the Skolem with the
-                // compound — routes the chain through the stale
+                // compound – routes the chain through the stale
                 // compound-keyed entries that disagree with the
                 // domain-keyed ones.
                 let entry_norm = self.model.semantic_value_of(entry_norm, manager);
@@ -2829,8 +2829,8 @@ fn rebuild_with(
             let (a, b) = two_at(0)?;
             // `p => p` collapses to `true` (and a decided side
             // short-circuits): without the collapse, an antecedent whose
-            // atoms fell through to the else — leaving hash-consed
-            // identical symbolic terms like `(member u!0 a)` — stays a
+            // atoms fell through to the else – leaving hash-consed
+            // identical symbolic terms like `(member u!0 a)` – stays a
             // non-constant and-chain of trivial implications, the walk
             // reports "not false" where every solver reads `true`, and
             // the falsifier the aux found at that point is never mined
@@ -3065,7 +3065,7 @@ fn rebuild_with(
             // Rebuild the fold node over the evaluated children; the
             // function symbol is a payload, rebuilt from its interned
             // name. MBQI's candidate evaluation of a fold rests on the
-            // model's own bag/fun values like any other compound — no
+            // model's own bag/fun values like any other compound – no
             // separate evaluation is attempted here.
             let (i, b) = two_at(0)?;
             let name = manager.resolve_str(*func).to_string();
@@ -3217,7 +3217,7 @@ enum NumOrder {
 /// Exact numeric order between two value terms, when both are numeric
 /// literals (`IntConst`/`RealConst`, mixed allowed).  `None` when not
 /// comparable (non-numeric, or a magnitude that does not fit `i64`
-/// exactly — never truncate: the nested solver decides those).
+/// exactly – never truncate: the nested solver decides those).
 fn compare_numeric(a: TermId, b: TermId, manager: &TermManager) -> Option<NumOrder> {
     let ra = numeric_value(a, manager)?;
     let rb = numeric_value(b, manager)?;
@@ -3244,7 +3244,7 @@ fn numeric_value(term: TermId, manager: &TermManager) -> Option<Rational64> {
 /// Build a numeric literal of the given flavor from an exact rational, or
 /// `None` when the value is not exactly representable (a non-integral
 /// rational for an integer literal, or a magnitude outside the manager's
-/// rational range).  Callers fall back to rebuilding the node — never a
+/// rational range).  Callers fall back to rebuilding the node – never a
 /// truncated value.
 fn mk_numeric(value: Rational64, is_real: bool, manager: &mut TermManager) -> Option<TermId> {
     if is_real {

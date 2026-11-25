@@ -2,14 +2,14 @@
 //! stream of the algorithm body.
 //!
 //! The grammar followed is the one `ParseAlgorithm.java` implements: the
-//! appendix of the +CAL user manual in two syntaxes — p-syntax
+//! appendix of the +CAL user manual in two syntaxes – p-syntax
 //! (`if … then … end if`) and c-syntax (`if (…) { … }`), decided by whether
 //! the algorithm name is followed by `{`.
 //!
 //! Expressions are not re-implemented. The algorithm body is lexed with the
-//! front end's own TLA+ lexer — so Unicode spellings, based numerals and
+//! front end's own TLA+ lexer – so Unicode spellings, based numerals and
 //! layout-sensitive junction lists behave exactly as they do in the module
-//! around the algorithm — and each expression position hands the token
+//! around the algorithm – and each expression position hands the token
 //! slice up to the next structural keyword to [`crate::parser::Parser`].
 //! The slice boundaries are the delimiter set `Tokenize.IsDelimiter` uses,
 //! with the same record-field protection (`m.type` after `.`/`[`/`,` is a
@@ -149,7 +149,7 @@ struct PcalParser {
 }
 
 impl PcalParser {
-    // ---- token plumbing ---------------------------------------------------
+    // ======== token plumbing ========
 
     fn tok(&self) -> &Token {
         self.tokens
@@ -229,7 +229,7 @@ impl PcalParser {
 
     /// `GobbleThis(";")`: a `;` that is silently optional before the
     /// tokens that make it obviously unnecessary (`end`, `}`, `begin`,
-    /// …), and a *missing-semicolon* error before a statement keyword —
+    /// …), and a *missing-semicolon* error before a statement keyword –
     /// where swallowing it would silently move a label into the previous
     /// statement.
     fn eat_semicolon(&mut self) -> Result<()> {
@@ -285,7 +285,7 @@ impl PcalParser {
         }
     }
 
-    // ---- expressions -------------------------------------------------------
+    // ======== expressions ========
 
     /// Parse the expression starting at the cursor, stopping at the next
     /// PlusCal structural token. Mirrors `Tokenize.TokenizeExpr`.
@@ -364,7 +364,7 @@ impl PcalParser {
         i
     }
 
-    // ---- labels -------------------------------------------------------------
+    // ======== labels ========
 
     /// `GetLabel`: consume `name : [+|-]` if present.
     fn label(&mut self) -> Result<Label> {
@@ -403,7 +403,7 @@ impl PcalParser {
         self.peek(1).is_sym(":")
     }
 
-    // ---- declarations --------------------------------------------------------
+    // ======== declarations ========
 
     fn var_decls(&mut self) -> Result<Vec<VarDecl>> {
         if self.at_word("variables") {
@@ -496,7 +496,7 @@ impl PcalParser {
         Ok(text)
     }
 
-    // ---- macros --------------------------------------------------------------
+    // ======== macros ========
 
     fn macro_def(&mut self, macros: &mut Vec<Macro>) -> Result<()> {
         self.must_word("macro")?;
@@ -530,7 +530,7 @@ impl PcalParser {
         Ok(())
     }
 
-    // ---- procedures -----------------------------------------------------------
+    // ======== procedures ========
 
     fn procedure(&mut self) -> Result<Procedure> {
         self.must_word("procedure")?;
@@ -574,7 +574,7 @@ impl PcalParser {
         })
     }
 
-    // ---- processes ------------------------------------------------------------
+    // ======== processes ========
 
     fn process(&mut self, fairness: Fairness) -> Result<Process> {
         self.must_word("process")?;
@@ -613,7 +613,7 @@ impl PcalParser {
         })
     }
 
-    // ---- statements -------------------------------------------------------------
+    // ======== statements ========
 
     fn begin(&mut self) -> Result<()> {
         if self.p_syntax {
@@ -1043,7 +1043,7 @@ impl PcalParser {
         })
     }
 
-    // ---- macro expansion ---------------------------------------------------
+    // ======== macro expansion ========
 
     /// Expand every macro call in a statement sequence, substituting
     /// arguments for parameters (`ExpandMacroCall` and friends).
@@ -1148,7 +1148,7 @@ impl PcalParser {
         }
     }
 
-    // ---- top level ----------------------------------------------------------
+    // ======== top level ========
 
     fn algorithm(&mut self) -> Result<Algorithm> {
         if self.fair_algorithm {

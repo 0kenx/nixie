@@ -207,7 +207,7 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, Grob
     // against the other inputs so the seed leading monomials are
     // distinct. The chain criterion is unsound over duplicate seed lms
     // (a duplicate trivially divides every lcm of its own multiples)
-    // — root cause 1 of the 2026-09-18 𝔽_p missed-refutation finding;
+    // – root cause 1 of the 2026-09-18 𝔽_p missed-refutation finding;
     // this is the same fix, over ℚ. Not full inter-reduction: only the
     // leading-term chain, so structured generators survive.
     {
@@ -242,12 +242,12 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, Grob
     }
 
     // Iteration cap with HONEST failure: the first version silently
-    // returned whatever partial basis it had when the cap fired — a
+    // returned whatever partial basis it had when the cap fired – a
     // non-basis indistinguishable from a complete one (the
     // no-silent-fallthrough rule; `grobner_basis_f5_tracked` already
     // modeled the honest shape for the F5 variant). Buchberger over ℚ
     // terminates (Noetherian), so the cap only guards pathological
-    // slowness — refusing is correct, truncating is not.
+    // slowness – refusing is correct, truncating is not.
     let max_iterations = 10_000;
     let mut iterations = 0;
 
@@ -329,7 +329,7 @@ pub fn grobner_basis(polynomials: &[Polynomial]) -> Result<Vec<Polynomial>, Grob
 }
 
 /// The iteration cap fired: the computation was refused, NOT truncated
-/// — the caller must not treat any partial result as a Gröbner basis.
+/// – the caller must not treat any partial result as a Gröbner basis.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GrobnerIterationCap {
     /// Unprocessed critical pairs at refusal.
@@ -398,7 +398,7 @@ pub fn ideal_membership(
     }
 
     // Compute Gröbner basis (an honest refusal propagates: a truncated
-    // basis cannot decide membership — reduce-to-nonzero on a non-basis
+    // basis cannot decide membership – reduce-to-nonzero on a non-basis
     // proves nothing).
     let gb = grobner_basis(generators)?;
 

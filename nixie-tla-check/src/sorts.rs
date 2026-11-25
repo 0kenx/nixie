@@ -8,7 +8,7 @@
 //!
 //! The scalar types map directly. Sets go to the solver's finite-set sort,
 //! functions to an SMT array, and **tuples and records to single-constructor
-//! datatypes** — each field keeping its own sort, which is the whole reason a
+//! datatypes** – each field keeping its own sort, which is the whole reason a
 //! datatype works where an array does not. A sequence has no sort yet and is
 //! declined by name rather than approximated.
 //!
@@ -66,8 +66,8 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
         }
         // A sequence is a **length and a graph**: a datatype holding an `Int`
         // and an array from `1..` to the element sort. That is Apalache's
-        // proto-sequence in substance, and it is what TLA+ says a sequence is —
-        // a function on `1..Len(s)` — with the length carried alongside,
+        // proto-sequence in substance, and it is what TLA+ says a sequence is –
+        // a function on `1..Len(s)` – with the length carried alongside,
         // because an array alone cannot say where the sequence stops.
         //
         // Equality is the datatype's, so it compares the array at *every*
@@ -94,9 +94,9 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
         //   not have.
         // * TLA+ function equality compares domains and the values on them;
         //   SMT array equality compares every index. Array equality is
-        //   therefore **stricter**. In a positive position that costs nothing —
+        //   therefore **stricter**. In a positive position that costs nothing –
         //   the out-of-domain entries are free variables, so the solver picks
-        //   witnesses that agree — but under a negation it lets two
+        //   witnesses that agree – but under a negation it lets two
         //   TLA+-equal functions be told apart.
         //
         // So the encoding can manufacture a counterexample and cannot hide
@@ -137,7 +137,7 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
         )),
         // A variant is a **multi-constructor datatype**: one constructor per
         // tag, each with one payload selector (issue #17). An open row is
-        // closed at the tags inference found — sound here because inference
+        // closed at the tags inference found – sound here because inference
         // walks every term, so a value of a tag outside the row could only
         // come from a `Variant` node the row would then have absorbed; the
         // row *is* the connected component. What an open row still costs is
@@ -155,7 +155,7 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
             open: false,
         } => {
             // `BTreeMap`, so the field order is the same wherever the type is
-            // built — two records written in a different order are one sort.
+            // built – two records written in a different order are one sort.
             let mut fields = Vec::with_capacity(known.len());
             for (name, t) in known {
                 fields.push((record_field(name), sort_of(t, tm)?));
@@ -236,7 +236,7 @@ pub fn record_field(name: &str) -> String {
 /// TLA+ type it came from. That is what lets the encoder rebuild it: the
 /// encoder holds values and their sorts, never the inferred type, so a name
 /// derived from the type would be one the encoder could not compute. It also
-/// makes the sort genuinely structural — two types that map to the same fields
+/// makes the sort genuinely structural – two types that map to the same fields
 /// are the same datatype, which is what makes two such values comparable.
 ///
 /// Declaring is idempotent: a second caller finds it and takes the sort rather
@@ -263,7 +263,7 @@ pub(crate) fn declare_struct(fields: &[(String, SortId)], tm: &mut TermManager) 
 /// Named by the tags and their payload sorts like every struct here, so two
 /// variants of the same tags are one sort wherever they are built. The
 /// constructor names are the tags themselves, prefixed to keep them out of
-/// the user's constructor namespace — the payload selector carries the
+/// the user's constructor namespace – the payload selector carries the
 /// `@vp` marker.
 #[must_use]
 pub(crate) fn declare_variant(ctors: &[(String, SortId)], tm: &mut TermManager) -> SortId {
@@ -415,7 +415,7 @@ pub(crate) fn render_sort(sort: SortId, tm: &TermManager) -> String {
                 Some(SortKind::Uninterpreted(spur)) => out.push_str(tm.resolve_str(*spur)),
                 Some(SortKind::Datatype(spur)) => out.push_str(tm.sorts.resolve_spur(*spur)),
                 // Anything else is named by its id, which is unique within
-                // this `TermManager` — unambiguous, if unreadable. Never
+                // this `TermManager` – unambiguous, if unreadable. Never
                 // omitted: two sorts sharing a rendering would share a
                 // datatype.
                 _ => out.push_str(&format!("S{}", id.0)),

@@ -1,9 +1,9 @@
 //! Deadlock checking (issue #26).
 //!
 //! Apalache's `check` looks for deadlocks **by default**: a reachable state
-//! no transition leaves. The no-successor half is a *proof* — the `Next`
+//! no transition leaves. The no-successor half is a *proof* – the `Next`
 //! query at a step comes back `Unsat` over every state that has a successor
-//! — never a sample; an undecided query anywhere makes the whole verdict
+//! – never a sample; an undecided query anywhere makes the whole verdict
 //! `Unknown`. `--no-deadlock` (and `CHECK_DEADLOCK FALSE`) turns it off, and
 //! then a search that finds nothing must also say whether any behaviour ran
 //! the full length: `ExecutionsTooShort`, not a silent "no error".
@@ -103,10 +103,10 @@ fn write_spec(dir: &Path, name: &str, body: &str) -> PathBuf {
     p
 }
 
-// ---- the deadlock itself ----
+// ======== the deadlock itself ========
 
 /// The counter stops at `x = 3`: no transition leaves it, and the search
-/// says **Deadlock** at exactly step 3 — the earliest step whose every
+/// says **Deadlock** at exactly step 3 – the earliest step whose every
 /// reachable state is stuck.
 #[test]
 fn a_deadlock_is_found_at_the_step_it_happens() {
@@ -114,7 +114,7 @@ fn a_deadlock_is_found_at_the_step_it_happens() {
 }
 
 /// With the deadlock check off and an invariant that holds, a bound the
-/// behaviours cannot reach is not "no error" — it is `ExecutionsTooShort`.
+/// behaviours cannot reach is not "no error" – it is `ExecutionsTooShort`.
 #[test]
 fn executions_too_short_when_nothing_reaches_the_bound() {
     assert_eq!(claim(STUCK_INV, 4, false), Outcome::ExecutionsTooShort);
@@ -122,7 +122,7 @@ fn executions_too_short_when_nothing_reaches_the_bound() {
     assert_eq!(claim(STUCK_INV, 2, false), Outcome::NoViolationWithin(2));
 }
 
-/// A counterexample outranks the deadlock at the same step — the invariant
+/// A counterexample outranks the deadlock at the same step – the invariant
 /// is checked first, per step, which is Apalache's order and the order a
 /// user reading a report wants: the bug before the liveness footnote.
 #[test]
@@ -130,7 +130,7 @@ fn an_invariant_violation_wins_over_the_deadlock() {
     assert_eq!(claim(STUCK_BAD, 4, true), Outcome::Violation { step: 2 });
 }
 
-// ---- the CLI surface ----
+// ======== the CLI surface ========
 
 /// The whole matrix on one specification: default finds the deadlock (12),
 /// `--no-deadlock` finds nothing to run the length (0, ExecutionsTooShort),
@@ -205,7 +205,7 @@ fn a_deadlock_only_check_needs_no_invariant() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- action invariants ----
+// ======== action invariants ========
 
 /// An action invariant constrains a step pair; `ActionInv.tla` in
 /// Apalache's own suite is the acceptance shape, checked here inline.
@@ -261,7 +261,7 @@ WrongInv == n' > n + 1
     assert_eq!(
         bmc.check(2, &mut tm).expect("checks"),
         Outcome::Violation { step: 1 },
-        "n' is n + 1, never n + 2 — the pair query refutes it"
+        "n' is n + 1, never n + 2 – the pair query refutes it"
     );
 }
 

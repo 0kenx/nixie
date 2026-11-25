@@ -1,12 +1,12 @@
 //! Sequences: `<<>>`, `Append`, `Len`, `Head`, and equality.
 //!
-//! A sequence is a **length and a graph** — a datatype holding an `Int` and an
-//! array from `1..` — which is what TLA+ says a sequence is (a function on
+//! A sequence is a **length and a graph** – a datatype holding an `Int` and an
+//! array from `1..` – which is what TLA+ says a sequence is (a function on
 //! `1..Len(s)`) with the length carried alongside, because an array alone
 //! cannot say where the sequence stops.
 //!
 //! It has *two* shapes here, and that is the thing to keep straight. `<<a, b>>`
-//! is a tuple and a sequence at once — TLA+ does not distinguish them — so a
+//! is a tuple and a sequence at once – TLA+ does not distinguish them – so a
 //! literal encodes structurally while a `VARIABLE` of sequence type encodes to
 //! the datatype. The operators take either, the same way the set operators
 //! dispatch on a set's representation rather than on a mode. An operator that
@@ -54,7 +54,7 @@ fn fails(vars: &str, init: &str, body: &str) {
     );
 }
 
-// ---- a literal sequence, which is structurally a tuple ----
+// ======== a literal sequence, which is structurally a tuple ========
 
 #[test]
 fn len_of_a_literal() {
@@ -81,7 +81,7 @@ fn head_of_a_literal() {
     fails("x", "x = 0", "Head(<<7, 8>>) = 8");
 }
 
-// ---- a sequence-valued state variable, which is the datatype ----
+// ======== a sequence-valued state variable, which is the datatype ========
 
 /// The shape every specification `intent` generates is built on:
 /// `history = <<>>` then `history' = Append(history, …)`, with the invariant
@@ -163,7 +163,7 @@ Inv  == Len(h) = 0
     );
 }
 
-// ---- Tail and concatenation ----
+// ======== Tail and concatenation ========
 
 /// `Tail` moves the sequence's **window** forward instead of copying: `s[i]`
 /// is `fun[off + i]`, so shortening from the front costs nothing and needs no
@@ -210,7 +210,7 @@ Inv  == Len(q) >= 0
 }
 
 /// A queue of **records**, which is what a generated channel actually holds.
-/// The elements arrive structural — field by field — and are reified into
+/// The elements arrive structural – field by field – and are reified into
 /// their datatype on the way in.
 #[test]
 fn a_queue_of_records() {
@@ -238,7 +238,7 @@ Inv  == Len(q) < 2
 }
 
 /// A sequence is indexed through the window too, and the index need not be a
-/// literal — `events[Len(events)]` is how a specification reads the last thing
+/// literal – `events[Len(events)]` is how a specification reads the last thing
 /// that happened.
 #[test]
 fn a_sequence_is_indexed_by_a_computed_position() {
@@ -246,7 +246,7 @@ fn a_sequence_is_indexed_by_a_computed_position() {
 }
 
 /// Sharing one `Seq` between an operator's argument and its result reads as
-/// "these have the same type" — true, until a tuple is involved. `<<a, b, c>>`
+/// "these have the same type" – true, until a tuple is involved. `<<a, b, c>>`
 /// is a tuple *and* a sequence, and unifying keeps the tuple because it is the
 /// more precise shape of a literal; that precision then propagates backwards
 /// and makes the queue a 3-tuple, which has no sequence operations at all.
@@ -267,18 +267,18 @@ Inv  == Len(q) < 7
     let mut tm = TermManager::new();
     let mut bmc =
         Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
-    // 0, 3, 6, 9 — the ninth breaks it, which needs the queue to have grown
+    // 0, 3, 6, 9 – the ninth breaks it, which needs the queue to have grown
     // three times rather than been pinned to three elements. With the
     // incremental unrolling (issue #25) the search finishes within the
     // budget **and** produces a decodable model, so the step-3 violation is
-    // confirmed rather than reported as an undecided query — this test was
+    // confirmed rather than reported as an undecided query – this test was
     // the `Unknown` (decode-refused) shape before the budget stopped being
     // spent re-deriving each depth from scratch.
     let out = bmc.check(4, &mut tm).expect("checks");
     assert_eq!(out, Outcome::Violation { step: 3 });
 }
 
-// ---- an invariant must be a predicate ----
+// ======== an invariant must be a predicate ========
 
 /// `Inv == (100 - 10) + 5` is a perfectly good constant-level expression and a
 /// perfectly useless invariant. TLA+'s level rules do not catch it, and
@@ -308,9 +308,9 @@ Inv  == LET a == 100 b == 10 IN (a - b) + 5
     assert!(err.contains("BOOLEAN"), "{err}");
 }
 
-// ---- SubSeq ----
+// ======== SubSeq ========
 
-/// `SubSeq(s, m, n)` moves the window and resizes it — element `i` of the
+/// `SubSeq(s, m, n)` moves the window and resizes it – element `i` of the
 /// result is element `m + i - 1` of `s`. Nothing is copied, for the same
 /// reason `Tail` copies nothing, and `Tail` is exactly `SubSeq(s, 2, Len(s))`.
 #[test]
@@ -364,7 +364,7 @@ fn tail_agrees_with_subseq() {
     );
 }
 
-// ---- `Seq(S)` membership and SelectSeq (issue #23) ----
+// ======== `Seq(S)` membership and SelectSeq (issue #23) ========
 
 /// `s \in Seq(S)` over a literal tuple is pointwise, never a blanket TRUE
 /// for a "type-defining" `S`: `<<1, -2>> \notin Seq(Nat)` is a fact about
@@ -407,7 +407,7 @@ Inv  == q \in Seq(Nat)
     );
 }
 
-/// `SelectSeq(seq, F)` — Apalache's rewire to a left fold that appends the
+/// `SelectSeq(seq, F)` – Apalache's rewire to a left fold that appends the
 /// elements `F` accepts. The empty base starts in the accumulator's
 /// sequence shape, which is the fold-base sort half of the issue.
 #[test]
@@ -428,7 +428,7 @@ fn select_seq_keeps_the_accepted_elements() {
         "q = <<>>",
         r#"LET Nat(a) == a \in Nat IN SelectSeq(<<0, -1, 2, -3, 4>>, Nat) = <<0, 2, 4>>"#,
     );
-    // And the wrong claim fails — the fold really filters.
+    // And the wrong claim fails – the fold really filters.
     fails(
         "q",
         "q = <<>>",

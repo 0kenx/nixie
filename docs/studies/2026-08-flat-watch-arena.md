@@ -13,12 +13,12 @@ Replace `WatchLists { watches: Vec<Vec<Watcher>> }` with kissat's scheme
 (`../temp/kissat/src/watch.h`, `vector.{h,c}`, `proplit.h`):
 
 * one flat `pool: Vec<Watcher>` arena;
-* per-literal-code spans `{start, len, cap}` — contiguous, geometric slack;
+* per-literal-code spans `{start, len, cap}` – contiguous, geometric slack;
 * propagation scans its own span by index with two-pointer in-place
   compaction (never moves the span);
 * **cross-list pushes during a scan are buffered in a `delayed` queue and
   flushed after the span is closed** (kissat `kissat_delay_watching_large` /
-  `kissat_watch_large_delayed` in `proplit.h`) — this is the property that
+  `kissat_watch_large_delayed` in `proplit.h`) – this is the property that
   makes arena shifts safe mid-scan, ported verbatim;
 * periodic defrag compacts accumulated span slack (kissat
   `vectors.usable` + defrag).
@@ -38,7 +38,7 @@ profiles (propagate-dominated files).
   the both-solve corpus files must improve by **≥ 2%**. Below that the
   added structural complexity is not justified → revert, record as negative.
 * Metric: PMU `cpu_core/instructions` (deterministic, load-independent,
-  covers all work the change affects — it is a whole-process counter).
+  covers all work the change affects – it is a whole-process counter).
 * Record every run into the result store (`benchstore.py record`), cells
   content-addressed by config flags; never re-run a stored cell.
 * Soundness: full workspace suite + clippy/fmt/doc; fuzz `diff_equiv`
@@ -47,12 +47,12 @@ profiles (propagate-dominated files).
 
 ## Results
 
-**Verdict: REVERTED — Gate 2 failed** (0.9554–0.9647, i.e. the arena is
+**Verdict: REVERTED – Gate 2 failed** (0.9554–0.9647, i.e. the arena is
 4–4.5% *slower*; pre-registered threshold was >= 1.02). Gate 1 passed: the
 final port is behaviour-identical (75/75 comparable trajectories
 bit-identical in decisions/propagations/conflicts/restarts/learnt; the 76th
 file, `64_25.sanitized`, was baseline-timeout at the 30 s cap and solved
-with *identical* counters at 31.8 s — faster, not divergent).
+with *identical* counters at 31.8 s – faster, not divergent).
 
 ### The defect chain the hang exposed (8 layers, all fixed, all worth keeping in the record for any retry)
 
@@ -67,7 +67,7 @@ symbolized build). Following the chain downward, in symptom order:
 3. **Middle-growth insert loop**: reserving `grow` slots via `grow`
    separate `Vec::insert` calls paid `grow` full-pool memmoves; fixed to
    one resize + one `copy_within`… which then panicked: `copy_within(from..,
-   to)` expands the source range to the *post-resize* length — must bound
+   to)` expands the source range to the *post-resize* length – must bound
    at the pre-resize tail (`from..old_len`).
 4. **The real structural fix** (kissat `kissat_enlarge_vector`, which the
    first port under-read): a full span is **relocated to the arena tail**
@@ -94,13 +94,13 @@ symbolized build). Following the chain downward, in symptom order:
 ### Why it is slower (hypothesis, for the next attempt)
 
 Our `Watcher` is 12 bytes (id + arena slot + blocker); kissat's is 8 (a
-31-bit ref + blocking lit in two 4-byte words — no stable clause id at
+31-bit ref + blocking lit in two 4-byte words – no stable clause id at
 all). The flat arena makes every cache line cover fewer *distinct-literal*
 watchers than the per-list layout did for a single scan, so the locality
 win from removing allocator traffic is eaten by density. The retry that
 could actually pay: shrink the watcher to 8 bytes (drop the id from the
 hot struct, recover it via the slot's clause header only when a reason is
-needed) — a different, pre-registrable experiment.
+needed) – a different, pre-registrable experiment.
 
 ### Measurement lessons (third orphan incident)
 
@@ -109,7 +109,7 @@ needed) — a different, pre-registrable experiment.
   this session; load hit 75 again. Any harness must install a SIGTERM trap
   that kills its process group.
 - `perf stat` under 8-way parallel *without* per-job CPU pinning produces
-  `<not counted>` PMU cells — pin each job to a distinct core, and retry
+  `<not counted>` PMU cells – pin each job to a distinct core, and retry
   failed cells serially pinned.
 - Wall-caps under external load corrupt "solved/TO" splits; the final
   Gate-2 used a 12 s symmetric cap with both-solve cell selection, which
@@ -126,7 +126,7 @@ artifact. Precompile entries for the touched commits retained.
 `docs/BENCHMARKING.md` §3 now defines a ±5% neutrality band for geomean
 effects.  The measured 0.9554–0.9647 (−3.5 to −4.5%) falls **inside** it:
 this study's Arena result is therefore **neutral**, not "4.5% slower" as
-the prose above says.  The verdict is unchanged — the pre-registered bar
-was ≥ 1.02× and was not met — but under the band rule the correct wording
+the prose above says.  The verdict is unchanged – the pre-registered bar
+was ≥ 1.02× and was not met – but under the band rule the correct wording
 is "neutral, below the pre-registered bar".  The 8-bug defect chain and
 the density hypothesis remain the study's content.

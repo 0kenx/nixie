@@ -5,7 +5,7 @@
 //! * The variable-count pins are the leak itself: before re-fix pass 12 every
 //!   `pop` retracted the circuits encoded inside the scope, every re-assertion
 //!   re-encoded them with fresh variables, and `assert_neq` minted one fresh
-//!   variable per bit per call — so the embedded variable count, and with it
+//!   variable per bit per call – so the embedded variable count, and with it
 //!   the `O(num_vars)` price of one check, grew with the number of outer
 //!   backtracks rather than with the formula.
 //! * The differential test drives random `push` / `pop` / assertion / `check`
@@ -102,7 +102,7 @@ enum Atom {
 /// `b <u a` asserted and recorded as `later`.  The refutation needs both, and
 /// `b <u a` alone is satisfiable, so an explanation of `[later]` alone would
 /// be a false theory lemma; the unblamed literal sends the explanation to the
-/// sound fallback instead — every recorded term, `earlier` included.
+/// sound fallback instead – every recorded term, `earlier` included.
 #[test]
 fn an_assertion_checked_before_its_term_is_never_charged_to_a_later_term() {
     let mut solver = BvSolver::new();

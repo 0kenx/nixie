@@ -58,7 +58,7 @@ fn parse_script_rejects_an_unlexable_character_instead_of_hanging() {
     // A character that can neither start nor continue a symbol (here a NUL, but
     // `,` `[` `\` `'` and U+007F behave identically) used to make the lexer
     // return a zero-width `Symbol("")` at an unchanged position for ever, and
-    // the parser's balanced-paren skip then spun on it — a real infinite loop,
+    // the parser's balanced-paren skip then spun on it – a real infinite loop,
     // with no timeout on wasm32. It must now be a plain lexical error.
     for source in [
         "(\u{0}check-sat)",

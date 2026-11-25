@@ -2,7 +2,7 @@
 //!
 //! `CONSTANT N = 4` in a `.cfg` is a *substitution*: TLC replaces the constant,
 //! so `0 .. N-1` becomes `0 .. (4-1)`. That is as ground as `0 .. 3` and has
-//! exactly the same three members, but a check for a literal rejects it — and
+//! exactly the same three members, but a check for a literal rejects it – and
 //! `0 .. N-1` is how a ring of `N` nodes is written, so the rejection reached a
 //! large part of the corpus (`EWD998` among them).
 //!
@@ -12,7 +12,7 @@
 //! TLC, and two folders would be two semantics to keep in agreement.
 //!
 //! What must *not* change is the refusal. A genuinely symbolic bound still has
-//! no candidate list, and these pin that too — inventing one would check a
+//! no candidate list, and these pin that too – inventing one would check a
 //! different specification.
 
 use nixie_core::TermManager;
@@ -72,7 +72,7 @@ fn fails(vars: &str, defs: &str, init: &str, body: &str) {
     );
 }
 
-// ---- an arithmetic bound ----
+// ======== an arithmetic bound ========
 
 #[test]
 fn a_range_whose_upper_bound_is_arithmetic() {
@@ -90,7 +90,7 @@ fn a_wrong_claim_about_an_arithmetic_range_still_fails() {
     fails("x", "", "x = 0", "0 .. (4 - 1) = {0, 1, 2}");
 }
 
-/// The bound may be an arbitrarily deep ground expression — it is evaluated,
+/// The bound may be an arbitrarily deep ground expression – it is evaluated,
 /// not matched.
 #[test]
 fn a_nested_ground_bound() {
@@ -116,7 +116,7 @@ fn an_empty_arithmetic_range() {
     holds("x", "", "x = 0", "3 .. (1 + 1) = {}");
 }
 
-// ---- a bound over a quantifier ----
+// ======== a bound over a quantifier ========
 
 #[test]
 fn a_quantifier_over_an_arithmetic_range() {
@@ -124,7 +124,7 @@ fn a_quantifier_over_an_arithmetic_range() {
     fails("x", "", "x = 0", "\\A i \\in 1 .. (2 + 1) : i < 3");
 }
 
-// ---- a tuple index ----
+// ======== a tuple index ========
 
 /// The same defect, in a second place: a tuple is a function on `1..n`, and its
 /// index had to be a literal too.
@@ -144,7 +144,7 @@ fn except_on_a_tuple_at_an_arithmetic_index() {
     );
 }
 
-// ---- the refusal survives ----
+// ======== the refusal survives ========
 
 const SYMBOLIC: &str = r"
 ---- MODULE Symbolic ----
@@ -159,7 +159,7 @@ Inv  == x \in 0 .. N - 1
 
 /// With nothing pinning `N`, `x \\in 0..N-1` used to be refused because the
 /// arena could not enumerate the range. Since membership became a comparison
-/// (issue #22) the query is answered — and the answer is a **violation**:
+/// (issue #22) the query is answered – and the answer is a **violation**:
 /// with `N` free, `x = 1` leaves the invariant when `N = 1`. That is the
 /// true verdict about the specification as written; what still refuses is
 /// anything that needs the range's *elements* (a fold, a cardinality over a
@@ -183,11 +183,11 @@ fn a_symbolic_bound_is_answered_not_enumerated() {
     assert_eq!(
         out,
         Outcome::Violation { step: 0 },
-        "with `N` free the invariant does not hold — the honest verdict"
+        "with `N` free the invariant does not hold – the honest verdict"
     );
 }
 
-/// And the configuration is what makes it ground — the `EWD998` shape, end to
+/// And the configuration is what makes it ground – the `EWD998` shape, end to
 /// end: the `.cfg` pins `N`, the arithmetic is folded, the range enumerates.
 #[test]
 fn a_configured_constant_makes_an_arithmetic_bound_ground() {

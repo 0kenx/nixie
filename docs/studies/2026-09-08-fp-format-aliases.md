@@ -1,7 +1,7 @@
 # FP format sort aliases: `Float32` & co. parsed as uninterpreted sorts
 
 **Date:** 2026-09-08 · **Found by:** directed probe (roadmap item: FP halfway /
-subnormal / rounding-mode boundary productions — the probe phase of building
+subnormal / rounding-mode boundary productions – the probe phase of building
 the `fpboundary` obligation family) · **Status:** FIXED, landed.
 
 ## Finding
@@ -19,7 +19,7 @@ The most basic satisfiable QF_FP shape answered `unknown` where z3 says
 
 (and the same for the pinned-operand chain `x = c ∧ y = fp.add(RNE, x, x)`).
 Every probe *without* a declared variable (literal operands only) was already
-correct — the rewriter folds concrete `fp.*` applications exactly.
+correct – the rewriter folds concrete `fp.*` applications exactly.
 
 ## Root cause
 
@@ -29,13 +29,13 @@ every term the `fp.*` operators produce carries the real indexed sort
 `FloatingPoint { eb: 8, sb: 24 }` (a *different* `SortId`).
 
 The SMT-LIB FloatingPoint theory declares four canonical format aliases as
-part of the theory's language — `Float16` = `(_ FloatingPoint 5 11)`,
+part of the theory's language – `Float16` = `(_ FloatingPoint 5 11)`,
 `Float32` = `(_ FloatingPoint 8 24)`, `Float64` = `(_ FloatingPoint 11 53)`,
-`Float128` = `(_ FloatingPoint 15 113)` — and essentially every QF_FP script
+`Float128` = `(_ FloatingPoint 15 113)` – and essentially every QF_FP script
 declares its variables at one of these names.  With the mistyped sort:
 
 * `FpModelFinder::is_fp_var` rejected the variable (`Uninterpreted` is not a
-  float sort), so the concrete model builder could never pin it — instrumented
+  float sort), so the concrete model builder could never pin it – instrumented
   run: `values = []` after propagation, every assertion `eval = None`;
 * the variable was equally invisible to the pattern conflict checks and to
   the honesty gate's atom walk, so the FP path had nothing to work on and the
@@ -50,7 +50,7 @@ errors, and a whole theory quietly disconnects from its variables.
 
 `Parser::parse_sort_name` resolves the four theory aliases to the exact
 indexed sorts (nixie-core `smtlib/parser/sorts.rs`), before the alias/datatype/
-uninterpreted fallbacks — so the theory names keep priority over a user
+uninterpreted fallbacks – so the theory names keep priority over a user
 `define-sort` of the same name, matching the reference solvers' treatment of
 theory-declared sorts.  z3 and cvc5 give these names exactly this semantics
 in FP logics.
@@ -67,7 +67,7 @@ spelled out longhand behaves identically (it always did).
   fallback regression is back).
 * New end-to-end regression file `nixie-solver/tests/fp_format_aliases.rs`:
   `Float32`/`Float64` definitional arithmetic decides `sat`; the
-  `x < y ∧ y < x` chain is pinned **never `sat`** (honest `unknown` today —
+  `x < y ∧ y < x` chain is pinned **never `sat`** (honest `unknown` today –
   see rung 2 below); `fp.isNaN` witness synthesis through the alias.
 * Full gate on the landing tree: build `--all-features`; nextest workspace
   `--all-features` **10666/10666**; clippy `-D warnings`; fmt; doc
@@ -94,7 +94,7 @@ spelled out longhand behaves identically (it always did).
    works).  Small, self-contained; fold the conversion in `eval_fp`'s
    `RealToFp`/`ToFp` arms from the exact rational.
 3. **The `fpboundary` obligation family** (the roadmap productions that
-   motivated the probe) is still worth building — it would have found this
+   motivated the probe) is still worth building – it would have found this
    on day one, and it stresses exactly the boundaries (halfway ties,
    subnormals, rounding-mode asymmetries, special values) where the *next*
    FP gaps will be.

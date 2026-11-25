@@ -3,7 +3,7 @@
 //! The original false-sat (2026-09-22, found by the `bench/fsm_perf`
 //! verdict-agreement canary): a second `fsm.accepts` command arriving
 //! after an `(assert ...)` had already triggered registration was
-//! silently dropped by the idempotence guard — its result constant
+//! silently dropped by the idempotence guard – its result constant
 //! stayed unconstrained, so `(assert (not n0))` over an accepted word
 //! returned **sat**. Registration is now incremental: late acceptance
 //! queries over the frozen declarations register an additional

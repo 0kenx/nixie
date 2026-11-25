@@ -2,28 +2,28 @@
 //!
 //! PlusCal bodies are TLA+ *comments*, which is why a TLA+ front end can
 //! parse every PlusCal specification and never see the algorithm: the
-//! comment scanner skips it. This module is the missing layer — the piece
+//! comment scanner skips it. This module is the missing layer – the piece
 //! three handoffs have carried as "the PlusCal wall".
 //!
 //! The reference is `tla2tools`' `pcal` package (consulted as source, never
-//! linked — the same relationship `bench/z3_parity` has to Z3). The
+//! linked – the same relationship `bench/z3_parity` has to Z3). The
 //! pipeline mirrors its phases exactly, because the label-placement rules
 //! *are* the semantics and each phase decides part of them:
 //!
-//! 1. [`extract`] — find the algorithm comment.
-//! 2. [`parse`] — the grammar, macro expansion included, over the front
+//! 1. [`extract`] – find the algorithm comment.
+//! 2. [`parse`] – the grammar, macro expansion included, over the front
 //!    end's own TLA+ token stream.
-//! 3. [`labels`] — required-label insertion, then the split into labeled
+//! 3. [`labels`] – required-label insertion, then the split into labeled
 //!    clusters (one cluster = one atomic step) and the `pc`-elision check.
-//! 4. [`symtab`] — name disambiguation and renaming.
-//! 5. [`explode`] — control flow (`while`, labeled `if`/`either`, `goto`)
+//! 4. [`symtab`] – name disambiguation and renaming.
+//! 5. [`explode`] – control flow (`while`, labeled `if`/`either`, `goto`)
 //!    becomes `pc` guards and updates.
-//! 6. `emit` — the TLA+ text: `VARIABLES`, `vars`, `ProcSet`, `Init`, one
+//! 6. `emit` – the TLA+ text: `VARIABLES`, `vars`, `ProcSet`, `Init`, one
 //!    action per cluster, `Next`, `Terminating`, `Spec`.
 //!
 //! The output is ordinary TLA+ text placed in a `BEGIN/END TRANSLATION`
 //! region exactly where `pcal.trans` puts it, so every downstream consumer
-//! — SANY, TLC, the parity harnesses, the BMC checker — reads it unchanged.
+//! – SANY, TLC, the parity harnesses, the BMC checker – reads it unchanged.
 //!
 //! Constructs outside the corpus-sized subset are **declined with a named
 //! error**, never approximated: `procedure`/`call`/`return` (the stack
@@ -59,7 +59,7 @@ pub struct Translation {
 /// # Errors
 ///
 /// A [`SyntaxError`] naming the first construct this translator does not
-/// implement or the first grammar violation — never a guess.
+/// implement or the first grammar violation – never a guess.
 pub fn translate_file(src: &str) -> Result<Translation> {
     let found = extract::find_algorithm(src)?;
     let mut parsed = parse::parse(&found)?;
@@ -180,7 +180,7 @@ fn labels_note(added: &[String]) -> String {
 fn splice(src: &str, found: &extract::Found, region: &str) -> (String, bool) {
     let lines: Vec<&str> = src.lines().collect();
     // `findTokenPair`: a line containing the two tokens `BEGIN` and
-    // `TRANSLATION` — `\*`, `\**` and Toolbox variants all match.
+    // `TRANSLATION` – `\*`, `\**` and Toolbox variants all match.
     let marker = |l: &str, word: &str| {
         let t = l.trim_start().trim_start_matches(['\\', '*']).trim_start();
         t.starts_with(word)

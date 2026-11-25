@@ -868,11 +868,11 @@ impl EnumerativeInstantiator {
 
         for (i, &(_name, sort)) in bound_vars.iter().enumerate() {
             let mut domain = Vec::new();
-            // Use the universe if available — as the model's *distinguished
+            // Use the universe if available – as the model's *distinguished
             // values*, not its raw terms: two universe elements the model
             // assigns the same value (`union(a,b)` and `b`) are the same
             // domain point, and instantiating at both emits a lemma that is
-            // syntactically fresh but semantically redundant — the ground
+            // syntactically fresh but semantically redundant – the ground
             // model does not move, yet the round counts as productive, the
             // rounds never saturate, and the compound closure
             // (`union(union(a,b),a)`, ...) grows the universe and the entry
@@ -889,7 +889,7 @@ impl EnumerativeInstantiator {
             // universe with compounds collapsed through the computed
             // tables, so the seeder stops instantiating `union`-shaped
             // axioms at compounds next to the points they already denote
-            // (`(x, b, union(b,b))` is the `(x, b, b)` tuple) — that
+            // (`(x, b, union(b,b))` is the `(x, b, b)` tuple) – that
             // enumeration is what minted the ever-deeper compounds of the
             // chase.  Non-defining axioms (the merge-forcing `seteq`
             // pairs) keep the raw universe: their instances at *distinct*
@@ -902,7 +902,7 @@ impl EnumerativeInstantiator {
             {
                 // Table mode: the completed structure's domain governs the
                 // whole problem (the aux restrictions, the tables, the
-                // certification semantics) — every engine enumerates the
+                // certification semantics) – every engine enumerates the
                 // frozen domain, not only the table-owned axioms' axes.
                 // Enumerating raw pairs on the *other* axioms of a table
                 // problem bloats the observer tables past every chain cap

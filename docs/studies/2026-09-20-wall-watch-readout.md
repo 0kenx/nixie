@@ -5,12 +5,12 @@ wall, not only solved counts).  Method note per `docs/BENCHMARKING.md`:
 wall here is a *secondary observation* over the calm-load snapshot's own
 pairwise-sequential runs (both solvers ran in one table pass, same box),
 cross-checked against the deterministic conflict counters before any
-conclusion is drawn — counters decide "real vs noise", wall decides
+conclusion is drawn – counters decide "real vs noise", wall decides
 "fragile vs solid".
 
 ## The health datum
 
-**Both-solved median wall ratio nixie/z3 = 0.64** (n=78) — on cells both
+**Both-solved median wall ratio nixie/z3 = 0.64** (n=78) – on cells both
 solvers decide, nixie is typically *faster*.  The gap lives entirely in
 the unsolved tail, not in per-solve slowness.
 
@@ -24,7 +24,7 @@ the unsolved tail, not in per-solve slowness.
 
 `bench_16217` is one load spike from re-timing-out.  Its residual was
 dumped (`NIXIE_BV_DUMP_PRE`): 1 242 assertions of deeply nested
-`bvadd`/`bvmul` chains over concat-wrapped terms — **z3's own plain
+`bvadd`/`bvmul` chains over concat-wrapped terms – **z3's own plain
 `simplify` also leaves ~159 atoms there**; the 0-conflict closer is its
 full qfbv cascade (`solve-eqs` + `propagate-values` + `elim-uncnstr` +
 blast), i.e. a *tactic-pipeline* gap, not a single missing rewrite rule.
@@ -38,19 +38,19 @@ are that route's pins.
 
 Worst wall shifts, counter-checked:
 
-- `bench_6722` 569→1 790 ms — conflicts **0→0: load noise**, not real.
-- `convert-jpg2gif-1145` 338→626 ms — conflicts 274→274: noise.
-- `Example_11` 2 011→2 550 ms — conflicts 7 667→**14 106**: a REAL
+- `bench_6722` 569→1 790 ms – conflicts **0→0: load noise**, not real.
+- `convert-jpg2gif-1145` 338→626 ms – conflicts 274→274: noise.
+- `Example_11` 2 011→2 550 ms – conflicts 7 667→**14 106**: a REAL
   trajectory shift (+84 %, still solves comfortably; watch it at the
-  next snapshot — if it doubles again, bisect).
-- Median stayed-solved shift **0.86×** — the slice got collectively
+  next snapshot – if it doubles again, bisect).
+- Median stayed-solved shift **0.86×** – the slice got collectively
   FASTER (the SAT-core landings), so the two noise cells and one real
   shift sit on an improving base.
 
 ## The worst both-solved wall ratios (the z3-folds-at-0-conflicts class)
 
 `prp-3-18` 47× (938 ms vs 20 ms), `problem_2__014` 42×, `bench_604`
-11×, `FISCHER10-7-fair` 9.5×, `bench_16217` 9.3× — every one a cell
+11×, `FISCHER10-7-fair` 9.5×, `bench_16217` 9.3× – every one a cell
 where z3's preprocessor decides and nixie searches (the nec-smt /
 ctx-simplify fold gap already named in the 2026-09-19 attribution
 study).  These are wall-visible *because* they solve; the same mechanism

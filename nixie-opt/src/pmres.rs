@@ -429,8 +429,8 @@ impl PmresSolver {
                         // variables.  Dropping it (the body used to stay the
                         // original clause) let each constraint be violated by
                         // its newest blocking variable only, so a core that
-                        // needs two violations — at most one of `x0, x1, x2`
-                        // with all three wanted — reproduced itself forever.
+                        // needs two violations – at most one of `x0, x1, x2`
+                        // with all three wanted – reproduced itself forever.
                         // A `solve_with_assumptions` that silently dropped
                         // assumptions after a backjump used to end that loop
                         // with a `Sat` violating them (fixed 2026-09-28,

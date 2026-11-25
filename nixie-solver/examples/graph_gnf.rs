@@ -1,4 +1,4 @@
-//! GNF (graph DIMACS) driver — differential-testing harness against MonoSAT.
+//! GNF (graph DIMACS) driver – differential-testing harness against MonoSAT.
 //!
 //! Reads the unweighted directed subset of MonoSAT's GNF format and solves
 //! it with the integrated graph constraints (`nixie_theories::graph`):

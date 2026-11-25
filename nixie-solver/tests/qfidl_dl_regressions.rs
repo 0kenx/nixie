@@ -4,7 +4,7 @@
 //! Each test pins one of the four defects fixed together in that sweep, on
 //! the exact SMT-LIB instance that exposed it:
 //!
-//! 1. **Phantom dense edges** — the dense core was created lazily on first
+//! 1. **Phantom dense edges** – the dense core was created lazily on first
 //!    feed, so decision levels that preceded its creation never recorded a
 //!    scope mark; a backtrack past that point hit `DenseDlCore::pop`'s
 //!    no-mark early return and stranded every live edge as a permanent
@@ -12,20 +12,20 @@
 //!    DL route broke purity and replayed into the simplex (DTP/queens:
 //!    10s–2s where Z3 answers in 20–80ms).  Fix: eager creation in
 //!    `DiffLogicSolver::with_config`.
-//! 2. **Constraint wipe on routine backtrack** — `ConstraintGraph::push`
+//! 2. **Constraint wipe on routine backtrack** – `ConstraintGraph::push`
 //!    initialized the new level's rollback mark to `0` instead of the
 //!    current constraint count, so a pop to an add-less level truncated
 //!    EVERYTHING, including level-0 facts.  Symptom: false `sat` on
 //!    `qlock-4-10-11.base` once the sparse engine could own a verdict.
 //!    Fix: mark starts at `constraints.len()`.
-//! 3. **Scope-leak across push/pop** — `DiffLogicSolver::reset` did not
+//! 3. **Scope-leak across push/pop** – `DiffLogicSolver::reset` did not
 //!    clear the dense term map / sparse scratch together with the graph.
-//! 4. **1-UIP under chronological backtracking** — the theory-conflict
+//! 4. **1-UIP under chronological backtracking** – the theory-conflict
 //!    analysis walked the trail discharging its counter on ANY seen literal,
 //!    not only conflict-level ones (the Boolean `analyze`'s
 //!    `analyze_scan_pivot` guard exists for exactly this).  On non-level-
 //!    sorted trails it terminated early and emitted an asserting literal at
-//!    the backtrack level — `backtrack_level == uip level`, tripping the
+//!    the backtrack level – `backtrack_level == uip level`, tripping the
 //!    debug assert on `qlock-4-10-11.base` (debug) and corrupting the trail
 //!    in release.  Fix: port the guard.
 //!
@@ -58,7 +58,7 @@ fn solve_file(rel: &str, timeout_ms: u64) -> Option<(SolverResult, std::time::Du
     Some((verdict, start.elapsed()))
 }
 
-/// DTP family: 35 constants / 210 clauses — the dense-core route's home turf.
+/// DTP family: 35 constants / 210 clauses – the dense-core route's home turf.
 /// The phantom-edge defect timed this out (>10s); Z3 answers in 50ms.
 /// Budget: 5s (≈100× headroom over the fixed ~30ms).
 #[test]
@@ -93,7 +93,7 @@ fn qfidl_dtp_s14_unsat_is_fast_and_correct() {
 }
 
 /// queens_bench: the eager-atom-interning regression (before it, CDCL
-/// decided every atom by hand — 35k decisions where Z3's eagerly
+/// decided every atom by hand – 35k decisions where Z3's eagerly
 /// internalized closure needs 66).  Z3: 78ms sat.
 #[test]
 fn qfidl_super_queen38_is_fast_and_correct() {
@@ -134,7 +134,7 @@ fn qfidl_qlock_11_base_is_unsat() {
 }
 
 /// qlock-4-10-11.induction (Z3: sat): the sat-side member of the same
-/// family — pins that the fixes did not overcorrect into a wrong `unsat`.
+/// family – pins that the fixes did not overcorrect into a wrong `unsat`.
 #[test]
 fn qfidl_qlock_11_induction_is_sat() {
     let Some((res, _)) = solve_file(

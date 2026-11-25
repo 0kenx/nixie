@@ -3,7 +3,7 @@
 //! A polynomial is a map from monomials (exponent vectors, reusing the
 //! coefficient-agnostic parts of `nixie_math::polynomial::Monomial`) to
 //! Montgomery-form coefficients. The 𝔽_p-specific `mul`/`add` reduce as
-//! they go, so **coefficient growth does not exist here** — the pathology
+//! they go, so **coefficient growth does not exist here** – the pathology
 //! that makes Gröbner bases over ℚ explode, and the reason the OKTB23
 //! procedure works at all.
 //!
@@ -62,7 +62,7 @@ impl MPoly {
         p
     }
 
-    /// Iterate the terms in hash order — determinism-sensitive code must
+    /// Iterate the terms in hash order – determinism-sensitive code must
     /// use [`MPoly::sorted_terms`] instead.
     pub fn terms_iter(&self) -> impl Iterator<Item = (&Monomial, &Limbs)> {
         self.terms.iter()
@@ -91,7 +91,7 @@ impl MPoly {
     }
 
     /// The terms sorted by `order` (greatest first is the caller's choice;
-    /// this returns ascending order — `sorted_terms` reversed gives the
+    /// this returns ascending order – `sorted_terms` reversed gives the
     /// leading term first, which is how the Buchberger loop consumes it).
     pub fn sorted_terms(&self, order: MonomialOrder) -> Vec<(Monomial, Limbs)> {
         let mut terms: Vec<(Monomial, Limbs)> = self
@@ -354,7 +354,7 @@ mod tests {
         p.add_term(&f, mono(&[(0, 3)]), &f.one());
         p.add_term(&f, mono(&[(1, 1), (0, 1)]), &f.one());
         p.add_term(&f, mono(&[(1, 2)]), &f.one());
-        // grevlex: x^3 vs x y vs y^2 — all degree-incomparable pairs? x^3
+        // grevlex: x^3 vs x y vs y^2 – all degree-incomparable pairs? x^3
         // is degree 3, the others 2 → x^3 leads in graded orders.
         assert_eq!(p.lm(MonomialOrder::GRevLex), Some(mono(&[(0, 3)])));
         assert_eq!(p.lm(MonomialOrder::GrLex), Some(mono(&[(0, 3)])));

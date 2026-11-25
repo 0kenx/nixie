@@ -15,7 +15,7 @@
 //! face. It is a proof of unsatisfiability when nothing about it was chosen,
 //! and it is merely a bad guess when something was. Reading the second as the
 //! first is how `x·y = 12` came back `unsat`, and the decision level is no
-//! help in telling them apart — level 0 says only that no *Boolean* branch is
+//! help in telling them apart – level 0 says only that no *Boolean* branch is
 //! outstanding, which has no bearing on how many arithmetic witnesses were
 //! free picks.
 //!
@@ -39,7 +39,7 @@
 //!   an exhausted ledger yields `Unknown` and never `Unsat`.
 //!
 //! A variable whose region was a single real point is recorded as
-//! [`CommittedWitness::Pinned`] rather than as a source to draw from — there
+//! [`CommittedWitness::Pinned`] rather than as a source to draw from – there
 //! is nothing to draw. That distinction is also what
 //! `NlsatSolver::certify_forced_chain_conflict` reads: a dead end reached
 //! through nothing but pinned variables really is a theory conflict, because
@@ -99,7 +99,7 @@ enum CommittedWitness {
         /// Every point drawn for it so far, oldest first. The first entry is
         /// the original pick.
         drawn: Vec<BigRational>,
-        /// Where replacements come from — the region as it stood when the
+        /// Where replacements come from – the region as it stood when the
         /// original pick was made.
         region: IntervalSet,
     },
@@ -187,8 +187,8 @@ impl WitnessLedger {
     /// *earlier* variable's pick may still be, so an exhausted entry is
     /// dropped and the search for an alternative continues behind it.
     ///
-    /// With no allowance left this withdraws nothing at all — neither
-    /// releasing nor dropping any entry — so a conceded search leaves the
+    /// With no allowance left this withdraws nothing at all – neither
+    /// releasing nor dropping any entry – so a conceded search leaves the
     /// assignment exactly as the caller found it.
     pub(super) fn withdraw(&mut self) -> Withdrawal {
         let mut released: SmallVec<[Var; 4]> = SmallVec::new();
@@ -221,7 +221,7 @@ impl WitnessLedger {
     }
 
     /// Whether every recorded witness was pinned by the constraints rather
-    /// than chosen — and there is at least one.
+    /// than chosen – and there is at least one.
     ///
     /// See `NlsatSolver::certify_forced_chain_conflict`, the only caller: a
     /// dead end reached without ever making an arithmetic choice cannot be
@@ -363,7 +363,7 @@ mod tests {
     }
 
     /// A pinned witness offers no replacement, so a withdrawal walks past it
-    /// to an earlier entry that does — releasing both on the way.
+    /// to an earlier entry that does – releasing both on the way.
     #[test]
     fn test_ledger_walks_past_pinned_entries_to_an_earlier_choice() {
         let mut ledger = WitnessLedger::default();
@@ -384,7 +384,7 @@ mod tests {
         assert!(!ledger.every_witness_pinned());
     }
 
-    /// An algebraic witness offers no rational replacement, and — critically —
+    /// An algebraic witness offers no rational replacement, and – critically –
     /// must not read as "pinned", which would license a forced-chain conflict
     /// certificate over a point that was in fact chosen.
     #[test]

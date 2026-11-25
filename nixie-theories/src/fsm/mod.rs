@@ -3,13 +3,13 @@
 //! This module provides **symbolic acceptance constraints over a fixed
 //! finite NFA**: the automaton's state universe, alphabet, initial state and
 //! accepting states are fixed at declaration, and every transition carries a
-//! Boolean **guard** term — the transition exists in a candidate automaton
+//! Boolean **guard** term – the transition exists in a candidate automaton
 //! exactly when its guard is true. `accepts(word)` reifies acceptance of a
 //! constant word as a single Boolean atom that the solver must assign the
 //! acceptance value; assert it, negate it, or combine it in arbitrary
 //! Boolean formulas (with arithmetic, BV, strings, ...). Because guards are
-//! ordinary terms, several transitions — across positions, words, and
-//! automata — can share one guard, which is what makes **synthesis** from
+//! ordinary terms, several transitions – across positions, words, and
+//! automata – can share one guard, which is what makes **synthesis** from
 //! positive and negative word examples possible: the solver searches over
 //! guard assignments until one automaton accepts every positive example and
 //! rejects every negative one.
@@ -36,7 +36,7 @@
 //!   nothing on an epsilon transition. The **empty word** is accepted
 //!   exactly when the initial state reaches an accepting state through
 //!   epsilon transitions (in particular when it *is* accepting).
-//! - Negated acceptance — `¬accepts(word)` — excludes every accepting run.
+//! - Negated acceptance – `¬accepts(word)` – excludes every accepting run.
 //!
 //! # Procedure: reduction to explained graph reachability
 //!
@@ -53,7 +53,7 @@
 //!   keeps one meaning across all positions and words (shared-term aliasing
 //!   in the graph model).
 //! - `accepts(word)` is reified as a fresh atom defined by
-//!   `∨_{qf ∈ F} reach((q0,0), (qf, n))` — plus the constant `true` when
+//!   `∨_{qf ∈ F} reach((q0,0), (qf, n))` – plus the constant `true` when
 //!   `n = 0` and `q0 ∈ F` (Nixie graph reachability counts paths of length
 //!   ≥ 1 only; the zero-length accepting run is exactly this constant, and
 //!   every other accepting path has length ≥ n ≥ 1, so the disjunction is
@@ -63,14 +63,14 @@
 //!   An alternative "sink" construction (a fresh sink vertex with
 //!   unconditional edges from `(qf, n)` for each accepting `qf`, acceptance
 //!   = one reach atom) is equivalent, but needs unconditional product
-//!   edges — extra asserted-true variables — while the disjunction above
+//!   edges – extra asserted-true variables – while the disjunction above
 //!   reuses only the existing reach atoms; that is the construction
 //!   implemented here.
 //!
 //! Correctness follows from graph-reachability soundness: a path in the
 //! product is exactly an accepting run (guards present ⇔ transitions
 //! exist), an under-approximation path proves acceptance, and a cut over
-//! the over-approximation refutes it — MonoSAT's forced/possible scheme,
+//! the over-approximation refutes it – MonoSAT's forced/possible scheme,
 //! with explanations carried by the guard literals themselves.
 //!
 //! # Scope, lifecycle, and certification
@@ -497,7 +497,7 @@ impl FsmModel {
 
     /// The per-accepting-state product reach atoms that compose the
     /// acceptance definition of `accepts(a, word)`: `(qf, atom)` pairs
-    /// where `atom` reifies `reach((q0,0), (qf, n))` — a run consuming the
+    /// where `atom` reifies `reach((q0,0), (qf, n))` – a run consuming the
     /// entire word and ending exactly at `qf`. Acceptance is the
     /// disjunction of these atoms (plus, when the word is empty and the
     /// initial state is accepting, the constant true). Introspection for
@@ -561,7 +561,7 @@ impl FsmModel {
     }
 
     /// The distinct non-constant guard terms of automaton `a`, in first
-    /// declaration order — the terms whose model values determine the
+    /// declaration order – the terms whose model values determine the
     /// candidate automaton (for tests and model validation).
     pub fn guards(&self, a: AutomatonHandle) -> Result<Vec<TermId>, FsmError> {
         let mut seen = FxHashSet::default();
@@ -578,8 +578,8 @@ impl FsmModel {
     /// assignment (`truth` answers the value of a non-constant guard term;
     /// constant guards are evaluated directly). This is the reference
     /// interpreter: an iterative forward search over `(state, position)`
-    /// configurations with epsilon steps — **no** product construction, no
-    /// graph machinery — so agreement with the solver is genuine
+    /// configurations with epsilon steps – **no** product construction, no
+    /// graph machinery – so agreement with the solver is genuine
     /// cross-validation.
     ///
     /// Returns `true` iff some run consumes the entire word and ends in an
@@ -656,7 +656,7 @@ impl FsmModel {
     /// constant-`true` guards and the exclusion of statically dead
     /// constant-`false` guards), and reach-atom pairs must equal exactly
     /// what the declaration and word determine. A mismatch is an explicit
-    /// error — never a silently trusted reduction — so consumers retaining
+    /// error – never a silently trusted reduction – so consumers retaining
     /// these statements (certificate checking) are anchored to the FSM
     /// inputs. Call before `into_propagator`/`register_fsm`.
     pub fn graph_statements(
@@ -790,7 +790,7 @@ impl FsmModel {
 /// Layout: vertex `(q, p) = q + p * states` (layer-major). Constant
 /// `false` guards contribute no edges; constant `true` guards use the
 /// asserted-true `true_var` as edge atom. Identical `(u, v, atom)` edges
-/// are deduplicated — parallel duplicates with one atom add no presence
+/// are deduplicated – parallel duplicates with one atom add no presence
 /// information.
 fn build_product(
     spec: &AutomatonSpec,
@@ -821,7 +821,7 @@ fn build_product(
     let v = |q: u32, p: usize| VertexId::new(q + (p as u32) * states);
 
     // Epsilon transitions live in every layer; symbol transitions only at
-    // matching positions. Identical `(u, v, atom)` edges are deduplicated —
+    // matching positions. Identical `(u, v, atom)` edges are deduplicated –
     // parallel duplicates with one atom add no presence information.
     let mut true_var_local = *true_var;
     let mut outcome = Ok(());
@@ -877,7 +877,7 @@ fn build_product(
 
     // Definition: OR over accepting states of reach((q0,0),(qf,n)); plus
     // the constant true for the zero-length accepting run (n = 0 and the
-    // initial state accepting — the graph's length-≥-1 reach cannot see
+    // initial state accepting – the graph's length-≥-1 reach cannot see
     // it). No accepting states: the constant false.
     let mut disjuncts: Vec<(u32, TermId)> = Vec::with_capacity(accepting.len());
     let mut terms = Vec::with_capacity(accepting.len() + 1);

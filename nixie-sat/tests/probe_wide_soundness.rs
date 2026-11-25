@@ -1,7 +1,7 @@
 //! Probe-schedule widening (`NIXIE_PROBE_WIDE`, default on since
 //! 2026-09-07): the candidate queue includes variables with binaries in
 //! both polarities (the legacy schedule skipped them).  Only the ORDER
-//! and COVERAGE of probe candidates changes — the probe itself (assign →
+//! and COVERAGE of probe candidates changes – the probe itself (assign →
 //! propagate → check) is identical, so soundness is structural.  This
 //! fuzz is the belt-and-suspenders check.
 

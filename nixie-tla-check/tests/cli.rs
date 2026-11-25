@@ -4,8 +4,8 @@
 //! `tla-connect`, the model-based testing harness for Rust, runs
 //! `apalache-mc check --inv=… --length=… --out-dir=…`, collects `*.itf.json`,
 //! and replays each trace against a driver. These pin the parts of that
-//! contract a caller depends on — the command line, the exit codes, and the
-//! file that appears in the output directory — because a caller will branch on
+//! contract a caller depends on – the command line, the exit codes, and the
+//! file that appears in the output directory – because a caller will branch on
 //! them without asking us anything.
 
 use std::path::{Path, PathBuf};
@@ -84,7 +84,7 @@ fn a_counterexample_is_exit_12_and_an_itf_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// No counterexample within the bound is exit **0** — and the message says the
+/// No counterexample within the bound is exit **0** – and the message says the
 /// bound out loud, because a bounded search that finds nothing is not a proof.
 #[test]
 fn no_counterexample_is_exit_0() {
@@ -102,7 +102,7 @@ fn no_counterexample_is_exit_0() {
 }
 
 /// A specification that does not type check is **120**, and one that does not
-/// parse is **150** — Apalache's codes, which a caller may branch on to tell
+/// parse is **150** – Apalache's codes, which a caller may branch on to tell
 /// "your spec is wrong" from "the checker fell over".
 #[test]
 fn the_failure_exit_codes_are_apalaches() {
@@ -134,7 +134,7 @@ Inv  == x = 1
 /// `--inv` is optional exactly when deadlock checking is on (issue #26):
 /// a deadlock-only check is a complete question. With `--no-deadlock` and
 /// no invariant there is nothing to check at all, and that is still
-/// refused — loudly, naming what to give.
+/// refused – loudly, naming what to give.
 #[test]
 fn a_missing_invariant_is_refused_only_without_deadlock_checking() {
     let dir = scratch("noinv");
@@ -197,7 +197,7 @@ fn the_differences_from_apalache_are_reported() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- --max-error ----
+// ======== --max-error ========
 
 const CHOICE: &str = r"
 ---- MODULE Choice ----
@@ -210,7 +210,7 @@ View == <<x>>
 ====
 ";
 
-/// `--max-error=N` means N counterexamples distinct **under the view** —
+/// `--max-error=N` means N counterexamples distinct **under the view** –
 /// Apalache's semantics, including its refusal of `--max-error > 1` without
 /// one (`ApalacheConfigResolver`). Each reported trace is ruled out at its
 /// view's value, so the next must differ where the author looks.
@@ -250,13 +250,13 @@ fn max_error_yields_distinct_counterexamples() {
     seen.sort();
     assert_eq!(seen, ["3", "4", "5"]);
     assert_eq!(r.out.matches("independently replayed: yes").count(), 3);
-    // The search is exhaustive, so three is all there are — and it says so
+    // The search is exhaustive, so three is all there are – and it says so
     // rather than quietly delivering fewer than asked.
     assert!(r.err.contains("asked for more"), "{}", r.err);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A view that names no definition is refused with exit 255 — an honest
+/// A view that names no definition is refused with exit 255 – an honest
 /// refusal rather than a note that would silently mean "no view".
 #[test]
 fn a_view_that_names_nothing_is_refused() {
@@ -367,7 +367,7 @@ fn a_deterministic_spec_has_one_counterexample() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- the `.cfg` divergences (issue #11) ----
+// ======== the `.cfg` divergences (issue #11) ========
 
 const RING: &str = r"
 ---- MODULE Ring ----
@@ -382,7 +382,7 @@ Inv  == x \in 0 .. N - 1
 
 /// A `<Spec>.cfg` next to the specification is **not** read: Apalache's own
 /// default since 0.25.0. Instead a hint names the file and the flag that
-/// enables it — silently reading it applied its `CONSTRAINT`/`CONSTANTS`
+/// enables it – silently reading it applied its `CONSTRAINT`/`CONSTANTS`
 /// without anyone asking, which changes the verdict.
 #[test]
 fn a_cfg_beside_the_spec_is_not_read_and_says_so() {
@@ -397,7 +397,7 @@ fn a_cfg_beside_the_spec_is_not_read_and_says_so() {
         spec.to_str().expect("a path"),
     ]);
     // Without the file, `N` is arbitrary and `0 .. N - 1` has no members: the
-    // checker declines rather than guessing — and the hint says how to enable.
+    // checker declines rather than guessing – and the hint says how to enable.
     assert_ne!(r.code, 0, "an arbitrary `N` must not pass silently");
     assert!(
         r.err.contains("TLC config file found"),
@@ -527,7 +527,7 @@ fn max_run_is_refused_under_check() {
 
 /// `--inv=A,B` is a list: every invariant is checked, the one that broke is
 /// named on stdout and in the ITF `#meta`, and a name that does not resolve
-/// refuses the whole list — never a silent subset.
+/// refuses the whole list – never a silent subset.
 #[test]
 fn inv_takes_a_comma_separated_list() {
     let dir = scratch("invlist");
@@ -629,7 +629,7 @@ fn a_cfg_with_specification_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- the option table and subcommands (issue #27) ----
+// ======== the option table and subcommands (issue #27) ========
 
 /// Performance-only knobs are accepted with a note; verdict-changing ones
 /// are implemented or refused with the reason; unknown stays fatal.
@@ -718,7 +718,7 @@ fn the_stdout_contract_is_apalaches() {
 
 /// `parse` and `typecheck` are their own subcommands with their own codes:
 /// 150 for a file that does not parse, 120 for one that does not type
-/// check, 0 otherwise — Apalache's cheap syntax gates.
+/// check, 0 otherwise – Apalache's cheap syntax gates.
 #[test]
 fn parse_and_typecheck_are_subcommands() {
     let dir = scratch("subcmd");
@@ -778,7 +778,7 @@ fn unsupported_subcommands_refuse_with_reasons() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// ---- simulate: sampled behaviours (issue #28) ----
+// ======== simulate: sampled behaviours (issue #28) ========
 
 const WALK: &str = r"
 ---- MODULE Walk ----
@@ -793,7 +793,7 @@ View == <<x>>
 ";
 
 /// `simulate` samples: at each step one *enabled* disjunct is taken, and a
-/// violation found in a run is a real counterexample — exit 12, replayed,
+/// violation found in a run is a real counterexample – exit 12, replayed,
 /// with its `example<r>.itf.json` when `--output-traces` says so.
 #[test]
 fn simulate_reports_a_sampled_violation() {
@@ -846,7 +846,7 @@ fn simulate_no_error_is_about_the_sampled_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The same seed gives byte-identical sampled behaviour — where Apalache's
+/// The same seed gives byte-identical sampled behaviour – where Apalache's
 /// simulation is not reproducible, this one is a deterministic function of
 /// `--seed`, and a reported bug must replay from the seed alone.
 #[test]
@@ -884,8 +884,8 @@ fn simulate_is_seed_deterministic() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A role may name a member of an **unnamed** instance — `INSTANCE y2k
-/// WITH …` makes `Init`, `Next` and `Safety` visible unprefixed — which is
+/// A role may name a member of an **unnamed** instance – `INSTANCE y2k
+/// WITH …` makes `Init`, `Next` and `Safety` visible unprefixed – which is
 /// the y2k simulate cell's very shape.
 #[test]
 fn a_role_may_name_an_open_instance_member() {

@@ -1,14 +1,14 @@
-# Handoff: the PlusCal wall — the TLA+ side's single biggest coverage lever, handed to its next owner (2026-09-21, night)
+# Handoff: the PlusCal wall – the TLA+ side's single biggest coverage lever, handed to its next owner (2026-09-21, night)
 
 **From:** the gap-filling session that closed the attribution arc's
 unowned items (snapshot, tree-health validation, ndir2, the deep-split
-deletion) — PlusCal was the one standing item whose owner never
+deletion) – PlusCal was the one standing item whose owner never
 picked it up across three handoff generations
 (`2026-09-19-arc-closed.md` item 1 → the attribution-arc close-out →
 today).  **Read `AGENTS.md` first** (the reference-first rule decides
 the whole route below).  Successor context:
 `docs/handovers/2026-09-19-tla-bags.md` (the TLA+ front end's state,
-the parity gates, the bag vocabulary) — read it before touching
+the parity gates, the bag vocabulary) – read it before touching
 `nixie-tla*`.
 
 ## Where the wall is (verified this session, current tree)
@@ -20,21 +20,21 @@ the parity gates, the bag vocabulary) — read it before touching
   `bench/tla_bmc/METHODOLOGY.md`.
 * **PlusCal bodies are TLA+ COMMENTS** (`(* --algorithm … *)`).  The
   current parser therefore *accepts* every PlusCal spec and silently
-  ignores the algorithm — the parity gates run green over these files
+  ignores the algorithm – the parity gates run green over these files
   because only the surrounding plain-TLA+ definitions are ever seen.
   Nothing is broken; a whole specification layer is simply absent.
 * **The corpus surface (measured, not estimated)**:
   `../temp/tlaplus-examples` holds **424 `.tla` files; 7 carry
-  PlusCal bodies** — `KVsnap`, `Slush`, `QueensPluscal` (+ a
-  `.toolbox` duplicate — skip it), `MultiPaxos`, `Sailfish`,
+  PlusCal bodies** – `KVsnap`, `Slush`, `QueensPluscal` (+ a
+  `.toolbox` duplicate – skip it), `MultiPaxos`, `Sailfish`,
   `DiningPhilosophers`.  All use the single-`--algorithm` form;
   three have `process` blocks; none use `procedure`.
-* **A correction to the record**: `Nano.tla` — named in two handoffs
-  as "blocked on PlusCal" — has **no PlusCal body** (verified: no
+* **A correction to the record**: `Nano.tla` – named in two handoffs
+  as "blocked on PlusCal" – has **no PlusCal body** (verified: no
   `--algorithm` marker; it is plain TLA+ with Init/Next and the
   `MC*.cfg` models in its toolbox).  Its actual blockers are the two
   documented bag-BMC declines (state-bag updates, `DOMAIN`
-  quantifiers — the lambda-shaped function encoding / `Bag`-sort
+  quantifiers – the lambda-shaped function encoding / `Bag`-sort
   bridge, `2026-09-19-arc-closed.md` item 3).  The PlusCal value
   claim stands on the 7 real PCal specs, not on Nano.
 
@@ -52,34 +52,34 @@ java -cp "$JAR" pcal.trans DiningPhilosophers.tla
 `pcal.trans` is the standalone entry (`pcal/Translator` the API);
 SANY also auto-translates on parse.  The output shape verified on
 DiningPhilosophers: `vars == <<…>>`, `Init == …`, and
-`Next == \E self \in ProcSet : Action(self)` — one labeled statement
+`Next == \E self \in ProcSet : Action(self)` – one labeled statement
 cluster per atomic step.  **The route is golden-output parity**, not
 reimplementation-from-memory: translate all 7 corpus files with
 `pcal.trans` FIRST, and build our translator against those outputs
 (parse+level parity on the translated defs, eval parity on the
-translated Init/successor states vs TLC — the existing harnesses
+translated Init/successor states vs TLC – the existing harnesses
 extend directly).  The PCal grammar subset the corpus actually uses
 (assign, await, if, while, with, either, call→macro-free, skip,
 labels, process sets, `define` blocks) is small; the *semantics* live
-in label placement — see the traps.
+in label placement – see the traps.
 
 ## The route, in order
 
 1. **Extract** the `(* --algorithm … *)` / `--process` bodies from
    the comment stream (nested `(* *)`/paren balancing is a real
-   lexer concern — the bodies contain full TLA+ expressions).
+   lexer concern – the bodies contain full TLA+ expressions).
 2. **Parse** the PCal grammar (corpus-sized subset above; the full
-   grammar is `pcal/`'s parser classes — read them, don't guess).
+   grammar is `pcal/`'s parser classes – read them, don't guess).
 3. **Translate** to plain TLA+ text/AST: the process-set
    instantiation (`self`), `Init`, `Next` as the disjunction over
    processes × labels, the `vars` tuple, macro expansion.  Emit
    **without fairness** first (`pcal.trans -nofairness` is the
-   matching reference flag) — `lower.rs` currently *declines*
+   matching reference flag) – `lower.rs` currently *declines*
    `WF_`/`SF_` (`ExprKind::Fairness`, ~L2527), and pcal's default
    emits `WF_vars(Next)` per process; a default-fairness translation
    would land straight on that decline.  Fairness is a follow-up,
    not a first slice.
-4. **Feed the existing pipeline unchanged** — the translation's
+4. **Feed the existing pipeline unchanged** – the translation's
    output is ordinary TLA+; `nixie-tla` parse → levels → lower →
    eval, and `nixie-tla-check` BMC, all run on it as-is.  BMC smoke
    targets: DiningPhilosophers (the classic), QueensPluscal, KVsnap.
@@ -101,13 +101,13 @@ in label placement — see the traps.
 * **Labels are the semantics**: a statement cluster between labels is
   one atomic step; getting label placement wrong yields specs that
   parse, typecheck, and answer wrongly.  The eval-parity gate is the
-  catcher — never trust parse-parity alone.
-* `pcal.trans` rewrites the input file in place (keeps `.old`) — run
+  catcher – never trust parse-parity alone.
+* `pcal.trans` rewrites the input file in place (keeps `.old`) – run
   it in a scratch copy, never on the corpus in place.
-* The `.toolbox` duplicate (QueensPluscal) is a model-instance copy —
+* The `.toolbox` duplicate (QueensPluscal) is a model-instance copy –
   one file, not two data points.
 * `pcal`'s translation of `await` inside a label cluster is a
-  conjunct guard (no step), not a block — mirror it exactly.
+  conjunct guard (no step), not a block – mirror it exactly.
 * Process sets can be expressions (`1..NP`), not just named
   CONSTANTSs; `self` is universally quantified in `Next`.
 * Standing environment traps: `/media/data` swings to 100 % (build
@@ -120,7 +120,7 @@ in label placement — see the traps.
 The corpus subset is genuinely small (no `procedure`, no `either`
 nests beyond one level in most files, three `process` users).  The
 work is a session-scale extractor+parser+translator plus the parity
-wiring — **provided** the golden outputs are built first and the
+wiring – **provided** the golden outputs are built first and the
 label semantics are treated as the correctness core, not a detail.
 The payoff: 7 corpus specs × their toolboxes currently invisible to
 the whole TLA+ path, and the "PlusCal wall" line finally comes off
@@ -130,6 +130,6 @@ three handoffs' open lists.
 
 1. PlusCal (this handoff).
 2. The `Bag`-sort bridge / lambda-shaped function encoding (the two
-   bag-BMC declines — design-sized, workload-gated).
-3. The delta-propagation proof obligation (study item 85 — the
+   bag-BMC declines – design-sized, workload-gated).
+3. The delta-propagation proof obligation (study item 85 – the
    boundary argument written, the canary standing).

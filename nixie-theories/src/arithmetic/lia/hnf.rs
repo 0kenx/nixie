@@ -25,7 +25,7 @@
 //! `pivot_rows` lists the row of each pivot in order. For full-row-rank
 //! inputs this is the textbook HNF (`[L | 0]` with `L` lower triangular,
 //! zero rows at the bottom); for rank-deficient inputs, zero rows may be
-//! interleaved — pure column operations cannot reorder rows — and
+//! interleaved – pure column operations cannot reorder rows – and
 //! `pivot_rows` is the authoritative echelon ordering.
 //!
 //! # Why this file was rewritten
@@ -46,8 +46,8 @@
 //! All elimination runs in `i128` with a magnitude guard
 //! ([`MAG_BOUND`]): every stored intermediate must satisfy `|v| ≤
 //! MAG_BOUND`, under which the products and sums of the update rules
-//! cannot overflow `i128`. Any violation — or a system larger than the
-//! entry budget — makes the API return `None` / [`EqSolution::GiveUp`]:
+//! cannot overflow `i128`. Any violation – or a system larger than the
+//! entry budget – makes the API return `None` / [`EqSolution::GiveUp`]:
 //! callers fall back to their search path. A wrapped answer is never
 //! returned (the same honest-skip policy as the rest of the arithmetic
 //! stack).
@@ -67,11 +67,11 @@ const MAG_BOUND: i128 = 1 << 40;
 /// `i64`-range coefficients and constants (the `IntEquation` rows the
 /// Diophantine check feeds it), so `2^63 − 1` admits EVERY legal input
 /// while keeping every stored entry within the range whose pairwise
-/// products still fit `i128` (`2^63 · 2^63 = 2^126 < 2^127`) — and the
+/// products still fit `i128` (`2^63 · 2^63 = 2^126 < 2^127`) – and the
 /// update arithmetic below is CHECKED, so a growth spurt outside the
 /// bound trips to `GiveUp` instead of wrapping.  The historical blanket
 /// `2^40` refused every wide-constant system at the first substitution
-/// (`2y + 4q = 2^62 − 3` — the mod-axiom parity refutation — was a
+/// (`2y + 4q = 2^62 − 3` – the mod-axiom parity refutation – was a
 /// `GiveUp`, degrading a decidable `unsat` to `unknown`).
 const MAG_BOUND_SOLVE: i128 = (1i128 << 63) - 1;
 
@@ -134,7 +134,7 @@ fn ext_gcd(a: i128, b: i128) -> (i128, i128, i128) {
 }
 
 /// Checked magnitude guard: `Some(v)` when `v` is within `mag`, `None`
-/// when the guard trips (the caller declines — never wraps).
+/// when the guard trips (the caller declines – never wraps).
 fn fits(v: i128, mag: i128) -> Option<i128> {
     if (-mag..=mag).contains(&v) {
         Some(v)
@@ -212,7 +212,7 @@ fn column_echelon(a: &[Vec<i128>], mag: i128) -> Option<ColEchelon> {
             // Checked throughout: the pair coefficients are bounded by
             // the entries' Bézout cofactors (≤ mag), so products stay
             // within `mag² ≤ 2^126`, and the sums of two products are
-            // checked — an overflow here is a guard trip (`None`),
+            // checked – an overflow here is a guard trip (`None`),
             // never a wrap.
             for row in h.iter_mut() {
                 let (hp, hq) = (row[p], row[q]);
@@ -266,7 +266,7 @@ fn column_echelon(a: &[Vec<i128>], mag: i128) -> Option<ColEchelon> {
 /// pivot row, or a consistency row fails); `Feasible` is a witness (with
 /// free variables set to zero, which is lossless: in column-echelon form
 /// the pivot variables are *uniquely determined* by the earlier ones, so
-/// either every choice of free variables works or none does — unlike
+/// either every choice of free variables works or none does – unlike
 /// row-Gaussian elimination with free variables, where integrality can
 /// depend on the free choice, this substitution order never consults
 /// them).
@@ -285,7 +285,7 @@ pub fn solve_integer_eq_system(a: &[Vec<i128>], b: &[i128]) -> EqSolution {
     let mut z = vec![0i128; e.rank];
     for (i, &pr) in e.pivot_rows.iter().enumerate() {
         // `b[pr]` is an `i64`-range input (`IntEquation::rhs`); the
-        // accumulator below is CHECKED-only (exact within `i128`) — the
+        // accumulator below is CHECKED-only (exact within `i128`) – the
         // historical `fits` here is what refused every wide-constant
         // system before the first pivot.
         let mut val = b[pr];
@@ -389,7 +389,7 @@ impl HermiteNormalForm {
         // Canonical reduction: for every pivot row i (in order), reduce
         // each below-diagonal entry H[pr_i][j], j < i, modulo the row's
         // own pivot via `col_j <- col_j - k·col_i`. This leaves all rows
-        // above i untouched (their entry in column i is zero — it is
+        // above i untouched (their entry in column i is zero – it is
         // right of their pivots), so a single top-down pass suffices.
         for i in 1..e.rank {
             let pr = e.pivot_rows[i];
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn hnf_known_value() {
         // Lattice basis {(2,0), (1,3)} (columns of [[2,1],[0,3]]):
-        // canonical column HNF is [[1, 0], [3, 6]] — pivot row 0
+        // canonical column HNF is [[1, 0], [3, 6]] – pivot row 0
         // concentrates gcd(2,1) = 1 at column 0; entry 3 below the pivot
         // already reduced mod 6.
         let hnf = HermiteNormalForm::try_compute(&[vec![2, 1], vec![0, 3]]).unwrap();
@@ -620,7 +620,7 @@ mod tests {
     }
 
     /// The wide-constant parity refutation (2026-09-19, the B&B-leaf
-    /// false-`sat` follow-up): `2y + 4q = 2^62 − 3` with `r = 3` — the
+    /// false-`sat` follow-up): `2y + 4q = 2^62 − 3` with `r = 3` – the
     /// mod-axiom system `mod(−2y + 2^62, 4) > 2` reduces to.  The
     /// left side is even, the right side odd: no integer solution.  The
     /// historical blanket `2^40` guard refused the system at the first
@@ -642,7 +642,7 @@ mod tests {
             other => panic!("expected Infeasible, got {other:?}"),
         }
         // The satisfiable twin (`2^62 − 1` on the right is odd too but
-        // the case is r = 1): even = odd is still infeasible — pick the
+        // the case is r = 1): even = odd is still infeasible – pick the
         // genuinely feasible wide form: `2y + 4q = 2^62` (even = even).
         let b = vec![1i128 << 62, 0];
         match solve_integer_eq_system(&a, &b) {
@@ -667,7 +667,7 @@ mod tests {
         }
         // A wide system whose witness exceeds i64 stays `Feasible` here
         // (the caller narrows witnesses through `i64::try_from` and
-        // declines those — completeness of the WITNESS channel, not the
+        // declines those – completeness of the WITNESS channel, not the
         // verdict).
         let a = vec![vec![1]];
         let b = vec![1i128 << 62];
@@ -681,9 +681,9 @@ mod tests {
     /// INTERMEDIATES leave the solver bound: Euclid pair updates combine
     /// another row's entries with the reducing row's Bézout cofactors, so
     /// two rows of `~2^40` coprime entries drive the untouched row's
-    /// entries to `~2^78` — beyond `MAG_BOUND_SOLVE`.  The guard must
+    /// entries to `~2^78` – beyond `MAG_BOUND_SOLVE`.  The guard must
     /// answer `GiveUp`, never a wrapped verdict.  (Out-of-bound INITIAL
-    /// entries, by contrast, are simply computed exactly — every
+    /// entries, by contrast, are simply computed exactly – every
     /// operation is checked; a divisibility-decidable row answers even
     /// with huge literals, which is strictly better than the old
     /// blanket refusal.)
@@ -790,7 +790,7 @@ mod tests {
                 }
             }
             // If brute force found a witness, the solver must not say
-            // Infeasible (checked above) — and any witness it produced is
+            // Infeasible (checked above) – and any witness it produced is
             // verified above, so agreement is complete.
         }
     }
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn solve_parity_shaped_system_is_feasible_for_even_charge() {
         // The 26-vertex parity shape, scaled down: 6 vertices, 8 edges,
-        // slack per vertex, even total charge — the exact class that
+        // slack per vertex, even total charge – the exact class that
         // stalled branch-and-bound (see the mixed-parity study).
         let verts = 6usize;
         let edges: Vec<(usize, usize)> = (1..verts)

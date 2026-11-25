@@ -3,7 +3,7 @@
 The round-13 handoff executed with its precondition restored: the machine
 had lost its `smt-lib/` corpus (handoff trap 2), so it was refetched from
 the official SMT-LIB release 2025 (non-incremental) Zenodo record 16740866
-— 12 logics, 108 659 files, 53 GiB, layout
+– 12 logics, 108 659 files, 53 GiB, layout
 `smt-lib/non-incremental/<LOGIC>/<FAMILY>/...` exactly as the tests and the
 differential sample expect (provenance + refill recipe: `smt-lib/PROVENANCE.md`).
 
@@ -13,18 +13,18 @@ differential sample expect (provenance + refill recipe: `smt-lib/PROVENANCE.md`)
   QF_BV division (46 191 files, size ≤ 20 MB; largest picked 3.3 MB).
   QF_BV is the only division where all three solvers can meet: nixie and
   z3 solve the `.smt2` directly; kissat solves the DIMACS CNF produced by
-  z3's `apply (then simplify bit-blast tseitin-cnf)` — the equisatisfiable
+  z3's `apply (then simplify bit-blast tseitin-cnf)` – the equisatisfiable
   tseitin encoding z3 itself would feed its SAT core (converter:
   `bench/differential/smt2_to_dimacs.py`).
-- **Gates**: kissat(cnf) must equal z3(smt2) — converter fidelity;
-  nixie(smt2) must equal z3(smt2) — the soundness canary. 60 s timeout,
-  single run, wall clock (cross-binary capability view, SMT-COMP style —
+- **Gates**: kissat(cnf) must equal z3(smt2) – converter fidelity;
+  nixie(smt2) must equal z3(smt2) – the soundness canary. 60 s timeout,
+  single run, wall clock (cross-binary capability view, SMT-COMP style –
   not a heuristic A/B; the AGENTS matched-null discipline does not apply
   to a fixed-seed one-shot verdict check).
 - Binaries: nixie = HEAD build (flip-A CSR default path), z3 4.16.0,
   kissat = `../temp/kissat/build/kissat`.
 
-## Results — 10/10 three-way agreement
+## Results – 10/10 three-way agreement
 
 | instance | z3 | kissat | nixie | cnf (vars/clauses) |
 |---|---|---|---|---|
@@ -40,11 +40,11 @@ differential sample expect (provenance + refill recipe: `smt-lib/PROVENANCE.md`)
 | MCMPC/millionaires.t1.i31 | sat 0.03 s | sat 0.01 s | sat 0.02 s | 636 / 1 799 |
 
 Reading notes (one shot, no distributional claim):
-- Five `0/1` CNFs: z3's `simplify` decided them before any search — the
+- Five `0/1` CNFs: z3's `simplify` decided them before any search – the
   kissat leg is the empty clause; those cells say nothing about search.
 - nixie's QF_BV stack is currently behind z3's on the spear/sage cells
-  that survive preprocessing (≈2–2.5× z3) — consistent with the
-  QF_BV-tier roadmap — while **bench_13880 inverts the picture** (0.21 s
+  that survive preprocessing (≈2–2.5× z3) – consistent with the
+  QF_BV-tier roadmap – while **bench_13880 inverts the picture** (0.21 s
   vs z3 7.12 s / kissat 2.31 s on the 2.9 M-clause encoding), so the
   gap is structure-specific, not uniform.
 - Verdict-wise the canary is clean: 0 disagreements, 0 timeouts.

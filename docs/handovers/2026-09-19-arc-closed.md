@@ -1,18 +1,18 @@
-# Handoff: the 2026-09-19 queue executed to completion — fold, stamps-item, assert, caps; the TLA+ front end's bags slice
+# Handoff: the 2026-09-19 queue executed to completion – fold, stamps-item, assert, caps; the TLA+ front end's bags slice
 
 **Date:** 2026-09-19 (final session of the arc; supersedes the open-items
 lists of `2026-09-19-next-session.md`, `2026-09-19-bags-fold.md` and
 `2026-09-19-tla-bags.md`)
 
-## The queue from `904c366b`, item by item — all closed
+## The queue from `904c366b`, item by item – all closed
 
 | # | item | landed | state |
 |---|---|---|---|
 | 1 | `bag.fold` | `aaf3074a` | done: ground-multiset unroll + exchange-law gate + declined-fold model certification; CVC5 differential 4 seeds 0 mismatches |
 | 2 | delta-propagation invariant | `aaf3074a` | item 85 in the wide-literal study: invariant mapped, boundary argument written, `NIXIE_DELTA_VERIFY` canary release-runnable and self-healing; open as a *proof* obligation only |
-| 3 | bag deep-shape perf | — | **closed as not-worth-it with evidence**: the gate ("only if a corpus ever grows bags") is now *proven absent* — the TLA+ corpus study found 7 bag files (1 with a BMC triple, blocked on PlusCal), bag usage flows through the function encoding, and no other corpus has a bag surface. The fuzz timeout share is synthetic-shape cost. Reopen only if a real bag corpus appears. |
+| 3 | bag deep-shape perf | – | **closed as not-worth-it with evidence**: the gate ("only if a corpus ever grows bags") is now *proven absent* – the TLA+ corpus study found 7 bag files (1 with a BMC triple, blocked on PlusCal), bag usage flows through the function encoding, and no other corpus has a bag surface. The fuzz timeout share is synthetic-shape cost. Reopen only if a real bag corpus appears. |
 | 4 | `(assert x)` non-Bool | `aaf3074a` | parse-level rejection (Z3/CVC5 parity) |
-| 5 | cap re-measurement | `9fa55909` | **done, verdict: keep every cap** (`docs/studies/2026-09-19-cap-survey.md`) — the gate condition (TLA+ green) was verified, the survey ran, 0 corpus verdicts lost to any firing; caps now observable (`NIXIE_DEBUG_CAPS`) and overridable (`NIXIE_CAPS`) for any future re-check |
+| 5 | cap re-measurement | `9fa55909` | **done, verdict: keep every cap** (`docs/studies/2026-09-19-cap-survey.md`) – the gate condition (TLA+ green) was verified, the survey ran, 0 corpus verdicts lost to any firing; caps now observable (`NIXIE_DEBUG_CAPS`) and overridable (`NIXIE_CAPS`) for any future re-check |
 
 ## The TLA+ arc (`eb6ce2da` + this session's fix)
 
@@ -22,28 +22,28 @@ TLA+ parity gates are green and the corpus question is answered: TLA+ is
 not a bag-theory workload today, and the `Bag`-sort bridge is the named
 next step *if* that ever changes. The `--help` trap that made the corpus
 look absent is fixed in both `run_parity.sh` scripts (usage printed,
-exit 0 — the next session won't repeat the misdiagnosis).
+exit 0 – the next session won't repeat the misdiagnosis).
 
 ## What is genuinely open, in value order
 
-1. **The PlusCal wall** — the one bag-adjacent corpus spec with a BMC
+1. **The PlusCal wall** – the one bag-adjacent corpus spec with a BMC
    triple (`Nano.tla`) is blocked on PlusCal lowering, not bags. PlusCal
    translation is the single biggest coverage lever on the TLA+ side
    (many `tlaplus-examples` specs are `.tla` + PCal bodies).
-2. **The delta-propagation proof obligation** (study item 85) — the
+2. **The delta-propagation proof obligation** (study item 85) – the
    boundary argument is written, not mechanized; the canary is the
    standing tripwire.
-3. **The lambda-shaped function encoding or `Bag`-sort bridge** — the
+3. **The lambda-shaped function encoding or `Bag`-sort bridge** – the
    two honest declines in TLA+ bag BMC (state-bag updates,
    `DOMAIN`-quantifiers). Design-sized; only worth it with a workload.
 4. ~~`structurally_equal`/`alpha_equivalent` conservative `false` for
-   `BagMap`/`BagFilter`~~ — **closed** (`5193b526`, merged `5f6577d7`):
+   `BagMap`/`BagFilter`~~ – **closed** (`5193b526`, merged `5f6577d7`):
    both walks now mirror `bag.fold`'s discipline (the function/predicate
-   symbol — plus the codomain sort for map — is part of the identity, the
+   symbol – plus the codomain sort for map – is part of the identity, the
    bag compares as a child); pinned by
    `bag_map_and_filter_shape_equality`.  Verified: suite 12 014/12 014,
    parity 100 % (z3 4.16.0), gate PASS, fresh differentials clean.
-5. **Bag deep-shape perf** — stays closed (see item 3 above) unless a
+5. **Bag deep-shape perf** – stays closed (see item 3 above) unless a
    corpus appears.
 
 ## Environment notes carried forward

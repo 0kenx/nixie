@@ -24,7 +24,7 @@ Raw cells: `precompile/<sha>/benchmark/bv_gap/cells.jsonl` + runner.
 A separate cheap finding: mux/increment chain identities
 (`ite(bit_i, c+1, c)` nested n-deep, forward vs reverse order) are
 *unsat-provable* by z3 at n≤16 in seconds but nixie hits `unknown` at
-n≥12–16 depending on width — the equivalence-content class again; the
+n≥12–16 depending on width – the equivalence-content class again; the
 kitten-sweep/definitions machinery may be exactly the lever here.
 
 ## SOUNDNESS BUG (top priority, open): false `sat` on width-128 nlz files
@@ -34,7 +34,7 @@ kitten-sweep/definitions machinery may be exactly the lever here.
 unknown. Widths ≤ 64 answer correctly. The reported model **does not
 satisfy the formula** (verified: z3 rejects `x = model ∧ formula`; a
 width-masked exact Python evaluator over the 410-let chain agrees with
-z3), **and nixie's own `--validate-model` blesses the model** — so the
+z3), **and nixie's own `--validate-model` blesses the model** – so the
 shared evaluation path is also wrong, or validates the wrong object.
 
 ### What is known (all evidence reproducible from the raw artifacts)
@@ -45,24 +45,24 @@ shared evaluation path is also wrong, or validates the wrong object.
    `NIXIE_ELS_FORCE=0`, `NIXIE_PROBE_PERMILLE=0` all still `sat`.
 3. **Not the SAT search**: the CNF dumped at solve entry
    (`NIXIE_DUMP_CNF`, tooling landed with this commit) is **SAT per
-   kissat** — the solver's own entry formula is satisfiable, i.e. the
+   kissat** – the solver's own entry formula is satisfiable, i.e. the
    *blast emits an under-constrained network* in this context.
 4. **Not the isolated circuits**: unit test
    `lshr_const64_forces_zero_high_bits` (landed) pins x=0, amount=k and
    checks every out-of-range result bit of `bv_lshr` is forced false at
-   widths 64/96/128, amounts 32/48/64/96 — the barrel shifter alone is
+   widths 64/96/128, amounts 32/48/64/96 – the barrel shifter alone is
    correct. Standalone symbolic shift identities
    (`lshr/shl/ashr x const` vs concat/extract forms, all widths) are
    correct end-to-end. Single-op and small-compound micro-tests at
    width 128 all agree with z3.
 5. **Context-dependence**: pinning `x` to *any* concrete value (an extra
-   assert) makes the file `unsat` (correct) — the under-constraint only
+   assert) makes the file `unsat` (correct) – the under-constraint only
    manifests with symbolic x and the full 410-let DAG. Tautology
    add-ons don't flip it; it is the pinning (constant folding at blast
    time) that hides it.
 6. Under kissat's satisfying model, the circuit value of
-   `bvlshr(x, 64)` has bit 64 free-true while x reads all-zero — the
-   network does not force it — but the same term standalone encodes
+   `bvlshr(x, 64)` has bit 64 free-true while x reads all-zero – the
+   network does not force it – but the same term standalone encodes
    tight (point 4). So some *interaction* (two link passes, the
    `get_bv(tid).is_some()` skip in `encode_bv_term_recursive`, eq/ult
    caches, free-vector fallback interplay) drops constraints.
@@ -72,9 +72,9 @@ shared evaluation path is also wrong, or validates the wrong object.
 
 ### Tooling landed (all env-gated no-ops when unset)
 
-- `NIXIE_DUMP_CNF=<path>` — DIMACS snapshot at first solve entry
+- `NIXIE_DUMP_CNF=<path>` – DIMACS snapshot at first solve entry
   (`Solver::solve` and `Solver::solve_with_theory`).
-- `NIXIE_DUMP_TERMS=<path>` — sidecar `term → bits / atom var` map with
+- `NIXIE_DUMP_TERMS=<path>` – sidecar `term → bits / atom var` map with
   op kinds and child ids, plus a free-bit scan report.
 - `BvSolver::{debug_bv_terms, debug_bool_nodes}` accessors; test-gated
   pin/solve accessors; the lshr regression unit test.
@@ -86,7 +86,7 @@ shared evaluation path is also wrong, or validates the wrong object.
    evaluate every gate chain (the sidecar gives bits per term) and find
    the first term whose *defining clauses* fail to pin it. The hand
    analysis stopped at "TermId(7) bvlshr loose in context, tight alone"
-   — the culprit is whatever distinguishes the in-context encode
+   – the culprit is whatever distinguishes the in-context encode
    (skip-guard ordering? `bv_sorted` dedup? second link pass re-walk?)
 2. Suspect list from reading: `encode_bv_term_recursive`'s early-skip on
    `bv.get_bv(tid)` (a term first given bits by the *free-vector
@@ -114,11 +114,11 @@ suite is not green in a worktree.
 
 **`encode_add_const` read `(constant >> i) & 1` with `constant: u64` over
 bit positions `i` up to the vector width.** In release, `>>` masks the
-shift amount modulo 64, so position `i ≥ 64` re-read bit `i mod 64` —
+shift amount modulo 64, so position `i ≥ 64` re-read bit `i mod 64` –
 `bvsub` at width ≥ 65 encoded `−b = ~b + 2^64 + 1` instead of `~b + 1`
 (constant 1's bit 0 re-read at position 64). The wrong circuit is still
 *consistently satisfiable*, so the solver completed with a false `sat`
-whose model satisfies the wrong circuit — exactly the width boundary
+whose model satisfies the wrong circuit – exactly the width boundary
 (≤ 64 correct, 128 false).
 
 Found via the landed tooling plus one decisive unit-level probe: a debug
@@ -126,11 +126,11 @@ build PANICKED (`attempt to shift right with overflow`) in
 `encode_add_const` where release silently wrapped.
 
 **Fixed sites** (all the `u64`-shift-at-`i≥64` family):
-- `bv/solver.rs encode_add_const` — the soundness bug;
-- `bv/solver.rs get_model` — value grouping keyed `1u64 << i` beyond 64
+- `bv/solver.rs encode_add_const` – the soundness bug;
+- `bv/solver.rs get_model` – value grouping keyed `1u64 << i` beyond 64
   (wide values collided into one group → wrong model merging); wide terms
   now get singleton groups;
-- `bv/aig.rs constant_bitvector` and `bv/aig_builder.rs` — same wrapped
+- `bv/aig.rs constant_bitvector` and `bv/aig_builder.rs` – same wrapped
   const-bit reads.
 
 **Evidence chain**: pre-fix precompile binary says `sat` on
@@ -141,7 +141,7 @@ the corpus-level `audit_nlzbs128_circuits` test (env-gated
 `NIXIE_AUDIT_NLZBS`) asserts Unsat.
 
 **Corpus impact**: the wrong `bvsub` circuit didn't just falsify two
-files — re-screening the 509-file QF_BV sample, the fix flips **50
+files – re-screening the 509-file QF_BV sample, the fix flips **50
 verdicts** (mostly `unknown` → decided; `log-slicing/bvsub_*` literally
 names the op) and takes nixie from **213 → 263 solved** (z3: 281). The
 gap shrinks from 68 to 18 files.
@@ -155,21 +155,21 @@ the verdict when chasing nondeterminism. A residual unexplained
 observation: one intermediate build (all fixes, pre-fmt) still said
 `sat` on nlzbs128; every build since is stably `unsat`. If the false
 sat ever resurfaces build-to-build, suspect a second, layout-sensitive
-site — the env-gated corpus test is the canary.
+site – the env-gated corpus test is the canary.
 
 **Also fixed this session**: `NIXIE_DUMP_CNF_AT_SAT` (dump the formula
-at the sat return — search-added clauses included) landed alongside the
+at the sat return – search-added clauses included) landed alongside the
 fix for future blast-vs-core splits.
 
 ## Post-landing correction (final numbers)
 
 The 509-cell re-screen first ran with a stale worktree binary (another
-agent rebuilt the shared `target/` mid-session — the binary at a fixed
+agent rebuilt the shared `target/` mid-session – the binary at a fixed
 path changed md5 three times). Final, verified numbers with the
 **committed** `ac13904` binary (`md5 64e6c14…`, built in an isolated
 `CARGO_TARGET_DIR`, `unsat` on nlzbs128 ×3):
 
-- **266 of 509 solved** (pre-fix 213, z3 281) — gap 68 → 15;
+- **266 of 509 solved** (pre-fix 213, z3 281) – gap 68 → 15;
 - **0 verdict disagreements vs z3** (the one recorded nlzbs128 `sat` was
   the stale binary; corrected cell banked in
   `precompile/ac13904/benchmark/bv_gap/fixed_cells.jsonl`).
@@ -177,11 +177,11 @@ path changed md5 three times). Final, verified numbers with the
 Remaining gap families (next perf targets): brummayerbiere4 (0 vs 10),
 Sydr (5 vs 9), bmc-bv-svcomp14 (5 vs 9), UltimateAutomizer-2023 (2 vs
 5), plus one-file losses scattered. The 256-bit nlz variants are honest
-timeouts (z3 solves them — wide-width blasting cost).
+timeouts (z3 solves them – wide-width blasting cost).
 
 Measurement lesson (twice in one session): **verify the binary md5 in
 the same shell block as any verdict**, and never source a benchmark
-binary from a shared, concurrently-rebuilt `target/` — the precompile
+binary from a shared, concurrently-rebuilt `target/` – the precompile
 cache exists precisely to freeze one artifact per commit.
 
 ## Follow-up plan: the remaining 15-net (44 gross) file gap vs z3
@@ -189,36 +189,36 @@ cache exists precisely to freeze one artifact per commit.
 Cluster map of the 44 one-sided losses (z3 solves, nixie does not, 25 s
 cap), from `precompile/ac13904/benchmark/bv_gap/`:
 
-### Tier A — preprocessing/rewriting gap (~17 files, z3 < 1 s each)
+### Tier A – preprocessing/rewriting gap (~17 files, z3 < 1 s each)
 
 z3's rewriter solves these **before search**; we blast giant circuits.
 
 1. **`elim-unconstrained` (10 files: `brummayerbiere4/unconstrained01-10`,
-   z3 0.1 s)** — 6×1024-bit vars each occurring **once**; z3's
+   z3 0.1 s)** – 6×1024-bit vars each occurring **once**; z3's
    unconstrained-variable propagation replaces the whole goal with a
    free atom. The tactic is an **empty stub** in nixie
-   (`nixie-core/src/tactic/core/elim_unconstrained.rs` — every method is
+   (`nixie-core/src/tactic/core/elim_unconstrained.rs` – every method is
    an `#[allow(dead_code)]` no-op). Port z3's
    `tactic/core/elim_unconstrained*.cpp` + `elim_unconstrained.cpp`
    rules (reference in `../temp/z3/`; Brummayer-Biere, MEMICS'09).
    Soundness notes: satisfiability-preserving only (assert the rewrite
    alongside, as the stage-4 dispatch preprocessor does, or gate model
    production); per-operator reachability conditions are load-bearing.
-2. **Bit-hack/structural rewriting (~7 files)** —
+2. **Bit-hack/structural rewriting (~7 files)** –
    `maxandminor016`/`bitrev1024`/`calypto problem_14/19`/`sage
    bench_4443`/`BuchwaldFried counterexample`: concat/extract
    normalization (extract-of-concat, concat-of-extracts merge),
    AND/OR/NOT constant push. z3's `bv_rewriter` is the reference.
-3. **Polynomial normalization (3 files: `cohencu.c_2/3/4`, z3 0.1 s)** —
+3. **Polynomial normalization (3 files: `cohencu.c_2/3/4`, z3 0.1 s)** –
    32-bit mul/add chains encoding z=3n², y=3n+3n²−1; z3's
    sum-of-monomials canonicalization substitutes the linear relations
    and collapses to a univariate quadratic. The dispatch preprocessor's
-   existing SOM/poly-identity pass (stage-4 study) is close — extend or
+   existing SOM/poly-identity pass (stage-4 study) is close – extend or
    fix its routing (`goal_is_pure_bv` declines these: widths < 32).
 
-### Tier B — search gap (~27 files, z3 1–24 s)
+### Tier B – search gap (~27 files, z3 1–24 s)
 
-`Sydr/cjpeg` predicates (5, z3 8–24 s — bvmul CEGAR territory),
+`Sydr/cjpeg` predicates (5, z3 8–24 s – bvmul CEGAR territory),
 `bmc-bv-svcomp14/s3_clnt*` (4), `spear/samba` (2), `Sydr/symbolic_memory`,
 `2019-Wolf zipcpu`, wide-nlz 256-bit variants. These need measured work
 on the CEGAR lemma tiers / search, not rewriting.

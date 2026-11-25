@@ -2,8 +2,8 @@
 //!
 //! Apalache *requires* annotations, so a drop-in has to read them. These
 //! tests pin the three halves that landed: attachment (including
-//! interleaved comments inside one `VARIABLES` block — Test1226's shape),
-//! the Type1 grammar subset, and seeding — where an annotation is
+//! interleaved comments inside one `VARIABLES` block – Test1226's shape),
+//! the Type1 grammar subset, and seeding – where an annotation is
 //! **checked, never trusted**: it unifies with what inference derives, and
 //! a conflict is the type error it is.
 
@@ -55,10 +55,10 @@ fn types_err(spec: &str, inv: &str) -> String {
     )
 }
 
-// ---- attachment ----
+// ======== attachment ========
 
 /// Interleaved comments inside one `VARIABLES` block annotate the *next*
-/// name each — Test1226's shape, and the attachment bug's reproducer.
+/// name each – Test1226's shape, and the attachment bug's reproducer.
 #[test]
 fn interleaved_comments_annotate_the_next_name() {
     let src = r#"
@@ -91,7 +91,7 @@ Inv == strToInt["a"] = 1
     );
 }
 
-// ---- seeding: the annotation settles the shape ----
+// ======== seeding: the annotation settles the shape ========
 
 /// An annotated variable whose only uses would leave its shape ambiguous
 /// gets it from the annotation: here `f` is written once and read only
@@ -114,8 +114,8 @@ Inv == Cardinality(DOMAIN f) = 2
 }
 
 /// The issue's own named defect, **closed**: `f["b"]` against the settled
-/// `Str -> Int` annotation is a *function* application — Apalache's settled
-/// shape — because a subject already settled as `Fun` never takes the
+/// `Str -> Int` annotation is a *function* application – Apalache's settled
+/// shape – because a subject already settled as `Fun` never takes the
 /// field-access record preference. The annotation is authoritative.
 #[test]
 fn a_field_access_against_the_annotation_applies_the_function() {
@@ -154,7 +154,7 @@ Inv == f["b"] = 2
 }
 
 /// A **conflicting** annotation is a type error (exit 120), never a silent
-/// override — the issue's "contradictory annotations accepted silently"
+/// override – the issue's "contradictory annotations accepted silently"
 /// defect.
 #[test]
 fn a_conflicting_annotation_is_a_type_error() {
@@ -173,7 +173,7 @@ Inv == x = x
     assert!(err.contains("does not type check"), "{err}");
 }
 
-// ---- the grammar ----
+// ======== the grammar ========
 
 /// The Type1 subset: Int/Bool/Str, Set/Seq, function arrows
 /// (right-associative), tuples, records.
@@ -218,7 +218,7 @@ fn the_type1_subset_parses() {
 }
 
 /// What the grammar has no type for is refused by name: variants and
-/// operator types (the variants sub-issue) — never silently accepted.
+/// operator types (the variants sub-issue) – never silently accepted.
 #[test]
 fn unsupported_forms_are_refused_by_name() {
     use nixie_tla::annotations::parse_type1;
@@ -239,7 +239,7 @@ fn unsupported_forms_are_refused_by_name() {
     );
 }
 
-// ---- uninterpreted types ----
+// ======== uninterpreted types ========
 
 /// An uppercase name is an uninterpreted type: its own base, one per NAME,
 /// never Int or Str. Two annotated names sharing `T` share the type, and a
@@ -284,7 +284,7 @@ Inv == Cardinality(seen) <= 1
     );
 }
 
-// ---- operator-signature annotations, checked (issue #41) ----
+// ======== operator-signature annotations, checked (issue #41) ========
 
 /// An operator signature is **checked** against the operator's body: the
 /// parameters are assumed at their annotated types and the body's inferred

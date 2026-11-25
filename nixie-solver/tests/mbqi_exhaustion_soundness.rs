@@ -6,7 +6,7 @@
 //! the completed model can exhibit** for each bound sort.  Three gates, each
 //! of which failed open before this fix and is pinned here:
 //!
-//! 1. **Truncated pool replacement** — the injected candidate pool (ground
+//! 1. **Truncated pool replacement** – the injected candidate pool (ground
 //!    terms of the problem) used to *replace* the model-derived candidates
 //!    and was then truncated to 10 entries.  CLEARSY/00779 enumerated 10 of
 //!    a 2405-term pool over a model with 2270 distinct `U` values while the
@@ -14,12 +14,12 @@
 //!    refutes (`:status unsat`).  The pool now merges *after* the required
 //!    values, and the coverage verdict is recorded per sort per round.
 //!
-//! 2. **Universe undercount** — the "universe" the old check counted is a
+//! 2. **Universe undercount** – the "universe" the old check counted is a
 //!    `MAX_UNIVERSE_SIZE`-truncated *sample* (8 of 2270 values).  The
 //!    required set is now harvested untruncated from assignments, function
 //!    tables and the universe.
 //!
-//! 3. **Vacuous / out-of-kind coverage** — a constants-only goal over `U`
+//! 3. **Vacuous / out-of-kind coverage** – a constants-only goal over `U`
 //!    yielded an empty required set (vacuously "covered"), and the refactor
 //!    initially let infinite sorts (`Int`) claim exhaustion over their model
 //!    values.  Only `Bool` and uninterpreted sorts can be exhaustive at all,

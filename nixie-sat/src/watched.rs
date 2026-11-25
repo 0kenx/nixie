@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 /// even after garbage collection has coalesced deleted headers.
 /// `#[repr(C)]` is load-bearing: the AVX2 block filter extracts the
 /// four blocker codes of a 4-watcher block as dwords 1,3,5,7 of one
-/// `vmovdqu` — a field reorder would silently read refs instead (the
+/// `vmovdqu` – a field reorder would silently read refs instead (the
 /// randomized differential test catches it as wild codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -107,7 +107,7 @@ pub struct WatchLists {
     /// next propagate of that literal, matching lazy ghost removal ticks.
     ghost_debt: Vec<u32>,
     /// Maintained CSR shadow (`NIXIE_CSR_SHADOW=1`, slices 1.5-3 of the
-    /// CSR-watches migration — `docs/studies/2026-09-13-csr-watches-kickoff.md`).
+    /// CSR-watches migration – `docs/studies/2026-09-13-csr-watches-kickoff.md`).
     /// `None` on default paths: every mirror below is a single None-check,
     /// and nothing on a default path constructs one.
     csr: Option<CsrWatchLists>,
@@ -132,7 +132,7 @@ pub struct WatchSnapshot {
     /// Copy of compact-time ghost tick debt.
     ghost_debt: Vec<u32>,
     /// Copy of the CSR, when one is active (rollback must restore it).
-    /// Stored PACKED — the overflow as one buffer plus per-literal ends —
+    /// Stored PACKED – the overflow as one buffer plus per-literal ends –
     /// because a derived `Vec<Vec<Watcher>>` clone duplicates every
     /// per-literal header (18.7M empty headers ≈ 450 MB on the
     /// 9.4M-variable class; measured 3% of the whole run inside lucky's
@@ -141,7 +141,7 @@ pub struct WatchSnapshot {
 }
 
 /// The CSR's packed rollback form: the three contiguous arrays cloned
-/// verbatim (unavoidable — they ARE the state) plus the overflow packed
+/// verbatim (unavoidable – they ARE the state) plus the overflow packed
 /// into one buffer with per-literal end offsets (empty lists cost nothing,
 /// matching the `Vec` side's `WatchSnapshot` economics).
 #[derive(Debug, Clone)]
@@ -156,7 +156,7 @@ pub(crate) struct PackedCsrSnapshot {
 
 impl From<&CsrWatchLists> for PackedCsrSnapshot {
     fn from(c: &CsrWatchLists) -> Self {
-        // The spill tails pack into one buffer keyed by literal (sparse —
+        // The spill tails pack into one buffer keyed by literal (sparse –
         // the common run has none at all); the three contiguous arrays
         // are the state and clone verbatim.
         let mut ovf_packed = Vec::new();
@@ -202,14 +202,14 @@ impl From<&PackedCsrSnapshot> for CsrWatchLists {
 }
 
 /// The CSR-form watch build (count → layout → fill), the `RoundOccs`
-/// pattern (`solver/eliminate.rs`) adapted to [`Watcher`] entries —
+/// pattern (`solver/eliminate.rs`) adapted to [`Watcher`] entries –
 /// slice 1 of the CSR-watches migration
 /// (`docs/studies/2026-09-13-csr-watches-kickoff.md`).
 /// Validation infrastructure only: nothing reads it on any default path.
 #[derive(Debug, Default)]
 pub struct CsrWatchBuild {
     /// Concatenated entries; literal `code`'s filled span is
-    /// `entries[prim_end-position]` — see `prim_end`.
+    /// `entries[prim_end-position]` – see `prim_end`.
     entries: Vec<Watcher>,
     /// Exclusive end offset of each literal's span (the layout).
     span_end: Vec<u32>,
@@ -286,13 +286,13 @@ impl CsrWatchBuild {
 }
 
 /// The per-scan mirror state carried between `begin_scan` and `end_scan`
-/// (the dual-write BCP scan, slice 2 of the CSR-watches migration —
+/// (the dual-write BCP scan, slice 2 of the CSR-watches migration –
 /// `docs/studies/2026-09-13-csr-watches-kickoff.md`).
 ///
 /// `read` counts *notified* entries. The notifying scan visits entries in
 /// list order exactly once each, so `read` is the scan's read cursor in
 /// combined-view coordinates: positions `< p_len` are primary sources,
-/// positions `>= p_len` are overflow sources — the order-isomorphism
+/// positions `>= p_len` are overflow sources – the order-isomorphism
 /// invariant that makes the mirror resolvable segment-wise.
 #[derive(Debug, Default, Clone)]
 struct CsrScanFrame {
@@ -316,7 +316,7 @@ struct CsrScanFrame {
     active: bool,
 }
 
-/// The maintained CSR watch representation — the **slack-CSR** form
+/// The maintained CSR watch representation – the **slack-CSR** form
 /// (2026-09-20 redesign): one contiguous allocation per literal with
 /// embedded slack, replacing the earlier span+per-literal-overflow pair.
 ///
@@ -325,16 +325,16 @@ struct CsrScanFrame {
 ///   end); `[span_start[c]..prim_end[c])` is live, `[prim_end[c]..cap(c))`
 ///   is slack.
 /// * A search-time append (`push_overflow`) writes `entries[prim_end[c]]`
-///   and bumps — O(1), zero per-literal structure, zero allocation while
+///   and bumps – O(1), zero per-literal structure, zero allocation while
 ///   slack remains.  A literal whose slack fills **spills**: its appends
 ///   go to `fallback` from then on (sticky, so arrival order across the
 ///   two segments stays chronological) until the next rebuild.
 /// * A scan compacts its span in place (the cursor's write stays behind
-///   its read) and commits `prim_end` — mid-scan self-pushes land beyond
+///   its read) and commits `prim_end` – mid-scan self-pushes land beyond
 ///   the snapshotted live end and die at the commit, exactly the old
 ///   taken-`Vec` put-back-overwrite semantics.
-/// * The scan's visit order — *(rebuilt span in id order) compacted by
-///   survivors, then arrival-ordered appends* — is the same
+/// * The scan's visit order – *(rebuilt span in id order) compacted by
+///   survivors, then arrival-ordered appends* – is the same
 ///   survivors-then-appends decomposition the span+overflow form
 ///   maintained, so trajectories are unchanged (bit-identity verified
 ///   per landing).
@@ -353,7 +353,7 @@ pub struct CsrWatchLists {
     /// Live end of each span (a push bumps it; a scan commits it; the
     /// space up to the cap is slack, reclaimed at the next layout).
     prim_end: Vec<u32>,
-    /// Sticky-spill tails: literals whose slack filled — a dense array of
+    /// Sticky-spill tails: literals whose slack filled – a dense array of
     /// optional boxed lists (8 B per literal, heap only where actually
     /// spilled; O(1) take/put/push per scan).  Stickiness: once `Some`,
     /// the slot is that literal's append target until the next layout.
@@ -362,7 +362,7 @@ pub struct CsrWatchLists {
     /// Per-literal spill DEMAND for the next layout's slack sizing
     /// (saturating u16): at adopt time, each spilled literal's surviving
     /// tail length raises its slot, and the next layout gives it
-    /// `1 + demand` free appends.  Derived at adopt time only — the hot
+    /// `1 + demand` free appends.  Derived at adopt time only – the hot
     /// push path pays nothing.  ~37 MB on the 9.4M-variable class.
     arrivals: Vec<u16>,
     /// The active dual-write scan's mirror state (one scan at a time).
@@ -409,7 +409,7 @@ impl CsrWatchLists {
     }
 
     /// The combined view of `lit`'s list as a pair: `(live span, spill
-    /// tail)` — the second is empty unless the literal spilled.
+    /// tail)` – the second is empty unless the literal spilled.
     #[must_use]
     pub fn spans(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
         let i = lit.index();
@@ -430,7 +430,7 @@ impl CsrWatchLists {
 
     /// Append `w` to `lit`'s list in arrival order: slack-append while
     /// the literal has room and has not spilled; the spill tail once it
-    /// has (sticky — appends never interleave across the two segments,
+    /// has (sticky – appends never interleave across the two segments,
     /// which would reorder the visit sequence).
     pub fn push_overflow(&mut self, lit: Lit, w: Watcher) {
         let code = lit.index();
@@ -485,7 +485,7 @@ impl CsrWatchLists {
     /// packed spans are re-spaced with embedded slack, every literal
     /// restarts live, and the spill tails clear.
     ///
-    /// Slack policy: `min(4, 1 + count/32)` per nonempty literal — the
+    /// Slack policy: `min(4, 1 + count/32)` per nonempty literal – the
     /// modal literal (2-3 watchers) gets one free append (the common
     /// inter-rebuild arrival), dense literals get proportionally more.
     /// A push beyond slack spills.
@@ -497,7 +497,7 @@ impl CsrWatchLists {
         // Adaptive slack from OBSERVED SPILL DEMAND: a literal only needs
         // more than base slack if it actually spilled last interval, and
         // its surviving tail length is a lower bound on what it needed.
-        // Derived entirely at adopt time (zero per-push cost — the hot
+        // Derived entirely at adopt time (zero per-push cost – the hot
         // push path never touches the counter), so the sizing sees every
         // push source, including the session kernel's watch moves.
         if self.arrivals.len() < num_lits {
@@ -556,7 +556,7 @@ impl CsrWatchLists {
         self.scan = CsrScanFrame::default();
     }
 
-    // ---- Dual-write BCP scan (the legacy frame mirror) ---------------
+    // ======== Dual-write BCP scan (the legacy frame mirror) ========
 
     /// Begin mirroring a scan of `code`'s list whose scanned length is
     /// `scanned_len` (the materialized scratch).  Precondition: the
@@ -571,7 +571,7 @@ impl CsrWatchLists {
             self.warned_precondition = true;
             eprintln!(
                 "[csr-shadow] scan precondition violated at literal code {code}: \
-                 combined {} vs scanned {scanned_len} — mirror suspended for this scan",
+                 combined {} vs scanned {scanned_len} – mirror suspended for this scan",
                 (p_len as u64) + (o_len as u64)
             );
             #[cfg(feature = "std")]
@@ -627,14 +627,14 @@ impl CsrWatchLists {
     }
 
     /// Mirror a watch move: append to the destination literal (arrival
-    /// order — exactly where the `Vec` path's push lands).
+    /// order – exactly where the `Vec` path's push lands).
     pub(crate) fn scan_push(&mut self, dest: Lit, w: Watcher) {
         self.push_overflow(dest, w);
     }
 
     /// Finish the scan: compact the unvisited span tail behind its
     /// survivors, compact/truncate the spill tail, and commit the live
-    /// end — mid-scan self-pushes (beyond the snapshotted lengths) die
+    /// end – mid-scan self-pushes (beyond the snapshotted lengths) die
     /// here, exactly as the `Vec` put-back overwrite dropped them.
     pub(crate) fn end_scan(&mut self) {
         let f = &mut self.scan;
@@ -677,7 +677,7 @@ impl CsrWatchLists {
         f.ps = 0;
     }
 
-    // ---- Cold paths ---------------------------------------------------
+    // ======== Cold paths ========
 
     /// Relocation through the compaction plan (see `relocate_with_debt`).
     pub(crate) fn relocate(&mut self, arena: &ClauseArena, plan: &CompactionPlan) {
@@ -718,7 +718,7 @@ impl CsrWatchLists {
             }
         }
         // Spill tails BEYOND the layout (the pre-first-materialize window,
-        // where every push lived in the tails — the old code's overflow
+        // where every push lived in the tails – the old code's overflow
         // array covered them; missing this left stale refs and dead
         // entries un-relocated and desynced the mirror from the first
         // compaction on).
@@ -825,7 +825,7 @@ impl CsrWatchLists {
 /// around the scanned literal's live span.  The cursor scans the span
 /// (a clean `&mut [Watcher]`, returned separately so it and the context
 /// borrow disjointly); pushes append into `head` or `tail` at the
-/// destination literal's live end — region-disjoint from the scan by
+/// destination literal's live end – region-disjoint from the scan by
 /// construction (each literal's allocation is disjoint from every
 /// other's), which the split makes borrow-checkable with no unsafe
 /// code.
@@ -854,18 +854,18 @@ pub(crate) struct ScanCtx<'a> {
 impl CsrWatchLists {
     /// Split the entries buffer around `code`'s live span for an
     /// in-place scan: the cursor's buffer plus the push context.
-    /// Pre-layout (no materialization yet) the split is degenerate —
-    /// empty span, pushes land in the spill tails — so the caller never
+    /// Pre-layout (no materialization yet) the split is degenerate –
+    /// empty span, pushes land in the spill tails – so the caller never
     /// special-cases.
     #[inline]
     pub(crate) fn scan_split(&mut self, code: usize) -> (&mut [Watcher], ScanCtx<'_>) {
         let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
         // A MISSING `prim_end` entry means the code has no live primary
         // span (the pre-layout contract: pushes land in the spill tails)
-        // — its degenerate span is EMPTY, i.e. `start` itself.  Defaulting
+        // – its degenerate span is EMPTY, i.e. `start` itself.  Defaulting
         // to 0 independently of `start` made a code present in
         // `span_start` but absent from `prim_end` (the two tables resize
-        // at different times) compute `end - start` UNDERFLOW — a hard
+        // at different times) compute `end - start` UNDERFLOW – a hard
         // panic on the standing pete_5s fixture, release included (the
         // wrapped length then trips `split_at_mut`).  Found the day the
         // CSR flip landed; this is the documented-degenerate repair, with
@@ -875,7 +875,7 @@ impl CsrWatchLists {
         debug_assert!(
             end >= start,
             "csr scan_split: prim_end {end} < span_start {start} for code {code} \
-             (both entries present — a layout invariant violation, not the \
+             (both entries present – a layout invariant violation, not the \
              missing-entry degenerate case)"
         );
         let CsrWatchLists {
@@ -903,7 +903,7 @@ impl CsrWatchLists {
     }
 
     /// Detach `code`'s spill tail for a second scan pass (arrival order
-    /// after the span — the same visit sequence the span+overflow form
+    /// after the span – the same visit sequence the span+overflow form
     /// maintained).
     #[allow(clippy::box_collection)]
     pub(crate) fn take_fallback(&mut self, code: usize) -> Option<Box<Vec<Watcher>>> {
@@ -978,7 +978,7 @@ impl ScanCtx<'_> {
     pub(crate) fn push_entry(&mut self, key: Lit, w: Watcher) {
         let k = key.index();
         // Hot path (the whole reason this is inline): no spill slot and
-        // slack available — one bounds test, one write, one bump.  The
+        // slack available – one bounds test, one write, one bump.  The
         // out-of-line form (a call per watch move, ~1.4% of the run)
         // measured before this split.
         let live = self.prim_end.get(k).copied().unwrap_or(0) as usize;
@@ -992,7 +992,7 @@ impl ScanCtx<'_> {
         self.push_entry_cold(key, w);
     }
 
-    /// The spilled / layout-miss / spill-creation paths — cold by
+    /// The spilled / layout-miss / spill-creation paths – cold by
     /// construction (a literal reaches here only after its slack filled).
     #[cold]
     #[inline(never)]
@@ -1025,8 +1025,8 @@ impl ScanCtx<'_> {
         }
     }
 
-    /// Return a scanned spill tail (truncated — or untruncated on the
-    /// conflict path — by its owning pass).
+    /// Return a scanned spill tail (truncated – or untruncated on the
+    /// conflict path – by its owning pass).
     #[allow(clippy::box_collection)]
     pub(crate) fn put_fallback(&mut self, tail: Box<Vec<Watcher>>) {
         if !tail.is_empty() {
@@ -1040,10 +1040,10 @@ impl ScanCtx<'_> {
 
 /// The swapped-dual scan's `Vec` mirror (`NIXIE_CSR_SCAN`): the CSR's
 /// span+overflow passes drive, and this cursor reproduces the old
-/// in-place `Vec` compaction from the notifications — kept entries in
+/// in-place `Vec` compaction from the notifications – kept entries in
 /// order (possibly blocker-rewritten), removals skipped, the unvisited
 /// tail preserved at `finish`.  Consumed sequentially across the two
-/// passes (span entries first, overflow after — the combined order the
+/// passes (span entries first, overflow after – the combined order the
 /// drift invariant maintains).
 pub(crate) struct VecScanMirror<'a> {
     list: &'a mut Vec<Watcher>,
@@ -1123,7 +1123,7 @@ impl WatchLists {
     #[must_use]
     pub fn new(num_vars: usize) -> Self {
         Self {
-            // The flip: the Vec side is dead in CSR-primary mode — its
+            // The flip: the Vec side is dead in CSR-primary mode – its
             // 2·num_vars headers (~450 MB on the 9.4M-var class) are not
             // allocated at all.
             watches: if csr_b_enabled() {
@@ -1134,12 +1134,12 @@ impl WatchLists {
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
             // The CSR shadow is a diagnostic/experimental mirror, documented
-            // "Default off; the flag-off path is byte-identical" — but it was
+            // "Default off; the flag-off path is byte-identical" – but it was
             // attached unconditionally, so every `add` paid `push_overflow`
             // (a `positions` HashMap write per watcher!) and every scan paid
             // `scan_remove` mirroring.  Measured on SCPC-500-13 (seed study,
             // 2026-09-16): 65 % of runtime in mirror maintenance at
-            // bit-identical conflict counts — a 3-6x wall inflation on
+            // bit-identical conflict counts – a 3-6x wall inflation on
             // watch-dense instances with zero semantic effect.  Attach only
             // when one of the CSR knobs actually asks for it.
             csr: if csr_shadow_enabled()
@@ -1154,13 +1154,13 @@ impl WatchLists {
         }
     }
 
-    // ---- CSR dual-write shadow (slices 1.5-3) -------------------------
+    // ======== CSR dual-write shadow (slices 1.5-3) ========
     //
     // The maintained CSR mirrors every mutation the `Vec` lists undergo.
     // All hooks are single None-checks on default paths; the per-rebuild
     // drifted comparison (`csr_drifted_compare`, called by
     // `rebuild_watches_and_binary_graph`) validates the pair entry-for-
-    // entry, order included — the empirical order-isomorphism proof.
+    // entry, order included – the empirical order-isomorphism proof.
 
     /// Detach the shadow (the rebuild: fills would double-maintain;
     /// `csr_set` re-attaches the adopted fresh layout).
@@ -1192,8 +1192,8 @@ impl WatchLists {
     /// live `Vec` lists, order-insensitively.
     /// Returns `(literals, entries, mismatched_literals)`.
     /// Compare the CSR shadow against the live lists, order-insensitively
-    /// (multiset of (ref, blocker) per literal) — see [`Self::csr_multiset_compare_with`].
-    /// (detached) CSR — the surgery experiment's oracle form: the rebuild
+    /// (multiset of (ref, blocker) per literal) – see [`Self::csr_multiset_compare_with`].
+    /// (detached) CSR – the surgery experiment's oracle form: the rebuild
     /// detaches the surgically-updated shadow at entry and compares it
     /// Compare the **drifted** shadow against the drifted `Vec` lists,
     /// entry-for-entry, order included (the dual-write validation; called
@@ -1241,7 +1241,7 @@ impl WatchLists {
     /// 2): snapshot the primary/overflow split before the list is taken.
     pub(crate) fn shadow_begin_scan(&mut self, lit: Lit, scanned_len: usize) {
         if self.csr.is_some() {
-            // The scan target's length is the CALLER's scratch — in flip-A
+            // The scan target's length is the CALLER's scratch – in flip-A
             // the CSR materialized into it, in commit-B the Vec side is dead
             // and the CSR's own view is what the caller scanned.  Reading
             // `self.get(lit)` here compares against the dead Vec (0) and
@@ -1332,7 +1332,7 @@ impl WatchLists {
             watcher.r.byte_offset(),
             watcher.blocker.code()
         );
-        // Commit-B mode: the CSR overflow is the only representation — the
+        // Commit-B mode: the CSR overflow is the only representation – the
         // Vec side is dead weight (its lists must stay empty so any read
         // surfaces as a bug, not a silent divergence).
         if !csr_b_enabled() {
@@ -1343,7 +1343,7 @@ impl WatchLists {
         }
     }
 
-    /// Append without touching the CSR shadow — for callers that fill the
+    /// Append without touching the CSR shadow – for callers that fill the
     /// lists while the shadow is detached (the watch rebuild's fill loop:
     /// `csr_take` removed the shadow, so `add` would pay a dead branch per
     /// entry on watch-dense instances, measured +0.75% samples on
@@ -1365,7 +1365,7 @@ impl WatchLists {
     }
 
     /// The CSR combined view (`NIXIE_CSR_READ=1`): primary span then
-    /// overflow — the reader-side API for the flip.  Empty pair when no
+    /// overflow – the reader-side API for the flip.  Empty pair when no
     /// shadow exists (readers fall back to identical content).
     #[must_use]
     pub fn get_combined(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
@@ -1373,7 +1373,7 @@ impl WatchLists {
     }
 
     /// Dump the CSR's combined view per literal (the commit-B divergence
-    /// tool: run under flip-A — whose CSR provably equals its scanned Vec —
+    /// tool: run under flip-A – whose CSR provably equals its scanned Vec –
     /// and under the roundtrip build, diff at the phase boundary).  One
     /// line per nonempty literal: `code: ref:blocker ref:blocker ...`.
     #[cfg(feature = "std")]
@@ -1486,8 +1486,8 @@ impl WatchLists {
 
     /// Materialize `lit`'s combined view into an owned `Vec` (the
     /// non-session scan path's flip-A form: the `Vec` list becomes a
-    /// per-scan scratch buffer copied from the CSR — the authoritative
-    /// state — with the frame mirror maintaining the CSR through the scan
+    /// per-scan scratch buffer copied from the CSR – the authoritative
+    /// state – with the frame mirror maintaining the CSR through the scan
     /// exactly as before).
     pub(crate) fn take_combined_vec(&mut self, lit: Lit) -> Vec<Watcher> {
         match self.csr.as_ref() {
@@ -1502,7 +1502,7 @@ impl WatchLists {
         }
     }
 
-    /// Whether CSR reads are live (the flag AND an adopted shadow —
+    /// Whether CSR reads are live (the flag AND an adopted shadow –
     /// before the first rebuild there is no CSR to read).
     #[must_use]
     pub fn csr_read_active(&self) -> bool {
@@ -1535,20 +1535,20 @@ impl WatchLists {
     }
 
     /// CSR shadow validation (`NIXIE_CSR_SHADOW=1`, slice 1 of the
-    /// CSR-watches migration — `docs/studies/2026-09-13-csr-watches-kickoff.md`).
+    /// CSR-watches migration – `docs/studies/2026-09-13-csr-watches-kickoff.md`).
     ///
     /// Rebuilds the watch state **independently** as a CSR (two sweeps:
     /// count → layout → fill, the `RoundOccs` pattern) from the caller's
     /// iteration, then compares every literal's CSR span against the live
     /// per-literal `Vec` list entry-for-entry, **order included**.  Passing
     /// validates that the CSR layout reproduces the rebuild's contents and
-    /// per-list order exactly — the representation's claim — and the
+    /// per-list order exactly – the representation's claim – and the
     /// elapsed time is an upper bound for the eventual merged build (the
     /// shadow runs the two sweeps alone; the real build will share the
     /// rebuild's existing sweep).
     ///
     /// Returns `(literals_compared, entries_compared, mismatched_literals)`.
-    /// Zero-cost when the lists are empty of differences — callers gate on
+    /// Zero-cost when the lists are empty of differences – callers gate on
     /// the env flag.
     pub fn csr_shadow_compare(
         &self,
@@ -1611,10 +1611,10 @@ impl WatchLists {
     ///
     /// The propagation session's exclusive views index
     /// `destinations[code]` DIRECTLY, so `watches.len()` must cover every
-    /// live literal (`>= num_vars * 2`) — lazy per-slot growth is not an
+    /// live literal (`>= num_vars * 2`) – lazy per-slot growth is not an
     /// option at this boundary (the views are `&mut [...]` and cannot
     /// grow).  But growing by exactly two rows per created var wrote two
-    /// elements per call into cold arrays — the per-var cache-miss storm
+    /// elements per call into cold arrays – the per-var cache-miss storm
     /// behind `WatchLists::resize`'s 8.5 % share of encode-bound cells
     /// (addendum 32).  Growth therefore OVERSHOOTS by
     /// [`WATCH_GROW_SLACK`] rows, so the per-var call is usually a single
@@ -1789,7 +1789,7 @@ impl WatchLists {
             }
         }
         if csr_b_enabled() {
-            // Commit-B: the Vec side is dead — the CSR charges the debt.
+            // Commit-B: the Vec side is dead – the CSR charges the debt.
             let WatchLists {
                 csr, ghost_debt, ..
             } = self;
@@ -1807,7 +1807,7 @@ impl WatchLists {
         arena: &ClauseArena,
     ) -> Result<(), String> {
         // Combined-view iteration: the CSR's entries when one is attached
-        // (commit-B: the only representation), the Vec lists otherwise —
+        // (commit-B: the only representation), the Vec lists otherwise –
         // identical content by the drift invariant.
         for lit_idx in 0..self
             .watches
@@ -1996,7 +1996,7 @@ mod tests {
 
 /// `NIXIE_CSR_SCAN=1` (slice 4's swapped-dual gate; requires the shadow):
 /// the propagation session scans the CSR's span+overflow as the PRIMARY
-/// and mirrors the outcomes into the taken `Vec` list — the roles of the
+/// and mirrors the outcomes into the taken `Vec` list – the roles of the
 /// slice-2 dual-write swapped.  The drift comparison stays the oracle:
 /// it compares the (now primary-scanned) CSR against the (now mirrored)
 /// `Vec`.  Default off; the flag-off path is byte-identical.
@@ -2019,7 +2019,7 @@ pub fn csr_scan_enabled() -> bool {
 
 /// `NIXIE_CSR_READ=1` (slice 4's reader gate; requires the shadow):
 /// production readers iterate the CSR's combined view instead of the
-/// `Vec` lists.  Content-identical by the drift invariant — the gate
+/// `Vec` lists.  Content-identical by the drift invariant – the gate
 /// proves the reader-side API, the last pre-flip surface.
 pub fn csr_read_enabled() -> bool {
     #[cfg(feature = "std")]
@@ -2038,7 +2038,7 @@ pub fn csr_read_enabled() -> bool {
 }
 
 /// `NIXIE_CSR_CHARGE_TRACE=1`: log every session tick charge (the
-/// commit-B divergence probe — see the CSR study's commit-B sections).
+/// commit-B divergence probe – see the CSR study's commit-B sections).
 pub fn csr_charge_trace_enabled() -> bool {
     #[cfg(feature = "std")]
     {
@@ -2053,7 +2053,7 @@ pub fn csr_charge_trace_enabled() -> bool {
 }
 
 /// `NIXIE_CSR_SHADOW=1`: run the CSR shadow validation at every watch
-/// rebuild (slice 1 of the CSR-watches migration — see
+/// rebuild (slice 1 of the CSR-watches migration – see
 /// `docs/studies/2026-09-13-csr-watches-kickoff.md`).  Diagnostic only:
 /// the flag adds two validation sweeps per rebuild and never feeds any
 /// solver decision.
@@ -2074,7 +2074,7 @@ pub fn csr_shadow_enabled() -> bool {
 }
 
 /// Whether commit-B mode is active (`NIXIE_CSR_B=1`): the CSR is the
-/// ONLY live watch representation — the session kernel scans it as
+/// ONLY live watch representation – the session kernel scans it as
 /// primary (span-copy + overflow-take roundtrip), pushes and dedups go
 /// straight to the CSR, and the `Vec<Vec<Watcher>>` side is dead (its
 /// lists stay empty; any read of them in this mode is a bug to flush
@@ -2090,7 +2090,7 @@ pub fn csr_b_enabled() -> bool {
         // standing corpus (search-heavy cells +15-32%; the load-heavy
         // spot instances that motivated it were its best case at +3-6%)
         // with a wash on memory and the surgery payback measured
-        // negative — a net cost with no compensating win.  The machinery
+        // negative – a net cost with no compensating win.  The machinery
         // stays landed at zero default cost; `NIXIE_CSR_B=1` opts into
         // the CSR-primary world (all its driver optimizations intact).
         *FLAG.get_or_init(|| {
@@ -2206,7 +2206,7 @@ mod csr_tests {
         assert_eq!(csr.len(Lit::pos(v(0))), 3);
 
         // Search-time append (BCP move): arrival order after the primary.
-        // The slack-CSR appends into the span's slack — the combined view
+        // The slack-CSR appends into the span's slack – the combined view
         // is [primary survivors][arrivals] exactly as the span+overflow
         // form maintained; the spill tail stays empty until slack runs out.
         let m = Watcher::new(ClauseId::new(9), ClauseRef::NULL, Lit::pos(v(5)));
@@ -2234,7 +2234,7 @@ mod csr_tests {
         csr2.adopt_layout(b2);
         csr2.push_overflow(Lit::neg(v(1)), c);
         // Shrink the live span to its first entry (the slack-CSR's scan
-        // commit shape): the appended entry dies with the commit — the
+        // commit shape): the appended entry dies with the commit – the
         // same take-semantics the scan guarantees.
         let code = Lit::neg(v(1)).index();
         let start = csr2.span_start[code] as usize;
@@ -2306,7 +2306,7 @@ mod csr_tests {
 
     /// The dual-write mirror must reproduce the reference model's list
     /// after arbitrary keep/remove sequences over a mixed primary/overflow
-    /// list — through many chained scans (drift chains) and early exits.
+    /// list – through many chained scans (drift chains) and early exits.
     #[test]
     fn csr_dual_write_scan_mirrors_reference_model() {
         use super::*;
@@ -2381,7 +2381,7 @@ mod csr_tests {
 
     /// Watch moves append to the destination's overflow in arrival order,
     /// and a mid-scan push into the scanned literal's own list is dropped
-    /// at `end_scan` — exactly what the `Vec` put-back overwrite does.
+    /// at `end_scan` – exactly what the `Vec` put-back overwrite does.
     #[test]
     fn csr_dual_write_moves_and_self_push_parity() {
         use super::*;
@@ -2444,7 +2444,7 @@ mod csr_tests {
         wl.csr_set(csr);
         assert!(wl.csr_active());
 
-        // Cold-path drift: attach (overflow append) — then a clause
+        // Cold-path drift: attach (overflow append) – then a clause
         // deletion keyed by ref. All unit-test watchers share
         // `ClauseRef::NULL` (no arena here), so `remove_clause` drops every
         // NULL-ref entry under the literal: coarse, but it exercises the

@@ -13,7 +13,7 @@ Time-splitting `14.normalised` (9.4M vars / 25.2M clauses / 505 MB):
 | 25.2M × `add_clause` | ~17.8 s |
 | search (lucky answers sat) | ~0 s |
 
-and the run's split is **6–7 s user / 28–42 s sys** — an allocation-churn
+and the run's split is **6–7 s user / 28–42 s sys** – an allocation-churn
 fault storm, not compute (kissat: 3.5 s user / 0.95 s sys; it pre-sizes
 from the header).
 
@@ -22,7 +22,7 @@ from the header).
 - `Solver::new_vars_bulk(n)`: one resize per per-var/per-literal table to
   the final size (the same fills `new_var` writes), then the same
   `vsids`/`chb` insertions in the same order (all-equal activities make
-  each O(1)).  Sequential `new_var` measured 2 µs/var — ~25 tables
+  each O(1)).  Sequential `new_var` measured 2 µs/var – ~25 tables
   resized one variable at a time, amortized-doubling reallocs and their
   page-fault traffic dominating huge-formula load.  The CLI fast path now
   calls the bulk form.
@@ -35,13 +35,13 @@ spot set; the perf gate reads counters 1.000 vs the `2b0b4d54` pin).
 Measured effect on `14.normalised` under heavy external load: user
 7.7 → 5.6 s, wall consistently 10–15 s below the old binary across
 interleaved runs (the box's contention inflated both arms' sys to
-40–60 s during measurement — the deltas are directional, not final).
+40–60 s during measurement – the deltas are directional, not final).
 
 ## Named next slices (the remaining ~35 s of sys on this class)
 
 1. **The 18.7M per-literal `Vec<Watcher>` headers** (`WatchLists.watches:
    Vec<Vec<Watcher>>`): ~450 MB of headers plus one small allocation per
-   watched literal — the dominant remaining churn.  The CSR-watches arc
+   watched literal – the dominant remaining churn.  The CSR-watches arc
    (`2026-09-13-csr-watches-kickoff.md`, slices 1–5, currently an
    optional mirror) is the structural answer; promoting it to the primary
    on the bulk-load path (the CLI knows the whole literal stream upfront)
@@ -50,7 +50,7 @@ interleaved runs (the box's contention inflated both arms' sys to
    moved): a header-driven reserve for the original-clause count.
 3. `begin_deferred_big`/`finish_deferred_big` around the CLI bulk load
    (the `DimacsParser::parse_reader` path already does this; the fast
-   path does not — it only covers binary/BIG edges, but those are 78 %
+   path does not – it only covers binary/BIG edges, but those are 78 %
    of the hwmcc anatomy).
 
 ## Addendum: the header-driven reserves land (and deferred-BIG does not)
@@ -59,7 +59,7 @@ interleaved runs (the box's contention inflated both arms' sys to
 `reserve_clause_slots` plus a new `reserve_clause_bytes` (arena backing
 sized from the flat stream's exact literal count: `4·lits + 16·clauses`),
 removing the arena's doubling traffic (~600 MB grown ≈ 1.2 GB moved on
-the 25M-clause class).  Bit-identical by construction — the gate reads
+the 25M-clause class).  Bit-identical by construction – the gate reads
 counters 1.000 against the pin; conflicts/decisions identical on the
 spot set; 1318 tests, clippy/fmt clean, parity 177/0/1.
 
@@ -67,11 +67,11 @@ spot set; 1318 tests, clippy/fmt clean, parity 177/0/1.
 **net-negative on the binary-heavy hwmcc anatomy** (9.5 → 10.6 s over
 three interleaved pairs: the exact-size CSR materialization over ~38 M
 deferred edges costs more than incremental attach saves at that scale)
-and neutral on the normalised class — dropped.  The `DimacsParser` path
+and neutral on the normalised class – dropped.  The `DimacsParser` path
 keeps its pair (worker-class measured wins there).
 
 Measured (interleaved, load-contended): `14.normalised` 39–46 s →
 29–38 s; the load wall is now dominated by the per-literal
-`Vec<Watcher>` churn — the CSR-watches-primary slice — plus the file
+`Vec<Watcher>` churn – the CSR-watches-primary slice – plus the file
 I/O gap to kissat's mmap (0.85 s vs 9.5 s on hwmcc remains after these
 fixes; most of that is the same watch-list churn, not read()).

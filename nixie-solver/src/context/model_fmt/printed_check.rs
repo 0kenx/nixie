@@ -1,5 +1,5 @@
-//! The printed model read back as an interpretation — constants **and
-//! uninterpreted functions** — and checked against what was asserted
+//! The printed model read back as an interpretation – constants **and
+//! uninterpreted functions** – and checked against what was asserted
 //! (re-fix pass 15: decisions (64), (67), (68)).
 //!
 //! # Why the functions are read back too (decision (68))
@@ -9,7 +9,7 @@
 //! spell, and only where their arguments were literals the candidate pinned.
 //! An application nested in another (`(f (f 7))`) or read at a bound variable
 //! had no reading, so the certificate declined and a model that was correct
-//! — `f` constantly `7` — was withheld (recheck 14 measured 95 of 132
+//! – `f` constantly `7` – was withheld (recheck 14 measured 95 of 132
 //! withheld models correct).  The printed `define-fun` of a function *is* its
 //! interpretation: the first entry whose arguments match, else the else
 //! value.  Every application is replaced by that table, bottom-up and under
@@ -18,7 +18,7 @@
 //! # The scope of the net (decision (67))
 //!
 //! The net used to run only where the solver's `has_array_ops` flag was set,
-//! and it read the solver's assertions — after Skolemisation, destructive
+//! and it read the solver's assertions – after Skolemisation, destructive
 //! equality resolution and vacuous-binder elimination had removed a
 //! quantifier.  A scalar or uninterpreted goal (`q01`, `u04`), and an array
 //! goal whose only read sits under a binder that never produced an instance
@@ -32,7 +32,7 @@
 //! changed is evaluated once, exactly, under the printed interpretation: if
 //! it makes an assertion false, the fresh values are dropped and the solver's
 //! own model is printed (recheck 14's `r03`: a fresh value re-keyed a table
-//! and lost an entry — c702310 printed a correct model there).
+//! and lost an entry – c702310 printed a correct model there).
 
 use super::*;
 use crate::prelude::{FxHashMap, FxHashSet};
@@ -125,8 +125,8 @@ pub(in crate::context) struct ParseBack {
 }
 
 impl Context {
-    /// Whether some asserted term — as the script wrote it, before any
-    /// quantifier was Skolemised, resolved or dropped — contains a
+    /// Whether some asserted term – as the script wrote it, before any
+    /// quantifier was Skolemised, resolved or dropped – contains a
     /// quantifier (decision (67)).  Assumptions of a `check-sat-assuming`
     /// count too.
     pub(in crate::context) fn goal_is_quantified(&self) -> bool {
@@ -204,7 +204,7 @@ impl Context {
 
     /// A printed numeric value as the literal it denotes: the printer spells a
     /// non-integral `Real` as `(/ 37 10)` and a negative one as `(/ -21 10)`
-    /// or `(- 2.0)`, which parse back as a division / negation of literals —
+    /// or `(- 2.0)`, which parse back as a division / negation of literals –
     /// terms the exact evaluator reads as `Int` division or leaves open.
     /// Anything else is returned unchanged.
     fn fold_numeral_value(&mut self, value: TermId) -> TermId {
@@ -286,7 +286,7 @@ impl Context {
 
     /// Every declared uninterpreted function's printed table that parses
     /// back into values closed up to witnesses, and the names of those that
-    /// do not — the honesty net's reader (decision (92)(d), re-fix pass 19):
+    /// do not – the honesty net's reader (decision (92)(d), re-fix pass 19):
     /// one unreadable table must not switch off the reading of every
     /// assertion, so every other table is still read.  A table counts as
     /// unreadable when a printed value does not parse (a constructor named
@@ -339,7 +339,7 @@ impl Context {
         // Two entries at one argument tuple with different values (the
         // congruence closure kept two applications apart that the
         // arithmetic valued alike, `#P2b-74`) are read exactly as
-        // `(get-model)` prints them — the first entry at a tuple wins —
+        // `(get-model)` prints them – the first entry at a tuple wins –
         // and the certificate judges that function.
         let Some(((entries, else_text, arity), _)) =
             self.func_interp_reading(name, solver_model, class_values, false)
@@ -640,8 +640,8 @@ impl Context {
         Some((printed, parse))
     }
 
-    /// The quantifier-free check: the first assertion the printed model —
-    /// constants and function tables as `(get-model)` prints them — makes
+    /// The quantifier-free check: the first assertion the printed model –
+    /// constants and function tables as `(get-model)` prints them – makes
     /// **definitely** false, quoted; `None` when every assertion is true or
     /// cannot be evaluated exactly.
     pub(in crate::context) fn printed_model_falsifies(&mut self) -> Option<String> {
@@ -678,7 +678,7 @@ impl Context {
     /// replaced by its printed value, folded exactly.  So a compound over an
     /// application (`(+ (f j) 3)`), a comparison of two applications and a
     /// read at an applied index fold to a literal, a constructor is its own
-    /// value, and a `Real` keeps its decimal point — the same model the
+    /// value, and a `Real` keeps its decimal point – the same model the
     /// printed one is, term for term.  `None` for an array- or
     /// uninterpreted-sorted term, or one the evaluator cannot fold (the
     /// ordinary readings then answer).

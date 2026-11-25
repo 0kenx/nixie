@@ -1,7 +1,7 @@
 # Propagate write-elision + branchless other-watch: pre-registration + results (2026-09-01)
 
 Follow-up to the landed BIG-authoritative study
-(`2026-09-big-authoritative-bcp.md`) — its closing "remaining lever" list:
+(`2026-09-big-authoritative-bcp.md`) – its closing "remaining lever" list:
 the large-clause visit itself. This study takes the two lowest-risk cuts
 from that list; Gent's saved-position scan (needs a header field) stays
 deferred behind the 12-byte-header pin per the closed arena study.
@@ -24,7 +24,7 @@ differs from the read pointer after the first dropped watcher; while
 `write == read` a kept watcher's write-back is a pure self-write. Branch
 on it: blocker-hit path writes nothing while `write == read`; refresh
 paths (firsttrue/satrepl/unit) write only the `blocker` word (1 store
-instead of 3). Final memory state identical in all cases — this cut is
+instead of 3). Final memory state identical in all cases – this cut is
 state-identical by construction.
 
 **(a) branchless other-watch (cadical `lits[0] ^ lits[1] ^ lit`) with
@@ -34,16 +34,16 @@ codes (no branch, no arena write). The arena position invariant
 by writing positions only where needed:
 
 * satisfied-first / satrepl paths: **no position writes** (a non-reason
-  clause's position order is unobservable — audited: every other
+  clause's position order is unobservable – audited: every other
   `lits[0]`/`lits[1]` consumer reads the pair order-insensitively
   (detach, rebuild, BIG build, ELS, transred, probing), and a *reason*
   clause can never be re-visited on a writing path while it is a reason
-  — its propagated literal is true, so every visit of its watchers
+  – its propagated literal is true, so every visit of its watchers
   short-circuits satisfied);
-* move path: write `(0)=first, (1)=l, (j)=¬lit` — 3 stores vs the
+* move path: write `(0)=first, (1)=l, (j)=¬lit` – 3 stores vs the
   current swap-pair's 4;
 * unit path (the clause becomes a reason **now**): normalize
-  `(0)=first, (1)=¬lit` before `assign_propagation` — this is the one
+  `(0)=first, (1)=¬lit` before `assign_propagation` – this is the one
   site the invariant is actually created, and it is the same writes the
   old top-swap did;
 * conflict path: normalize the same way (rare; keeps any downstream
@@ -57,17 +57,17 @@ leave the two watched literals in whichever order they found them.
 
 Path-preserving: final watch-list state identical (e); arena literal
 *order* differs only on non-reason clauses whose last visit was a
-satisfied/satrepl visit — argued unobservable above, and Gate 1
+satisfied/satrepl visit – argued unobservable above, and Gate 1
 (trajectory identity) is the empirical proof for both cuts.
 
 ## Go / no-go (pre-registered BEFORE measuring)
 
-1. **Gate 1 — trajectory identity**: 54-file `/tmp/sc24f`,
+1. **Gate 1 – trajectory identity**: 54-file `/tmp/sc24f`,
    `stats_solve`, `MAXC=60000`, default seed, vs `precompile/49ec6b1`
    (the BIG-authoritative landing): counters + verdict bit-identical.
-2. **Gate 2 — instructions** (`cpu_core/instructions`, pinned, private
+2. **Gate 2 – instructions** (`cpu_core/instructions`, pinned, private
    target dir): fixed `MAXC=40000` on the miss-path class
-   {circuit_64in, si2-b03m, noL-11-14} — geomean ≥ **1.02**; frb45-21-2
+   {circuit_64in, si2-b03m, noL-11-14} – geomean ≥ **1.02**; frb45-21-2
    (post-BIG also blocker-hit-dominated) expected ≥ 1.00 and counted
    separately; the binary-heavy class {ITC2021_Early_3, qwh.50.1250,
    shuffling-2} as should-not-regress (≥ 0.99). Both-solve corpus
@@ -78,12 +78,12 @@ satisfied/satrepl visit — argued unobservable above, and Gate 1
    verdict sweep 0 mismatches, SMT differential 0 disagreements, z3
    parity.
 
-## Results — LANDED (slice e only; slice a reverted on Gate 1)
+## Results – LANDED (slice e only; slice a reverted on Gate 1)
 
-**Slice (a) — branchless other-watch with on-demand normalization —
+**Slice (a) – branchless other-watch with on-demand normalization –
 FAILED Gate 1 and was reverted before any measurement.** 34/54 corpus
 trajectories diverged. Root cause: leaving the watched pair in visit
-order on satisfied/satrepl paths *is* observable — not through the
+order on satisfied/satrepl paths *is* observable – not through the
 direct `lits[0]` readers the audit covered (all order-insensitive), but
 through **order-sensitive consumers**: `watch_rank`'s first-wins
 selection in `remove_literal_and_rewatch`-style re-attach, first-wins
@@ -91,15 +91,15 @@ scans in vivify/probe/els, tie-breaking anywhere positions meet a
 comparator. Stored literal order is part of the observable state, full
 stop. The unconditional top-swap stays (2 arena stores per miss
 visit), with a comment recording why. A retry would have to normalize
-positions without the stores on exactly the paths that need them —
-which is what the failed pilot did — or eliminate the order-sensitive
+positions without the stores on exactly the paths that need them –
+which is what the failed pilot did – or eliminate the order-sensitive
 consumers; neither is worth the tail risk at ~0.4 % projected gain.
 
-**Slice (e) — kept-watcher write elision — passed everything and
+**Slice (e) – kept-watcher write elision – passed everything and
 landed** (`49ec6b1` → this commit):
 
 - **Gate 1**: 54/54 bit-identical vs `precompile/49ec6b1` (old sha
-  `50fe131e…`, new `957b1189…`) — the cut is state-identical by
+  `50fe131e…`, new `957b1189…`) – the cut is state-identical by
   construction, confirmed.
 - **Gate 2** (fixed `MAXC=40000`, 3 reps, pinned):
 
@@ -117,7 +117,7 @@ landed** (`49ec6b1` → this commit):
   a small share; the fixed-cap class carries the effect).
 - **Gate 3**: `nixie-sat` 879/879, workspace 10 418/10 418,
   clippy/fmt/doc clean, `diff_equiv` 200 k iterations 0/0, corpus
-  verdict sweep 54/54 **0 mismatches** (one new-only 60 s solve — pure
+  verdict sweep 54/54 **0 mismatches** (one new-only 60 s solve – pure
   speed, identical trajectories), SMT differential **160/0** (par2
   2 316.9), z3 parity **169/1/0**.
 
@@ -131,5 +131,5 @@ conflict count than the session start.
 ## Hazards (recorded for the next agent)
 
 The unit-path normalization omission is the one soundness-relevant
-risk of slice (a) — moot after the revert; slice (e) writes the same
+risk of slice (a) – moot after the revert; slice (e) writes the same
 final state as before, just fewer redundant stores.

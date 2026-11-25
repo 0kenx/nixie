@@ -1,5 +1,5 @@
 //! Tests for the ternary×binary SSR cascade (`extract_binary_resolvents`)
-//! and the pre-search ELS fixpoint arm — both default-off study machinery
+//! and the pre-search ELS fixpoint arm – both default-off study machinery
 //! (2026-09-18, `docs/studies/2026-09-18-ssr-binaries.md`).
 
 use super::*;
@@ -77,7 +77,7 @@ fn ssr_skips_assigned_and_tautological_shapes() {
     }
     s.add_clause([l(0, true), l(1, true), l(2, true)]);
     s.add_clause([l(0, false), l(1, true)]);
-    // (b ∨ ¬b) shape: ternary (b ∨ b' ∨ c) with binary (¬b ∨ b') — the
+    // (b ∨ ¬b) shape: ternary (b ∨ b' ∨ c) with binary (¬b ∨ b') – the
     // resolvent (b' ∨ c) is fine, but a complementary pair can never be
     // produced because detection refuses same-var clauses; this asserts
     // the pass stays a no-op on formulas without resolution partners.

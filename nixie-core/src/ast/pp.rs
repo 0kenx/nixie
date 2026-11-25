@@ -4,7 +4,7 @@
 //! recursion over user-controlled DAGs).  Covers every kind needed to
 //! reconstruct a clause for external checking (arithmetic, Boolean,
 //! ite/equality, arrays, bit-vector basics); exotic kinds print as
-//! `(_term <id>)` placeholders — an honest partial rendering, never a
+//! `(_term <id>)` placeholders – an honest partial rendering, never a
 //! wrong one (the placeholder is a free constant for the checker).
 //!
 //! Also the debugging channel for `NIXIE_APROP_VERIFY` (see

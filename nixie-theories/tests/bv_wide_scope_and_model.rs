@@ -19,8 +19,8 @@ use num_bigint::BigUint;
 /// clauses defining `x`'s circuit and a surviving cache entry would have
 /// handed the encoder an unconstrained bit-vector.  Circuits are now installed
 /// at the root and never deleted, so the entry and its clauses live exactly as
-/// long as each other; what U-Z10 was about — a circuit that is *unconstrained*
-/// after the pop — is what this version checks directly: the adder defined
+/// long as each other; what U-Z10 was about – a circuit that is *unconstrained*
+/// after the pop – is what this version checks directly: the adder defined
 /// inside the scope still constrains `z` after it, while the constant pinned
 /// inside the scope is gone.
 #[test]
@@ -61,7 +61,7 @@ fn pop_keeps_the_circuit_and_retracts_only_the_assertion() {
     solver.pop();
 }
 
-/// A node created below the pushed scope survives the pop — and so, now, does
+/// A node created below the pushed scope survives the pop – and so, now, does
 /// one created inside it: both are definitions.
 #[test]
 fn pop_keeps_every_circuit_node_below_or_inside_the_scope() {
@@ -121,7 +121,7 @@ fn nested_pops_unwind_one_level_at_a_time() {
 /// `a <u b` into it once. Before the fix that entry survived a pop whose
 /// `sat.pop()` had deleted the variable's defining clauses, so the *next*
 /// `assert_ult` on the same pair hit the memo, found a now-**free** variable and
-/// asserted it — which is trivially satisfiable whatever `a` and `b` hold. Here
+/// asserted it – which is trivially satisfiable whatever `a` and `b` hold. Here
 /// `a` and `b` are pinned to 5 and 3 at the base level, so `a <u b` is false and
 /// the second assertion must be refuted.
 ///
@@ -150,7 +150,7 @@ fn pop_retracts_the_ult_memo_so_a_later_conflict_is_still_found() {
     );
 }
 
-/// `bvsub` of equal wide operands is zero — the U-Z11 shift bug at unit level.
+/// `bvsub` of equal wide operands is zero – the U-Z11 shift bug at unit level.
 ///
 /// `bv_sub` encodes `a - b` as `a + (~b + 1)` and the `+1` went through
 /// `encode_add_const`, whose `((constant >> i) & 1)` read bit `i >= 64` of the
@@ -184,7 +184,7 @@ fn wide_sub_of_equal_operands_is_zero_at_128_bits() {
 /// Control for the row above: the negation of the same identity must still be
 /// refuted, so the fix did not simply make the circuit weaker.
 ///
-/// This one was **already correct** on 0.3.3/0.3.4 — the corrupted constant
+/// This one was **already correct** on 0.3.3/0.3.4 – the corrupted constant
 /// perturbs the difference by `2^64`, which does not make `a - b = 1` reachable
 /// when `a = b`, so the shapes that contradict in the low 64 bits were refuted
 /// before the fix too (`p2-nixie-034/report.md` §6.2). It is here to pin that
@@ -220,7 +220,7 @@ fn wide_sub_of_equal_operands_is_not_one_at_128_bits() {
 /// shift amount, so bit `i` was ORed into bit `i % 64` and two *different* wide
 /// values could fold onto one key. Equal keys are exactly what makes two terms
 /// share a representative here, so the collision reports unequal terms as
-/// having the same value — the hazard `extract_model_equalities` already
+/// having the same value – the hazard `extract_model_equalities` already
 /// documents and avoids with a `BigUint` key. This function now uses the same
 /// key.
 ///

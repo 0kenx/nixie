@@ -105,12 +105,12 @@ impl RootSample {
     }
 
     /// Whether the isolating intervals of `self` and `other` fail to be
-    /// **strictly** separated — sharing an endpoint counts.
+    /// **strictly** separated – sharing an endpoint counts.
     ///
     /// Touching must count. Two brackets meeting at `x` (say `[-3, 0]` around
     /// `−√2` and the degenerate `[0, 0]` of the rational root `0`) make
     /// [`open_sample`] return `(0 + 0)/2 = 0`, which is the *root*, not a point
-    /// of the open cell between them — so the cell `(−√2, 0)` would get no
+    /// of the open cell between them – so the cell `(−√2, 0)` would get no
     /// representative at all. A caller enumerating one point per cell (see
     /// `crate::solver::witness_algebraic`) would then miss every solution
     /// living there and wrongly conclude that none exists. Distinct real roots
@@ -186,7 +186,7 @@ pub(crate) fn isolate_root_samples(polys: &[Polynomial], var: Var) -> Vec<RootSa
 /// Deduplicate equal roots, refine intervals to be pairwise **strictly**
 /// disjoint, and sort ascending. After this the `i`-th and `(i+1)`-th roots
 /// satisfy `roots[i].hi < roots[i+1].lo`, so any rational in the open interval
-/// `(hi, lo)` — the midpoint [`open_sample`] picks, in particular — sits
+/// `(hi, lo)` – the midpoint [`open_sample`] picks, in particular – sits
 /// strictly between the two real roots. Merely *touching* brackets would break
 /// that: see [`RootSample::overlaps`].
 fn normalize_roots(samples: Vec<RootSample>) -> Vec<RootSample> {
@@ -321,7 +321,7 @@ fn sign_at_algebraic_inner(
     }
 
     // Unreachable for well-formed input; fall back to the (approximate) midpoint
-    // sign rather than fabricating a zero — flagged as unproven.
+    // sign rather than fabricating a zero – flagged as unproven.
     let mid = (&a + &b) / BigRational::from_integer(2.into());
     (sign_at_rational(q, var, &mid), true)
 }
@@ -335,12 +335,12 @@ fn sign_at_algebraic_inner(
 /// # The interval is half-open, and that matters
 ///
 /// Sturm isolation counts roots in `(a, b]`, so a rational sitting exactly at
-/// `lo` is *not* the root this bracket isolates — it is the neighbouring
+/// `lo` is *not* the root this bracket isolates – it is the neighbouring
 /// bracket's. Accepting it collapses this bracket onto the wrong number and
 /// silently loses the root that actually lives here: for `x³ − 2x`, `−√2`'s
 /// bracket can be `(-3, 0]`, and admitting the rational root `0` at its lower
 /// endpoint replaced `−√2` with a duplicate of `0`, which deduplication then
-/// discarded — leaving the polynomial with two of its three real roots.
+/// discarded – leaving the polynomial with two of its three real roots.
 /// Anything enumerating cells from these samples (`crate::cad`'s lifting,
 /// `crate::solver::witness_algebraic`'s candidate walk) would then never look
 /// at `−√2` or the cells beside it.
@@ -495,9 +495,9 @@ impl CadPoint {
     /// [`Self::sign_of`] with no approximate fallback: `None` means the sign
     /// could not be *proved* within the refinement budget.
     ///
-    /// Any decision that a wrong answer would ride on — accepting a point as a
+    /// Any decision that a wrong answer would ride on – accepting a point as a
     /// satisfying witness, refuting it as part of an emptiness proof, deciding
-    /// a theory atom's truth value — must go through this and treat `None` as
+    /// a theory atom's truth value – must go through this and treat `None` as
     /// "unknown", never as a sign. `sign_of`'s budget-exhaustion fallback is a
     /// midpoint guess and would turn a fabricated sign into a fabricated
     /// verdict.
@@ -620,8 +620,8 @@ mod tests {
     /// Regression: an irrational root's wide bracket can end exactly where a
     /// rational root sits (`−√2` isolated by `[-3, 0]`, next to the root `0`).
     /// If merely-touching brackets were accepted as "disjoint", the open cell
-    /// between them would be sampled *at* the shared endpoint — i.e. at the
-    /// root — leaving that cell with no representative at all. A caller
+    /// between them would be sampled *at* the shared endpoint – i.e. at the
+    /// root – leaving that cell with no representative at all. A caller
     /// enumerating one point per cell would then miss every solution in
     /// `(−√2, 0)` and wrongly report the constraint set empty.
     #[test]

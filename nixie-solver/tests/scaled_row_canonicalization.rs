@@ -7,7 +7,7 @@
 //! raw: a couple of pivots multiply 10⁹-scale coefficients together, the
 //! `i64` `Rational64` products overflow, the pivot is transactionally
 //! refused, `resource_limit` trips, and the LP answers an honest `Unknown`
-//! — where the LP question itself is trivial (a handful of variables with
+//! – where the LP question itself is trivial (a handful of variables with
 //! small-integer structure once the common 10⁹ factor is divided out).
 //!
 //! The fix rescales every row by `lcm(denominators)/gcd(|numerators|)` at
@@ -17,13 +17,13 @@
 //!
 //! 1. the scaled LRA `gap` twin decides `sat` (its certificate is the
 //!    rational half-integer solution),
-//! 2. the scaled LIA twin decides `unsat` (integer-infeasible, LP-sat —
+//! 2. the scaled LIA twin decides `unsat` (integer-infeasible, LP-sat –
 //!    the gap certificate),
 //! 3. strict scaled inequalities (the δ-encoding path) keep their exact
 //!    semantics under rescaling, both polarities,
 //! 4. a formula and its uniformly rescaled copy (every constant ×3) agree,
 //! 5. an integer gap whose rhs shares the coefficient gcd is *satisfiable*
-//!    — canonicalization must not turn a solvable row into an unsolvable
+//!    – canonicalization must not turn a solvable row into an unsolvable
 //!    one (`2·10⁹·x = 4·10⁹` is `x = 2`, not a parity contradiction).
 
 use nixie_solver::Context;
@@ -79,7 +79,7 @@ fn scaled_gap_lia_twin_is_unsat() {
 #[test]
 fn scaled_lia_gap_with_divisible_rhs_is_sat() {
     // `2e9·x = 4e9` divides: x = 2.  Canonicalization must preserve the
-    // solution set exactly — a rescaled row may never widen or narrow it.
+    // solution set exactly – a rescaled row may never widen or narrow it.
     let output = run(r#"
         (set-logic QF_LIA)
         (declare-fun x () Int)
@@ -94,7 +94,7 @@ fn scaled_lia_gap_with_divisible_rhs_is_sat() {
 #[test]
 fn strict_scaled_inequality_unsat_side() {
     // x0 + 2·x1 < 1.5 with x0 = 1, x1 = 1/4: the boundary case 1.5 < 1.5
-    // is false — strictness must survive the 2·10⁹ rescaling (the δ
+    // is false – strictness must survive the 2·10⁹ rescaling (the δ
     // encoding lives in ℚ[ε]; a positive row rescaling rescales δ
     // magnitudes, which the framework admits).
     let output = run(r#"

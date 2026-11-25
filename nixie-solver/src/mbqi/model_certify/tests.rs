@@ -104,7 +104,7 @@ fn quantifier_free_goal_is_declined() {
     // honesty gate certifies them by evaluating the assertions under the
     // recorded model (`certify`'s enumeration degenerates to one exhaustive
     // pass when there is nothing to enumerate).  What still declines is a
-    // ground goal whose pinned model CONTRADICTS it — the certification
+    // ground goal whose pinned model CONTRADICTS it – the certification
     // question, not a sat question.
     let mut goal = IntGoal::new();
     let zero = goal.lit(0);
@@ -175,7 +175,7 @@ fn real_goal_is_refused_by_the_integer_engine() {
 /// Pins the ground-certification widening (2026-09-17): mixed LIRA goals
 /// carrying a Real literal used to be declined by `harvest`'s vocabulary
 /// (no `RealConst` arm), so a `sat` verdict over the big-constant
-/// abstraction could never publish — `unknown` on a decidable goal.
+/// abstraction could never publish – `unknown` on a decidable goal.
 #[test]
 fn ground_mixed_real_arithmetic_certifies() {
     let mut manager = TermManager::new();
@@ -202,7 +202,7 @@ fn ground_mixed_real_arithmetic_certifies() {
 }
 
 /// A Real-sorted `Div` over Int-valued operands evaluates to the exact
-/// RATIONAL quotient — `(/ 7 2)` is `7/2`, never the Euclidean floor `3`.
+/// RATIONAL quotient – `(/ 7 2)` is `7/2`, never the Euclidean floor `3`.
 ///
 /// The evaluator decides by the node's SORT, not by the operand value types:
 /// dispatching on values floored every real quotient whose operands happened
@@ -220,7 +220,7 @@ fn ground_real_division_is_exact_not_floored() {
     // (= (/ xi yi) (/ 7 2)) with xi = 7, yi = 2 is TRUE.
     let seven_halves = manager.mk_real(num_rational::Rational64::new(7, 2));
     let eq_exact = manager.mk_eq(quotient, seven_halves);
-    // (= (/ xi yi) 3) is FALSE — 7/2 is not 3, and not the floor 3 either.
+    // (= (/ xi yi) 3) is FALSE – 7/2 is not 3, and not the floor 3 either.
     let three = manager.mk_int(3);
     let eq_floor = manager.mk_eq(quotient, three);
     let mut model: FxHashMap<TermId, TermId> = FxHashMap::default();
@@ -241,20 +241,20 @@ fn ground_real_division_is_exact_not_floored() {
 /// Quantified goals carrying a Real literal or a Real-sorted free constant
 /// still decline at `prepare`: the region/critical-set argument the integer
 /// engine's exhaustive domain rests on is written for `Int`, and a Real
-/// value shifts atoms' crossing points off the critical set — an enumeration
+/// value shifts atoms' crossing points off the critical set – an enumeration
 /// over it would not be exhaustive, so no certification may rest on it.
 #[test]
 fn quantified_goal_with_real_values_still_declines() {
     let mut manager = TermManager::new();
     let int = manager.sorts.int_sort;
     let real = manager.sorts.real_sort;
-    // forall yi. yi < 2.5 — a Real literal under a quantifier.
+    // forall yi. yi < 2.5 – a Real literal under a quantifier.
     let yi = manager.mk_var("yi", int);
     let two_five = manager.mk_real(num_rational::Rational64::new(5, 2));
     let body_lit = manager.mk_lt(yi, two_five);
     let q_lit = manager.mk_forall([("yi", int)], body_lit);
     assert!(super::prepare(&[q_lit], &FxHashMap::default(), &manager).is_none());
-    // forall yi. yi < xr — a Real-sorted free constant under a quantifier.
+    // forall yi. yi < xr – a Real-sorted free constant under a quantifier.
     let xr = manager.mk_var("xr", real);
     let body_var = manager.mk_lt(yi, xr);
     let q_var = manager.mk_forall([("yi", int)], body_var);

@@ -1,6 +1,6 @@
 //! The 2026-09-21 class-crossing-unit false-sat regression (found by the
 //! `gate_subsume_soundness` generator; root cause in
-//! `substitute_equivalent_literals_round` — see the class-units block in
+//! `substitute_equivalent_literals_round` – see the class-units block in
 //! `equiv.rs`).
 //!
 //! Bug shape: an equivalence class containing a level-0-ASSIGNED literal
@@ -9,7 +9,7 @@
 //! and trail values) without deriving the forced representative unit, so
 //! the search branched the representative freely, answered `sat` on an
 //! UNSAT formula, and the model reconstruction assigned the member from
-//! the representative — clobbering the level-0 fact.  (Pinned by
+//! the representative – clobbering the level-0 fact.  (Pinned by
 //! `ce2_min` below, found by the `gate_subsume_soundness` generator.)
 //!
 //! `ce2_min` (16 clauses, default config, plain solve): unit ¬2 with
@@ -96,7 +96,7 @@ fn class_crossing_unit_never_false_sats() {
 #[test]
 fn class_crossing_unit_survives_the_fold_knob_matrix() {
     // The same anatomy under the full study stack (SSR + pre-search +
-    // gate subsumption) must stay honest too — the composition is what
+    // gate subsumption) must stay honest too – the composition is what
     // originally exposed the base bug.
     unsafe { std::env::set_var("NIXIE_GATE_SUBSUME", "1") };
     let (r, m) = solve_default(CE2_MIN);

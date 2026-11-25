@@ -31,7 +31,7 @@ exact `BigInt` modular arithmetic over the field the terms' sort names).
 
 Finite-field UNSATs additionally accept a first-class theory certificate:
 `FfCertificate` carries either ideal-membership cofactors (`Σ cᵢ fᵢ = 1`,
-re-encoded and re-multiplied by the gate — see `nixie-theories`'
+re-encoded and re-multiplied by the gate – see `nixie-theories`'
 `ff_theory`) or a pigeonhole count (`distinct` over more terms than the
 field's order). Field refutations without a certificate (exhaustive
 enumeration, branch exhaustion) fail closed to `unknown`.

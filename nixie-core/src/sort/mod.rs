@@ -70,7 +70,7 @@ pub enum SortKind {
     /// The theory is the SMT-LIB bags draft as CVC5 implements it
     /// (`src/theory/bags`): a bag is a finite map from elements to
     /// multiplicities, decided by reducing every constraint to arithmetic
-    /// over `bag.count` terms — the same eager membership reduction the
+    /// over `bag.count` terms – the same eager membership reduction the
     /// finite-set theory uses, with `count` playing the role both of
     /// membership and of cardinality.
     Bag(SortId),
@@ -83,7 +83,7 @@ pub enum SortKind {
     },
     /// The SMT-LIB `FloatingPoint` theory's `RoundingMode` sort.
     ///
-    /// A reserved, built-in sort with **exactly five** elements — the IEEE 754
+    /// A reserved, built-in sort with **exactly five** elements – the IEEE 754
     /// rounding modes `roundNearestTiesToEven`, `roundNearestTiesToAway`,
     /// `roundTowardPositive`, `roundTowardNegative` and `roundTowardZero`
     /// (abbreviated `RNE`, `RNA`, `RTP`, `RTN`, `RTZ`).
@@ -125,7 +125,7 @@ pub enum SortKind {
     ///
     /// A `u32` payload rather than the modulus itself: `SortKind` is the
     /// interner key (hashed and compared on every `Sorts::intern` lookup),
-    /// and the ZK moduli are 254 bits wide — the id keeps comparisons O(1)
+    /// and the ZK moduli are 254 bits wide – the id keeps comparisons O(1)
     /// and gives the per-field derived data a home computed once. See
     /// `sort::field` for the design.
     FiniteField(FieldId),
@@ -389,7 +389,7 @@ impl SortManager {
 
     /// Look up an already-interned sort kind, without interning.
     ///
-    /// Needed where only `&SortManager` is available — sort *inference* is one
+    /// Needed where only `&SortManager` is available – sort *inference* is one
     /// such place, and it must not be able to create sorts as a side effect of
     /// being asked a question.
     #[must_use]
@@ -893,8 +893,8 @@ impl SortManager {
             SortKind::FiniteField(id) => self.fields.get(*id).map(|f| f.sort_syntax()),
             SortKind::Array { .. } => Some("Array".to_string()),
             // `try_resolve`, not `resolve`, and that is not defensiveness.
-            // There are **two** interners in play — a `TermManager`'s and this
-            // `SortManager`'s — and the codebase splits names between them:
+            // There are **two** interners in play – a `TermManager`'s and this
+            // `SortManager`'s – and the codebase splits names between them:
             // `SortKind::Uninterpreted` names are interned by the SMT-LIB
             // parser (and read back by the printer) through the *term*
             // manager's, while a datatype's own name is interned here. A key

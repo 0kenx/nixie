@@ -4,7 +4,7 @@
 //! * rationally feasible (x = 1/2 works, by construction), but
 //! * integer-infeasible, certified by an integer combination `u` of the
 //!   rows such that every entry of `u^T (2A)` is divisible by `g` while
-//!   `u^T (2b)` is not — so `u^T (2A) x = u^T (2b)` has no integer
+//!   `u^T (2b)` is not – so `u^T (2A) x = u^T (2b)` has no integer
 //!   solution.
 //!
 //! The conflict depends on integrality: ordinary rational infeasibility
@@ -13,7 +13,7 @@
 //! `m * (odd/2)` in `u^T b`, invisible to any LP relaxation.
 //!
 //! `scale_log10` multiplies all emitted coefficients/rows by `10^k`
-//! (exact: same solution set over Q and over Z) — numeral stress.
+//! (exact: same solution set over Q and over Z) – numeral stress.
 //! A QF_LRA twin over the *same* system is SAT with witness x = 1/2,
 //! forming a differential pair that pins down integrality handling.
 

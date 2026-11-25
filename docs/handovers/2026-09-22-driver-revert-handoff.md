@@ -1,8 +1,8 @@
-# Handoff: the driver revert — the mis-attribution owned, the arc's simplex story closed (2026-09-22, third session)
+# Handoff: the driver revert – the mis-attribution owned, the arc's simplex story closed (2026-09-22, third session)
 
-**Read `AGENTS.md` first — it is canonical.**  This executes the CAV
+**Read `AGENTS.md` first – it is canonical.**  This executes the CAV
 audit's open item to completion.  Studies:
-`docs/studies/2026-09-22-driver-revert-attribution.md` (this landing —
+`docs/studies/2026-09-22-driver-revert-attribution.md` (this landing –
 the study wins), `2026-09-22-cav-regression-attribution.md` (the
 audit + piece-level bisect), `2026-09-22-simplex-unified-feasibility-driver.md`
 (the corrected campaign), `2026-09-22-lia-request-cadence.md` (the
@@ -15,7 +15,7 @@ The unified wide driver REVERTED (three pieces, verbatim to
 wide-leaving branch is gone, `check`'s interleaved one-wide-repair loop
 is restored.  **KEPT**: the preserve pair (S1-innocent, pinned by the
 `rederivation_preserves_*` tests) and the request cadence
-(`LIA_REQUEST_NODES = 64` — re-dosed on the reverted architecture:
+(`LIA_REQUEST_NODES = 64` – re-dosed on the reverted architecture:
 231s walk vs 80s request on the fixed-seed corpus).
 
 **The correction**: the driver campaign's "4 recoveries" were measured
@@ -47,23 +47,23 @@ holds main dirty).  Then delete the branch.
 
 * **Stale-base measurement**: a campaign that rebases mid-flight MUST
   re-run its baseline members on the CURRENT base before crediting
-  recoveries to its own change — main racing underneath can recover
+  recoveries to its own change – main racing underneath can recover
   them for you.  (This is the root of the driver mis-attribution.)
 * **Member-regeneration scripts**: a missing seed in the loop leaves a
-  stale file under the target name — a phantom verdict flip.  md5-
+  stale file under the target name – a phantom verdict flip.  md5-
   verify regenerated members against a fresh single-seed generation
   (the "i566 false unsat" was exactly this).
 * **`git checkout -- <file>` and worktree ops fail on a full /media/data**
-  ("unable to write index.lock") — verify byte counts and grep state
+  ("unable to write index.lock") – verify byte counts and grep state
   after every failure; the FS also flickers directories in and out of
   visibility transiently.
 * **Never push a refspec with an empty source**: `git push . "$(cmd)":main`
-  with a FAILING `cmd` becomes `:main` — a branch DELETION.  (Happened
+  with a FAILING `cmd` becomes `:main` – a branch DELETION.  (Happened
   once; recovered via `git branch main <sha>` + ff.  Always quote-check
   the refspec expands non-empty.)
 
 The one-sentence version: **the driver's recoveries were the tableau
-session's, measured against a stale base — the revert restores every
+session's, measured against a stale base – the revert restores every
 cell to its best recorded state while keeping the two sound residues
 (the preserve contract and the cadence), and the arc's simplex story
 closes with the conflict-limit and J5 classes as the named residual.**

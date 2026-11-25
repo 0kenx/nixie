@@ -1,4 +1,4 @@
-//! TLA+ generation — `PcalTLAGen`, reduced to the parts that carry meaning.
+//! TLA+ generation – `PcalTLAGen`, reduced to the parts that carry meaning.
 //!
 //! Line wrapping is not reproduced: the reference formats to a 78-column
 //! target with a hand-rolled wrapper, and parity is checked on parse, levels
@@ -8,7 +8,7 @@
 //! * the `VARIABLES`/`vars`/`ProcSet`/`Init` skeleton, including the
 //!   `pc`-first ordering and the `define`-block split between global and
 //!   local variable declarations;
-//! * the per-cluster actions — the `pc` guard, each statement's conjuncts
+//! * the per-cluster actions – the `pc` guard, each statement's conjuncts
 //!   with `EXCEPT`-based updates, self-subscripts on process-local
 //!   variables, primes on variables the step has already assigned, and the
 //!   `UNCHANGED` bookkeeping that closes each action and each branch;
@@ -53,7 +53,7 @@ pub fn generate(input: &GenInput) -> String {
     };
     let globals = input.alg.decls().clone();
     let defs = input.alg.defs().cloned();
-    // pcal 1.7.4 declares the globals first and `pc` (then `stack`) last —
+    // pcal 1.7.4 declares the globals first and `pc` (then `stack`) last –
     // the reverse ordering in current git master postdates the oracle.
     let mut g_vars: Vec<String> = Vec::new();
     for d in &globals {
@@ -230,7 +230,7 @@ impl Gen {
         self.line(&format!("{kw} {}", names.join(", ")));
     }
 
-    // ---- Init ---------------------------------------------------------------
+    // ======== Init ========
 
     fn init(&mut self, input: &GenInput, globals: &[VarDecl]) {
         let mut lines: Vec<String> = Vec::new();
@@ -295,7 +295,7 @@ impl Gen {
         self.blank();
     }
 
-    // ---- actions --------------------------------------------------------------
+    // ======== actions ========
 
     /// Emit one cluster's action definition.
     fn action(
@@ -532,7 +532,7 @@ impl Gen {
         items
     }
 
-    // ---- Next / Terminating / Spec ---------------------------------------------
+    // ======== Next / Terminating / Spec ========
 
     fn next(&mut self, input: &GenInput) {
         if !self.mp && self.omit_pc {
@@ -602,7 +602,7 @@ impl Gen {
         self.blank();
     }
 
-    /// `GenTermination` — elided exactly when the Terminating action was.
+    /// `GenTermination` – elided exactly when the Terminating action was.
     fn termination(&mut self, input: &GenInput) {
         if input.omit_pc || input.omit_stuttering {
             return;
@@ -627,7 +627,7 @@ fn render_guard(e: &Expr) -> String {
     }
 }
 
-/// Whether the expression is a conjunction/disjunction at its top level —
+/// Whether the expression is a conjunction/disjunction at its top level –
 /// bulleted (`Junction`) or single-line (`Infix`). Written inline after a
 /// bullet, either shape merges with the list it sits in.
 fn is_bool_chain(e: &Expr) -> bool {

@@ -2,7 +2,7 @@
 //!
 //! This is the *surface* IR from `docs/TLA_FRONTEND_DESIGN.md` §2: a faithful
 //! tree of what was written, with spans on every node. It is deliberately not
-//! minimal — desugaring to the KerA kernel happens in `nixie-tla`, downstream
+//! minimal – desugaring to the KerA kernel happens in `nixie-tla`, downstream
 //! of here. Keeping the two apart is what lets diagnostics point at what the
 //! user actually typed.
 
@@ -45,9 +45,9 @@ impl QualName {
 /// Which junction a bulleted list is built from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Junct {
-    /// `/\` — conjunction list.
+    /// `/\` – conjunction list.
     And,
-    /// `\/` — disjunction list.
+    /// `\/` – disjunction list.
     Or,
 }
 
@@ -65,22 +65,22 @@ impl Junct {
 /// Which quantifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QuantKind {
-    /// `\A` — universal.
+    /// `\A` – universal.
     Forall,
-    /// `\E` — existential.
+    /// `\E` – existential.
     Exists,
-    /// `\AA` — temporal universal.
+    /// `\AA` – temporal universal.
     TemporalForall,
-    /// `\EE` — temporal existential.
+    /// `\EE` – temporal existential.
     TemporalExists,
 }
 
 /// Whether an action is written with square or angle brackets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionKind {
-    /// `[A]_v` — `A` or stuttering on `v`.
+    /// `[A]_v` – `A` or stuttering on `v`.
     Stuttering,
-    /// `<<A>>_v` — `A` and `v` changes.
+    /// `<<A>>_v` – `A` and `v` changes.
     NonStuttering,
 }
 
@@ -128,9 +128,9 @@ pub struct Bound {
 /// One selector step in an `EXCEPT` update path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExceptSel {
-    /// `[i, j]` — function application.
+    /// `[i, j]` – function application.
     Index(Vec<Expr>),
-    /// `.field` — record field.
+    /// `.field` – record field.
     Field(Ident),
 }
 
@@ -161,7 +161,7 @@ pub enum NewKind {
 /// One item in the assumption list of an `ASSUME … PROVE …`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AssumeItem {
-    /// `NEW CONSTANT x \in S` — a fresh declaration, scoped to the sequent.
+    /// `NEW CONSTANT x \in S` – a fresh declaration, scoped to the sequent.
     New {
         /// What the declaration introduces.
         kind: NewKind,
@@ -581,7 +581,7 @@ impl Expr {
 /// Collect every `INSTANCE` target named inside `e`, including the ones a
 /// `LET` definition introduces (`LET M == INSTANCE A IN …`), without
 /// recursing on the native stack: the worklist is explicit, and dedup
-/// (`seen`) keeps shared subterms — a common `LET` fact referenced twice —
+/// (`seen`) keeps shared subterms – a common `LET` fact referenced twice –
 /// from queuing the same subtree twice.
 fn collect_instance_targets<'e>(
     e: &'e Expr,
@@ -787,7 +787,7 @@ impl Module {
     ///
     /// Distinct from [`Module::extends`]: `INSTANCE` substitutes for the
     /// instantiated module's declarations, so its names are *not* imported.
-    /// It still has to be loaded, though — a member cannot be resolved
+    /// It still has to be loaded, though – a member cannot be resolved
     /// without it.
     #[must_use]
     pub fn instantiated(&self) -> Vec<&Ident> {
@@ -805,8 +805,8 @@ impl Module {
                         collect_instance_targets(e, &mut out, &mut seen);
                     }
                 }
-                // A `LET` definition can itself be an instance —
-                // `Next == LET M == INSTANCE A IN …` — and its target must
+                // A `LET` definition can itself be an instance –
+                // `Next == LET M == INSTANCE A IN …` – and its target must
                 // be loaded exactly like a top-level one, or the instance
                 // cannot resolve at its use site. Every expression a unit
                 // carries is walked, explicitly and iteratively (a user's

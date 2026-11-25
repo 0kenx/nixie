@@ -1,4 +1,4 @@
-//! Gate-modulo forward subsumption inside the equivalence-closure round —
+//! Gate-modulo forward subsumption inside the equivalence-closure round –
 //! a port of kissat `congruence.c:forward_subsume_matching_clauses`
 //! (2026-09-21 slice; `docs/studies/2026-09-18-ite-gate-congruence.md`
 //! measured kissat retiring **108,484 clauses = 44 % of tried** through
@@ -8,7 +8,7 @@
 //! the early-out, BEFORE the fold's rewrite writes the representatives
 //! back.  Every whole-clause retirement here is one the rewrite would
 //! otherwise leave behind: the rewrite only retires *exact* canonical
-//! duplicates and tautologies — strictly-smaller-set subsumption modulo
+//! duplicates and tautologies – strictly-smaller-set subsumption modulo
 //! the classes (`d ⊂ c` with `|d| < |c|`) is this pass's alone.
 //!
 //! Semantics: `d` subsumes `c` modulo classes iff every literal of `d`
@@ -16,16 +16,16 @@
 //! mapped set.  Soundness for verdicts AND models: the equivalence
 //! classes are entailed by the retained binary evidence, so any model of
 //! the kept clauses plus the classes satisfies `c`; retirement is
-//! whole-clause only — no strengthening, the shape the separate
+//! whole-clause only – no strengthening, the shape the separate
 //! post-substitution `forward_subsumption` + self-subsumption sequence's
 //! ≈1/15k wrong-model interaction (see the caller in `mod.rs`) does not
 //! take.  Retirements run through the same `retire_clause` the rewrite's
 //! tautology path uses (binary-graph purge, reason fixup, arena
-//! bookkeeping — including the `num_original` decrement the
+//! bookkeeping – including the `num_original` decrement the
 //! fold-collapse accounting reads).
 //!
 //! Candidates are originals only (kissat's `last_irredundant` bound;
-//! learned clauses are the search's own product), and — as in kissat —
+//! learned clauses are the search's own product), and – as in kissat –
 //! only those containing a *matchable* variable (a literal whose
 //! representative differs, or a representative of such a literal): the
 //! no-matchable case is ordinary subsumption, owned by the regular
@@ -33,7 +33,7 @@
 //! canonical set.  Candidates are probed smallest-set-first so a
 //! subsumer is met before its victims whenever sizes allow, exactly
 //! kissat's `sort_references_by_clause_size`.  The probe then walks ONE
-//! occurrence list per victim — the least-occurring repr's — which
+//! occurrence list per victim – the least-occurring repr's – which
 //! makes the pass *incomplete* by design (kissat parity): a subsumer
 //! sharing no literal with that repr is missed, falling to the regular
 //! subsumption passes or the next round's exact-duplicate retire.
@@ -98,7 +98,7 @@ impl Solver {
 
         // Candidate-volume guard: a cheap read-only pre-count of
         // matchable-containing originals.  Below the floor the pass
-        // returns without touching anything — the rewrite's own
+        // returns without touching anything – the rewrite's own
         // satisfied/tautology/dedup paths then handle the round exactly
         // as the fold-only arm would (bit-identical trajectory).
         let min_candidates = crate::gate_subsume_min_candidates();
@@ -130,7 +130,7 @@ impl Solver {
         // One pass over the live originals: canonicalize (map through
         // `sub`, drop level-0-false literals, sort + dedup by code),
         // retire satisfied clauses and class-tautologies (the rewrite's
-        // own retire paths — doing them here only moves them earlier),
+        // own retire paths – doing them here only moves them earlier),
         // collect every canonical set as subsumer pool, and the
         // matchable-containing ones as subsumption candidates.  Ids are
         // collected first: `retire_clause` takes `&mut self` while the
@@ -185,7 +185,7 @@ impl Solver {
 
         // Occurrence lists over canonical reprs for the whole subsumer
         // pool (kissat's dense-mode lists contain every clause; candidates
-        // connect lazily there, eagerly here — the probe's shortest-list
+        // connect lazily there, eagerly here – the probe's shortest-list
         // choice bounds the walk the same way).
         let mut occ: Vec<Vec<u32>> = vec![Vec::new(); num_lits];
         for (cid, set) in &sets {
@@ -237,7 +237,7 @@ impl Solver {
                     // The victim leaves the subsumer pool WITH its
                     // retirement: a later candidate probing this set
                     // would otherwise "subsume" through a clause that is
-                    // itself gone — two equal-set clauses retire each
+                    // itself gone – two equal-set clauses retire each
                     // other and the constraint vanishes entirely (the
                     // minimal counterexample: differential iter 1186,
                     // invalid model).  kissat's dense-mode lists make the

@@ -1,4 +1,4 @@
-//! Dense difference-logic core — a faithful port of Z3's
+//! Dense difference-logic core – a faithful port of Z3's
 //! `smt/theory_dense_diff_logic` (Leonardo de Moura, 2008).
 //!
 //! # What this is
@@ -30,12 +30,12 @@
 //!     i.e. `s′ − t′ ≤ −k′ − 1` over the integers, entailed exactly when
 //!     `−d(s′,t′) ≥ −k′ − 1`).
 //! * Explanations decompose a cell's supporting path through its supporting
-//!   edge ([`DenseDlCore::antecedents`]) — Z3 `get_antecedents` exactly.
+//!   edge ([`DenseDlCore::antecedents`]) – Z3 `get_antecedents` exactly.
 //!
 //! # Exactness of the incremental closure
 //!
 //! `update_cells` computes the improving set `F` from row `t` first, then
-//! relaxes cells `(y, x)` for `x ∈ F` using `d(y,s)` — and neither row `t`
+//! relaxes cells `(y, x)` for `x ∈ F` using `d(y,s)` – and neither row `t`
 //! (skipped: `y ≠ t`) nor column `s` (excluded: `s ∉ F`) is written while the
 //! loop runs, so every read input is stable at its pre-round value. The
 //! standard incremental-closure argument then applies: before the edge the
@@ -44,7 +44,7 @@
 //! contains a cycle of weight `k + d(t,s) ≥ 0`, which can be cut), so
 //! `min(d(y,x), d(y,s) + k + d(t,x))` over the *old* distances is the new
 //! exact closure. All writes happen in one round over stable inputs, with
-//! strict improvements only — the matrix stays exact after every assert.
+//! strict improvements only – the matrix stays exact after every assert.
 //!
 //! # Numeric exactness
 //!
@@ -57,7 +57,7 @@
 //! mistaken for a real distance.** Strict inequalities are pre-tightened by
 //! the caller (`x − y < c` ⇒ `x − y ≤ c − 1` over ℤ), so no infinitesimals
 //! are needed. (Z3's engine handles reals with `mpq_inf`; nixie routes
-//! real-sorted difference logic to the sparse `Rational64` engine instead —
+//! real-sorted difference logic to the sparse `Rational64` engine instead –
 //! see `solver.rs`.)
 
 use rustc_hash::FxHashMap;
@@ -136,7 +136,7 @@ pub enum DlAssert {
 ///
 /// The matrix is a flat row-major `Vec` whose *capacity width* doubles as
 /// nodes arrive (each row reserves `cap` slots), so growth re-layouts the
-/// whole matrix only every power of two — `O(n²)` total copying, amortised
+/// whole matrix only every power of two – `O(n²)` total copying, amortised
 /// `O(n)` per node.
 #[derive(Default, Debug)]
 pub struct DenseDlCore {
@@ -159,7 +159,7 @@ pub struct DenseDlCore {
     /// direction is recovered from the atom's own `(s,t)` orientation.
     occs: FxHashMap<(u32, u32), Vec<u32>>,
     /// Undo trail for closure cells: `(row, col, old edge, old dist)`.  The
-    /// cell is stored as coordinates, not a flat index — the matrix stride
+    /// cell is stored as coordinates, not a flat index – the matrix stride
     /// changes on capacity re-layout, which would silently invalidate flat
     /// trail indices.
     cell_trail: Vec<(u32, u32, u32, i64)>,
@@ -305,7 +305,7 @@ impl DenseDlCore {
     ///
     /// Returns [`DlAssert::Conflict`] when the edge closes a negative cycle
     /// (the reason lists the justifying atoms of the whole cycle), else
-    /// [`DlAssert::Ok`] — in which case closure improvements may have queued
+    /// [`DlAssert::Ok`] – in which case closure improvements may have queued
     /// propagations (drained via [`Self::take_propagations`]).
     pub fn assert_edge(
         &mut self,
@@ -431,10 +431,10 @@ impl DenseDlCore {
                         // `t − s ≤ k` (this cell) and `s − t ≤ −k` (the
                         // reverse cell).  Testing the reverse against 0
                         // instead of −k would propagate `x − y = 1` from a
-                        // path pair with d(s,t) ≤ 1, d(t,s) ≤ 0 — a bound
+                        // path pair with d(s,t) ≤ 1, d(t,s) ≤ 0 – a bound
                         // that does NOT entail the equality.
                         // The reverse edge is asserted only on assignment, so
-                        // it may not be known yet — skip unless present.
+                        // it may not be known yet – skip unless present.
                         let back = self.dist_of(x, y);
                         let back_known = back != DL_INF && self.edge_of(x, y) != NO_EDGE;
                         if back_known && back <= -a.k {
@@ -501,7 +501,7 @@ impl DenseDlCore {
                 let eid = self.edge_of(a, b);
                 if eid == NO_EDGE || eid == SELF_EDGE {
                     // Unreachable pair (should not happen when called on a
-                    // cell with a known distance) — emit nothing further
+                    // cell with a known distance) – emit nothing further
                     // rather than fabricating an explanation.
                     continue;
                 }
@@ -568,7 +568,7 @@ impl DenseDlCore {
     ///
     /// With every asserted edge `src→dst` of weight `w` satisfying
     /// `value(dst) − value(src) ≤ d(src,dst) ≤ w`, this is a feasible
-    /// integer assignment — the negated-row-minimum argument on the exact
+    /// integer assignment – the negated-row-minimum argument on the exact
     /// closure.
     pub fn value(&self, v: u32) -> i64 {
         let row = v as usize * self.cap;

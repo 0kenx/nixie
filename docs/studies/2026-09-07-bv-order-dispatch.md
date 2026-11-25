@@ -6,8 +6,8 @@ flip; baseline here = `precompile/4689d14`).
 
 **Verdict: landed.**  The order encoding now also serves the **eager
 pure-QF_BV dispatch** (`BvSolver::assert_formula_true`'s `Distinct` arm):
-the campaign's original headline cell — n=2000 w=16 free-variable
-`distinct`, pure QF_BV — goes from **timeout to 23.8 s**, n=1000 w=11 from
+the campaign's original headline cell – n=2000 w=16 free-variable
+`distinct`, pure QF_BV – goes from **timeout to 23.8 s**, n=1000 w=11 from
 timeout to 6.3 s, and the dense n=600 w=10 cell improves 8.4×.  The
 corpus has **zero** regression surface: an exhaustive scan of the 46 191
 QF_BV extracts found **no file with `distinct` arity > 32**, so the new
@@ -18,7 +18,7 @@ arm cannot fire on any real corpus input.
 - `assert_formula_true`'s spine: an eligible `distinct` at a **fact**
   position builds the bitonic network (the same
   `encode_distinct_order_network` the unified path uses) and pins its
-  result true.  Fact positions only — the free-pad soundness shape of
+  result true.  Fact positions only – the free-pad soundness shape of
   `order`'s module docs; nested or negated occurrences keep
   `encode_bool_node`'s exact pairwise definition.
 - **Pads are anonymous SAT variables** here (no `TermId` needs to exist
@@ -28,7 +28,7 @@ arm cannot fire on any real corpus input.
   dispatch); the network build refutes outright if an already-asserted
   equality hits two arguments, and a later `assert_eq` between two
   arguments of a built network refutes it the other way.  Without a
-  guard, an explicit `(= x_i x_j)` must refute through the full sort —
+  guard, an explicit `(= x_i x_j)` must refute through the full sort –
   resolution-hard (stage 2 measured 4M conflicts at n=16).
 - Eligibility mirrors stage 2's gates: arity > 32, all arguments blasted
   same-width bit-vectors, no ground-constant argument (pinned wires
@@ -55,7 +55,7 @@ Unsat cells at parity (guard- or blast-bound); the bounded small-n loss
 (n=100 w=8, 0.36 s absolute) is below the flip's n ≥ 300 scope and has no
 corpus exposure.  The embedded instance handles the network measurably
 worse than the unified main core (n=300 w=16: 3.0 s here vs 0.93 s
-unified; n=100 w=8 loses here, wins unified) — an argument for the
+unified; n=100 w=8 loses here, wins unified) – an argument for the
 remaining stage-4 question (routing pure goals through the unified path),
 not against this landing.
 

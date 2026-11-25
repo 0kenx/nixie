@@ -6,8 +6,8 @@
 //! `nixie_sat::Solver::solve_with_assumptions`, see `scope.rs`) on its own
 //! embedded solver, once per asserted bit-vector atom, from inside the enclosing
 //! CDCL(T) search's `on_assignment` callback. Every budget poll in the
-//! CDCL(T) layer — `TheoryManager::timed_out`, the `max_conflicts` comparison
-//! against `Statistics::conflicts`, `check_core`'s round-boundary deadline —
+//! CDCL(T) layer – `TheoryManager::timed_out`, the `max_conflicts` comparison
+//! against `Statistics::conflicts`, `check_core`'s round-boundary deadline –
 //! sits *outside* that call. So a single bit-blasted `solve()` could run
 //! unbounded, and it did: a 64x64 multiplier verification condition under
 //! `(set-option :timeout 100)` answered after 17 s, 170x its budget, because
@@ -25,7 +25,7 @@
 //!   so a fixed ceiling of `n` would only be right for the very first probe;
 //! * `BvSolver::reset` calls `sat.reset()`, which zeroes those statistics, and
 //!   `nixie-solver`'s `Solver::rebase_theory_state` calls `BvSolver::reset` once
-//!   per check **and again on every repair round** — so a budget expressed
+//!   per check **and again on every repair round** – so a budget expressed
 //!   purely in terms of the embedded statistics would silently re-arm in full
 //!   several times inside one `(check-sat)`.
 //!
@@ -34,7 +34,7 @@
 //! ceiling is computed relative to the embedded solver's current conflict count
 //! ([`BvSolver::apply_budget_to_embedded`]). The allowance is re-armed only by
 //! [`BvSolver::set_budget`], which the owning solver calls once per
-//! `check_core` — so `(set-option :max-conflicts N)` bounds the *total*
+//! `check_core` – so `(set-option :max-conflicts N)` bounds the *total*
 //! bit-blasting work of a check-sat, however many probes and repair rounds it
 //! takes.
 
@@ -43,13 +43,13 @@ use super::BvSolver;
 impl BvSolver {
     /// Bound every embedded `solve()` this solver runs.
     ///
-    /// * `max_conflicts` — a **total** conflict allowance across all probes and
+    /// * `max_conflicts` – a **total** conflict allowance across all probes and
     ///   all repair rounds until the next `set_budget`, not a per-probe grant.
     ///   `None` means unbounded. Calling this re-arms the allowance: the
     ///   accumulator behind [`Self::conflicts_spent`] is reset to zero, so the
     ///   caller decides the budget's period (`nixie-solver` arms it once per
     ///   `check_core`, making the period one `(check-sat)`).
-    /// * `deadline` — a wall-clock instant shared by every embedded solve, so a
+    /// * `deadline` – a wall-clock instant shared by every embedded solve, so a
     ///   timeout stays a bound on the whole check rather than becoming a
     ///   per-probe bound. `None` means no deadline. On a target with no clock
     ///   (`wasm32-unknown-unknown`, or a `--no-default-features` build) the
@@ -75,7 +75,7 @@ impl BvSolver {
     ///
     /// Survives [`crate::theory::Theory::reset`] (which zeroes the embedded
     /// solver's own statistics), and is cleared only by [`Self::set_budget`].
-    /// Exposed so a caller — or a test — can see how much of the third budget
+    /// Exposed so a caller – or a test – can see how much of the third budget
     /// `(set-option :max-conflicts N)` installs has actually been spent; the
     /// other two (outer Boolean conflicts, theory conflicts) are visible
     /// through `nixie-solver`'s `Solver::stats()` and `Solver::get_statistics()`

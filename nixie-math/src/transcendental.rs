@@ -6,21 +6,21 @@
 //! hands back is a mathematically guaranteed enclosure of the true value over
 //! the queried interval, rounded outward to `f64` bounds.  The engine that
 //! consumes it prunes search boxes with these intervals, so any unsoundness
-//! here would be a wrong `unsat` downstream — the worst failure mode an SMT
+//! here would be a wrong `unsat` downstream – the worst failure mode an SMT
 //! solver has.  Hence the design rules:
 //!
 //! * **No host libm on the proof path.**  `f64::exp`/`sin`/… are not
 //!   guaranteed correctly rounded, so their values are never used as bounds.
 //!   (`f64::sqrt` *is* IEEE-754 correctly rounded, so `sqrt` uses it and then
-//!   widens by one ulp in each direction — the true square root lies within
+//!   widens by one ulp in each direction – the true square root lies within
 //!   half an ulp of the rounded one.)
 //! * **Exact rational series arithmetic.**  Each enclosure range-reduces the
 //!   (dyadic, hence exactly rational) `f64` argument and sums Taylor /
 //!   atanh / atan series **exactly in `BigRational`**, adding an explicit
 //!   rigorous tail bound.  There is no intermediate rounding to account for:
 //!   the partial sum is exact, the tail bound is an exact rational known to
-//!   dominate the true remainder, and only the final bracket is rounded —
-//!   outward — to `f64`.
+//!   dominate the true remainder, and only the final bracket is rounded –
+//!   outward – to `f64`.
 //! * **Totalized semantics, documented per function.**  SMT demands total
 //!   functions.  `log(x)` for `x ≤ 0` is `−∞`; `sqrt(x)` for `x < 0` is `0`
 //!   (the dReal-style totalizations, see `docs/TRANS.md`).  These choices only
@@ -54,9 +54,7 @@ use num_rational::BigRational;
 use num_traits::One;
 use num_traits::{Signed, ToPrimitive, Zero};
 
-// =====================================================================
-// f64 outward rounding
-// =====================================================================
+// ======== f64 outward rounding ========
 
 /// `min` for `f64` (NaN-free by contract in this module).
 fn fmin(a: f64, b: f64) -> f64 {
@@ -115,9 +113,7 @@ pub fn f64_next_down(x: f64) -> f64 {
     }
 }
 
-// =====================================================================
-// Directed rational → f64 conversion (the single rounding point)
-// =====================================================================
+// ======== Directed rational → f64 conversion (the single rounding point) ========
 
 /// Convert the nonnegative rational `num/den` (`den > 0`) to `f64`, rounded
 /// in the direction `up` selects.  Saturates to `f64::MAX` / the smallest
@@ -257,9 +253,7 @@ fn f64_to_rational(x: f64) -> BigRational {
     if neg { -v } else { v }
 }
 
-// =====================================================================
-// Rigorous constants (ln 2, π) as rational brackets
-// =====================================================================
+// ======== Rigorous constants (ln 2, π) as rational brackets ========
 
 /// A rational bracket `[lo, hi]` with `lo ≤ true ≤ hi`.
 #[derive(Clone, Debug)]
@@ -406,21 +400,19 @@ fn consts() -> &'static TransConsts {
     leaked
 }
 
-// =====================================================================
-// Point enclosures (rigorous, per single f64 argument)
-// =====================================================================
+// ======== Point enclosures (rigorous, per single f64 argument) ========
 
-// =====================================================================
+// ========  ========
 // Interval fixed-point (IFX): every series quantity is a directed bracket
 // of BigInts in units of 2^-FRAC.
 //
 // Why not exact rationals: the Taylor terms of atan/atanh carry their
 // arguments' denominators to the n-th power, so exact-`BigRational` series
 // grow to ~10^5-bit numbers and one point enclosure costs seconds (measured).
-// IFX keeps every number below ~600 bits, and — because each quantity IS a
-// bracket and every operation rounds toward the bound it produces — the
+// IFX keeps every number below ~600 bits, and – because each quantity IS a
+// bracket and every operation rounds toward the bound it produces – the
 // enclosure property is structural: no error algebra to get wrong.
-// =====================================================================
+// ========  ========
 
 /// Fractional bits of the IFX representation.
 const FRAC: u64 = 192;
@@ -433,7 +425,7 @@ fn ifx_scale() -> BigInt {
 ///
 /// The `*_rational` enclosures all return dyadic fractions (denominator
 /// `2^FRAC`), and `BigRational::new` runs a full binary-gcd plus two big
-/// divisions per construction — two constructions per call — which
+/// divisions per construction – two constructions per call – which
 /// dominated the δ-witness profile (t19: ~35% of samples in
 /// `BigUint::gcd`/`div_rem`).  With a power-of-two denominator, reduction
 /// is a right-shift by the numerator's trailing zeros: the shifted
@@ -561,7 +553,7 @@ impl Ifx {
     }
     /// Exact conversion from a finite f64 (dyadic; subnormals below the
     /// 2^-FRAC grid clamp to 0 with a ±1-unit widening that callers'
-    /// brackets already dominate — handled by clamping to the nearer of
+    /// brackets already dominate – handled by clamping to the nearer of
     /// 0/±1 unit).
     fn from_f64(x: f64) -> Self {
         debug_assert!(x.is_finite());
@@ -575,7 +567,7 @@ impl Ifx {
         Self { lo, hi }
     }
     /// Exact conversion from a rational POINT (bracket of width ≤ 1 unit
-    /// when the denominator is not a power of two ≤ 2^FRAC — the bracket
+    /// when the denominator is not a power of two ≤ 2^FRAC – the bracket
     /// semantics keep it sound).
     fn from_rat_point(v: &BigRational) -> Self {
         let s = ifx_scale();
@@ -615,14 +607,14 @@ fn rat_nonneg_or_neg_to_f64(n: &BigInt, d: &BigInt, up: bool) -> f64 {
 }
 
 /// The convergence target for IFX series: stop when the tail bound drops
-/// below this many units (2^-184 — far below f64 significance).
+/// below this many units (2^-184 – far below f64 significance).
 fn ifx_tail_target() -> BigInt {
     BigInt::one() << 8
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Constants in IFX form (converted once from the exact rational brackets)
-// ---------------------------------------------------------------------
+// ========  ========
 
 struct IfxConsts {
     ln2: Ifx,
@@ -650,11 +642,11 @@ fn ifx_consts() -> &'static IfxConsts {
     }))
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Point enclosures (IFX series)
-// ---------------------------------------------------------------------
+// ========  ========
 
-/// Integer square root (floor), Newton — exact for any nonnegative input.
+/// Integer square root (floor), Newton – exact for any nonnegative input.
 fn isqrt(n: &BigInt) -> BigInt {
     if n.is_zero() {
         return BigInt::zero();
@@ -1026,11 +1018,11 @@ fn ifx_sqrt_pos(v: &Ifx) -> Ifx {
     Ifx { lo: r_lo, hi: r_hi }
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Exact rational enclosures: the δ-witness's publication check evaluates
 // the published RATIONAL point in exact arithmetic; these hand back exact
 // rational brackets from the same Ifx series that power the f64 bounds.
-// ---------------------------------------------------------------------
+// ========  ========
 
 /// |q| for a rational.
 fn abs_rat(q: &BigRational) -> BigRational {
@@ -1133,7 +1125,7 @@ pub fn sin_cos_rational(x: &BigRational, want_cos: bool) -> (BigRational, BigRat
     }
     // Quadrant dispatch for BOTH functions: sin(r + kπ/2) = S(k mod 4, r),
     // cos(r + kπ/2) = C(k mod 4, r).  (The first version forgot the sin
-    // dispatch — sin(366) evaluated as sin(r) ≈ 0.0036 instead of cos(r) ≈
+    // dispatch – sin(366) evaluated as sin(r) ≈ 0.0036 instead of cos(r) ≈
     // 1.0, and a false δ-witness slipped through the exact check.)
     let (r, kk) = trig_reduce_ifx(xf);
     let m = ((kk % 4) + 4) % 4;
@@ -1274,15 +1266,13 @@ fn atanh_ifx_series(t: &Ifx) -> Ifx {
     }
 }
 
-// =====================================================================
-// Public interval type + operations
-// =====================================================================
+// ======== Public interval type + operations ========
 
 /// A closed interval over the extended reals, bounds as `f64` (±∞ allowed,
 /// never NaN).  An *empty* interval is represented by `lo > hi`.
 ///
 /// All operations round **outward**, so the result always contains every
-/// true value of the corresponding point operation over the operand boxes —
+/// true value of the corresponding point operation over the operand boxes –
 /// the invariant the δ-ICP engine's soundness rests on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DI {
@@ -1335,7 +1325,7 @@ impl DI {
     }
 
     /// Midpoint (0 for doubly-infinite; a finite "interesting point" for
-    /// half-infinite boxes; may round for huge finite bounds — callers use it
+    /// half-infinite boxes; may round for huge finite bounds – callers use it
     /// only as a split/witness point, never as a bound).
     #[must_use]
     pub fn midpoint(&self) -> f64 {
@@ -1393,7 +1383,7 @@ impl DI {
     }
 
     /// Outward product.  Four-corner method over the extended reals with the
-    /// interval convention `0·±∞ = 0` — exactly the sup/inf of the pointwise
+    /// interval convention `0·±∞ = 0` – exactly the sup/inf of the pointwise
     /// product over closed intervals.
     #[must_use]
     pub fn mul(&self, o: &Self) -> Self {
@@ -1621,9 +1611,7 @@ impl DI {
     }
 }
 
-// =====================================================================
-// Extended-real helpers
-// =====================================================================
+// ======== Extended-real helpers ========
 
 /// Extended-real product of two `f64`s that may be ±∞, with the interval
 /// convention `0·±∞ = 0`.  Returns a bracket covering the true product.
@@ -1670,7 +1658,7 @@ fn cos_point_capped(x: f64) -> (f64, f64) {
 
 /// Rigorous enclosure of `asin(y)` (principal branch) for any `f64` `y`.
 ///
-/// Outside `[−1, 1]` the answer is the full principal range `[−π/2, π/2]` —
+/// Outside `[−1, 1]` the answer is the full principal range `[−π/2, π/2]` –
 /// sound over-approximation, never a fabricated value.
 #[must_use]
 pub fn asin_enclosure(y: f64) -> (f64, f64) {
@@ -1696,9 +1684,7 @@ fn pi_f64_bracket() -> (f64, f64) {
     pi_bracket()
 }
 
-// =====================================================================
-// Point-enclosure memoization (std only; no_std recomputes)
-// =====================================================================
+// ======== Point-enclosure memoization (std only; no_std recomputes) ========
 
 #[cfg(feature = "std")]
 fn cache_get_or_insert(op: u8, x: f64, f: impl FnOnce(f64) -> (f64, f64)) -> (f64, f64) {
@@ -1751,7 +1737,7 @@ fn asin_point_cached(x: f64) -> (f64, f64) {
     // asin is the most expensive point enclosure on the contraction path
     // (a ~500-bit isqrt plus two atan series per call) and the ICP's
     // sin/cos contraction calls it twice per propagation of a Sin/Cos
-    // node — overwhelmingly at repeat arguments while a box converges or
+    // node – overwhelmingly at repeat arguments while a box converges or
     // is re-propagated after `BranchInto`.  Measured on the t19 corpus
     // goal, uncached asin dominated the whole run.
     cache_get_or_insert(5, x, asin_point)
@@ -1947,7 +1933,7 @@ mod tests {
     #[test]
     fn rational_dyadic_matches_the_reducing_constructor() {
         // The dyadic fast path must produce BIT-FOR-BIT the same reduced
-        // fraction as the gcd-reducing `BigRational::new` — it replaced
+        // fraction as the gcd-reducing `BigRational::new` – it replaced
         // that constructor on the δ-witness hot path (sin/cos/exp/log/atan
         // enclosures), where the big-integer gcd + divisions dominated
         // the runtime profile.

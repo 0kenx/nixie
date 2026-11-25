@@ -5,10 +5,10 @@ edition = "2024"
 publish = false
 
 [workspace]
-# Standalone crate, like bench/z3_parity and fuzz/ — deliberately not a
+# Standalone crate, like bench/z3_parity and fuzz/ – deliberately not a
 # member of the root workspace.
 
-# Intentionally empty: std only. Same policy as bench/z3_parity's Rng —
+# Intentionally empty: std only. Same policy as bench/z3_parity's Rng –
 # zero dependency churn means a (family, seed, size) triple reproduces the
 # same corpus bytes forever.
 

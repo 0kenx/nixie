@@ -14,7 +14,7 @@ use nixie_solver::{Solver, SolverResult};
 /// Asserting **sequentially** matters: `reduce` re-runs on every assert over
 /// the whole stack, so this exercises the element-list growth that once made
 /// two valid counting equations share one slack and conjoin into a false
-/// `unsat` (`|s| = 2` then `1 ∈ s` — the `slack_keys_on_the_element_list`
+/// `unsat` (`|s| = 2` then `1 ∈ s` – the `slack_keys_on_the_element_list`
 /// invariant).
 fn solve(build: impl FnOnce(&mut TermManager) -> Vec<TermId>) -> SolverResult {
     let mut tm = TermManager::new();
@@ -27,7 +27,7 @@ fn solve(build: impl FnOnce(&mut TermManager) -> Vec<TermId>) -> SolverResult {
 }
 
 /// `x ∈ s ∧ |s| = 0` is unsatisfiable: a member makes the set nonempty.
-/// This was the headline gap — the old reduction answered `unknown`.
+/// This was the headline gap – the old reduction answered `unknown`.
 #[test]
 fn member_with_cardinality_zero_is_unsat() {
     let got = solve(|tm| {
@@ -43,7 +43,7 @@ fn member_with_cardinality_zero_is_unsat() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// `|s| = 2 ∧ 1 ∈ s` is satisfiable (`s = {1, 7}`) — and stays satisfiable
+/// `|s| = 2 ∧ 1 ∈ s` is satisfiable (`s = {1, 7}`) – and stays satisfiable
 /// when the membership arrives *after* the cardinality constraint, which is
 /// the assertion order that once conflated two counting equations.
 #[test]
@@ -152,7 +152,7 @@ fn equal_terms_with_card_two_is_sat() {
 }
 
 /// Inclusion–exclusion: `|a| = |b| = 2`, `|a ∪ b| = 3` is satisfiable
-/// (`a = {1,2}`, `b = {1,7}`; `|a ∩ b| = 1`) — the twin `a ∩ b` exists so
+/// (`a = {1,2}`, `b = {1,7}`; `|a ∩ b| = 1`) – the twin `a ∩ b` exists so
 /// the identity is statable.
 #[test]
 fn union_of_two_singles_identity_sat() {
@@ -194,7 +194,7 @@ fn union_cardinality_one_forces_equality() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Two distinct members of a union of cardinality one is unsatisfiable —
+/// Two distinct members of a union of cardinality one is unsatisfiable –
 /// the case that needs the **slack lattice**, not just per-set slacks: an
 /// element of `a ∩ b` must live in `a` and in `b`, so `slack(a ∩ b) ≤
 /// slack(a)` has to be stated for the region algebra to close.
@@ -263,7 +263,7 @@ fn empty_union_forces_empty_operands() {
 }
 
 /// Cardinality of a structurally known set stays exact: `|{x} ∪ {y}| = 5`
-/// is unsatisfiable — at most two elements, no slack may smuggle more in.
+/// is unsatisfiable – at most two elements, no slack may smuggle more in.
 #[test]
 fn support_known_cardinality_is_exact() {
     let got = solve(|tm| {
@@ -375,7 +375,7 @@ fn choose_of_empty_is_not_a_member() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Finite universe pigeonhole: over `Bool`, `|s| = 3` is unsatisfiable —
+/// Finite universe pigeonhole: over `Bool`, `|s| = 3` is unsatisfiable –
 /// the universe has exactly two elements.
 #[test]
 fn bool_set_cannot_have_three_members() {
@@ -614,7 +614,7 @@ fn user_declared_union_is_not_the_alias() {
     assert_eq!(got, SolverResult::Sat);
 }
 
-/// `(as emptyset (Set Int))` and `univset` — Z3's spellings.
+/// `(as emptyset (Set Int))` and `univset` – Z3's spellings.
 #[test]
 fn z3_classic_emptyset_and_univset() {
     let got = solve_smt(
@@ -627,7 +627,7 @@ fn z3_classic_emptyset_and_univset() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Nested sets: `Set (Set Int)` — the universe is infinite, cardinality
+/// Nested sets: `Set (Set Int)` – the universe is infinite, cardinality
 /// works over ground elements, and `s ⊆ t` with equal cards forces `s = t`.
 #[test]
 fn nested_set_sorts() {
@@ -653,7 +653,7 @@ fn nested_set_sorts() {
 }
 
 /// Push/pop scope consistency: a cardinality constraint asserted inside a
-/// pushed scope must vanish with the pop — the axioms are conjoined onto
+/// pushed scope must vanish with the pop – the axioms are conjoined onto
 /// the scoped assertion, so the bookkeeping rides the existing trail.
 #[test]
 fn cardinality_is_scope_consistent() {
@@ -680,12 +680,12 @@ fn cardinality_is_scope_consistent() {
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
 
-// ===== equality ⇒ equal cardinality / congruent choose =====
+// ======== equality ⇒ equal cardinality / congruent choose ========
 //
 // Found 2026-09-15 while starting the model-synthesis roadmap item: the
 // cardinality encoding related the *memberships* of equal sets (the pair
 // machinery) but never their *sizes* or their `choose` applications, so
-// every script below answered `sat` — each is unsat. Z3's reference is
+// every script below answered `sat` – each is unsat. Z3's reference is
 // `theory_finite_set_size::add_eq_axioms`, which ties the Boolean
 // abstractions of every asserted-equal pair (equalizing their sizes through
 // the sub-solver); `choose` congruence is ordinary equality-engine
@@ -721,7 +721,7 @@ fn equal_to_empty_has_cardinality_zero() {
 }
 
 /// `x = y ∧ |f x| = 5 ∧ |f y| = 3`: the equality is *derived* (EUF
-/// congruence), not asserted — the implicit-pair atom is what carries it,
+/// congruence), not asserted – the implicit-pair atom is what carries it,
 /// so the equality⇒card rule must fire on implicit pairs too.
 #[test]
 fn derived_equality_equalizes_cardinality() {
@@ -787,7 +787,7 @@ fn congruent_choose_on_equal_sets_is_sat() {
 
 /// `c ∧ choose(ite c A B) ≠ choose(A)`: with `c` the ite *is* `A`, but the
 /// equality atom `ite c A B = A` is never asserted by anyone, so the pair
-// rule cannot carry it — the ite yields its element through its own rule.
+// rule cannot carry it – the ite yields its element through its own rule.
 #[test]
 fn choose_of_ite_picks_the_taken_branch() {
     let got = solve_smt(

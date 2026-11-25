@@ -699,7 +699,7 @@ impl EqualityPropagator {
             // operator, exactly like `Apply`'s name. Without these arms,
             // `map f b` and `map g b` shared one identity (symbol `None`)
             // and equal domains would congruence-identify two different
-            // images — a false equality the EUF layer would then commit.
+            // images – a false equality the EUF layer would then commit.
             TermKind::BagMap { func, ret, .. } => {
                 CongruenceShape::Operator(OperatorIdentity {
                     discriminant: core::mem::discriminant(kind),

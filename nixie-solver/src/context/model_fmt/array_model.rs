@@ -2,7 +2,7 @@
 //! interpretation for `(get-model)` (`#P2b-34`).
 //!
 //! Before this module an array constant printed the *sort default* and nothing
-//! else — `arr = ((as const (Array (_ BitVec 8) (_ BitVec 8))) #x00)` — even
+//! else – `arr = ((as const (Array (_ BitVec 8) (_ BitVec 8))) #x00)` – even
 //! when the same model answered `(get-value ((select arr j)))` with `#x05`.
 //! The two statements contradict each other: read the printed array at `j` and
 //! it is `#x00`.  A declared function fared worse still: `(get-model)` omitted
@@ -28,7 +28,7 @@ use nixie_core::ast::TermManager;
 /// enumerable when deciding that a chain covers its whole domain.
 ///
 /// Sixteen elements, the same order of magnitude as the array refinement's own
-/// `ARRAY_INDEX_ENUMERATION_LIMIT` — past that a
+/// `ARRAY_INDEX_ENUMERATION_LIMIT` – past that a
 /// model does not name every index in practice, and the coverage test would
 /// walk a long entry list to learn nothing.
 const COVERED_DOMAIN_WIDTH_LIMIT: u32 = 4;
@@ -58,23 +58,23 @@ impl Context {
     ///
     /// # Why the rendering is per congruence *class* (`#P2b-34`)
     ///
-    /// An array is never *assigned* a value term — there is no literal for
-    /// "the function `{0 ↦ 5}` extended by 0" — so the model records it
+    /// An array is never *assigned* a value term – there is no literal for
+    /// "the function `{0 ↦ 5}` extended by 0" – so the model records it
     /// indirectly: the default of an `(as const d)` member of its class, the
     /// index and value of a `store` member, and the reads the solver
     /// published.  Reading only the reads of the *syntactic* term rendered
     /// `arr = ((as const A) #b1)` as `(store ((as const A) #b0) #b1 #b1)`:
     /// the class's own constant said every entry is `#b1`, and the printed
-    /// array said `arr[#b0] = #b0` — a model falsifying its own assertion.
+    /// array said `arr[#b0] = #b0` – a model falsifying its own assertion.
     /// The class is what the model decided; the term is just one name for it.
     ///
     /// So the rendering is, in order:
     ///
-    /// 1. **base** — the default of an `(as const d)` member if the class has
+    /// 1. **base** – the default of an `(as const d)` member if the class has
     ///    one, else the rendering of the base array of a `store` member with
     ///    that store's write laid on top, else the sort default;
-    /// 2. **writes** — every `store` member's own `(index, value)`;
-    /// 3. **reads** — every published read of any member of the class.
+    /// 2. **writes** – every `store` member's own `(index, value)`;
+    /// 3. **reads** – every published read of any member of the class.
     ///
     /// Two arrays in different classes print differently because the
     /// extensionality witness of `#P2b-37` gives their classes a read at an
@@ -91,8 +91,8 @@ impl Context {
         // case where the class is not the better source: the value did not
         // come out of the congruence closure at all.  It is installed by
         // `solver::array_completion_certify`, whose certificate was discharged
-        // over exactly this term — the completed total interpretation
-        // `((as const A) d)`, or a `store` chain over it — so printing
+        // over exactly this term – the completed total interpretation
+        // `((as const A) d)`, or a `store` chain over it – so printing
         // anything else would publish a model the certificate did not verify.
         // An array-sorted `(get-value)` hands the installed value itself in
         // (`array_query_value` resolves the constant to its model entry), and
@@ -105,9 +105,9 @@ impl Context {
         self.array_class_value(array, sort, model, class_values, 0)
     }
 
-    /// The printed form of an installed array value — the constant array or
+    /// The printed form of an installed array value – the constant array or
     /// the `store` chain over one that `solver::array_completion_certify`
-    /// certified — or `None` when `value` is not one.
+    /// certified – or `None` when `value` is not one.
     ///
     /// Spelled with the same leaf formatting every other model entry uses
     /// ([`Context::format_value`]): a `Real` default prints as `0.0` here as it
@@ -248,7 +248,7 @@ impl Context {
     ) -> ArrayReady {
         let members = self.solver.euf_class_terms(array);
 
-        // ---- base ------------------------------------------------------
+        // ======== base ========
         // The class's array constant, if it has one: its default is the value
         // at *every* index the writes and reads below do not override.
         let mut base: Option<String> = None;
@@ -274,7 +274,7 @@ impl Context {
             break;
         }
 
-        // ---- writes ----------------------------------------------------
+        // ======== writes ========
         // Deterministic: the model map and the class membership are hash
         // tables, the printed chain is not allowed to depend on their order.
         let mut sorted_members = members.clone();
@@ -297,7 +297,7 @@ impl Context {
             // The class's *background*: every index this store does not
             // write reads through to its own base array.  Kept aside rather
             // than folded into `base` here, and merged in below once every
-            // entry this class names is known — see the merge for why.
+            // entry this class names is known – see the merge for why.
             if base.is_none() && background.is_none() {
                 background = lookup(store_base, sort, depth + 1, visiting)?;
             }
@@ -314,7 +314,7 @@ impl Context {
             )?;
         }
 
-        // ---- reads -----------------------------------------------------
+        // ======== reads ========
         let bound = self.bound_only_variables();
         let mut reads: Vec<(TermId, TermId, TermId)> = Vec::new();
         for (&term, &value) in model.assignments() {
@@ -332,7 +332,7 @@ impl Context {
         // before a read at a symbol the model merely assigns that value: the
         // first entry per position wins, and a solver-internal symbol (an
         // extensionality witness) can carry a sort default that coincides
-        // with a position another read names — `a[ext] = 5` beside `a[red] =
+        // with a position another read names – `a[ext] = 5` beside `a[red] =
         // 1` with `ext` defaulted to `red` printed `red ↦ 5` (`#P2b-72`).
         reads.sort_unstable_by_key(|&(term, index, _)| (!self.is_value_index(index), term.raw()));
         for (_, index, value) in reads {
@@ -351,7 +351,7 @@ impl Context {
 
         // An *array-sorted* read is never in `model.assignments()`: the model
         // assigns value terms, and no term denotes a whole array.  Its value
-        // is the read itself, rendered from its own class one level down —
+        // is the read itself, rendered from its own class one level down –
         // which is the only way the outer array of an array of arrays says
         // anything at all.  `(= row0 (select matrix 0))` with
         // `(= (select row0 0) 42)` printed `matrix` as the sort default and
@@ -361,7 +361,7 @@ impl Context {
         // The term-graph scan is confined to this case and to an
         // uninterpreted range: an array whose range is a scalar or a datatype
         // has all its reads in the model, while a read of an uninterpreted
-        // sort has no model value either — its value is its class's
+        // sort has no model value either – its value is its class's
         // `@uc_S_n` witness ([`Self::entry_value`]).  Without the scan an
         // array into `U` read at `x` and `y` printed as one constant beside
         // two different witnesses for the reads (`#P2b-89`).
@@ -396,14 +396,14 @@ impl Context {
             }
         }
 
-        // ---- background of a `store` member ----------------------------
+        // ======== background of a `store` member ========
         // Merged here, not where it was read, because an entry of the
         // background is only printable once every index *this* class names is
         // known: an index this class writes or reads overrides the background
         // at that index, and an index it does not is inherited unchanged.
         //
-        // Folding the background into `base` as a ready-made chain instead —
-        // which is what this did when the array printer was written — publishes
+        // Folding the background into `base` as a ready-made chain instead –
+        // which is what this did when the array printer was written – publishes
         // both, and the printed array then carries the same index twice
         // (`#P2b-45`).  A duplicated link is not cosmetic: it is a *deeper
         // store chain* in the published model, and the model is re-read as
@@ -415,8 +415,8 @@ impl Context {
         // in 0.6 ms.  A model a consumer cannot check is not much better than
         // one that is wrong.
         //
-        // Suppressing the *other* side instead — dropping this class's own
-        // entry wherever the background already has that index — is wrong and
+        // Suppressing the *other* side instead – dropping this class's own
+        // entry wherever the background already has that index – is wrong and
         // was measured to be: the store's own write is exactly the index where
         // it differs from its base, so two arrays that differ in one cell
         // printed as the same chain, and the debug interpretation check caught
@@ -438,7 +438,7 @@ impl Context {
             base = Some(inner_base);
         }
 
-        // ---- inherited from the outside --------------------------------
+        // ======== inherited from the outside ========
         // Nothing in this class names a value, but the class may still be
         // pinned by an equality it does not contain: `(= (store brr k w)
         // ((as const A) #b01))` says nothing about `brr`'s class directly,
@@ -500,7 +500,7 @@ impl Context {
     ///
     /// `entries` is deduplicated by index value
     /// ([`Context::push_entry`]), so `entries.len()` equal to the domain's
-    /// cardinality *is* full coverage — no index string has to be constructed
+    /// cardinality *is* full coverage – no index string has to be constructed
     /// or compared to know it.  The base is then unreachable and may be chosen
     /// freely: take the value that occurs most often (first occurrence wins a
     /// tie, so the choice does not depend on hashing) and drop every entry
@@ -542,7 +542,7 @@ impl Context {
     }
 
     /// The number of elements of `domain`, when it is a sort small enough to
-    /// have been written out index by index — otherwise `None`.
+    /// have been written out index by index – otherwise `None`.
     ///
     /// Deliberately narrower than "finite": an uninterpreted sort is finite in
     /// every model this solver builds, but its elements are named by minted
@@ -619,7 +619,7 @@ impl Context {
     /// # Why the chain is deduplicated by index value
     ///
     /// A `store` chain is read outermost-first, so two writes at the same
-    /// index would let the outer one shadow the inner — and the shadowed entry
+    /// index would let the outer one shadow the inner – and the shadowed entry
     /// is one the model published, i.e. the printed array would contradict its
     /// own `(get-value ((select arr i)))` answer.  That is the very defect
     /// this rendering exists to remove, so the first entry in collection order
@@ -661,23 +661,23 @@ impl Context {
     }
 
     /// The value this model gives `select(array, index_value)`, where
-    /// `index_value` is the *evaluated* index — the read-side twin of
+    /// `index_value` is the *evaluated* index – the read-side twin of
     /// [`Context::array_class_value`] (`#P2b-35`).
     ///
     /// # Why this exists beside the renderer
     ///
     /// `(get-model)` prints an array as the `store` chain of its class, and
-    /// `(get-value ((select a #b0)))` used to answer `(select a #b0)` — an
+    /// `(get-value ((select a #b0)))` used to answer `(select a #b0)` – an
     /// echo, because no theory ever gave that read a value and the structural
     /// evaluator has no store to reduce.  Two commands then describe two
     /// different models: the printed chain says `a[#b0] = #b1` and the query
     /// says nothing at all.
     ///
     /// So this reads the *same three sources in the same order* the renderer
-    /// lays down — the class's `store` members' own writes, then every
+    /// lays down – the class's `store` members' own writes, then every
     /// published read of any member, then the class's background (an
     /// `(as const d)` member, a `store` member's base, or a `store` this array
-    /// is the base of) — and any change to one has to be made in the other.
+    /// is the base of) – and any change to one has to be made in the other.
     /// The paired test `model_one_reading.rs` pins the agreement.
     pub(super) fn array_class_read(
         &self,
@@ -701,7 +701,7 @@ impl Context {
             .map(ToString::to_string)
     }
 
-    /// [`Context::array_class_read`] restricted to the class's *background* —
+    /// [`Context::array_class_read`] restricted to the class's *background* –
     /// the value every index the class's writes and reads do not name takes.
     ///
     /// The renderer needs the same distinction: an array pinned only from the
@@ -755,7 +755,7 @@ impl Context {
     /// this model cannot name that position at all.
     ///
     /// A ground value spells itself.  A term of an **uninterpreted** sort never
-    /// will — that sort has no literals — but the model still names its
+    /// will – that sort has no literals – but the model still names its
     /// elements: `build_class_values` mints one `@uc_S_n` witness per
     /// congruence class, and every other renderer in this module prints those
     /// same witnesses for the same classes.  Reading the position out of that
@@ -770,7 +770,7 @@ impl Context {
     /// (assert (distinct a b))
     /// ```
     ///
-    /// answers `sat` — correctly: the extensionality witness of `#P2b-37` is an
+    /// answers `sat` – correctly: the extensionality witness of `#P2b-37` is an
     /// index of sort `U` at which the two arrays are forced to read
     /// differently, and the model holds exactly that.  But the *printer*
     /// dropped every entry whose index was not a ground value, so both arrays
@@ -819,7 +819,7 @@ impl Context {
     /// Rendering the default term as written asks [`Self::entry_value`] to
     /// print `v`, which is not a ground value, so it answered `None`, the base
     /// fell back to the *sort* default, and the model printed
-    /// `a = ((as const …) #b0)` beside `v = #b1` — a model that falsifies the
+    /// `a = ((as const …) #b0)` beside `v = #b1` – a model that falsifies the
     /// very assertion it claims to satisfy. The default has to be read in the
     /// model, exactly as the stored value of a `store` already is.
     fn evaluated(&self, term: TermId, model: &crate::solver::Model) -> TermId {
@@ -831,7 +831,7 @@ impl Context {
     /// an array.
     ///
     /// `None` when the range is an array the model says nothing about, or when
-    /// the nesting limit is reached — the caller then drops the entry rather
+    /// the nesting limit is reached – the caller then drops the entry rather
     /// than printing a value it cannot justify.
     fn entry_value_ready(
         &self,
@@ -886,7 +886,7 @@ impl Context {
     /// function, in declaration order.
     ///
     /// The body is the nested `ite` over the interpretation's entries with the
-    /// else-value at the bottom — a total function, as SMT-LIB requires a
+    /// else-value at the bottom – a total function, as SMT-LIB requires a
     /// model's interpretation to be.  A function with no application in the
     /// assertions is the constant else-value, which is what
     /// [`Context::get_func_interp_raw`] reports for it.
@@ -899,7 +899,7 @@ impl Context {
         let mut lines: Vec<String> = Vec::new();
         // Only a model the solver stands behind is described here.  After an
         // `unsat` (or an `unknown`) `self.solver.model()` may still hold the
-        // last *candidate* — a model the refutation discarded — and rendering
+        // last *candidate* – a model the refutation discarded – and rendering
         // interpretations from it printed entries no verdict supports, which
         // is also what made the canonical-map assertion in
         // [`Context::get_func_interp_raw`] fire on a script the solver had
@@ -989,8 +989,8 @@ impl Context {
 /// (`#P2b-72`).
 ///
 /// A constructor-valued array index used to be dropped from the printed
-/// `store` chain — neither a literal nor an uninterpreted-sort class, it named
-/// "no position" — so `(assert (= (select a red) 1))` over `(Array C Int)`
+/// `store` chain – neither a literal nor an uninterpreted-sort class, it named
+/// "no position" – so `(assert (= (select a red) 1))` over `(Array C Int)`
 /// printed `a = ((as const (Array C Int)) 0)`, a model falsifying its one
 /// assertion, while `(get-value ((select a red)))` answered `1`.
 pub(super) fn is_constructor_value(term: TermId, manager: &TermManager) -> bool {
@@ -1010,7 +1010,7 @@ pub(super) fn is_constructor_value(term: TermId, manager: &TermManager) -> bool 
     true
 }
 
-/// Whether `term` is a ground value literal — the shapes a model entry can
+/// Whether `term` is a ground value literal – the shapes a model entry can
 /// carry and the shapes `format_value` renders verbatim.
 ///
 /// Used to decide whether an index can be placed in a `store` chain: an index
@@ -1041,7 +1041,7 @@ impl Context {
     /// no `i` of that sort is also declared (`#P2b-62`).
     ///
     /// A bound variable is interned as an ordinary `Var` term, so the body's
-    /// own `(select a i)` is a term like any other — and the search can give
+    /// own `(select a i)` is a term like any other – and the search can give
     /// it, and `i`, a model entry (0 and 0 on
     /// `bench/z3_parity/benchmarks/AUFLIA/array_extensionality.smt2`).  Laid
     /// down as a read of `a` at index `0`, that entry shadowed the real

@@ -1,7 +1,7 @@
 //! TLA+ functions: a domain and a graph.
 //!
 //! A function value carries both halves (`arena::Value::Fun`). The graph is an
-//! SMT array — `f[x]` a select, `[f EXCEPT ![i] = v]` a store — and the domain
+//! SMT array – `f[x]` a select, `[f EXCEPT ![i] = v]` a store – and the domain
 //! is a set-sorted term, which is what an array on its own cannot hold.
 //!
 //! Carrying the domain is not a refinement, it closes a hole: array equality
@@ -42,7 +42,7 @@ fn holds(body: &str) {
 
 /// A claim whose counterexample exists but cannot yet be **replayed**: the
 /// trace reader and the encoder disagree about some value, so the honest
-/// verdict is `Unknown` — a violation reported without a confirmed trace is
+/// verdict is `Unknown` – a violation reported without a confirmed trace is
 /// exactly what the honesty gates exist to prevent. The reason names the gap.
 fn fails_unreplayed(body: &str) {
     let out = claim(body);
@@ -60,7 +60,7 @@ fn fails(body: &str) {
     assert_eq!(claim(body), Outcome::Violation { step: 0 }, "`{body}`");
 }
 
-// ---- the graph ----
+// ======== the graph ========
 
 #[test]
 fn a_function_takes_the_value_its_body_gives() {
@@ -78,7 +78,7 @@ fn a_function_over_a_range_is_enumerated() {
     holds("[i \\in 1..3 |-> i * i][3] = 9");
 }
 
-// ---- the domain ----
+// ======== the domain ========
 
 #[test]
 fn domain_is_exact() {
@@ -97,7 +97,7 @@ fn membership_in_the_domain_is_decided() {
     holds("3 \\notin DOMAIN [i \\in {1, 2} |-> 0]");
 }
 
-// ---- equality ----
+// ======== equality ========
 
 /// The regression for the hole carrying the domain closes. Both functions are
 /// 0 at 1; they differ only in whether 2 is in the domain, which is invisible
@@ -120,7 +120,7 @@ fn functions_differing_at_a_point_are_unequal() {
     fails("[i \\in {1, 2} |-> 0] = [i \\in {1, 2} |-> IF i = 2 THEN 1 ELSE 0]");
 }
 
-// ---- EXCEPT ----
+// ======== EXCEPT ========
 
 #[test]
 fn except_replaces_one_point_and_keeps_the_rest() {
@@ -134,7 +134,7 @@ fn except_keeps_the_domain() {
     holds("DOMAIN [[i \\in {1, 2} |-> 0] EXCEPT ![1] = 5] = {1, 2}");
 }
 
-// ---- the function set ----
+// ======== the function set ========
 
 #[test]
 fn a_function_set_states_a_type() {
@@ -159,7 +159,7 @@ fn a_function_into_nat_is_stated_not_declined() {
     fails_unreplayed("[i \\in {1, 2} |-> 0 - i] \\in [{1, 2} -> Nat]");
 }
 
-// ---- a function-typed state variable ----
+// ======== a function-typed state variable ========
 
 /// The shape the whole exercise is for: a function variable given its value by
 /// a constructor in `Init` and updated by `EXCEPT` in `Next`.
@@ -181,7 +181,7 @@ fn a_function_variable_is_checked_across_steps() {
     let mut tm = TermManager::new();
     let mut bmc =
         Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
-    // `f[1]` is 0, 1, 2 — so `f[1] < 2` first fails at step 2.
+    // `f[1]` is 0, 1, 2 – so `f[1] < 2` first fails at step 2.
     assert_eq!(
         bmc.check(5, &mut tm).expect("checks"),
         Outcome::Violation { step: 2 }
@@ -213,10 +213,10 @@ fn except_leaves_the_other_points_alone() {
     );
 }
 
-// ---- quantifying over a set that is now a term ----
+// ======== quantifying over a set that is now a term ========
 //
 // `DOMAIN f` is a set-sorted term, and a bounded quantifier is *instantiated*
-// per candidate — so the candidates have to be readable back off the term.
+// per candidate – so the candidates have to be readable back off the term.
 // Every set this encoder builds is a union of (conditional) singletons, which
 // is exactly what `Encoder::candidates_of` inverts.
 
@@ -242,7 +242,7 @@ fn a_quantifier_reaches_the_values_too() {
 /// instantiates over the candidate universe derived from `s`'s assignment
 /// sites, each candidate guarded by membership in the real variable. The
 /// universe is `{1, 2}` here and nothing escapes it, so the check reaches a
-/// verdict — and the invariant's content is live: a member that violates it
+/// verdict – and the invariant's content is live: a member that violates it
 /// is found (the frames test `an_added_violating_member_is_still_found`
 /// pins the other direction).
 #[test]
@@ -272,12 +272,12 @@ Inv  == \A i \in s : i < 3
     );
 }
 
-// ---- a tuple is a function on `1..n` ----
+// ======== a tuple is a function on `1..n` ========
 //
 // TLA+ has no separate sequence type, so the two spellings denote one value.
 // The evaluator normalises them into one representation; the encoder cannot,
 // because a function-typed state variable has no candidate list to turn into
-// a tuple — so `arena::eq_values` crosses the two by the definition instead.
+// a tuple – so `arena::eq_values` crosses the two by the definition instead.
 
 #[test]
 fn a_tuple_equals_the_function_on_its_indices() {

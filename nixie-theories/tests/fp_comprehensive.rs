@@ -331,7 +331,7 @@ fn test_min_max_operations() {
     assert_eq!(max_val.to_f32(), Some(2.0));
 
     // Test with NaN: SMT-LIB `fp.min` / `fp.max` yield the OTHER operand
-    // when one is NaN (the theory's ite-chain definition — NOT IEEE 754's
+    // when one is NaN (the theory's ite-chain definition – NOT IEEE 754's
     // `minNum` NaN propagation).  Verified against z3; the engine previously
     // returned the NaN itself.
     let nan = FpValue::nan(FpFormat::FLOAT32);

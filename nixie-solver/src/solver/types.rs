@@ -266,7 +266,7 @@ pub struct SolverConfig {
     /// Enable the `Sat` gate's negated-equality collision half
     /// (`crate::solver::Solver::model_refutes_assertions`): a numeric
     /// equality the core committed FALSE whose model values collide is a
-    /// definite model refutation.  Default on; the model counter opts out —
+    /// definite model refutation.  Default on; the model counter opts out –
     /// its exhaustive-enumeration contract treats every `Unknown` as
     /// end-of-enumeration, and the blocking loop an honest collision fires
     /// would cut counts short.
@@ -435,7 +435,7 @@ impl SolverConfig {
             enable_symmetry_breaking: false, // Still expensive
             enable_inprocessing: true,
             // 2000 since 2026-11-19: measured on the SMT path (the DIMACS
-            // presets keep their own values — this field reaches the
+            // presets keep their own values – this field reaches the
             // embedded core through `Solver::with_config` only).  The
             // response is monotone-deterministic on the long-conflict
             // classes (duthen-50: 70575 -> 53399 -> 34305 conflicts at
@@ -859,7 +859,7 @@ impl Model {
                     // iterative evaluator (`set_model::SetView`), which
                     // resolves opaque sets from this model and compounds
                     // structurally from their operands. An undetermined
-                    // answer breaks with `current` — the same honest echo
+                    // answer breaks with `current` – the same honest echo
                     // every other unconstrained term gets.
                     //
                     // A set-sorted `ite` never reaches an arm here: the

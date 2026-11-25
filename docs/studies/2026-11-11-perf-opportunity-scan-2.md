@@ -1,4 +1,4 @@
-# Perf opportunity scan #2 — post-batch landscape at `e86a7162`
+# Perf opportunity scan #2 – post-batch landscape at `e86a7162`
 
 ## Registered purpose
 
@@ -48,18 +48,18 @@ figure was a conflict-budget cut, not a full solve).
 
 ## Findings, ranked by measured impact × breadth
 
-### 1. EUF `term_to_node` pop uses full-map `retain` — 67.4% of coilist, 36.9% of huffman
+### 1. EUF `term_to_node` pop uses full-map `retain` – 67.4% of coilist, 36.9% of huffman
 
 `EufSolver::pop` runs `term_to_node.retain(|_, idx| idx < num_nodes)` whenever
 the popped scope created any nodes (`nixie-theories/src/euf/solver.rs:1504`).
 On MBQI-heavy instances every scope creates nodes, so **every theory backtrack
-scans the entire term vocabulary map** — including all base-scope terms — and
+scans the entire term vocabulary map** – including all base-scope terms – and
 rehashes survivors. This is the single largest share of the whole scan.
 
 Fix, exactly equivalent by construction: trail the *insertions*. All three
 insert sites (`intern` at :632/:643, `intern_app` at :788) run only on a
 `get()` miss, every entry's idx equals `nodes.len()` at creation, nodes are
-LIFO-truncated, and base-scope nodes are never truncated — so "removed by
+LIFO-truncated, and base-scope nodes are never truncated – so "removed by
 retain" ⇔ "inserted after the push mark". A `term_to_node_trail: Vec<TermId>`
 with per-scope limits (mirroring `sig_trail_limits`, and the
 `asserted_arith_eq_trail` / `processed_lit_trail` disciplines already in
@@ -67,27 +67,27 @@ with per-scope limits (mirroring `sig_trail_limits`, and the
 incremental-vs-replay differential fuzzers plus a debug oracle comparing
 trail-popped vs retain-popped map state.
 
-### 2. `propagate_bounds_in` re-materializes rows and stamps per fixpoint pass — still 79% of vlsat; `row_stamp` 10.8% of arctic
+### 2. `propagate_bounds_in` re-materializes rows and stamps per fixpoint pass – still 79% of vlsat; `row_stamp` 10.8% of arctic
 
 Batch B fused the derivation pass, but `Simplex::propagate_bounds_in`
 (`nixie-theories/src/arithmetic/simplex/mod.rs`) still, per call and per
 ≤16-iteration fixpoint pass: (a) **deep-clones** every narrow row
-(`row_lin(v).map(|arc| arc.as_ref().clone())`) purely to release a borrow —
+(`row_lin(v).map(|arc| arc.as_ref().clone())`) purely to release a borrow –
 an `Arc` clone suffices; (b) rebuilds `BigLinExpr`s per term per call; (c)
-recomputes `row_stamp` over all narrow rows on every pass — this is deferred
+recomputes `row_stamp` over all narrow rows on every pass – this is deferred
 item #9, and it survives *because* the stamp-skip needs the stamp first.
 
 The structural fix (Z3 `theory_arith` bound-watch shape): after a bound change
-on `v`, only rows in `columns[v]` can derive anything new — nixie now has that
+on `v`, only rows in `columns[v]` can derive anything new – nixie now has that
 index (and `f5fb11ef` made it O(1) to maintain). Convert the fixpoint into a
 worklist seeded from changed vars' columns. Equivalent-work only if the
 derivation order and applied-set stay identical (they need not: fixpoint
 iterations are order-insensitive in *result*, but the *trail* order of stored
-bounds must be preserved or counters drift — treat as heuristic-tier if order
+bounds must be preserved or counters drift – treat as heuristic-tier if order
 cannot be pinned). The (a) Arc-instead-of-deep-clone sub-item alone is
 equivalent-work and mechanical.
 
-### 3. `nl_eval::euclidean` pays full `BigInt` division for small operands — ~14% of verymax, ~10% of aprove
+### 3. `nl_eval::euclidean` pays full `BigInt` division for small operands – ~14% of verymax, ~10% of aprove
 
 Every integer `div`/`mod` ground evaluation converts to `BigRational`→
 `BigInt`, runs bignum `/`, `*`, `-` (`num_bigint div_rem_cow` ≈ 1187/8457
@@ -96,10 +96,10 @@ samples on verymax), even when both operands fit `i64`. Add a checked
 Euclidean correction → `BigRational::from_integer`) with BigInt fallback.
 Exactness preserved by construction (checked ops; fall back on any overflow).
 
-### 4. Dense DL `DenseDlCore::update_cells` — 87.7% of gryzzles (QF_IDL/asp family)
+### 4. Dense DL `DenseDlCore::update_cells` – 87.7% of gryzzles (QF_IDL/asp family)
 
 The incremental all-pairs update (Cottoné–Oddoux / Z3 `dense_graph` shape) is
-O(n²) per `assert_edge` by algorithm — two full passes over the `dist` matrix
+O(n²) per `assert_edge` by algorithm – two full passes over the `dist` matrix
 (row `t` for the F-set, then a column-`s` read for the Y-set) plus, per
 improved cell, a `HashMap<(u32,u32)>` `occs` lookup in
 `propagate_using_cell`. Algorithm already matches the reference; the
@@ -109,17 +109,17 @@ opportunities are constants: (a) per-node watcher vectors instead of the
 can be re-blocked. Z3/CVC5 comparison required before any change (read
 `../temp/z3/src/math/simplex/...` + diff_logic dense core).
 
-### 5. MBQI `build_exists_candidate_lists` scans the whole model per variable — 17.8% of rbt
+### 5. MBQI `build_exists_candidate_lists` scans the whole model per variable – 17.8% of rbt
 
 `nixie-solver/src/mbqi/counterexample.rs`: for each existential variable it
 iterates **every** entry of `model.assignments` (`manager.get(term)` per
-entry) plus linear `cands.contains` — O(vars × assignments) per call, per MBQI
+entry) plus linear `cands.contains` – O(vars × assignments) per call, per MBQI
 iteration. A per-sort value index built in one pass over the model (preserving
-first-encounter order so candidate order — hence trajectories — stay
+first-encounter order so candidate order – hence trajectories – stay
 identical) makes it O(universe). Equivalent-work verifiable by byte-identical
 candidate lists on the MBQI tests.
 
-### 6. SOI `optimize_linexpr` / `reduced_obj_coef` — 17.7% self + 21% adjacent on floppy (simplex_opt)
+### 6. SOI `optimize_linexpr` / `reduced_obj_coef` – 17.7% self + 21% adjacent on floppy (simplex_opt)
 
 The SOI feasibility driver re-walks the full tableau per objective probe
 (`reduced_obj_coef` under `optimize_linexpr`, `tableau_iter` leaf 740
@@ -128,7 +128,7 @@ simplex standard step, O(m) per pivot). Requires reading
 `../temp/z3/src/math/simplex/simplex.cpp` + the SOI/`opt` integration before
 designing; likely a moderate structural item.
 
-### 7. Row interning hash churn — `intern_row_reported`/`cached_row_slack` probing dominates store40/50
+### 7. Row interning hash churn – `intern_row_reported`/`cached_row_slack` probing dominates store40/50
 
 store40: `copy_nonoverlapping` 31.2% + `set_ctrl` 20.0% under
 `intern_row_reported`/`cached_row_slack` (`LinKey` build + hash per assert);
@@ -139,12 +139,12 @@ dominated by map *size* on storecomm, not key builds.
 
 ### 8. SAT-core items (unchanged verdicts)
 
-- carry: `find_saved_pos_hit` 24% leaf under `list_kernel::scan` —
+- carry: `find_saved_pos_hit` 24% leaf under `list_kernel::scan` –
   watch-position search inside the propagation kernel; that kernel is
   prior-study territory (`list_kernel`/`block_filter`), document only.
-- sage: `ClauseArena::get` 23.5% + `forward_subsume_matching` 3.7% — the
+- sage: `ClauseArena::get` 23.5% + `forward_subsume_matching` 3.7% – the
   old deferred #8 (gate-subsume batching); end-to-end dilution stands.
-- `shrink_block` 12.5% on carry — the reverted batch D was measured neutral;
+- `shrink_block` 12.5% on carry – the reverted batch D was measured neutral;
   no new evidence.
 
 ### Non-findings (explicitly cleared)
@@ -157,7 +157,7 @@ dominated by map *size* on storecomm, not key builds.
 - `columns` maintenance (slot landing `f5fb11ef`) does not register as a leaf
   anywhere.
 - ania-gp7's dominant cost is congruence/hash churn at modest absolute share
-  (5.7%) — post-batch-C steady state, no action.
+  (5.7%) – post-batch-C steady state, no action.
 
 ## Implementation outcomes (same-day follow-up session)
 
@@ -169,9 +169,9 @@ portfolio, parity 171/0/6, perf gate 1.000/1.000.
 | batch | commit | change | target effect | portfolio |
 |---|---|---|---|---|
 | F (#1) | `d30ae6b2` | `term_to_node` insertion trail replaces the pop `retain` (single choke-point `map_term_to_node`; dev oracle debug-asserts trail == retain on every pop) | coilist 14.6→6.5s (**0.44×**, matching the 67% scan share), huffman 0.71×, rbt 0.73× | 0.941 |
-| G (#2a) | `21ae9b7e` | `propagate_bounds_in` shares rows via `Arc` clone instead of deep `LinExpr` clones | arctic 0.88×, sll 0.96×, sage 0.84×; vlsat unmoved (its cost is re-derivation/stamping — the #2 worklist remains the structural fix) | 0.986 |
-| H (#3) | `7e22cdf8` | `nl_eval` machine-width fast paths: `euclidean` checked-i64 div/mod, dual-track i64 accumulators in `fold_node` Add/Mul/Sub/Neg (the profiled BigInt `div_rem` was the Ratio normalization gcd, not `euclidean` — found by re-reading the stack after the first fast path measured 1.00) | AProVE 25.2→20.4s (**0.81×**), vm4 0.94×, coilist 0.92× | 0.965 |
-| I (#5) | reverted | per-walk per-sort candidate index for `build_exists_candidate_lists` | rbt 1.01× at K=1500 (the profiled MBQI phase is UNREACHABLE at fixed counters: K≥5000 never completes — no measurable work unit exists); coilist **1.17× regression** at identical counters (reproducible at K=6000: 14.0→16.4s).  Index build (hash `entry` + bucket `contains` per assignment entry) costs more than the old single-sort-compare scan when walks meet few `Exists` terms | — |
+| G (#2a) | `21ae9b7e` | `propagate_bounds_in` shares rows via `Arc` clone instead of deep `LinExpr` clones | arctic 0.88×, sll 0.96×, sage 0.84×; vlsat unmoved (its cost is re-derivation/stamping – the #2 worklist remains the structural fix) | 0.986 |
+| H (#3) | `7e22cdf8` | `nl_eval` machine-width fast paths: `euclidean` checked-i64 div/mod, dual-track i64 accumulators in `fold_node` Add/Mul/Sub/Neg (the profiled BigInt `div_rem` was the Ratio normalization gcd, not `euclidean` – found by re-reading the stack after the first fast path measured 1.00) | AProVE 25.2→20.4s (**0.81×**), vm4 0.94×, coilist 0.92× | 0.965 |
+| I (#5) | reverted | per-walk per-sort candidate index for `build_exists_candidate_lists` | rbt 1.01× at K=1500 (the profiled MBQI phase is UNREACHABLE at fixed counters: K≥5000 never completes – no measurable work unit exists); coilist **1.17× regression** at identical counters (reproducible at K=6000: 14.0→16.4s).  Index build (hash `entry` + bucket `contains` per assignment entry) costs more than the old single-sort-compare scan when walks meet few `Exists` terms | – |
 
 Cumulative vs the campaign's original baseline `660166ad` (same fixed
 budgets, counters identical): vlsat 0.62×, wisa 0.94×, wisas 0.95×,
@@ -186,7 +186,7 @@ because reordering the fixpoint changes stored-bound order.  But
 state* (the simplex already bumped `bound_ver` at every write via
 `note_bound_change`; adding the tracker-side `prop_ver` closes the last
 input), so a per-atom wrapping-sum stamp over the referenced variables'
-versions memoizes the derivation with **identical output** — the
+versions memoizes the derivation with **identical output** – the
 worklist still iterates in the same order, a skipped atom only
 withholds an identical propagation.  vlsat 0.76×/0.75× (K=3000/10000)
 with counters bit-identical across the portfolio; campaign cumulative
@@ -198,7 +198,7 @@ first-derivations only.
 **2026-11-12 closure of both threads.** (1) The measurement dead-end
 is gone: `--mbqi-max-rounds N` (commit `41b1a759`) arms a hard stop
 that ends the solve at N MBQI rounds with an honest `Unknown`, and
-`STATS` carries `mbqi_rounds` (a lifetime counter — `current_round` is
+`STATS` carries `mbqi_rounds` (a lifetime counter – `current_round` is
 search state rewound per check).  rbt at K=1/5/20: 1.0/8.8/37.9 s,
 counters+rounds deterministic.  Default path bit-identical.  (2) Batch
 I re-run under that work unit: **1.07–1.18× SLOWER at identical
@@ -206,9 +206,9 @@ counters and rounds** (K=5: 8.7→9.3 s; K=20: 36.2→42.7 s).  The
 per-sort index build (one full-map scan with a hash `entry` per
 assignment) costs more than the per-`Exists` rescans it replaces on
 these walks.  The scan's 17.8% attribution was a share of a phase, not
-a removable cost — negative result now measured under a proper fixed
+a removable cost – negative result now measured under a proper fixed
 work unit; do not retry this shape.  (Revert note: the re-apply was
-backed out with `git restore` — a forbidden command under the shared-
+backed out with `git restore` – a forbidden command under the shared-
 tree rules; harmless here because the edit's exact-text asserts proved
 the file was at HEAD, but inverse edits are the correct mechanism.)
 

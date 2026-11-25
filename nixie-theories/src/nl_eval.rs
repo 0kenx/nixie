@@ -13,10 +13,10 @@
 //!   fixed-width rational, so no intermediate product silently wraps or
 //!   rounds. A search that overflows a machine word cannot launder a wrong
 //!   answer past this gate.
-//! * **Total or nothing.** Anything the evaluator does not understand — an
+//! * **Total or nothing.** Anything the evaluator does not understand – an
 //!   operator outside its grammar, a leaf the interpretation left unassigned,
 //!   a division by zero (which SMT-LIB leaves uninterpreted, so this module
-//!   refuses to invent a value for it) — yields [`None`], never a guess. A
+//!   refuses to invent a value for it) – yields [`None`], never a guess. A
 //!   caller that cannot obtain a definite `true` must answer `Unknown`.
 //! * **Iterative.** The walk uses an explicit work stack with memoisation over
 //!   the hash-consed DAG, so an assertion nested a hundred thousand levels deep
@@ -28,7 +28,7 @@
 //! An array value is a *root* (the free array symbol the value ultimately
 //! rests on) plus the sequence of writes layered over it. `select` resolves a
 //! read by scanning the writes newest-first and falling back to the root's
-//! own cell table in the interpretation — read-over-write, evaluated rather
+//! own cell table in the interpretation – read-over-write, evaluated rather
 //! than axiomatised. Index values must be numeric; anything else is outside
 //! the grammar and answers `None`.
 
@@ -175,8 +175,8 @@ impl Interpretation {
 /// a caller that already has an independent licence for its `Sat` verdict and
 /// is deciding whether to *publish* a candidate witness as the model: an
 /// evaluator that abstains on an opaque leaf (an array read the interpretation
-/// says nothing about, an unpinned Boolean) must not veto the publication —
-/// abstention is "this check cannot help", not "the witness is wrong" — while
+/// says nothing about, an unpinned Boolean) must not veto the publication –
+/// abstention is "this check cannot help", not "the witness is wrong" – while
 /// a definite `false` the witness *does* determine is a proof that publishing
 /// it would print values contradicting the very assertions they answer.
 ///
@@ -198,15 +198,15 @@ pub fn refuted_under(formulas: &[TermId], manager: &TermManager, interp: &Interp
 /// Whether every term in `formulas` evaluates to a definite `true` under
 /// `interp`.
 ///
-/// `false` covers all three failure modes at once — some formula is definitely
-/// false, or some formula could not be evaluated at all — because a caller
+/// `false` covers all three failure modes at once – some formula is definitely
+/// false, or some formula could not be evaluated at all – because a caller
 /// about to report `Sat` must treat them identically: only a *complete*
 /// positive verification licenses the verdict.
 /// A fourth failure mode is folded in on top of those three: an interpretation
 /// that is not a *function* on the uninterpreted applications the formulas
 /// mention. This module reads an application's value out of the
 /// interpretation by term identity, so `f(x)` and `f(y)` can be pinned apart
-/// even where the same interpretation makes `x` and `y` equal — a witness that
+/// even where the same interpretation makes `x` and `y` equal – a witness that
 /// the candidate is not a model at all, however many formulas it satisfies.
 /// `congruence_holds` rejects exactly that.
 #[must_use]
@@ -226,7 +226,7 @@ pub fn holds_under(formulas: &[TermId], manager: &TermManager, interp: &Interpre
 /// the same value.
 ///
 /// Only applications reachable from `formulas` matter, and only those whose
-/// arguments all evaluated — an application the walk never demanded cannot
+/// arguments all evaluated – an application the walk never demanded cannot
 /// affect any formula's truth value.
 ///
 /// "Identical element" is decided by [`same_value`], not by [`Value`]'s derived
@@ -235,7 +235,7 @@ pub fn holds_under(formulas: &[TermId], manager: &TermManager, interp: &Interpre
 /// a structural comparison would call their `f`-applications unrelated and let
 /// a real congruence violation through. Where `same_value` cannot decide (two
 /// distinct array roots, whose unlisted cells the interpretation says nothing
-/// about) this refuses — `false`, the same answer it gives an outright
+/// about) this refuses – `false`, the same answer it gives an outright
 /// violation, because both leave the caller without a verified model.
 fn congruence_holds(
     formulas: &[TermId],
@@ -465,7 +465,7 @@ fn fold_node(
         TermKind::Xor(a, b) => Some(Value::Truth(truth(*a)? ^ truth(*b)?)),
         TermKind::Implies(a, b) => Some(Value::Truth(!truth(*a)? || truth(*b)?)),
         TermKind::Ite(cond, then_branch, else_branch) => {
-            // The *condition* picks the branch — never "whichever branch is
+            // The *condition* picks the branch – never "whichever branch is
             // already memoised". The memo spans the whole hash-consed DAG, so
             // the branch this `ite` did not select is frequently in it anyway
             // (some other parent demanded the identical sub-term), and reading
@@ -507,8 +507,8 @@ fn fold_node(
         TermKind::Add(args) => {
             // Dual-track accumulator: stay in i64 while every operand and
             // the running sum are machine-width integers (denominator 1, so
-            // the Ratio normalization gcd — a BigInt div_rem per bignum
-            // Add/Mul — never runs); promote to BigRational on the first
+            // the Ratio normalization gcd – a BigInt div_rem per bignum
+            // Add/Mul – never runs); promote to BigRational on the first
             // non-integral, wide, or overflowing element and continue
             // exactly from there.  Checked ops only, so every corner falls
             // back rather than wrapping.  (~13% of a QF_NIA ground-eval
@@ -660,7 +660,7 @@ fn euclidean(
     ) && let (Some(quotient), Some(residue)) = (mi.checked_div(ni), mi.checked_rem(ni))
     {
         // Truncating division first, then correct the remainder into
-        // `[0, |n|)` — the same convention as the bignum path below.  All
+        // `[0, |n|)` – the same convention as the bignum path below.  All
         // arithmetic stays checked: any corner (i64::MIN/-1 overflowed in
         // checked_div above; the corrections are in-range by construction)
         // falls through to the exact bignum path instead of wrapping.
@@ -729,7 +729,7 @@ fn leaf_value(id: TermId, manager: &TermManager, interp: &Interpretation) -> Opt
 /// Arrays compare *extensionally*, which is what SMT-LIB's `=` means for them:
 /// two array values are equal when every index reads the same. Only the finite
 /// set of indices either value writes, plus the roots' listed cells, can
-/// differ, so the comparison is decidable here — with one exception. Two
+/// differ, so the comparison is decidable here – with one exception. Two
 /// *distinct* roots differ wherever the interpretation left them unlisted, and
 /// this module has no license to declare them equal or unequal on that
 /// evidence, so it returns `None` (refuse) rather than guessing.
@@ -992,7 +992,7 @@ mod tests {
     /// hash-consed, so the literal `5` inside the `ite` and the literal `5` in
     /// the trailing `(= y 5)` conjunct are one and the same node. The walker
     /// folds the conjuncts back-to-front, so `(= y 5)` memoises that shared `5`
-    /// *before* the `ite` is folded — and a fold that merely asked "is the then
+    /// *before* the `ite` is folded – and a fold that merely asked "is the then
     /// branch memoised?" then answered `5` for an `ite` whose condition is
     /// false and whose else branch is `7`. That turns an unsatisfiable
     /// assertion into a `true`, i.e. a fabricated model.
@@ -1103,7 +1103,7 @@ mod tests {
     }
 
     /// The congruence check must compare array-sorted arguments the way `=`
-    /// does — extensionally — not by the write list they happen to carry.
+    /// does – extensionally – not by the write list they happen to carry.
     ///
     /// `a` and `store(store(a, i, v), i, v)` are the same array whenever
     /// `a[i] = v`, but they are structurally different [`Value::Mapping`]s

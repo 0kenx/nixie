@@ -105,7 +105,7 @@ scheduling coverage; the inactive `cpu_core` entries were not counted.
 |---|---:|---:|---:|
 | circuit | 0.894047 | 1.075811 | 0.977636 |
 | j3037 | 0.991214 | 1.024233 | 0.999062 |
-| Geometric mean | **0.941378** | **1.049706** | — |
+| Geometric mean | **0.941378** | **1.049706** | – |
 
 The instruction gate passes narrowly (5.86% fewer); the required cycle
 reduction fails, and circuit exceeds the 5% per-input cycle-regression limit.

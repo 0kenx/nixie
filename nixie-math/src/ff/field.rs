@@ -2,7 +2,7 @@
 //!
 //! Elements are stored in Montgomery form (`a·R mod p`, `R = 2^{64·n}`) over
 //! 64-bit limbs, `SmallVec<[u64; 4]>` so the ZK primes (BN254 / BLS12-381
-//! scalar fields, Pallas/Vesta — 4 limbs; Goldilocks, BabyBear, Mersenne31 —
+//! scalar fields, Pallas/Vesta – 4 limbs; Goldilocks, BabyBear, Mersenne31 –
 //! 1 limb) stay inline and allocation-free.
 //!
 //! ## Exactness
@@ -15,7 +15,7 @@
 //!
 //! ## Determinism
 //!
-//! Constant-time is explicitly **not** a requirement — this is a solver, not
+//! Constant-time is explicitly **not** a requirement – this is a solver, not
 //! a crypto library. What *is* required is that nothing here reads a clock or
 //! a random source: search-shaping decisions above this layer must be
 //! reproducible.
@@ -70,7 +70,7 @@ impl FieldCtx {
     /// The caller is responsible for primality (the AST layer's
     /// `FieldTable` classifies orders before any `FieldCtx` is built; here
     /// trusting a composite `p` would silently produce ring arithmetic mod
-    /// a composite — every consumer constructs contexts only from
+    /// a composite – every consumer constructs contexts only from
     /// classified prime orders).
     ///
     /// # Errors
@@ -107,7 +107,7 @@ impl FieldCtx {
         };
         // Convert R and R² through the raw-int path: mul_raw(a, 1) reduces
         // a out of Montgomery form, so to build the Montgomery encodings we
-        // use R²·v as usual — but R itself must be built by the identity
+        // use R²·v as usual – but R itself must be built by the identity
         // below. Standard construction: with limbs of v = raw(v),
         // mont(v) = mul_raw(v_limbs, R²). Build R² first via a BigUint
         // modular multiply in raw limbs: R² mod p is already exact as an
@@ -117,7 +117,7 @@ impl FieldCtx {
         // b = raw 1 computes REDC(a·1) = a·R^{-1}… not what we want either.
         // The primitive that *is* available: mul_raw on raw limbs performs
         // REDC(xy) = x·y·R^{-1}. So mont(v) = REDC(v·R²) = mul_raw(v, R²)
-        // needs R² in raw limbs — which we have exactly (r2_int). And
+        // needs R² in raw limbs – which we have exactly (r2_int). And
         // mont(1) = mul_raw(1, R²) = R. So: store r2 as RAW limbs of R² mod
         // p and use it only through from_biguint; store r as mont(1).
         let r2_raw = pad_limbs(&to_limbs(&r2_int), n_limbs);
@@ -224,7 +224,7 @@ impl FieldCtx {
         //
         // Schoolbook subtraction: `sub = a[i] + borrow_in`; the borrow
         // *subtracts* from the next limb. The first version of this loop
-        // computed `p[i] + borrow` — adding instead — which was invisible
+        // computed `p[i] + borrow` – adding instead – which was invisible
         // at one limb (no borrow propagation) and corrupted every field
         // with p ≥ 2^64: BN254 goals answered a false `unsat` from the
         // poisoned Gröbner cascade. Multi-limb negation is pinned by
@@ -253,7 +253,7 @@ impl FieldCtx {
     }
 
     /// Montgomery multiplication. Inputs are Montgomery-form (any canonical
-    /// values); the result is Montgomery form. This is the core primitive —
+    /// values); the result is Montgomery form. This is the core primitive –
     /// CIOS with per-limb reduction, exact at every step.
     #[must_use]
     pub fn mul_raw(&self, a: &Limbs, b: &Limbs) -> Limbs {
@@ -261,8 +261,8 @@ impl FieldCtx {
         // t has n+2 limbs: the accumulator. Using u128 limbs would overflow
         // on the final adds, so u64 limbs with u128 column arithmetic.
         // (A stack-backed accumulator for n <= 8 was measured and reverted:
-        // the FF chains' times were unmoved — the CIOS loop arithmetic is
-        // the cost, not the per-call vec allocation — while the nixie-math
+        // the FF chains' times were unmoved – the CIOS loop arithmetic is
+        // the cost, not the per-call vec allocation – while the nixie-math
         // rebuild wobbled unrelated SAT instances' codegen layout up to
         // 1.23x at identical counters.  Scan #3 item #1c, negative result.)
         let mut t = vec![0u64; n + 2];

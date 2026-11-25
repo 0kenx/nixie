@@ -3,9 +3,9 @@
 The corrected Timetable anatomy (`2026-09-12-elim-ballast-erratum.md`)
 left one recorded item: candidate starvation between elimination phases,
 hypothesized to be fed by cadical's denser subsume interleave.  The
-cheapest form of that lever — **a subsume fixpoint at the elimination
+cheapest form of that lever – **a subsume fixpoint at the elimination
 phase entry** (`NIXIE_ELIM_SUBFIX`, rounds until zero yield, bounded at
-8) — is landed and measured.
+8) – is landed and measured.
 
 ## Screen (54 × 5, vs the 8082e335 baseline, 0 verdict disagreements)
 
@@ -22,7 +22,7 @@ phase entry** (`NIXIE_ELIM_SUBFIX`, rounds until zero yield, bounded at
 vs the baseline's 80,734): the pre-phase subsume rounds were never the
 elimination bottleneck.  The phase-2 pre-phase round already yields
 9.8 k in both configurations; iterating to the fixpoint adds rounds
-whose yields collapse immediately — the dirty set is exhausted, and the
+whose yields collapse immediately – the dirty set is exhausted, and the
 starvation in phases 3+ comes from the *search-side* feeding (learned
 clauses marking dirty literals at a rate the schedule cannot compound),
 not from too few rounds at the phase entry.
@@ -31,8 +31,8 @@ not from too few rounds at the phase entry.
 
 The arm's divergence path is instructive: the default `RandomSlice`
 subsume mode **re-places the dirty set uniformly at each round's end**
-(a fixed-count deterministic re-roll).  Every extra round — even at
-zero yield — re-rolls which literals the *next mid-search round* will
+(a fixed-count deterministic re-roll).  Every extra round – even at
+zero yield – re-rolls which literals the *next mid-search round* will
 schedule.  The arm is therefore fixpoint-mining **plus a dirty-lottery
 reshuffle**, and the −1 % aggregate / per-file split is consistent with
 the reshuffle dominating.  Any future interleave experiment must
@@ -41,8 +41,8 @@ separate these (e.g., a null that only re-rolls).
 ## Where the feeder item stands
 
 Both forms of "more subsumption between elim phases" are now measured:
-the fixpoint at the phase entry (this study — dead for amplitude) and
-the search-side feeders (OTFS + eager-sub, landed as arms — they feed
+the fixpoint at the phase entry (this study – dead for amplitude) and
+the search-side feeders (OTFS + eager-sub, landed as arms – they feed
 the dirty set directly and super-additively convert the circuit class
 but are corpus-neutral in aggregate).  The remaining amplitude gap on
 the Timetable class is not reachable by scheduling subsumption

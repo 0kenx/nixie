@@ -478,7 +478,7 @@ fn lshr_const64_forces_zero_high_bits() {
 }
 
 /// nlzbs128 false-sat regression: `bvsub` at width > 64 must encode
-/// `a − b = a + ~b + 1` **exactly** — the u64 shift wrap in
+/// `a − b = a + ~b + 1` **exactly** – the u64 shift wrap in
 /// `encode_add_const` used to add a spurious `2^64`, so wide subtractions
 /// computed a different function (docs/handovers/2026-09-09-bv-false-sat.md).
 #[test]
@@ -561,7 +561,7 @@ fn unified_const_results_flow_as_reserved_constants() {
 }
 
 /// The same chain through a subtraction and a bitwise op, checked against
-/// exact arithmetic — the semantics must be untouched by the canonicalization.
+/// exact arithmetic – the semantics must be untouched by the canonicalization.
 #[test]
 fn unified_const_chain_preserves_semantics() {
     use nixie_sat::Solver as SatSolver;
@@ -607,7 +607,7 @@ fn embedded_const_results_stay_pinned_variables() {
     assert!(bv.assert_const(two, 2, 8));
     assert!(bv.assert_const(three, 3, 8));
     assert!(bv.bv_add(five, two, three));
-    // Bits exist as *pinned fresh variables* — not the reserved constants —
+    // Bits exist as *pinned fresh variables* – not the reserved constants –
     // and the embedded solver agrees the sum is exactly 5: asserting 6
     // instead is unsat.
     let bits = bv.debug_bits(five).expect("sum must be blasted").to_vec();
@@ -732,8 +732,8 @@ fn model_equalities_never_merge_different_bitvector_sorts() {
 }
 
 /// Gate structural hashing (default on; `NIXIE_BV_GATE_SH=0` opts out):
-/// identical gates over the same operand variables — in either operand
-/// order — must share one signal, and distinct inputs must never alias.
+/// identical gates over the same operand variables – in either operand
+/// order – must share one signal, and distinct inputs must never alias.
 /// This is the mechanism behind the 2026-11-15 default flip (Sage2
 /// timeouts crossing at 1.7–6×, `smulov2bw*` closures; see
 /// `docs/studies/2026-11-15-bv-andfold-soundness-and-termrules.md`).

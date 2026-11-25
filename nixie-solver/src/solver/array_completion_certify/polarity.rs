@@ -4,8 +4,8 @@
 //! The certificate substitutes a truth value for every maximal quantifier
 //! sub-term it has certified and then checks the assertions, so what it needs
 //! to know about each sub-term is which value to certify.  Before this module
-//! the walk knew one polarity only — "every connective above is an `and` /
-//! `or`" — and declined every `exists` anywhere else.  But an `exists` under a
+//! the walk knew one polarity only – "every connective above is an `and` /
+//! `or`" – and declined every `exists` anywhere else.  But an `exists` under a
 //! negation *is* a universal: `(not (exists ((j S)) φ))` holds exactly when
 //! `∀j. ¬φ` does, and `(=> (exists ((j S)) φ) false)` is the same formula.
 //! Declining it kept the candidate model, which printed `a` as `#b0` at every
@@ -21,8 +21,8 @@
 //! | `∀x⃗. φ` | certified **true**: `φ` valid | certified **false**: a witness of `¬φ` |
 //! | `∃x⃗. φ` | certified **true**: a witness of `φ` | certified **false**: `¬φ` valid |
 //!
-//! The negative cases are handed to the certificate as a synthetic *dual* —
-//! `∃x⃗. ¬φ` for a negated `∀`, `∀x⃗. ¬φ` for a negated `∃` — listed with the
+//! The negative cases are handed to the certificate as a synthetic *dual* –
+//! `∃x⃗. ¬φ` for a negated `∀`, `∀x⃗. ¬φ` for a negated `∃` – listed with the
 //! ordinary universals and existentials, so the peel, the sample, the fill
 //! query and the pre-filter treat it exactly like a quantifier the script
 //! spelled; the original sub-term is then substituted by `false`.  Certifying

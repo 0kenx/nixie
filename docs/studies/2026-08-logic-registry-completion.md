@@ -4,14 +4,14 @@
 
 The quantified-UF pin study's probe case `(set-logic UFNIA)` was rejected
 at the command surface (`unknown logic 'UFNIA'`) while z3 answered `unsat`
-— a *completeness* defect in the Priority-0 logic-contract layer: valid
+– a *completeness* defect in the Priority-0 logic-contract layer: valid
 SMT-LIB input refused before any engine moved.
 
 ## Ground truth
 
 The smt-lib.org benchmark catalog (89 logics; the authoritative listing
 of logics with shipped benchmarks, provided from the site's bench index).
-Decoding semantics: cvc5's grammar decoder (`src/theory/logic_info.cpp`) —
+Decoding semantics: cvc5's grammar decoder (`src/theory/logic_info.cpp`) –
 leading `QF_` drops quantifiers; `A`=arrays, `UF`, `C`=cardinality,
 `BV`, `FF`, `FP`, `DT`, `S`=strings; exactly one arithmetic suffix
 (`IDL/RDL/IRDL/LIA/LRA/LIRA/NIA/NRA/NIRA`) sets linear/nonlinear and
@@ -31,7 +31,7 @@ the whole `DT`/`BVDT` composition stack (`UFDT*`, `UFBVDT*`, `AUFDT*`,
 
 All 43 added, decoded mechanically from the cvc5 grammar.  Mixed
 Int+Real shapes (`LIRA`/`NIRA`) follow the table's shipped convention
-(`AUFLIRA`, `AUFNIRA`, `QF_UFDTLIRA`): `integer: false` — provenance is
+(`AUFLIRA`, `AUFNIRA`, `QF_UFDTLIRA`): `integer: false` – provenance is
 deliberately unenforced in `validate` (mixed-comparison coercion), the
 flag only routes the linear fallback solver.  No existing entry changed.
 

@@ -141,7 +141,7 @@ impl<'a> PrettyPrinter<'a> {
             }
             TermKind::RealConst(r) => {
                 // SMT-LIB spelling, not the `Ratio` Display (which prints
-                // the math convention `1/3` — a token NO SMT-LIB parser
+                // the math convention `1/3` – a token NO SMT-LIB parser
                 // accepts; a `get-value` echo of an exact rational could
                 // not be re-parsed by nixie or z3).  Real-sorted integers
                 // carry the `.0`; everything else is `(/ n d)`.

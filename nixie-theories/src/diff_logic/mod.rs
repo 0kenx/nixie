@@ -10,11 +10,11 @@
 //!
 //! * **Dense integer core** (`dense_core.rs`, Z3 `theory_dense_diff_logic`):
 //!   incremental all-pairs shortest-path closure with occurrence-list theory
-//!   propagation — the engine Z3 installs for dense difference logic
+//!   propagation – the engine Z3 installs for dense difference logic
 //!   (`setup_QF_IDL` with `st.is_dense()`).
 //! * **Sparse graph** (`graph.rs` + `bellman_ford.rs`, Z3
 //!   `theory_diff_logic`): constraint graph with seeded incremental SPFA
-//!   over exact `Rational64` weights — used for QF_RDL and as the integer
+//!   over exact `Rational64` weights – used for QF_RDL and as the integer
 //!   fallback outside the dense core's exactness envelope.
 //!
 //! Constraint graph semantics: variables are nodes; constraint `x - y ≤ c`

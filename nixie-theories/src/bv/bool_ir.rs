@@ -1,4 +1,4 @@
-//! Hash-consed boolean expression IR — the layer between term blasting
+//! Hash-consed boolean expression IR – the layer between term blasting
 //! and CNF emission (Z3's `bit_blaster` produces exactly this: boolean
 //! *expressions*, with Tseitin deferred to the very end).
 //!
@@ -16,7 +16,7 @@
 //!   [`BoolIr::refold_consts`]);
 //! * **definitions inline**: a consumer that reads a defined signal
 //!   references the definition's *node*, so intermediate bits never
-//!   enter the CNF at all — the IR equivalent of `solve-eqs`
+//!   enter the CNF at all – the IR equivalent of `solve-eqs`
 //!   substitution, and the mechanism that keeps z3's blasted goals
 //!   small enough for its post-blast simplifier to close
 //!   (`bit-blast → simplifier → solve-eqs` traces on the
@@ -27,7 +27,7 @@
 //! # Representation
 //!
 //! A node is `And`, `Xor`, `Mux(sel, t, f)` or `Var(v)`; a **literal** is
-//! a `u32` code `(node_index << 1) | complement` — complement edges are
+//! a `u32` code `(node_index << 1) | complement` – complement edges are
 //! free, exactly as in an AIG.  Index `0` is the reserved constant-true
 //! node, so code `1` reads *true* and code `0` reads *false*.
 //!
@@ -109,7 +109,7 @@ impl BoolIr {
         // Reserve index 0 for the constant true UNCONDITIONALLY: the
         // literal codes (code = idx<<1 | complement) give idx 0 the
         // reading true/false, so the first real node must never take it.
-        // (A debug_assert here skipped the interning in release builds —
+        // (A debug_assert here skipped the interning in release builds –
         // the first circuit node landed on index 0 and every constant
         // code misread as that node: the bitrev false-sat.  The interning
         // must run unconditionally; the assert only checks the invariant.)
@@ -182,7 +182,7 @@ impl BoolIr {
         lit::make(self.intern(IrNode::And(x, y)), false)
     }
 
-    /// `or(a, b)` = `¬and(¬a, ¬b)` — a complement edge of the and node
+    /// `or(a, b)` = `¬and(¬a, ¬b)` – a complement edge of the and node
     /// (De Morgan collision for free).
     pub fn or(&mut self, a: u32, b: u32) -> u32 {
         lit::neg(self.and(lit::neg(self.canonical(a)), lit::neg(self.canonical(b))))
@@ -263,7 +263,7 @@ impl BoolIr {
     }
 
     /// Pin a variable to a constant (a level-0 fact discovered after
-    /// circuits referencing it were built — the input to the re-fold
+    /// circuits referencing it were built – the input to the re-fold
     /// fixpoint).
     pub fn pin(&mut self, v: Var, value: bool) {
         self.pinned.insert(v, value);
@@ -368,7 +368,7 @@ impl BoolIr {
     }
 
     /// Literal equality through the fold table: two literals are the
-    /// *same signal* (same node, any polarity) — the check the equality
+    /// *same signal* (same node, any polarity) – the check the equality
     /// encoder uses to fold bit-pair comparisons (`encode_eq_node`'s
     /// var-equality check, lifted to nodes).
     pub fn same_signal(&self, a: u32, b: u32) -> Option<bool> {
@@ -484,7 +484,7 @@ impl BoolIr {
     }
 
     /// SAT literal for an IR code, reading constants as the reserved
-    /// pair when available — but the constants here are *IR-level*
+    /// pair when available – but the constants here are *IR-level*
     /// (`true`/`false` codes); the caller-provided `const_true`/
     /// `const_false` mapping is passed via `slot[0]`.
     fn sat_lit(&self, slot: &[Option<nixie_sat::Lit>], code: u32) -> nixie_sat::Lit {
@@ -569,7 +569,7 @@ mod tests {
             .try_into()
             .expect("one root");
         // vars: the two leaves reuse their own vars (1, 2 → indexes 0/1
-        // in this fresh solver) and ONE and-node — the dead xor allocated
+        // in this fresh solver) and ONE and-node – the dead xor allocated
         // nothing.
         assert_eq!(sat.num_vars(), 3, "2 leaves + 1 and node");
         let _ = root;

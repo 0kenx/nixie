@@ -17,15 +17,15 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Distinct-semantics guard clauses (the census-driven fix; see the
 // arrangement-gap study's conflict census).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The guard clause `¬distinct ∨ ¬(t_i = t_j)` is a theorem for every pair
 /// of a live spec's arguments.  With the distinct asserted at the top
 /// level, the guard atoms are falsified by unit propagation at descent
-/// start — the census found CDCL learning exactly that falsity one conflict
+/// start – the census found CDCL learning exactly that falsity one conflict
 /// at a time (23k of 58k theory lemmas on memory-alias-s0-large).
 #[test]
 fn distinct_guard_clause_decides_eq_atom() {
@@ -44,7 +44,7 @@ fn distinct_guard_clause_decides_eq_atom() {
 }
 
 /// A CONDITIONAL distinct (under ite): the guard clause is valid
-/// regardless of the distinct's polarity — when the distinct is false, the
+/// regardless of the distinct's polarity – when the distinct is false, the
 /// clause is satisfied through its first literal; when true, the eq atom
 /// must be false.  Both polarities must decide correctly.
 #[test]
@@ -70,8 +70,8 @@ fn conditional_distinct_with_guard_clause_is_sound() {
         "(assert (ite c (= x y) (= x y)))\n",
         "(check-sat)\n",
     );
-    // ¬c: (> x y) branch with x = y forced elsewhere — contradiction there
-    // too; the c branch: distinct + x=y — contradiction.  Both branches
+    // ¬c: (> x y) branch with x = y forced elsewhere – contradiction there
+    // too; the c branch: distinct + x=y – contradiction.  Both branches
     // refute: unsat (z3 agrees).
     assert_eq!(run(sat_shape), vec!["unsat"]);
 }

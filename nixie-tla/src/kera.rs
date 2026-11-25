@@ -1,4 +1,4 @@
-//! **KerA** — the kernel language TLA+ reduces to.
+//! **KerA** – the kernel language TLA+ reduces to.
 //!
 //! `docs/TLA_FRONTEND_DESIGN.md` §2 describes a two-level IR: a *surface* tree
 //! that mirrors what the user wrote (that is
@@ -8,8 +8,8 @@
 //! # Why a kernel at all
 //!
 //! TLA+ has a large surface: `CASE`, `LET`, records, `\subseteq`, `EXCEPT`
-//! paths, tuple patterns, six spellings of `[`. Every downstream consumer —
-//! typing, transition analysis, the encoder — would otherwise have to handle
+//! paths, tuple patterns, six spellings of `[`. Every downstream consumer –
+//! typing, transition analysis, the encoder – would otherwise have to handle
 //! all of it, and each would get a slightly different subset right. Reducing
 //! once to a closed enum means everything after this point matches
 //! exhaustively, so a new construct **breaks compilation** rather than
@@ -25,7 +25,7 @@
 //!
 //! Nixie has `nixie-theories/src/set`. Keeping `\cup`, `\cap`, `\`, `SUBSET`
 //! and `UNION` *in* the kernel is what lets the encoder hand them to a set
-//! theory solver instead of blowing them into quantifiers first — opportunity
+//! theory solver instead of blowing them into quantifiers first – opportunity
 //! O3 in the design doc. Expanding them here would destroy exactly the
 //! structure that optimisation needs, and it cannot be recovered afterwards.
 
@@ -138,7 +138,7 @@ pub type KeraRef = Rc<Kera>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FoldOver {
     /// A set. Order is unspecified in TLA+, so a fold over a set is only
-    /// well defined when the operator is associative and commutative —
+    /// well defined when the operator is associative and commutative –
     /// Apalache does not check this either, and neither does this.
     Set,
     /// A sequence, folded left to right.
@@ -148,11 +148,11 @@ pub enum FoldOver {
 /// The kernel language.
 ///
 /// Deliberately closed and small. Everything the surface syntax offers is
-/// either represented here or rejected by name during lowering — never
+/// either represented here or rejected by name during lowering – never
 /// silently dropped.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kera {
-    // ---- names and literals ----
+    // ======== names and literals ========
     /// A constant, variable, or bound variable.
     Var(Name),
     /// `x'`.
@@ -164,7 +164,7 @@ pub enum Kera {
     /// `TRUE` / `FALSE`.
     Bool(bool),
 
-    // ---- propositional ----
+    // ======== propositional ========
     /// `~p`.
     Not(KeraRef),
     /// n-ary conjunction. Empty means `TRUE`.
@@ -174,7 +174,7 @@ pub enum Kera {
     /// `IF c THEN t ELSE e`.
     Ite(KeraRef, KeraRef, KeraRef),
 
-    // ---- binders (bounded only; unbounded forms are rejected in lowering) ----
+    // ======== binders (bounded only; unbounded forms are rejected in lowering) ========
     /// `\A x \in set : body`.
     Forall {
         /// The bound variable.
@@ -193,7 +193,7 @@ pub enum Kera {
         /// The body.
         body: KeraRef,
     },
-    /// `CHOOSE x : body` — unbounded.
+    /// `CHOOSE x : body` – unbounded.
     ///
     /// TLA+ genuinely admits this, and `None == CHOOSE v : v \notin Values` is
     /// a standard idiom for a fresh value, so refusing it would reject a large
@@ -215,13 +215,13 @@ pub enum Kera {
         body: KeraRef,
     },
 
-    // ---- equality and membership ----
+    // ======== equality and membership ========
     /// `a = b`.
     Eq(KeraRef, KeraRef),
     /// `a \in b`.
     In(KeraRef, KeraRef),
 
-    // ---- sets ----
+    // ======== sets ========
     /// `{a, b, c}`.
     SetEnum(Vec<KeraRef>),
     /// `{x \in set : pred}`.
@@ -253,7 +253,7 @@ pub enum Kera {
     /// `A \X B \X …`, always at least two components.
     Times(Vec<KeraRef>),
 
-    // ---- functions ----
+    // ======== functions ========
     /// `[x \in set |-> body]`.
     FunDef {
         /// The bound variable.
@@ -263,7 +263,7 @@ pub enum Kera {
         /// The body.
         body: KeraRef,
     },
-    /// `f[x \in S] == … f[…] …` — a function defined in terms of itself.
+    /// `f[x \in S] == … f[…] …` – a function defined in terms of itself.
     ///
     /// TLA+ allows this directly, with no `RECURSIVE` keyword, and it is how
     /// Fibonacci, factorial and every "sum of a sequence" is written. It is
@@ -272,7 +272,7 @@ pub enum Kera {
     /// lowering budget.
     ///
     /// The recursion is kept instead. `name` is free in `body`, standing for
-    /// the function being defined, and whoever consumes this ties the knot —
+    /// the function being defined, and whoever consumes this ties the knot –
     /// over a *finite* domain that is one equation per point and needs no
     /// quantifier, which is what makes it encodable at all.
     RecFun {
@@ -307,7 +307,7 @@ pub enum Kera {
         cod: KeraRef,
     },
 
-    // ---- tuples and records ----
+    // ======== tuples and records ========
     /// `<<a, b>>`.
     Tuple(Vec<KeraRef>),
     /// `[a |-> x, b |-> y]`. Fields are sorted by name so that two records
@@ -316,9 +316,9 @@ pub enum Kera {
     /// `[a : S, b : T]`, fields sorted like [`Kera::Record`].
     RecordSet(Vec<(String, KeraRef)>),
 
-    // ---- variants (issue #17) ----
+    // ======== variants (issue #17) ========
     /// `Variant("Tag", v)`: the value wrapped in a tagged union. The tag is
-    /// a string literal at the kernel — a non-literal tag is refused at
+    /// a string literal at the kernel – a non-literal tag is refused at
     /// lowering, exactly as Apalache's type system refuses it.
     Variant {
         /// The tag, a string literal.
@@ -330,7 +330,7 @@ pub enum Kera {
     VariantTag(KeraRef),
     /// `VariantGetUnsafe("Tag", v)` / `VariantGetOrElse("Tag", v, e)`: the
     /// payload when `v` carries `Tag`. Unsafe on the wrong tag leaves the
-    /// value **unconstrained** — an SMT datatype selector off its own
+    /// value **unconstrained** – an SMT datatype selector off its own
     /// constructor, which is underspecified by the theory and never a
     /// default someone invented; `or_else` makes it the given value instead.
     VariantGet {
@@ -350,7 +350,7 @@ pub enum Kera {
         set: KeraRef,
     },
 
-    // ---- arithmetic ----
+    // ======== arithmetic ========
     /// Binary arithmetic.
     Arith(ArithOp, KeraRef, KeraRef),
     /// Unary minus.
@@ -358,14 +358,14 @@ pub enum Kera {
     /// An ordering comparison.
     Cmp(CmpOp, KeraRef, KeraRef),
 
-    // ---- folds ----
+    // ======== folds ========
     /// `ApaFoldSet(Op, base, S)` and `ApaFoldSeqLeft(Op, base, seq)`.
     ///
     /// A fold is the one standard operator whose argument is an **operator**,
     /// and the kernel is deliberately first-order. Rather than grow a lambda
     /// and an operator type for it, the fold is its own binder: lowering keeps
     /// the operator's *body* with its two parameters free, and this node names
-    /// them — exactly the shape `Forall` and `FunDef` already have.
+    /// them – exactly the shape `Forall` and `FunDef` already have.
     ///
     /// That is also what Apalache does in substance. Its rewriter receives the
     /// operator wrapped in a `LetInEx` and inlines it once per element
@@ -502,7 +502,7 @@ impl Kera {
     ///
     /// This is the size that matters for a shared term. Lowering inlines a
     /// definition's body at every use and shares the result, so a term whose
-    /// tree has 2^n nodes may have only n distinct ones — and a naive walk
+    /// tree has 2^n nodes may have only n distinct ones – and a naive walk
     /// that does not deduplicate takes exponential time on exactly the inputs
     /// where sharing is doing the most good. Counting by pointer identity is
     /// what makes this linear.

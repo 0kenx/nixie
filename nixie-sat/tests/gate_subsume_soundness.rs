@@ -1,8 +1,8 @@
-//! Gate-modulo forward subsumption (`NIXIE_GATE_SUBSUME`) — differential
+//! Gate-modulo forward subsumption (`NIXIE_GATE_SUBSUME`) – differential
 //! soundness hunter/regression: verdicts must agree with the env-off
 //! base, and SAT models must satisfy the ORIGINAL clauses.  The
 //! generator is equivalence-dense (explicit equivalence pairs/chains +
-//! shared-tail spine groups + random fillers) — the shape the pass's
+//! shared-tail spine groups + random fillers) – the shape the pass's
 //! class-modulo containment feeds on.
 
 use std::io::Cursor;
@@ -33,7 +33,7 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
         f.push(vec![nlit(a, false), nlit(b, true)]);
         f.push(vec![nlit(a, true), nlit(b, false)]);
     }
-    // Spine groups: clauses sharing a common core, extended by extras —
+    // Spine groups: clauses sharing a common core, extended by extras –
     // subsumption-dense (core-only or core+1 clauses subsume their
     // wider siblings once classes fold the cores together).
     let spines = 1 + (rand(seed) as usize) % 3;
@@ -62,7 +62,7 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
         }
     }
     // AND-gate twin groups (the bv_ILA anatomy): o1 ≡ o2 through GATE
-    // CONGRUENCE — both defined as a ∧ b — with NO binary path between
+    // CONGRUENCE – both defined as a ∧ b – with NO binary path between
     // them.  These exercise the augmented-class path that plain
     // equivalence pairs never touch (the classes exist only through
     // `augment_big_with_gate_congruence`).

@@ -1,7 +1,7 @@
-# The CAV sat-cells lost at the unified feasibility driver — a bisected attribution
+# The CAV sat-cells lost at the unified feasibility driver – a bisected attribution
 
 **Date:** 2026-09-22 (small hours).  **Recorder:** the Route-B session
-that landed `35ea8786` (the division-first joint-reduction walk —
+that landed `35ea8786` (the division-first joint-reduction walk –
 bit-identity, counters identical base-vs-candidate on every probe named
 here, so this regression is present identically with and without it).
 
@@ -25,10 +25,10 @@ agent does not re-diagnose from scratch.
 
 All three losses appear AT `2a7dc324` and stay.  `problem__025`'s
 first-sweep TO on `7687dc39` was load noise (load 73; it re-ran `sat`
-calm) — the 60 s back-to-back rows are the trustworthy ones.
+calm) – the 60 s back-to-back rows are the trustworthy ones.
 
 Channel-independence: `2a7dc324` on `problem__011` with
-`NIXIE_LIA_BRANCH_LEMMA=0` still has no verdict at 120 s — the branch
+`NIXIE_LIA_BRANCH_LEMMA=0` still has no verdict at 120 s – the branch
 channel is not the differentiator; the driver's own trajectory is.
 
 ## The putative mode (not re-instrumented this session)
@@ -36,15 +36,15 @@ channel is not the differentiator; the driver's own trajectory is.
 The driver study's own residual map names the class for `i202`/`i445`:
 a 3-phase `make_feasible` rotation at the CHECK level across B&B dive
 nodes (~18 k single-pivot calls, branch requests fired, the 20 k node
-budget burned repeatedly — "item 89's dive-leaf/branch-channel
+budget burned repeatedly – "item 89's dive-leaf/branch-channel
 territory").  The CAV cells fit: pre-driver, `problem__011`'s cost was
-ONE theory check's internal B&B (~20 k nodes, ~80 k pivots — the
+ONE theory check's internal B&B (~20 k nodes, ~80 k pivots – the
 LIA-floor handoff's words) that reached an integral leaf; the driver's
 entering/leaving rule changes (wide rows join the smallest-index
 leaving rule; `crash_basis`/`update_assignment` preserve resting
 nonbasics) reshaped that internal trajectory so the dive no longer
 lands.  Confirming this needs the campaign's own instruments (the
-write-site trace + `[[MF-CALL]]` recipe, recorded in their study) —
+write-site trace + `[[MF-CALL]]` recipe, recorded in their study) –
 rebuild them per that recipe rather than re-deriving.
 
 ## What NOT to do
@@ -53,7 +53,7 @@ rebuild them per that recipe rather than re-deriving.
   resource-limit survey family with 4 z3-validated recoveries; the
   trade is real.  The fix is dive-level (Route A of the LIA-floor
   handoff: bound the internal B&B per CHECK and hand the fractional
-  variable to the CDCL-visible channel — the architecture the floor
+  variable to the CDCL-visible channel – the architecture the floor
   handoff already sized).
 * If a piece-level bisect is attempted: the commit is six pieces in
   `simplex/mod.rs` (the wide-store joining `find_violating`, the
@@ -71,12 +71,12 @@ under matched load; load-noise cells re-run calm before believing them
 
 ## The next agent's cheap closure
 
-The calm-load standing table (LIA leg) — blocked on machine load this
-whole arc — is the instrument that prices this class honestly
+The calm-load standing table (LIA leg) – blocked on machine load this
+whole arc – is the instrument that prices this class honestly
 (par-2/geomean readout per `docs/BENCHMARKING.md`); run it before any
 fix lands, so the dive campaign's counterfactual has a baseline.
 
-## Addendum (same night): the piece-level bisect — executed
+## Addendum (same night): the piece-level bisect – executed
 
 Two subset builds over the driver commit's six pieces (rebuild recipe:
 worktree at the base, apply the named hunks verbatim from `2a7dc324`):
@@ -84,17 +84,17 @@ worktree at the base, apply the named hunks verbatim from `2a7dc324`):
 * **S1 = `7687dc39` + the preserve-resting-nonbasics pair ONLY**
   (`nonbasic_rests_at_bound` + the two `continue`s in `crash_basis` and
   `update_assignment`): `problem__011` sat 13.9 s, `problem__025` sat
-  22.8 s, `problem__034` sat 5.1 s — **pre-driver behavior; the preserve
+  22.8 s, `problem__034` sat 5.1 s – **pre-driver behavior; the preserve
   rules are INNOCENT solo**.
 * **S2 = `2a7dc324` with the preserve rule neutralized** (fn body :=
-  `false`): all three cells TO @60 s — **the regression is the
+  `false`): all three cells TO @60 s – **the regression is the
   unified wide-driver rewrite ALONE** (the wide basics joining
   `find_violating`'s smallest-index leaving rule + `make_feasible`'s
   exact wide pivots + the `check` repair-loop deletion).
 
 These cells genuinely go wide: no input literal exceeds ~14 digits, but
 the pivot accumulation builds the 120-bit denominators the
-integer-tableau studies measured — the canonical `Rational64`
+integer-tableau studies measured – the canonical `Rational64`
 materialization declines and the exact store takes over.  The old
 architecture (narrow `make_feasible` + `check`'s interleaved one-wide-
 repair-then-narrow-re-feasibilization loop, 32-budget) carried the CAV

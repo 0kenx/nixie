@@ -74,7 +74,7 @@ fn render_nl_witness_value(value: &NlWitnessValue) -> String {
 /// negative numerals.
 ///
 /// The bound variable is **always** printed `x`, whatever the SMT constant is
-/// called — confirmed by asking Z3 for a model of `yy² = 2`, which answers
+/// called – confirmed by asking Z3 for a model of `yy² = 2`, which answers
 /// `(root-obj (+ (^ x 2) (- 2)) 1)` for `yy`. `root-obj`'s first argument is a
 /// closed polynomial term with its own binder, not an expression over the
 /// model's constants.
@@ -97,7 +97,7 @@ fn render_root_obj(value: &AlgebraicValue) -> String {
             (Some(power), false) => format!("(* {} {power})", render_integer(coefficient)),
         });
     }
-    // A `root-obj` polynomial always has at least two monomials in practice —
+    // A `root-obj` polynomial always has at least two monomials in practice –
     // a single-monomial polynomial `c·xᵏ` has only the rational root 0, which
     // never reaches this type. Handle it anyway rather than emitting a
     // one-argument `(+ ..)`, which some readers reject.
@@ -272,7 +272,7 @@ impl Context {
 
         // Resolve `func_name` to the EUF function-symbol id.  For an `Apply`
         // term the EUF id is the underlying value of the function-name `Spur`,
-        // so we recover it from any matching application term (read-only — no
+        // so we recover it from any matching application term (read-only – no
         // mutable interner access required).
         let mut func_id: Option<u32> = None;
         for idx in 0..(self.terms.len() as u32) {
@@ -344,7 +344,7 @@ impl Context {
         // Keyed by the *evaluated* argument tuple, not by the class
         // representatives: two argument classes with no concrete value of
         // their own render as the same fallback, and keying on the
-        // representatives let both through — `(p a)` and `(not (p b))` over an
+        // representatives let both through – `(p a)` and `(not (p b))` over an
         // uninterpreted sort printed `(ite (= x!0 @uc_U_0) true (ite (= x!0
         // @uc_U_0) false true))`, one guard twice with contradicting answers
         // (`#P2b-34`).  With every argument resolved through the canonical map
@@ -355,7 +355,7 @@ impl Context {
         // and different values cannot both be right, whether they come from
         // one class (a contradiction in the canonical map) or from two (a
         // model in which two arguments the solver kept apart are published
-        // indistinguishably — the array-model defect `#P2b-37` closed by
+        // indistinguishably – the array-model defect `#P2b-37` closed by
         // giving every pair of foreign arrays in different classes a witness
         // read that separates them).  The assertion is unscoped for that
         // reason: it is the property the printed interpretation needs, and
@@ -379,7 +379,7 @@ impl Context {
             // argument class the model gives no value at all makes the whole
             // entry unusable: substituting the argument *sort's* default
             // invented a fact, and the invented tuple then collided with a
-            // real one — `(bvslt (f w) #b00)` with `w` modelled `#b00` printed
+            // real one – `(bvslt (f w) #b00)` with `w` modelled `#b00` printed
             // `f(#b00) = #b00`, because an unrelated application whose
             // argument the model left open was rendered at `#b00` first and
             // won the deduplication (`#P2b-34`).  The else-value covers the
@@ -472,15 +472,15 @@ impl Context {
         let mut model = Vec::new();
         // An empty assertion stack is satisfied by *every* assignment, so the
         // solver answers `sat` without ever building a model.  Completing from
-        // the sort defaults is exact there, not a guess — with nothing asserted
-        // no constraint exists that a completion could violate — whereas
+        // the sort defaults is exact there, not a guess – with nothing asserted
+        // no constraint exists that a completion could violate – whereas
         // reporting "no model available" for a `sat` verdict is simply wrong.
         // Any other missing model is a genuine extraction failure and stays
         // `None`, so a real assignment is never fabricated.
         //
         // A nonlinear-real model whose values are algebraic is the second
-        // exception. There is no `Model` for it — `√2` has no term in the
-        // rational term language — and yet the assignment is fully known: it
+        // exception. There is no `Model` for it – `√2` has no term in the
+        // rational term language – and yet the assignment is fully known: it
         // lives in `Solver::nl_algebraic_values`, which is populated only
         // all-or-nothing and only for a real cell decomposition's `Sat` (see
         // that field). So the gate opens on that map being non-empty, and on
@@ -501,9 +501,9 @@ impl Context {
         // chain and `(get-value …)` all read their answers out of it, so two
         // renderers cannot describe the same class differently.  It carries
         // the synthesised `@uc_S_n` witnesses for unconstrained
-        // uninterpreted-sort constants — grouped by congruence class, so
+        // uninterpreted-sort constants – grouped by congruence class, so
         // constants proven equal share a witness and distinct ones stay
-        // distinct — as well as every value the circuit or the tableau
+        // distinct – as well as every value the circuit or the tableau
         // published.
         let class_values = self.build_class_values(solver_model);
 
@@ -514,7 +514,7 @@ impl Context {
             // keeps that true if one ever coexisted, because it is the more
             // precise of the two (a `Model` value for the same constant could
             // only be a rounded stand-in). Without this arm the sqrt2 goal
-            // falls through to `default_value(Real)` and reports `0.0` — a
+            // falls through to `default_value(Real)` and reports `0.0` – a
             // number satisfying none of its assertions.
             let value = if let Some(value) = self.published.literal_values.get(&decl.term) {
                 value.clone()
@@ -537,8 +537,8 @@ impl Context {
             } else if let Some(chain) =
                 self.array_model_value(decl.term, decl.sort, solver_model, &class_values)
             {
-                // An array is never *assigned* a value term — there is no
-                // literal for "the function `{0 ↦ 5}` extended by 0" — so
+                // An array is never *assigned* a value term – there is no
+                // literal for "the function `{0 ↦ 5}` extended by 0" – so
                 // before `#P2b-34` it fell through to the sort default and
                 // printed `((as const …) #x00)` beside its own `select`
                 // entries saying otherwise.  The published reads are that
@@ -555,7 +555,7 @@ impl Context {
                 // witness, which is grouped by congruence class so equal
                 // constants share one and distinct constants get distinct
                 // ones.  Always a valid value, unlike the previous invalid
-                // `?` — and, being the same map every other renderer reads,
+                // `?` – and, being the same map every other renderer reads,
                 // the same witness `f`'s interpretation prints.
                 witness.to_string()
             } else if let Some(value) =
@@ -567,7 +567,7 @@ impl Context {
                 // than from the sort defaults.  Falling through to
                 // `default_value` printed a constructor whose fields were the
                 // sort defaults while `(get-value ((tag b)))` answered the
-                // asserted value out of the same model in the same run — 153
+                // asserted value out of the same model in the same run – 153
                 // of 300 generated datatype scripts published a model that
                 // contradicted their own assertions that way.
                 value
@@ -686,7 +686,7 @@ impl Context {
             return Some(value.to_string());
         }
         // An array-sorted class is rendered the way `(get-model)` renders an
-        // array constant of that class — the `store` chain over its base — so
+        // array constant of that class – the `store` chain over its base – so
         // `f : Array -> BV` gets one interpretation entry per array rather
         // than one per *sort*: `(distinct (f arr) (f brr))` printed `f` as a
         // constant, because both argument classes fell back to the array
@@ -708,8 +708,8 @@ impl Context {
             }
             return Some(self.default_value(sort));
         }
-        // Folding a member in the model is still an *exact* answer — it is the
-        // model's own arithmetic — and it is what resolves an argument like
+        // Folding a member in the model is still an *exact* answer – it is the
+        // model's own arithmetic – and it is what resolves an argument like
         // `(bvsub (f #b10) v)` that has a value without having a model entry.
         for &member in members {
             if let Some(value) = self
@@ -1094,7 +1094,7 @@ impl Context {
                     // renders `Div` by sort (`/` for `Real`, Euclidean
                     // `div` for `Int`) and the compound arithmetic forms
                     // as themselves, keeping the printed model
-                    // re-readable as the same value — the `?` placeholder
+                    // re-readable as the same value – the `?` placeholder
                     // this arm used to fall through to is not a value at
                     // all (the exact-publication build's `get-model` gap:
                     // `get-value` printed the rational while `get-model`
@@ -1106,7 +1106,7 @@ impl Context {
                     | TermKind::Neg(..)
                     // A synthesized set value: a canonical
                     // `set.union`-of-`set.singleton` term (or `set.empty`),
-                    // which the printer renders as itself — so a printed
+                    // which the printer renders as itself – so a printed
                     // model re-reads as the same value.
                     | TermKind::SetEmpty(_)
                     | TermKind::SetSingleton(_)
@@ -1125,7 +1125,7 @@ impl Context {
                 printer.print_term(term)
             }
             // A rounding-mode value: a nullary `Var` at the reserved
-            // `RoundingMode` sort, interned under the canonical long name —
+            // `RoundingMode` sort, interned under the canonical long name –
             // print the name (that IS the value's SMT-LIB spelling).
             // (Ported from upstream v0.3.3.)
             Some(TermKind::Var(spur))
@@ -1392,8 +1392,8 @@ impl Context {
             return NO_MODEL.to_string();
         }
         // Owned so the evaluation below can borrow `self.terms` mutably; see
-        // `get_model` for why an empty assertion stack — or a populated
-        // algebraic side-channel — yields an empty model rather than an error.
+        // `get_model` for why an empty assertion stack – or a populated
+        // algebraic side-channel – yields an empty model rather than an error.
         let mut model = match self.published_model() {
             Some(model) => model.clone(),
             None if self.assertions.is_empty() || !self.solver.nl_algebraic_values().is_empty() => {
@@ -1408,7 +1408,7 @@ impl Context {
         // A constant the algebraic side-channel *does* pin is excluded. Its
         // sort default is `0.0`, and substituting that would answer a compound
         // query like `(get-value ((* x x)))` with `0.0` for a goal whose
-        // witness is `√2` — a fabricated value, and one contradicting the `2.0`
+        // witness is `√2` – a fabricated value, and one contradicting the `2.0`
         // that the very same model implies. Left out of the map the term
         // survives evaluation unreduced and echoes back, which is the same
         // honest non-answer this path already gives for anything else it
@@ -1434,7 +1434,7 @@ impl Context {
         // never did (`(get-value ((rel.join r s)))` with no asserted
         // membership in the join): the model-build survey walks the
         // assertions, so such compounds have no entry. Compose them on
-        // demand from the operands' verified values — the compound is a
+        // demand from the operands' verified values – the compound is a
         // function of its operands, so the composed value is not a guess;
         // anything the pass cannot verify still echoes (the honest
         // non-answer). Explicit-stack walk: queries nest arbitrarily.
@@ -1471,18 +1471,18 @@ impl Context {
         // Bag queries over an installed bag value: `bag.card`, `bag.count`
         // and `bag.member` are *functions of the value* (which the model
         // pass verified), so folding them is evaluation, not a guess. A
-        // query-only `(bag.card b)` — one whose assertion stack never
-        // constrained any cardinality — is exactly the case with no
+        // query-only `(bag.card b)` – one whose assertion stack never
+        // constrained any cardinality – is exactly the case with no
         // readback entry to print otherwise.
         //
-        // A query-only `bag.choose` — one the assertion stack never
+        // A query-only `bag.choose` – one the assertion stack never
         // mentioned, so the reduction stated no choose axiom and the bag
-        // pass valued nothing — completes first, from the same installed
+        // pass valued nothing – completes first, from the same installed
         // value: the first cell's element (a member, which is what the
         // choose of a nonempty bag is), or a fresh `0`-style default over
         // an empty bag (unspecified, so any value models it). This is the
         // same "complete the model before the query" discipline as the
-        // rel pass above — and it must run *before* the folds below,
+        // rel pass above – and it must run *before* the folds below,
         // because `(bag.count (bag.choose b) b)` reads the entry.
         let mut choose_installs: Vec<(TermId, TermId)> = Vec::new();
         {
@@ -1601,7 +1601,7 @@ impl Context {
 
     /// Format the model as SMT-LIB2
     /// Value of a Boolean constant the assertions DEFINE at conjunct level
-    /// (`(= b φ)`), evaluated under the model being printed — `Some` only
+    /// (`(= b φ)`), evaluated under the model being printed – `Some` only
     /// when `b` has such a definition and it evaluates to a definite truth
     /// value under `solver_model` (numeric entries and already-printed
     /// Booleans).  Used by the default-completion arm in `get_model` so a
@@ -1730,8 +1730,8 @@ impl Context {
                     // The name goes through the one symbol encoder
                     // (`#P2b-39`): a declaration the script wrote as `|a b|`
                     // was printed back bare, which is not re-parsable SMT-LIB
-                    // — `(define-fun a b () (_ BitVec 1) #b0)` reads as two
-                    // symbols — and disagreed with the `(get-value)` key path,
+                    // – `(define-fun a b () (_ BitVec 1) #b0)` reads as two
+                    // symbols – and disagreed with the `(get-value)` key path,
                     // which answers with the term's source spelling.
                     lines.push(format!(
                         "  (define-fun {} () {} {})",
@@ -1783,9 +1783,9 @@ impl Context {
                 }
                 TermKind::BagCount(e, b) => {
                     if let Some(cells) = self.installed_bag_cells(b, model) {
-                        // The element may itself have a model entry — a
+                        // The element may itself have a model entry – a
                         // `bag.choose` valued by the bag pass, or any
-                        // element-sorted term the model pins — and the
+                        // element-sorted term the model pins – and the
                         // fold must read *its* value's cell, not the
                         // term's spelling (`(bag.count (bag.choose b) b)` is
                         // the query the choose exists for).
@@ -1804,7 +1804,7 @@ impl Context {
                 // A bag-sorted equality (the `bag.all`/`bag.some` lowering
                 // lands here, as does any user equality): both sides' cells
                 // resolve from installed/ground values, and the atom folds
-                // to its truth — evaluation of verified objects.
+                // to its truth – evaluation of verified objects.
                 TermKind::Eq(a, b) => {
                     if self.bag_element_sort_of(a).is_some()
                         && self.bag_element_sort_of(b).is_some()
@@ -1819,11 +1819,11 @@ impl Context {
                     }
                 }
                 // `bag.subbag a b` from installed values: pointwise ≤ over
-                // the union of the cells (a cell absent from `b` counts 0) —
+                // the union of the cells (a cell absent from `b` counts 0) –
                 // evaluation of verified objects, the same contract as the
                 // count/member folds beside it. A side with no model entry
                 // still folds when it is a closed ground chain (a compound
-                // like `(bag 1 2)` is never installed — its value is
+                // like `(bag 1 2)` is never installed – its value is
                 // itself).
                 TermKind::BagSubbag(a, b) => {
                     if let (Some(ca), Some(cb)) = (
@@ -1856,7 +1856,7 @@ impl Context {
 
     /// A bag's cells for query folding: its installed value when it has
     /// one, else the term itself when it is a closed ground chain (a
-    /// compound like `(bag 1 2)` is its own value — nothing installs it).
+    /// compound like `(bag 1 2)` is its own value – nothing installs it).
     fn value_bag_cells(
         &self,
         bag: TermId,
@@ -1872,7 +1872,7 @@ impl Context {
     /// `bag.empty` base, collecting `(element, multiplicity)` pairs.
     /// `resolve` substitutes nested non-ground elements through the model
     /// (installed values); a walk that meets anything unparseable returns
-    /// `None` — the caller echoes honestly.
+    /// `None` – the caller echoes honestly.
     fn bag_cells_of_term(
         &self,
         mut cur: TermId,
@@ -1951,7 +1951,7 @@ impl Context {
     }
 
     /// A query-only `bag.choose(b)`'s value, from the installed bag value:
-    /// the first cell's element — the same deterministic pick the model
+    /// the first cell's element – the same deterministic pick the model
     /// pass makes for asserted chooses, so a choose that appears in both
     /// an assertion and a query prints one value. An empty installed bag
     /// leaves the choose unspecified; `0` models it for `Int` element
@@ -1960,7 +1960,7 @@ impl Context {
     /// A query-only `bag.map`/`bag.filter`'s value, from the domain bag's
     /// installed cells: the images (a `define-fun` body inlined and folded
     /// per cell, an application resolved through the model's entry) merged
-    /// by value with their multiplicities summed — or the kept cells for a
+    /// by value with their multiplicities summed – or the kept cells for a
     /// filter, where the predicate's truth comes from the same resolution.
     /// Anything unresolvable echoes honestly.
     fn query_map_filter_value(
@@ -2211,7 +2211,7 @@ mod tests {
     #[test]
     fn test_default_value_deep_array_chain_beyond_old_cap() {
         const DEPTH: usize = 2000;
-        // STACK-1MIB: deliberately 1 MiB, not swept to 128 KiB — depth is
+        // STACK-1MIB: deliberately 1 MiB, not swept to 128 KiB – depth is
         // 2000 (sub-10,000), well under the scaling threshold and nothing
         // here is quadratic in stack.
         let handle = std::thread::Builder::new()

@@ -3,7 +3,7 @@
 //! `(declare-const m RoundingMode)` used to be rejected at parse time: rounding
 //! modes existed only as literal `RNE`/`RTZ`/... symbols baked into `fp.*`
 //! operators, so a mode-sorted symbol had no representation. It is now
-//! `SortKind::RoundingMode`, whose five inhabitants are nullary `Var` terms —
+//! `SortKind::RoundingMode`, whose five inhabitants are nullary `Var` terms –
 //! which means EUF decides equalities between them for free, and the *only*
 //! thing the solver has to supply is the sort's cardinality.
 //!
@@ -46,14 +46,14 @@ fn declare_modes(count: usize) -> String {
         .collect()
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Declaration and model reporting.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The end-to-end round trip a first-class sort needs: declared, constrained,
 /// solved, and reported back.
 ///
-/// The reported value is the canonical *long* spelling, matching Z3 — and, more
+/// The reported value is the canonical *long* spelling, matching Z3 – and, more
 /// to the point, a spelling that is valid SMT-LIB input, unlike the `?`
 /// placeholder or an `@uc_RoundingMode_0` abstract witness.
 #[test]
@@ -139,14 +139,14 @@ fn get_value_reports_the_same_mode_as_get_model() {
     assert!(model.contains("roundTowardPositive"), "{model}");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Cardinality: exactly five.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Five pairwise-distinct rounding modes fit: the sort has exactly five
 /// elements, so this is tight but satisfiable.
 ///
-/// Fails if the distinctness axiom is missing — without it the five mode
+/// Fails if the distinctness axiom is missing – without it the five mode
 /// constants may be collapsed into fewer classes and there is no room for five
 /// distinct values.
 #[test]
@@ -172,7 +172,7 @@ fn distinct_six_modes_is_unsat() {
     assert_eq!(verdict(&script), "unsat");
 }
 
-/// The five-distinct model must actually name five *different* modes — an
+/// The five-distinct model must actually name five *different* modes – an
 /// assignment that repeats one would satisfy the printed model's syntax while
 /// falsifying the `distinct` it came from.
 #[test]
@@ -201,9 +201,9 @@ fn the_five_distinct_modes_get_five_different_values() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Symbolic rounding modes in `fp.*` operators.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// A *symbolic* mode inside `fp.add` solves, in the same fragment the
 /// equivalent literal mode solves in.
@@ -287,10 +287,10 @@ fn a_pinned_symbolic_mode_selects_that_modes_arithmetic() {
     assert_eq!(verdict(script), "sat");
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The reserved-name half: `RegLan` stays un-declarable, and the regular
 // expression sublanguage keeps working.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The companion to the parser-level `RegLan` tests: reserving the name leaves
 /// the regular-language operators not merely parseable but *solvable*.
@@ -337,9 +337,9 @@ fn reglan_stays_reserved_with_an_honest_message() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Internal axioms stay internal.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The closure and distinctness axioms are Nixie's encoding of a built-in sort,
 /// not something the user wrote, so `(get-assertions)` must not report them.

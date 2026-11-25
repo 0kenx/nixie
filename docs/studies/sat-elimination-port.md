@@ -1,6 +1,6 @@
 # CaDiCaL `elim.cpp` port: sound, big per-family wins, net-negative as a default (2026-08-17)
 
-> **Update 2026-08-21: the default flipped ON.** See the final section —
+> **Update 2026-08-21: the default flipped ON.** See the final section –
 > BVE+ELS are now enabled in the `CaDiCaL` preset (reference parity).
 
 ## Motivation
@@ -8,7 +8,7 @@
 `bench`-suite differential vs CaDiCaL (`/tmp` run, 94 files: 40× SATLIB `uf100`,
 54× satcomp2024) showed Nixie's SAT core >1.5× slower than CaDiCaL on 22/94
 files, with the worst gaps (66×, 29×, 25×, 18×) all on instances CaDiCaL
-collapses via inprocessing — its log shows clause counts dropping 13.5k → 2.3k
+collapses via inprocessing – its log shows clause counts dropping 13.5k → 2.3k
 through interleaved `e` (elim) / `s` (subsume) / `d` (distill) rounds before
 1.2k conflicts refute the residue. Nixie ran *no* elimination by default: the
 one-shot `bve.rs` pass was off in every preset, gated behind a documented
@@ -27,17 +27,17 @@ bound (0→1→2→…→16), pre-search fixpoint + mid-search re-arm schedule
 
 ## Soundness bugs found and fixed while porting (all with reproducers)
 
-1. **Resolvent built from one side only** — `elim_resolve_clauses` marked the
+1. **Resolvent built from one side only** – `elim_resolve_clauses` marked the
    c-side literals but only pushed the d-side into the resolvent; the
    "resolvents" were over-strong clauses → false UNSAT (fuzz seed 0x60fcfe…,
    13 vars). Fixed: build from both sides.
-2. **Stale occurrence-list entries after in-place shrink** — a clause shrunk
+2. **Stale occurrence-list entries after in-place shrink** – a clause shrunk
    by dropping literal `l` kept its `occs[l]` entry; a later unit assignment
    then retired it as "satisfied by `l`", deleting a live constraint → false
    SAT (it143: entailed `(9∨¬10)` deleted after `(9∨¬10∨5)` shrank). Fixed:
    physically remove the clause from the dropped literal's occurrence list
    (cadical `remove_occs`).
-3. **Learned clauses over eliminated variables left live** — cadical's
+3. **Learned clauses over eliminated variables left live** – cadical's
    `mark_redundant_clauses_with_eliminated_variables_as_garbage` pass was
    initially dropped from the port. A live learned clause over an eliminated
    variable is entailed by the formula, so an honest model must satisfy it,
@@ -45,13 +45,13 @@ bound (0→1→2→…→16), pre-search fixpoint + mid-search re-arm schedule
    only) and can falsify it → false SAT (`crn_11_99_u`: learned `(57∨1101)`
    survived v57's elimination). Fixed: retire learned clauses with eliminated
    variables at the end of each round.
-4. **Original clauses subsumed by learned clauses without promotion** —
+4. **Original clauses subsumed by learned clauses without promotion** –
    `subsume_round` deleted an original on the word of a *learned* subsumer,
    which can die later (reduction), leaving the deleted original's obligation
    uncovered → false SAT. Fixed with cadical `subsume_clause`'s rule: promote
    the learned subsumer to original (`learned = false`), and make
    `reduce_clause_database` skip promoted clauses.
-5. **Binary-implication-graph edges outliving their clauses** — the subsume
+5. **Binary-implication-graph edges outliving their clauses** – the subsume
    binary fast-path matched dead edges → false subsumption. Fixed: liveness
    check on the edge's clause id.
 
@@ -90,7 +90,7 @@ amortizers, and the phase cost itself (occurrence-list rescans) is not yet at
 CaDiCaL's efficiency (0.77s pre-search on 6s167 vs ~0.03s for CaDiCaL).
 
 **Decision: `enable_bve` stays `false` in every default.** The port ships as
-an opt-in (`SolverConfig { enable_bve: true, .. }`) — sound, tested, and the
+an opt-in (`SolverConfig { enable_bve: true, .. }`) – sound, tested, and the
 right tool for elimination-friendly instances. Re-evaluate after interleaved
 vivification and probing land; those are the known missing amortizers.
 
@@ -116,7 +116,7 @@ the watch lists when it actually subsumed something (`removed > 0`).
 a normalize-only reorder left every watcher pointing at stale positions; BCP
 then propagated never-implied literals and the search concluded UNSAT in 6
 conflicts. Notably the corrupted pass had been *luckily* "solving"
-`mrpp_4x4#12_12` (0.02s, verdict matched) — a reminder that speedups from a
+`mrpp_4x4#12_12` (0.02s, verdict matched) – a reminder that speedups from a
 corrupting pass are worthless. Fix: unconditional watch rebuild after the
 pass. Regression: `tests/fs_watch_position_soundness.rs` (noL under a
 conflict budget must not answer UNSAT).
@@ -148,7 +148,7 @@ lookup). ~5% on dense random instances.
 The residual ~2.9x time gap on the timeout files decomposes into ~1.4x
 instructions per watch visit (SmallVec discriminant + `self→trail→values`
 pointer depth; `#![deny(unsafe_code)]` rules out the raw-pointer fix), ~1.3x
-more propagations, and ~4.5x more decisions per conflict — the last is
+more propagations, and ~4.5x more decisions per conflict – the last is
 search policy (restart/reuse/branching interplay), which per
 `docs/BENCHMARKING.md` requires the matched-null, ≥10-seed methodology
 before any conclusion. That is the next lever for `stable-300`, `qwh`,
@@ -166,13 +166,13 @@ mode-dependent choice and, for the VMTF branch, comparing bump timestamps
 restarts at 100k fixed conflicts 19 205 → 3 409 (cadical-parity rate).
 
 **Measured effect: neutral.** The single-seed 94-file suite showed 653s →
-699s ("worse") with 17 files improving and 14 regressing >2s — textbook
+699s ("worse") with 17 files improving and 14 regressing >2s – textbook
 trajectory reshuffling. A seed study over the 31 moved files (8 seeds per
 arm, CPU-time, 30s cap) gave 11 wins / 10 losses and mean-sum 706.0s vs
 712.7s (0.9%, inside noise). The fix ships on faithfulness grounds, not on a
 speed claim. The decisions-per-conflict gap vs CaDiCaL (5.7 vs 1.27 on
 `stable-300`) persists and tracks propagation-cascade depth per decision
-(6.5 vs 23) — a search-quality question for the policy study, not a
+(6.5 vs 23) – a search-quality question for the policy study, not a
 mechanical bug.
 
 ## Arena follow-up: f32 header + the latent stride-desync bug it exposed
@@ -180,21 +180,21 @@ mechanical bug.
 ### The bug (gdb hardware watchpoint, exact write caught)
 
 `ClauseArena::scale_live_activities` walked the arena recomputing each slot's
-stride as `slot_size(current_len)` — but a clause's physical slot size is
+stride as `slot_size(current_len)` – but a clause's physical slot size is
 fixed at allocation while `shrink` later lowers `len`. After a 4→3-literal
 shrink the walk's stride (32→24) diverged from the real layout, landed
 mid-slot, and collected a bogus offset as "live". The rescale then did an
 f32 read-modify-write 8 bytes past that offset: it read a real clause's
 `len` field (raw `4`) as the denormal `5.6e-45`, multiplied by `1e-20`, and
-the underflow-to-zero result was stored — `len` became bit-pattern zero.
+the underflow-to-zero result was stored – `len` became bit-pattern zero.
 Propagation later indexed the empty clause; `crn_11_99_u` answered `sat`.
 
 **Latent since the arena commit, not introduced by f32.** The same walk
 existed under the f64 header; it was unreachable at verification scale
 because the rescale trigger sat at `increment > 1e100` (≈230k conflicts),
 above every corpus cap, and `iter_ids` (the only other would-be walker) uses
-the refs table. Lowering the bound to MiniSat's `1e20` — mandatory for f32,
-whose range ends at 3.4e38 — moved the first rescale to ≈46k conflicts and
+the refs table. Lowering the bound to MiniSat's `1e20` – mandatory for f32,
+whose range ends at 3.4e38 – moved the first rescale to ≈46k conflicts and
 exposed it inside the regression suite. Lesson recorded: the trajectory-
 identity corpus (≤30k caps) and the 25s-capped suite could not see a bug
 whose only trigger fires at 46k+ conflicts; soundness gates need at least
@@ -207,7 +207,7 @@ list, exact under shrink by construction); stride-walking deleted.
 
 Activity is only the reduce sort key; `1e20`/`1e-20` rescale keeps stored
 values ≈1e23, inside f32 range (the old 1e100 policy would saturate f32 to
-`inf` and collapse the ordering — the bound change was forced, not tuned).
+`inf` and collapse the ordering – the bound change was forced, not tuned).
 Pinned: 3-lit slot 24B → two ternaries per cache line (48B); 5-lit slot
 exactly 32B (half a line; 4 was the f64 ceiling). Perf at 300k fixed
 conflicts on stable-300: neutral (18.6s → 18.6s interleaved ×3). f32
@@ -236,7 +236,7 @@ Three changes:
 3. **Satisfied-replacement blocker refresh** (cadical `propagate.cpp`'s
    `if (v > 0) j[-1].blit = r`): when the replacement scan finds a
    *satisfied* literal, the watcher now stays on the current list with its
-   blocker refreshed — no clause write, no watch-list move; only an
+   blocker refreshed – no clause write, no watch-list move; only an
    *unassigned* replacement moves the watch. Our previous `>= 0` branch
    moved in both cases. Gent's saved-position scan (`clause->pos`) was
    deliberately NOT ported: it needs a header field that would grow the
@@ -247,12 +247,12 @@ Three changes:
 - Fixed-conflict instruction counts are **invalid** for trajectory-diverging
   changes: the blocker change measured +53% at 100k fixed conflicts on
   stable-300 purely because the new trajectory does more propagation per
-  conflict on those particular conflicts. Wall-clock was equally void —
+  conflict on those particular conflicts. Wall-clock was equally void –
   the machine spent much of this window at load 8-18 from another agent's
   job (and two day-old orphaned test processes had to be killed).
 - Valid metric: **instructions-to-verdict**, deterministic, paired per file,
   both binaries fully solving. Result over 64 files (both-solve, <45s):
-  geomean 0.9889 (-1.1%), 26 wins / 38 losses — small losses, large wins
+  geomean 0.9889 (-1.1%), 26 wins / 38 losses – small losses, large wins
   (mrpp -50%, ddc/6s167 -15%). Verdict identical on every file.
 
 Honest verdict: faithfulness-motivated (matches cadical's mechanic),
@@ -283,7 +283,7 @@ collapsed while the benefit side (smaller formula) stayed.
 
 Both arms are deterministic (no RNG axis in this path; repeat runs bit-stable
 to ~1e-8 modulo PMU interrupt noise), so single-run comparisons are true
-values, not draws — the stochastic-baseline trap of `BENCHMARKING.md` §4 does
+values, not draws – the stochastic-baseline trap of `BENCHMARKING.md` §4 does
 not apply. Wall-clock was only used for the suite-cap capability table and
 was measured under external load (run alongside, same conditions both arms).
 
@@ -316,7 +316,7 @@ Decisions from this table:
 2. **Inprocessing stays off**: the periodic `inprocess()` round destroys the
    BVE+ELS gains on stable-300/summle (back to base level or worse) and
    collapses qwh.50 by 20x. Only 6s167-opt benefits (46.9G -> 14.0G). The
-   missing amortizers are vivification and transitive reduction — the same
+   missing amortizers are vivification and transitive reduction – the same
    two named in the 2026-08-17 verdict.
 3. **Known regressions kept** (documented in the preset comment): x9-09054
    13.7G -> 509G (37x, one adversarial crypto file), constraints_17 1.6x,
@@ -327,11 +327,11 @@ Decisions from this table:
 ### Not the reshuffle signature
 
 `BENCHMARKING.md` requires asking whether an aggregate win is trajectory
-reshuffling. Three reasons it is not, here: (a) the arms are deterministic —
+reshuffling. Three reasons it is not, here: (a) the arms are deterministic –
 there is no seed distribution to confuse the estimate with; (b) the wins are
-family-clustered (every summle, both stable, mrpp, frb65, 6s167 — the
+family-clustered (every summle, both stable, mrpp, frb65, 6s167 – the
 elimination-shaped instances), while reshuffle noise is per-instance random
-in sign; (c) the mechanism is countable — BVE shrinks the formula (vars and
+in sign; (c) the mechanism is countable – BVE shrinks the formula (vars and
 clauses eliminated), it is not a trajectory perturbation of the same search.
 
 ### Soundness gate
@@ -352,6 +352,6 @@ doc, Z3 parity 168/168 clean.
 | disagreements | 0 | 0 |
 
 Remaining gap: the 15-file cadical-only-timeout class (circuit_800, worker,
-crypto, rbsat, FmlaEquivChain need 250-500G instructions — cadical's
+crypto, rbsat, FmlaEquivChain need 250-500G instructions – cadical's
 vivify/sweep amortizers; several DO solve now given 200 s: rbsat 484G,
 noL-11-14 410G, FmlaEquivChain 257G). Next lever: port vivification.

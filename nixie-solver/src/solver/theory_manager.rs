@@ -32,10 +32,119 @@ fn theory_trace_enabled() -> bool {
     })
 }
 
-/// `NIXIE_NO_RESTART_RESYNC` — opts out of the restart theory rebuild
+/// `NIXIE_NO_RESTART_RESYNC` – opts out of the restart theory rebuild
 /// (`TheoryManager::on_backtrack`'s root-level `resync_theory_state`; an A/B
 /// and emergency switch). Read once per process: the probe site is every
 /// backtrack to level 0, i.e. every restart.
+/// `NIXIE_APROP_CENSUS` – read-only yield census for the z3-shaped LP bound
+/// propagation (see `ArithSolver::debug_implied_atom_polarities`): at every
+/// FEASIBLE arithmetic final check, one stderr line with the atom polarities
+/// the current bound store forces and whether each is already assigned that
+/// way. Read once per process.
+#[cfg(feature = "std")]
+fn aprop_census_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_APROP_CENSUS").is_ok())
+}
+
+/// Census event counters (see `aprop_census_enabled`): where the
+/// arithmetic search's conflicts come from and how often a FEASIBLE final
+/// check is reached at all. `0` final-check entries, `1` feasible arithmetic
+/// checks, `2` arithmetic conflicts at final check, `3` crossed-bound
+/// conflicts at assertion time. One summary line per 2 000th event.
+#[cfg(feature = "std")]
+fn aprop_tick(event: usize) {
+    thread_local! {
+        static COUNTS: std::cell::RefCell<[u64; 4]> =
+            const { std::cell::RefCell::new([0; 4]) };
+    }
+    COUNTS.with(|c| {
+        let mut c = c.borrow_mut();
+        c[event] += 1;
+        if c[event].is_multiple_of(2000) {
+            eprintln!(
+                "[aprop-tick] final_checks={} arith_feasible={} arith_conflicts={} assert_bound_conflicts={}",
+                c[0], c[1], c[2], c[3]
+            );
+        }
+    });
+}
+
+/// `NIXIE_APROP_ROW=1` – study arm: the row-driven atom propagation
+/// (`TheoryManager::arith_row_propagations`; z3
+/// `propagate_bounds_with_lp_solver`'s bound half) after every arithmetic
+/// atom assertion. Default off: bit-identical to the unarmed search. Read
+/// once per process.
+#[cfg(feature = "std")]
+fn aprop_row_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_APROP_ROW").is_ok_and(|v| v == "1"))
+}
+
+/// `NIXIE_APROP_ROW_VERIFY=1` – re-prove every row-driven propagation with
+/// the LP (`ArithSolver::verify_implied`) before it is learned; an
+/// unjustified one is dropped and reported. A different trajectory from the
+/// un-oracled arm (the probe's pivots persist). Read once per process.
+/// `NIXIE_APROP_ROW_VERIFY` level: `0` off, `1` the LP oracle, `2` an
+/// SMT-LIB dump of the first propagation clauses for an external z3 check
+/// (antecedents asserted with their assigned polarity, the forced literal
+/// negated – `sat` from the checker is an invalid clause), `3` both. The dump
+/// covers `NIXIE_APROP_ROW_DUMP_N` clauses (default 500).
+#[cfg(feature = "std")]
+fn aprop_row_verify_level() -> u8 {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<u8> = OnceLock::new();
+    *FLAG.get_or_init(
+        || match std::env::var("NIXIE_APROP_ROW_VERIFY").as_deref() {
+            Ok("3") => 3,
+            Ok("2") => 2,
+            Ok("1") | Ok("on") | Ok("true") => 1,
+            _ => 0,
+        },
+    )
+}
+
+/// `NIXIE_THEORY_CONFLICT_DUMP` – set to a clause cap (e.g. `50000`) to dump
+/// every theory conflict's antecedents for an external z3 check (see
+/// `TheoryManager::dump_theory_conflict`). Read once per process.
+#[cfg(feature = "std")]
+fn theory_conflict_dump_limit() -> Option<u32> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<u32>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_THEORY_CONFLICT_DUMP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
+}
+
+#[cfg(feature = "std")]
+fn theory_conflict_dump_enabled() -> bool {
+    theory_conflict_dump_limit().is_some()
+}
+
+/// Diagnostic: a propagation was dropped because an antecedent bound
+/// outlived its asserting atom (`NIXIE_APROP_ROW` arm). Counted and reported
+/// on the first occurrence and every 1000th; a non-zero count is a scope
+/// bug elsewhere.
+#[cfg(feature = "std")]
+fn aprop_row_note_stale(stale: &TermId) {
+    thread_local! {
+        static N: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    N.with(|n| {
+        n.set(n.get() + 1);
+        if n.get() == 1 || n.get().is_multiple_of(1000) {
+            eprintln!(
+                "[aprop-row] stale antecedent dropped (count {}), e.g. {stale:?}",
+                n.get()
+            );
+        }
+    });
+}
+
 fn restart_resync_disabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -318,7 +427,7 @@ pub(crate) struct TheoryManager<'a> {
     /// `zero→x→zero` cycle of weight `k − k'`, infeasible iff `k < k'`) and
     /// never introduces spurious infeasibility.  Used as the second endpoint
     /// of single-variable bounds on the dense-core path (`x ≤ k` ≡ edge
-    /// `zero → x`, weight `k` — Z3's dense solver internalises numerals the
+    /// `zero → x`, weight `k` – Z3's dense solver internalises numerals the
     /// same way).  The sparse engine still defers 1-var bounds to the simplex
     /// (the zero hub inflated the seeded-SPFA check; see `diff_primary_check`).
     zero_term: TermId,
@@ -427,7 +536,7 @@ pub(crate) struct TheoryManager<'a> {
     is_dl_family: bool,
     /// Whether the problem's logic is exactly `QF_BV`: no UF or array
     /// symbols can appear, so BV-sorted equality atoms have no congruence
-    /// to maintain — their bit-blast comparators decide them completely,
+    /// to maintain – their bit-blast comparators decide them completely,
     /// and the EUF interning+merge on assignment is redundant (the QF_BV
     /// scan measured the congruence walk at 62 % of the asp class's
     /// runtime).  Sliced to the declared logic string only: mixed or
@@ -435,7 +544,7 @@ pub(crate) struct TheoryManager<'a> {
     bv_pure: bool,
     /// Whether the LP bound-propagation CHANNEL is armed for this logic
     /// (`is_dl_family` historically gated BOTH this channel and the
-    /// tentative arrangement round; they widen independently — the
+    /// tentative arrangement round; they widen independently – the
     /// arrangement round has its own shape coverage prerequisites, so a
     /// channel widening must not silently enable it).
     bound_prop_armed: bool,
@@ -473,12 +582,12 @@ pub(crate) struct TheoryManager<'a> {
     /// facts C).  Drained by `Solver::refine_arrangement_splits`, which
     /// internalizes `(= x y)` atoms for them so the next search can *decide*
     /// the arrangement (the refutation itself lives on search facts, so no
-    /// clause can be asserted — only the branching dimension is added).
+    /// clause can be asserted – only the branching dimension is added).
     arrangement_splits: Vec<(TermId, TermId)>,
     /// Pure integer difference logic end-to-end: every arithmetic atom is
     /// difference-shaped (Z3's structural `is_in_diff_logic(st)` gate, see
     /// `solver::static_features`) and integer-sorted without UF.  While this
-    /// holds, the dense DL core is the ONLY arithmetic engine — atoms are not
+    /// holds, the dense DL core is the ONLY arithmetic engine – atoms are not
     /// duplicated into the simplex tableau (Z3's `setup_QF_IDL` installs
     /// `theory_dense_diff_logic` in exactly this shape).  The first atom the
     /// DL engines reject (`NotApplicable`) breaks purity and replays every
@@ -545,7 +654,7 @@ pub(crate) struct TheoryManager<'a> {
     /// `'a` as the manager's map reference), so the loop body reads them
     /// with no per-atom lookups.  `None` until the first derive call: the
     /// borrowed map is frozen for the manager's lifetime (a shared borrow
-    /// — Solver can only insert/remove between manager generations), so
+    /// – Solver can only insert/remove between manager generations), so
     /// the list is built exactly once and then only shrinks:
     /// `assigned_pol_of` has ever-set semantics (the polarity maps are
     /// deliberately never pruned on backtrack), so an assigned atom is
@@ -558,7 +667,7 @@ pub(crate) struct TheoryManager<'a> {
     /// `ArithSolver::expr_bound_version` at its last derivation.  A repeat
     /// call with an unchanged stamp reproduces the identical derivation
     /// (pure function of the versioned bounds), so the atom is skipped
-    /// outright — same propagations out, no re-derivation work.
+    /// outright – same propagations out, no re-derivation work.
     atom_derive_ver: FxHashMap<Var, u64>,
     boolean_encodings: Option<&'a FxHashMap<TermId, (Lit, Polarity)>>,
     bv_embedded_check_ceiling: u64,
@@ -580,8 +689,8 @@ pub(crate) struct TheoryManager<'a> {
     /// Set to `true` ONLY at the arith-abstention arm of the check cascade
     /// (the theory returned `Unknown`: its internal search gave up, e.g.
     /// item 96's branch-walk ray).  Unlike [`Self::resource_exhausted`],
-    /// this names the CAUSE: an abstention taints only its own assignment —
-    /// a later candidate whose own check verifies cleanly is legitimate —
+    /// this names the CAUSE: an abstention taints only its own assignment –
+    /// a later candidate whose own check verifies cleanly is legitimate –
     /// while a dropped conflict (the conflict-limit arms) is a suppressed
     /// refutation that must keep poisoning `Sat` for the instance's life.
     /// Read by the LIA branch-lemma channel (`Solver::refine_lia_branch_requests`)
@@ -625,7 +734,7 @@ pub(crate) struct TheoryManager<'a> {
     /// SAT core and rebuild theory state soundly rather than trust the stale
     /// incremental state.
     assignment_trail: Vec<TrailAtom>,
-    /// Per-entry levels of `assignment_trail` in lockstep (same indices) —
+    /// Per-entry levels of `assignment_trail` in lockstep (same indices) –
     /// a parallel u32 array so `on_backtrack`'s "first entry above level"
     /// scan reads contiguous u32s instead of striding through 12-byte
     /// atoms.  Measured on the ASP class (duthen-50): 5.7G scan units per
@@ -666,7 +775,7 @@ pub(crate) struct TheoryManager<'a> {
     /// to the clause" apart from "justification silently lost".
     tautological_reasons: FxHashSet<TermId>,
     /// Numeric constants to pin into arithmetic as interface terms each
-    /// combine round — un-purified functions' arguments and `select`/`store`
+    /// combine round – un-purified functions' arguments and `select`/`store`
     /// indices alike; see the Solver field of the same name for why these
     /// exist and why the pin is re-asserted here.
     interface_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
@@ -1055,6 +1164,15 @@ impl<'a> TheoryManager<'a> {
     /// that it does not know why anything is refuted.  Answering `Unknown`
     /// loses a verdict; emitting that clause invents one.
     fn conflict_from_terms(&mut self, terms: &[TermId]) -> TheoryCheckResult {
+        // `NIXIE_THEORY_CONFLICT_DUMP=1`: write every theory conflict's
+        // antecedent set as a self-contained z3 check (`/tmp/theory_conflicts/`):
+        // each antecedent asserted with its CURRENT polarity must be
+        // unsatisfiable. A `sat` is an invalid theory conflict – the
+        // false-`unsat` class. Diagnostic only (see `aprop_row_dump_clause`).
+        #[cfg(feature = "std")]
+        if theory_conflict_dump_enabled() {
+            self.dump_theory_conflict(terms);
+        }
         match self.terms_to_conflict_clause(terms) {
             Some(conflict) => TheoryCheckResult::Conflict(conflict),
             None => {
@@ -1615,7 +1733,7 @@ impl<'a> TheoryManager<'a> {
             }
         }
 
-        // ===== arith → EUF: tentative arrangement (non-convex combination) =====
+        // ======== arith → EUF: tentative arrangement (non-convex combination) ========
         //
         // The entailed-equality pass in `nelson_oppen_combine` merges only
         // pairs arithmetic *proves* equal.  When a refutation instead needs
@@ -1657,7 +1775,7 @@ impl<'a> TheoryManager<'a> {
         // `is_dl_family` gate on bound propagation: on wider inputs the
         // refinement loop can move a search that main answers correctly onto
         // a trajectory that reaches a *different* unchecked arrangement
-        // (QF_UFLIA wisas: main `unsat`, with the round `sat` — the round
+        // (QF_UFLIA wisas: main `unsat`, with the round `sat` – the round
         // found no refutation for wisas's shape, so it only perturbed the
         // search).  Widen only after that shape is covered.
         if !self.is_dl_family {
@@ -1674,13 +1792,13 @@ impl<'a> TheoryManager<'a> {
         // intersection with `arith.interface_terms()`: an argument that is
         // only ever used under the application (e.g. `ifield impl.fdi0`,
         // never an arithmetic operand) is exactly the term whose model
-        // collapse must reach the arrangement — the UCLID-pred class hung
+        // collapse must reach the arrangement – the UCLID-pred class hung
         // on this filter (`fdi0 = emi0 = 0` in the tableau, both absent
         // from the interface list, the split never proposed).
         for &t in &uf_args {
             // Same value chain as `build_model`'s pinning: an argument the
             // tableau left free can still carry the difference-logic
-            // solver's basis value — grouping only on `arith.value` left
+            // solver's basis value – grouping only on `arith.value` left
             // those invisible to the arrangement (the UCLID-pred class:
             // all three arguments read 0 from the DL basis, no group, no
             // split, and the final model printed them collapsed).
@@ -1747,13 +1865,13 @@ impl<'a> TheoryManager<'a> {
 
                     let Some(core) = conflict else {
                         // POSITIVE half (2026-08-29): the merge is
-                        // arrangement-consistent — the model collapsed `x`
+                        // arrangement-consistent – the model collapsed `x`
                         // and `y`, but the core never DECIDED them, so the
                         // candidate can still print divergent values for
                         // applications whose arguments collided (the
                         // UCLID-pred wrong-model class).  Push the pair as
-                        // a care-split — the same channel the disequality
-                        // branch uses — so CDCL commits the equality either
+                        // a care-split – the same channel the disequality
+                        // branch uses – so CDCL commits the equality either
                         // way: `true` merges the applications in congruence
                         // closure (conflicting incompatible downstream
                         // commitments), `false` separates the arguments in
@@ -1775,14 +1893,14 @@ impl<'a> TheoryManager<'a> {
                 }
             }
         }
-        // ===== Phase 2: the full model arrangement. =====
+        // ======== Phase 2: the full model arrangement. ========
         //
         // Phase 1 refutes pairs one merge at a time and misses refutations
         // that need several merges simultaneously (congruence fires only
         // once a whole group of model-equal arguments is merged).  So also
         // accumulate ALL candidate merges in one scope and check once.  A
         // conflict there proves the *conjunction* of the merged equalities
-        // is incompatible with the current facts — no per-pair diseq is
+        // is incompatible with the current facts – no per-pair diseq is
         // derivable (soundness), but requesting `(= x y)` atoms for the
         // merged pairs lets the next search DECIDE the arrangement, where a
         // true polarity merges through `process_constraint` and the conflict
@@ -1790,8 +1908,8 @@ impl<'a> TheoryManager<'a> {
         //
         // The requested set is a superset of the proof's actual needs (we
         // cannot attribute the conflict to individual merges without
-        // per-edge tags); over-approximating is sound — an internalized
-        // equality atom is a pure branching dimension, never a constraint —
+        // per-edge tags); over-approximating is sound – an internalized
+        // equality atom is a pure branching dimension, never a constraint –
         // and bounded by the cap.
         {
             // COMPLETE arrangement: per value-group, merge a spanning
@@ -1802,7 +1920,7 @@ impl<'a> TheoryManager<'a> {
             // dependent on FxHashMap group order: the fatal pair of a
             // false candidate was probed only against other partners and
             // never against each other, its split atom was never
-            // internalized, and the candidate escaped as `sat` — reachable
+            // internalized, and the candidate escaped as `sat` – reachable
             // by any clause-DB perturbation that shifted term ids (measured
             // on pete/cxs-bp under trie-vivify; root cause of the
             // trajectory-dependent false-SAT class).
@@ -1835,7 +1953,7 @@ impl<'a> TheoryManager<'a> {
             if !conflicted && !merged.is_empty() {
                 // Cross-theory joint check: congruence may have collapsed
                 // applications whose PINNED values (equalities with
-                // constants) disagree only in arithmetic — invisible to
+                // constants) disagree only in arithmetic – invisible to
                 // `check_conflicts`, which sees no EUF disequality between
                 // the constants.  Group the arith-valued shared terms by
                 // their (now merged) EUF class and let a scoped tableau
@@ -1956,7 +2074,7 @@ impl<'a> TheoryManager<'a> {
         // interface term (un-purified functions' arguments and `select` /
         // `store` indices alike).  UNCONDITIONALLY: `term_to_var` survives
         // `pop` while the bounds do not, so `is_interned` cannot distinguish a
-        // live pin from a popped one — and the rows are cached per linear
+        // live pin from a popped one – and the rows are cached per linear
         // form, so re-asserting is a bound re-set on an existing row.  Each
         // pin is a tautology (`c = c`) whose reason tag names no literal; the
         // empty `DerivedReasons` explanation keeps a certificate citing it
@@ -2041,7 +2159,7 @@ impl<'a> TheoryManager<'a> {
                 }
             }
 
-            // ===== co-located care splits for the injective-map encoding =====
+            // ======== co-located care splits for the injective-map encoding ========
             //
             // The candidate loop below merges a model-equal pair only when
             // arithmetic *entails* the equality (two simplex probes).  A pair
@@ -2114,7 +2232,7 @@ impl<'a> TheoryManager<'a> {
                 const MAX_COLOCATED_SPLIT_PROPOSALS: usize = 256;
                 // Measured activation scope: with the polarity-stamp bug
                 // fixed above, this machinery engages on every asserted
-                // injective-`distinct` — and on ARRAY-bearing instances
+                // injective-`distinct` – and on ARRAY-bearing instances
                 // that measured negative (memory-alias large: conflicts
                 // 4695 → 5051, decisions 1.35 M → 2.75 M; the arrangement
                 // atoms it mints churn the same search the array
@@ -2252,7 +2370,7 @@ impl<'a> TheoryManager<'a> {
                 Ok(_) => {
                     // Arith ABSTENTION (the theory's search gave up on THIS
                     // assignment): taints only this assignment.  A later
-                    // candidate checked cleanly is legitimate — the LIA
+                    // candidate checked cleanly is legitimate – the LIA
                     // branch-lemma channel may clear this via a re-solve
                     // round (see `abstention_exhausted`).  Everything else
                     // that sets `resource_exhausted` (dropped conflicts,
@@ -2370,7 +2488,7 @@ impl<'a> TheoryManager<'a> {
         tighten: bool,
     ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
         use nixie_theories::arithmetic::DeltaRational;
-        // Fused single pass over `var_to_parsed_arith` — no candidate
+        // Fused single pass over `var_to_parsed_arith` – no candidate
         // collection, no per-atom probes into the second map.  The
         // historical two-loop form paid, per arith assertion, a full scan of
         // `var_to_constraint` with a `var_to_parsed_arith` hash probe per
@@ -2380,13 +2498,13 @@ impl<'a> TheoryManager<'a> {
         // reads per atom now comes from this one map entry: the
         // `eq_placeholder` flag replaces the `var_to_constraint` kind probe
         // (equality atoms carry an `Le` placeholder whose single-comparison
-        // reading would be unsound — see `encode.rs` `TermKind::Eq`), and
+        // reading would be unsound – see `encode.rs` `TermKind::Eq`), and
         // the terms are borrowed directly instead of copied.
         if self.var_to_parsed_arith.is_empty() {
             return None;
         }
         let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-        // Worklist of never-assigned atoms (built once — see the field's
+        // Worklist of never-assigned atoms (built once – see the field's
         // doc): the map iteration order below is the exact order the old
         // full scan produced, filtered by the same two skip conditions
         // (eq_placeholder at build, assigned-at-compaction), so the derive
@@ -2412,14 +2530,14 @@ impl<'a> TheoryManager<'a> {
         // all-equality/all-decided map skips it exactly as the empty
         // candidate list did.  `tighten_tableau_bounds` goes through the
         // `arith` reference field while the iteration reads the
-        // `var_to_parsed_arith` reference field — separate borrows, and no
+        // `var_to_parsed_arith` reference field – separate borrows, and no
         // derivation runs before the tighten.
         let mut tightened = false;
         for &(var, parsed) in &worklist {
             let var = *var;
             // Built-time filter (eq_placeholder) and call-time compaction
             // (ever-assigned) already removed these; the re-checks are the
-            // loop's original guards kept in place — each is one branch on
+            // loop's original guards kept in place – each is one branch on
             // an atom that cannot pass it.
             if parsed.eq_placeholder {
                 continue;
@@ -2434,7 +2552,7 @@ impl<'a> TheoryManager<'a> {
             // Memo stamp, read AFTER the once-per-call tighten so it names
             // the exact state the derivation below reads: an unchanged
             // bound-version sum reproduces the identical derivation (a
-            // pure function of the versioned bounds — see
+            // pure function of the versioned bounds – see
             // `ArithSolver::expr_bound_version`), so the atom contributes
             // nothing new and is skipped outright.
             let ver = self.arith.expr_bound_version(&parsed.terms);
@@ -2456,7 +2574,7 @@ impl<'a> TheoryManager<'a> {
             // check read `e + c ○ c` ≡ `e ○ 0` – a soundness bug for any atom
             // with a non-zero threshold.)  The `&parsed.terms` borrow reads
             // the map reference field while `self.arith` is the separate
-            // mutable reference field — no conflict.
+            // mutable reference field – no conflict.
             let (lo, hi) = self.arith.derive_expr_bound_reasons(
                 &parsed.terms,
                 Rational64::from_integer(0),
@@ -2734,12 +2852,12 @@ impl<'a> TheoryManager<'a> {
     ///
     /// Normalise an atom's linear form to a difference pair `(x, y, c)`
     /// reading `x − y ○ c` per the caller's constraint type: folds every
-    /// constant sub-term — whether a `purify_numeric_uf_args` proxy
+    /// constant sub-term – whether a `purify_numeric_uf_args` proxy
     /// (`__nixie_numarg`, recoverable via `numarg_proxies`) or a bare
-    /// `IntConst`/`RealConst` — into the RHS constant `c` (restoring the
+    /// `IntConst`/`RealConst` – into the RHS constant `c` (restoring the
     /// difference-logic shape the global purification substitute destroyed),
     /// maps a single-variable bound through the canonical zero term
-    /// (`x ≤ k` ≡ `x − 0 ≤ k` — Z3's dense-solver numeral internalization),
+    /// (`x ≤ k` ≡ `x − 0 ≤ k` – Z3's dense-solver numeral internalization),
     /// and rejects every non-unit-difference shape (3+ variables, non-unit
     /// coefficients, pure constants).  `None` = not difference-logic-shaped.
     fn dl_normalized_pair(
@@ -2813,7 +2931,7 @@ impl<'a> TheoryManager<'a> {
         // Dense integer path (Z3 `theory_dense_diff_logic`): exact i64
         // weights over integer-sorted plain numeric terms, incremental
         // closure with occurrence-list propagation.  Serves the PURE
-        // difference-logic route only — a vocabulary that mixes in UF,
+        // difference-logic route only – a vocabulary that mixes in UF,
         // `ite`s or quantifiers keeps the seeded-SPFA sparse engine below,
         // matching Z3 (the dense solver is installed by `setup_QF_IDL`
         // alone) and keeping mixed problems' conflict, unsat-core and
@@ -2823,7 +2941,7 @@ impl<'a> TheoryManager<'a> {
         {
             return self.feed_dense_edges(dla.var, &feed, is_positive);
         }
-        // Sparse path — the dedicated difference engine for the *declared*
+        // Sparse path – the dedicated difference engine for the *declared*
         // difference-logic logics that the dense integer core does not cover
         // (QF_RDL's reals; QF_UFIDL's UF combination), mirroring Z3, which
         // installs a difference solver per logic and never for the general
@@ -2834,7 +2952,7 @@ impl<'a> TheoryManager<'a> {
         if !self.sparse_dl {
             return DlPrimaryResult::NotApplicable;
         }
-        // 2-var differences only — feeding single-var bounds through the
+        // 2-var differences only – feeding single-var bounds through the
         // sparse zero-node hub was measured net-negative (the zero vertex
         // inflates the seeded SPFA per-edge check), so those defer to the
         // simplex here.  Both endpoints must be plain numeric Int/Real-sorted
@@ -2871,8 +2989,8 @@ impl<'a> TheoryManager<'a> {
     }
 
     /// Dense-core eligibility for one DL atom: the **watch orientation**
-    /// `(s, t, k)` — the exact integer reading `t − s ≤ k` of the atom's
-    /// TRUE polarity, with strict bounds tightened over ℤ — plus the edges
+    /// `(s, t, k)` – the exact integer reading `t − s ≤ k` of the atom's
+    /// TRUE polarity, with strict bounds tightened over ℤ – plus the edges
     /// to assert at the given polarity (Z3 `internalize_atom`: the positive
     /// edge is `(s→t, k)`, the negative edge is `(t→s, −k−1)`; an equality
     /// asserts both directions when positive and nothing when negative).
@@ -3006,7 +3124,7 @@ impl<'a> TheoryManager<'a> {
                     return match self.dense_reason_to_conflict(&reason) {
                         Some(c) => DlPrimaryResult::Conflict(c),
                         // A reason atom without a matching live assignment
-                        // cannot form a valid conflict clause — refuse to
+                        // cannot form a valid conflict clause – refuse to
                         // fabricate one and defer to the simplex.
                         None => DlPrimaryResult::NotApplicable,
                     };
@@ -3031,7 +3149,7 @@ impl<'a> TheoryManager<'a> {
     }
 
     /// Pre-search, eager dense-core atom interning for the pure-DL route (Z3
-    /// `internalize_atom`, which runs at clause-assertion time — before any
+    /// `internalize_atom`, which runs at clause-assertion time – before any
     /// decision): register every difference-shaped arithmetic atom's watch in
     /// the closure's occurrence lists up front, so closure improvements can
     /// propagate atoms the search has not yet assigned.  Without this, a
@@ -3040,7 +3158,7 @@ impl<'a> TheoryManager<'a> {
     /// (super_queen37-1: 35k decisions / 1.9k conflicts where Z3's eagerly
     /// internalized closure needs 66).
     ///
-    /// Asserts nothing — edges still flow only through assignments (the
+    /// Asserts nothing – edges still flow only through assignments (the
     /// occurrence lists are watch-only).  Idempotent: `intern_atom` keys on
     /// the SAT variable, and re-constructions of the manager over the same
     /// vocabulary re-register nothing.  Stops early if the node budget
@@ -3114,12 +3232,12 @@ impl<'a> TheoryManager<'a> {
     /// Pin every beyond-`i64` integer-constant COLUMN in a parsed row to
     /// its exact value (singleton bounds, any width; see
     /// [`ArithSolver::pin_int_const`]).  The big-const abstraction leaves
-    /// such a column floating — a free variable standing for a constant —
+    /// such a column floating – a free variable standing for a constant –
     /// which made every `sat` rest on after-the-fact certification and let
     /// drifted columns answer `unknown` after the evaluator refuted the
     /// model.  The pin is a TAUTOLOGY (`a constant equals itself in every
     /// model`): the reason term is registered so a conflict explanation
-    /// citing the pin drops it from the learned clause knowingly — the
+    /// citing the pin drops it from the learned clause knowingly – the
     /// clause remains entailed by the asserted atoms, since any model of
     /// them also satisfies `col = n`.
     ///
@@ -3129,7 +3247,7 @@ impl<'a> TheoryManager<'a> {
     /// `Consistent` over a floating column certifies a relaxation).
     ///
     /// At assert time, not parse time: bounds pop with the asserting scope,
-    /// and the parse cache is untrailed — a parse-time pin would die on the
+    /// and the parse cache is untrailed – a parse-time pin would die on the
     /// first pop past it and never return (the cache remembers the parse,
     /// never re-pins).
     fn pin_big_const_columns(&mut self, terms: &[(TermId, Rational64)]) -> bool {
@@ -3152,6 +3270,318 @@ impl<'a> TheoryManager<'a> {
     /// Assert one parsed arithmetic atom into the simplex at the current
     /// polarity (the shared body of the `process_constraint` assert arms and
     /// the [`Self::break_dl_purity`] replay).
+    /// One census line per feasible arithmetic check (see
+    /// `aprop_census_enabled`). Purely diagnostic: reads the arithmetic
+    /// solver and the atom tables, stores nothing.
+    #[cfg(feature = "std")]
+    fn aprop_census(&mut self) {
+        thread_local! {
+            static N: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+            // `reason term -> atom var`, rebuilt when the parsed-atom table grows.
+            static REASON_TO_VAR: std::cell::RefCell<(usize, FxHashMap<TermId, Var>)> =
+                std::cell::RefCell::new((0, FxHashMap::default()));
+        }
+        let census = self.arith.debug_implied_atom_polarities();
+        N.with(|n| n.set(n.get() + 1));
+        REASON_TO_VAR.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.0 != self.var_to_parsed_arith.len() {
+                slot.1.clear();
+                for (&var, parsed) in self.var_to_parsed_arith.iter() {
+                    slot.1.insert(parsed.reason_term, var);
+                }
+                slot.0 = self.var_to_parsed_arith.len();
+            }
+            let mut same = 0usize;
+            let mut opposite = 0usize;
+            let mut unassigned = 0usize;
+            for &(reason, form_pol, form_le_side) in &census.forced {
+                let Some(&var) = slot.1.get(&reason) else { continue };
+                let Some(parsed) = self.var_to_parsed_arith.get(&var) else { continue };
+                let atom_le_side = matches!(
+                    parsed.constraint_type,
+                    ArithConstraintType::Le | ArithConstraintType::Lt
+                );
+                let pol = form_pol == (form_le_side == atom_le_side);
+                if !self.is_level_assigned(var) {
+                    unassigned += 1;
+                } else {
+                    match self.assigned_pol_of(var) {
+                        Some(cur) if cur == pol => same += 1,
+                        Some(_) => opposite += 1,
+                        None => unassigned += 1,
+                    }
+                }
+            }
+            let atoms = self.var_to_parsed_arith.len();
+            eprintln!(
+                "[aprop-census] check={} atoms={atoms} forms={} basic_live={} derivable={} forced={} same={same} opposite={opposite} unassigned={unassigned} fixed_terms={} fixed_pairs={}",
+                N.get(),
+                census.forms,
+                census.basic_live,
+                census.derivable,
+                census.forced.len(),
+                census.fixed_terms,
+                census.fixed_same_value_pairs
+            );
+        });
+    }
+
+    /// Row-driven atom propagation, SAT half: the atom polarities the current
+    /// bound store forces (`ArithSolver::implied_atom_polarities`), filtered
+    /// to atoms the core has not assigned yet (z3 `bound_is_interesting`),
+    /// translated through each atom's constraint type, and paired with an
+    /// explanation clause built by the conflict machinery
+    /// (`terms_to_conflict_clause`: the false literals of every antecedent
+    /// atom, derived-equality tags expanded, tautologies dropped).
+    ///
+    /// Soundness rests on three things, each structural: the derivation is
+    /// interval arithmetic over bounds the live atoms imply (no LP point, no
+    /// value read); every consumed bound's complete antecedent set rides
+    /// along (`all_reasons`); and an atom that appears among its own
+    /// antecedents, or whose antecedents are not all live, is skipped – a
+    /// skipped propagation costs completeness only. `just_assigned` never
+    /// propagates itself.
+    #[cfg(feature = "std")]
+    fn arith_row_propagations(
+        &mut self,
+        just_assigned: Var,
+    ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        const MAX_PROPS: usize = 256;
+        // Touched rows only (z3 `touched_rows`): the full-table scan is the
+        // census; per assertion it costs more than the search it saves.
+        self.arith.enable_row_propagation_tracking();
+        let mut implied: Vec<nixie_theories::arithmetic::ImpliedAtom> = Vec::new();
+        self.arith.drain_implied_atom_polarities(&mut implied);
+        if implied.is_empty() {
+            return None;
+        }
+        let verify_level = aprop_row_verify_level();
+        let verify = verify_level == 1 || verify_level == 3;
+        thread_local! {
+            // `reason term -> atom var`, rebuilt when the parsed-atom table
+            // grows (the map is frozen for this manager's lifetime).
+            static REASON_TO_VAR: std::cell::RefCell<(usize, FxHashMap<TermId, Var>)> =
+                std::cell::RefCell::new((0, FxHashMap::default()));
+        }
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        REASON_TO_VAR.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.0 != self.var_to_parsed_arith.len() {
+                slot.1.clear();
+                for (&var, parsed) in self.var_to_parsed_arith.iter() {
+                    slot.1.insert(parsed.reason_term, var);
+                }
+                slot.0 = self.var_to_parsed_arith.len();
+            }
+            for imp in &implied {
+                if props.len() >= MAX_PROPS {
+                    break;
+                }
+                let Some(&var) = slot.1.get(&imp.reason) else {
+                    continue;
+                };
+                if var == just_assigned || self.is_level_assigned(var) {
+                    continue;
+                }
+                let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
+                    continue;
+                };
+                // Equality atoms ride the `Le` placeholder in this table
+                // (`encode.rs` `TermKind::Eq`): never a single comparison.
+                if parsed.eq_placeholder {
+                    continue;
+                }
+                let atom_le_side = matches!(
+                    parsed.constraint_type,
+                    ArithConstraintType::Le | ArithConstraintType::Lt
+                );
+                let pol = imp.form_pol == (imp.form_le_side == atom_le_side);
+                let terms: SmallVec<[TermId; 8]> = imp.antecedents.clone();
+                // Every antecedent must be live: a bound whose asserting
+                // atom left the trail must not feed a propagation (the
+                // conflict machinery would fall back to the whole-assignment
+                // clause there, which is valid for a conflict and NOT for a
+                // propagation whose derivation rests on a stale bound).
+                if let Some(stale) = terms.iter().find(|t| !self.reason_literal_is_live(**t)) {
+                    aprop_row_note_stale(stale);
+                    continue;
+                }
+                // An antecedent naming the atom itself would make the clause
+                // `lit ∨ ¬lit`: skip (completeness only).
+                if terms.iter().any(|t| self.term_to_var.get(t) == Some(&var)) {
+                    continue;
+                }
+                let Some(false_lits) = self.terms_to_conflict_clause(&terms) else {
+                    continue;
+                };
+                // The core's explanation contract is `(lit ∨ ¬r0 ∨ …)` over
+                // the antecedents' TRUE literals (`add_theory_reason_clause`
+                // negates them); the conflict machinery hands back each
+                // antecedent's FALSE literal, so negate here. (Passing the
+                // false literals built `lit ∨ r0 ∨ …` – a clause satisfied
+                // by its own antecedents, and a false `unsat` on bofill
+                // `ex24800_2600_100` once resolution resolved through it.)
+                let reason_lits: SmallVec<[Lit; 8]> =
+                    false_lits.iter().map(|l| l.negate()).collect();
+                let lit = if pol { Lit::pos(var) } else { Lit::neg(var) };
+                if props.iter().any(|(l, _)| l.var() == var) {
+                    continue; // one polarity per atom per round
+                }
+                #[cfg(feature = "std")]
+                if verify_level == 2 || verify_level == 3 {
+                    self.aprop_row_dump_clause(&imp.reason, &terms, pol);
+                }
+                // Oracle (see `ArithSolver::verify_implied`): an unjustified
+                // propagation is dropped and reported, never learned.
+                if verify && !self.arith.verify_implied(imp) {
+                    eprintln!(
+                        "[aprop-row-verify] UNJUSTIFIED propagation {lit:?} for reason {:?} \
+                         (form pol={} le_side={}, {} antecedents)",
+                        imp.reason,
+                        imp.form_pol,
+                        imp.form_le_side,
+                        imp.antecedents.len()
+                    );
+                    continue;
+                }
+                props.push((lit, reason_lits));
+            }
+        });
+        (!props.is_empty()).then_some(props)
+    }
+
+    /// `NIXIE_APROP_ROW_VERIFY=2`: write one propagation clause as a
+    /// self-contained QF_LIB check (`/tmp/aprop_row_clauses/NNN.smt2`), the
+    /// DL channel's `NIXIE_APROP_VERIFY=2` reconstruction applied to this
+    /// channel: antecedent atoms asserted with their assigned polarity, the
+    /// forced literal negated, the clause's variables declared. An
+    /// antecedent without a SAT variable (a derived-equality tag or a
+    /// tautology) is marked, not dropped silently.
+    #[cfg(feature = "std")]
+    fn aprop_row_dump_clause(&self, reason_term: &TermId, terms: &[TermId], pol: bool) {
+        static CLAUSE_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let limit = *LIMIT.get_or_init(|| {
+            std::env::var("NIXIE_APROP_ROW_DUMP_N")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500)
+        });
+        let n = CLAUSE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= limit {
+            return;
+        }
+        use std::fmt::Write as _;
+        let mut vars = std::collections::BTreeSet::new();
+        nixie_core::ast::pp::collect_var_names(self.manager, *reason_term, &mut vars);
+        let mut body = String::new();
+        for &r in terms {
+            nixie_core::ast::pp::collect_var_names(self.manager, r, &mut vars);
+            let rs = nixie_core::ast::pp::to_smt2(self.manager, r);
+            match self
+                .term_to_var
+                .get(&r)
+                .and_then(|rv| self.assigned_pol_of(*rv))
+            {
+                Some(true) => {
+                    let _ = writeln!(&mut body, "(assert {rs})");
+                }
+                Some(false) => {
+                    let _ = writeln!(&mut body, "(assert (not {rs}))");
+                }
+                None => {
+                    let _ = writeln!(&mut body, "; NO-SAT-VAR antecedent: {rs}");
+                }
+            }
+        }
+        let atom_s = nixie_core::ast::pp::to_smt2(self.manager, *reason_term);
+        let _ = writeln!(
+            &mut body,
+            "(assert {})",
+            if pol {
+                format!("(not {atom_s})")
+            } else {
+                atom_s.clone()
+            }
+        );
+        let _ = writeln!(&mut body, "(check-sat)");
+        let mut file = String::from("(set-logic QF_LIA)\n");
+        for v in &vars {
+            let _ = writeln!(&mut file, "(declare-fun {v} () Int)");
+        }
+        file.push_str(&body);
+        let _ = std::fs::create_dir_all("/tmp/aprop_row_clauses");
+        let _ = std::fs::write(format!("/tmp/aprop_row_clauses/clause{n:03}.smt2"), file);
+    }
+
+    /// `NIXIE_THEORY_CONFLICT_DUMP`: one file per theory conflict, the
+    /// antecedents asserted with their current polarity (derived-equality
+    /// tags expanded through `derived_reasons`, tautologies dropped), the
+    /// clause's variables declared over `QF_LIA`.
+    #[cfg(feature = "std")]
+    fn dump_theory_conflict(&self, terms: &[TermId]) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let Some(limit) = theory_conflict_dump_limit() else {
+            return;
+        };
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= limit {
+            return;
+        }
+        use std::fmt::Write as _;
+        let mut vars = std::collections::BTreeSet::new();
+        let mut body = String::new();
+        let mut pending: Vec<TermId> = terms.to_vec();
+        let mut expanded: FxHashSet<TermId> = FxHashSet::default();
+        let mut emitted: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(term) = pending.pop() {
+            if !emitted.insert(term) {
+                continue;
+            }
+            nixie_core::ast::pp::collect_var_names(self.manager, term, &mut vars);
+            if let Some(var) = self.term_to_var.get(&term).copied() {
+                let ts = nixie_core::ast::pp::to_smt2(self.manager, term);
+                match self.assigned_pol_of(var) {
+                    Some(true) => {
+                        let _ = writeln!(&mut body, "(assert {ts})");
+                    }
+                    Some(false) => {
+                        let _ = writeln!(&mut body, "(assert (not {ts}))");
+                    }
+                    None => {
+                        let _ = writeln!(&mut body, "; UNASSIGNED antecedent {ts}");
+                    }
+                }
+                continue;
+            }
+            if self.derived_reasons.literals(term).is_some() {
+                if expanded.insert(term)
+                    && let Some(just) = self.derived_reasons.literals(term)
+                {
+                    pending.extend(just);
+                }
+                continue;
+            }
+            if self.tautological_reasons.contains(&term) {
+                continue;
+            }
+            let _ = writeln!(
+                &mut body,
+                "; UNRESOLVED antecedent {}",
+                nixie_core::ast::pp::to_smt2(self.manager, term)
+            );
+        }
+        let _ = writeln!(&mut body, "(check-sat)");
+        let mut file = String::from("(set-logic QF_LIA)\n");
+        for v in &vars {
+            let _ = writeln!(&mut file, "(declare-fun {v} () Int)");
+        }
+        file.push_str(&body);
+        let _ = std::fs::create_dir_all("/tmp/theory_conflicts");
+        let _ = std::fs::write(format!("/tmp/theory_conflicts/conflict{n:05}.smt2"), file);
+    }
+
     fn arith_assert_parsed(&mut self, var: Var, parsed: &ParsedArithConstraint, is_positive: bool) {
         // Borrow the parsed terms: the writers take slices, and the former
         // per-assertion `Vec` copy was pure churn on this hot path.
@@ -3192,7 +3622,7 @@ impl<'a> TheoryManager<'a> {
         for prop in pending {
             let head = Var::new(prop.key);
             if self.trail_idx_of(head).is_some() {
-                continue; // already assigned — nothing to propagate
+                continue; // already assigned – nothing to propagate
             }
             let mut reason: SmallVec<[Lit; 8]> = SmallVec::new();
             let mut ok = true;
@@ -3204,7 +3634,7 @@ impl<'a> TheoryManager<'a> {
                 };
                 // Use the *currently assigned* polarity; it must match the
                 // justification's (edges pop in sync with scopes).  A
-                // mismatch means the trail diverged — drop the propagation
+                // mismatch means the trail diverged – drop the propagation
                 // rather than risk an invalid reason clause.
                 if self.assignment_trail[idx].is_positive != rpol {
                     ok = false;
@@ -3267,7 +3697,7 @@ impl<'a> TheoryManager<'a> {
     /// `(fp-op, rounding-mode)` pair gets its own function symbol
     /// (`FP_FUNC_BASE + op_index * 5 + rm_index`), so EUF congruence derives
     /// `fp.op(rm, x, …) = fp.op(rm, y, …)` whenever the operand classes
-    /// merge — e.g. `(= a b) → (= (fp.abs a) (fp.abs b))`, which z3 derives
+    /// merge – e.g. `(= a b) → (= (fp.abs a) (fp.abs b))`, which z3 derives
     /// through its `fpa` theory and the opaque-leaf treatment could only
     /// decline.  The base sits far above the interner's per-script `Spur`
     /// range and the mapping is injective, so it cannot collide.
@@ -3456,8 +3886,8 @@ impl<'a> TheoryManager<'a> {
             // Floating-point literals: mark as distinguished-value constants
             // keyed by bit pattern BEFORE the intern so the node is born
             // marked (the mirror of the BV arm below).  SMT-LIB `=` on floats
-            // is datum identity — `(_ +zero e s) ≠ (_ -zero e s)`, two
-            // different payloads of NaN are distinct datums — so merging two
+            // is datum identity – `(_ +zero e s) ≠ (_ -zero e s)`, two
+            // different payloads of NaN are distinct datums – so merging two
             // different bit patterns must raise a value conflict instead of
             // silently succeeding (the false-`sat` class: `(assert (= c1
             // c2))` over distinct fp literals used to answer `sat`).  All
@@ -3595,7 +4025,7 @@ impl<'a> TheoryManager<'a> {
     /// the same atoms and every congruence the tableau could use is available.
     fn intern_arith_shared_terms(&mut self, var: Var, manager: &TermManager) {
         // Lean-BV (see `bv_pure`): the shared terms exist to expose
-        // UF/select congruence hidden inside arithmetic — `(+ (f a) b)`.  In
+        // UF/select congruence hidden inside arithmetic – `(+ (f a) b)`.  In
         // exactly-QF_BV no such applications exist, and interning the
         // operands of every BV comparison floods congruence with
         // blast-decided merges (the `add_proof_edge` churn the CDCL(T)
@@ -3738,7 +4168,7 @@ impl<'a> TheoryManager<'a> {
             // Same-polarity re-send whose effects are still live (see the
             // comment above): idempotently a no-op.  Skipping here is what
             // keeps the sparse DL engine from re-adding duplicate edges and
-            // re-running an O(affected) SPFA per re-sent literal — measured
+            // re-running an O(affected) SPFA per re-sent literal – measured
             // 350k feeds for a ~7k-atom problem on gryzzles.37, with the
             // re-feeds dominating the whole run.
             return TheoryCheckResult::Sat;
@@ -3753,7 +4183,7 @@ impl<'a> TheoryManager<'a> {
                     // in term_to_var.
                     let constraint_term = self.term_for_var(var);
                     // Lean-BV path (see `bv_pure`): in exactly-QF_BV, BV-
-                    // and Bool-sorted equalities need no EUF treatment —
+                    // and Bool-sorted equalities need no EUF treatment –
                     // the blast decides bit-vector equality bit-wise and
                     // Boolean equality as iff, and no congruence exists.
                     let bv_no_euf = self.bv_pure
@@ -3847,6 +4277,10 @@ impl<'a> TheoryManager<'a> {
                         if let Ok(nixie_theories::TheoryCheckResult::Unsat(conflict_terms)) =
                             self.arith.check_bound_conflicts()
                         {
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(3);
+                            }
                             return self.conflict_from_terms(&conflict_terms);
                         }
                     }
@@ -3904,7 +4338,7 @@ impl<'a> TheoryManager<'a> {
                     // clause `(a = b) | (a < b) | (a > b)`, which unit-
                     // propagates to a strict bound once this atom is false.
                     // Every numeric equality atom is therefore *required* to
-                    // carry one — see `Solver::pending_numeric_eq_splits` and
+                    // carry one – see `Solver::pending_numeric_eq_splits` and
                     // the `every_numeric_equality_atom_carries_its_trichotomy`
                     // regression.  An atom that reaches here without one is a
                     // wrong `sat` waiting to happen: the Boolean level
@@ -3912,7 +4346,7 @@ impl<'a> TheoryManager<'a> {
                     // give them the same value.
                     let constraint_term = self.term_for_var(var);
                     // Lean-BV (see `bv_pure`): a disequality over BV/Bool-
-                    // sorted terms in exactly-QF_BV needs no EUF watch —
+                    // sorted terms in exactly-QF_BV needs no EUF watch –
                     // the blast's bit-wise disequality constraint decides
                     // it (this arm keeps the `bv_check_neq` blast below).
                     let bv_no_euf = self.bv_pure
@@ -3964,7 +4398,7 @@ impl<'a> TheoryManager<'a> {
                     // Negative assignment: ~(a != b) means a = b.
                     // Use the constraint term as the merge reason.
                     // Lean-BV (see `bv_pure`): BV/Bool-sorted equalities in
-                    // exactly-QF_BV skip the EUF merge — the blast decides
+                    // exactly-QF_BV skip the EUF merge – the blast decides
                     // them (same shape as the Eq arm's gate).
                     let constraint_term = self.term_for_var(var);
                     let bv_no_euf = self.bv_pure
@@ -3999,7 +4433,7 @@ impl<'a> TheoryManager<'a> {
                 // Apply/Select terms are registered for congruence closure.
                 // Deferred until after the difference-engine feed below: an
                 // atom the dense core accepted wholesale (plain numeric
-                // endpoints — no Apply/Select structure congruence could
+                // endpoints – no Apply/Select structure congruence could
                 // close over) needs no EUF presence on the pure-DL path,
                 // while every other atom still interns (its operands may be
                 // shared function applications whose equality the comparison
@@ -4105,7 +4539,7 @@ impl<'a> TheoryManager<'a> {
                     // row.  A row carrying one is NOT difference-logic-pure:
                     // the pin is a simplex bound the DL graph cannot see, so
                     // a `Consistent` verdict over the floating column would
-                    // certify a relaxation — break purity first and let the
+                    // certify a relaxation – break purity first and let the
                     // general path assert the row into the simplex (the
                     // replay in `break_dl_purity` re-pins, idempotently).
                     let has_wide_const_column = self.pin_big_const_columns(&terms);
@@ -4115,7 +4549,7 @@ impl<'a> TheoryManager<'a> {
 
                     // Pure-DL fast path: the difference engines run BEFORE
                     // the simplex assert, and a `Consistent` verdict finishes
-                    // the atom — the simplex never sees it (Z3
+                    // the atom – the simplex never sees it (Z3
                     // `setup_QF_IDL`'s dense solver).  The general path keeps
                     // the historical order (simplex assert first, difference
                     // check after): the sparse conflict explanations are
@@ -4229,6 +4663,10 @@ impl<'a> TheoryManager<'a> {
                         if let Ok(nixie_theories::TheoryCheckResult::Unsat(conflict_terms)) =
                             self.arith.check_bound_conflicts()
                         {
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(3);
+                            }
                             return self.conflict_from_terms(&conflict_terms);
                         }
                     }
@@ -4241,7 +4679,7 @@ impl<'a> TheoryManager<'a> {
                 // true or false node depending on the SAT assignment.
                 //
                 // Lean-BV (see `bv_pure`): in exactly-QF_BV every Boolean
-                // application is a BV comparison or a Boolean connective —
+                // application is a BV comparison or a Boolean connective –
                 // no UF/select can appear, so no congruence over these
                 // nodes can ever fire, and interning + truth-node merging
                 // only feeds the congruence walk work the bit-blast already
@@ -4303,6 +4741,10 @@ impl TheoryManager<'_> {
         if self.timed_out() || self.bv_embedded_budget_spent() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
+        }
+        #[cfg(feature = "std")]
+        if aprop_census_enabled() {
+            aprop_tick(0);
         }
 
         // Lazy checking is a from-scratch check of the *current* complete SAT
@@ -4389,7 +4831,7 @@ impl TheoryManager<'_> {
             && self.bv_terms.is_empty()
         {
             // (The pure-EUF per-final-check `resync_theory_state` replay used
-            // to live here; it moved to the restart hook in `on_backtrack` —
+            // to live here; it moved to the restart hook in `on_backtrack` –
             // see the note there.)
             return TheoryCheckResult::Sat;
         }
@@ -4426,7 +4868,7 @@ impl TheoryManager<'_> {
         }
 
         // NOTE (2026-09-10): this site used to run an unconditional
-        // `resync_theory_state` per final check — a full reset+replay of
+        // `resync_theory_state` per final check – a full reset+replay of
         // EUF/arith/DL on the premise that "the incremental EUF state can
         // lose a congruence or disequality".  That premise is refuted by the
         // three incremental-vs-replay differential fuzzers
@@ -4434,7 +4876,7 @@ impl TheoryManager<'_> {
         // `arith_incremental_matches_replay_fuzz`,
         // `dl_incremental_matches_replay_fuzz`), and across the 270-file
         // differential sample (~50k final checks on UF-bearing problems) the
-        // backstop NEVER produced a conflict the incremental checks missed —
+        // backstop NEVER produced a conflict the incremental checks missed –
         // while its reset+replay was ~2/3 of all theory-layer work.  The
         // rebuild now happens once per restart instead (`on_backtrack(0)`):
         // that is where it is cheap (the shadow trail is root-only at that
@@ -4448,7 +4890,7 @@ impl TheoryManager<'_> {
         //
         // Skipped on the pure-DL path: without UF the only merges come from
         // the asserted `Eq` atoms themselves, which the dense closure already
-        // carries as edges — re-asserting them into the (otherwise empty)
+        // carries as edges – re-asserting them into the (otherwise empty)
         // simplex only re-runs its integer search over rows the DL core has
         // already decided (observed degrading SAL bakery/lpsat to Unknown
         // through that solver's B&B budget).
@@ -4465,7 +4907,7 @@ impl TheoryManager<'_> {
         // Check arithmetic.  A `Sat` is only provisional until the
         // stranded-bound re-homing below confirms no asserted constraint was
         // dropped from the live system (a slack whose defining row a pivot
-        // consumed — see `ArithSolver::rehome_stranded_row_bounds`); the
+        // consumed – see `ArithSolver::rehome_stranded_row_bounds`); the
         // loop re-checks whenever a re-homing moved something, so a model is
         // never accepted while it hides a re-homed constraint.
         for _round in 0..4 {
@@ -4492,6 +4934,11 @@ impl TheoryManager<'_> {
                                     return TheoryCheckResult::Sat;
                                 }
                                 return conflict;
+                            }
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(1);
+                                self.aprop_census();
                             }
                             // Re-home and, if anything moved, re-run this check:
                             // the check's own pivots can strand a bound AFTER the
@@ -4569,6 +5016,10 @@ impl TheoryManager<'_> {
                         }
                         nixie_theories::TheoryCheckResult::Unsat(conflict_terms) => {
                             // Arithmetic conflict detected - convert to SAT conflict clause
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(2);
+                            }
                             let conflict = self.conflict_from_terms(&conflict_terms);
                             self.statistics.theory_conflicts += 1;
                             self.statistics.conflicts += 1;
@@ -4596,7 +5047,7 @@ impl TheoryManager<'_> {
                             // the solver never verified – an unsound `Sat`.  Flag
                             // resource exhaustion so the owning solver answers
                             // `Unknown`, and stop the search by reporting Sat.
-                            // ABSTENTION (nothing suppressed — see
+                            // ABSTENTION (nothing suppressed – see
                             // `abstention_exhausted`): the LIA branch-lemma
                             // channel may clear this via a re-solve round.
                             self.resource_exhausted = true;
@@ -4633,7 +5084,7 @@ impl TheoryCallback for TheoryManager<'_> {
     /// Record a candidate theory lemma. Recordable atoms: `Eq` over
     /// non-Bool operands, and **Bool-sorted applications** `f(x…)` (a
     /// `(S…)->Bool` function's atom is the equality `f(x…) = true/false`, so
-    /// congruence closure verifies it against the Boolean constants — the
+    /// congruence closure verifies it against the Boolean constants – the
     /// eq_diamond/NEQ family is built on them). Anything else (arithmetic
     /// comparisons, Boolean iff, unknown atoms) poisons the log: the gate
     /// then declines to use it (fail closed to the skeleton-only path).
@@ -4663,7 +5114,7 @@ impl TheoryCallback for TheoryManager<'_> {
                     self.manager.get(*lhs).is_some_and(|l| l.sort != bool_sort)
                         && self.manager.get(*rhs).is_some_and(|r| r.sort != bool_sort)
                 }
-                // Linear (in)equalities over Int/Real — verified by the
+                // Linear (in)equalities over Int/Real – verified by the
                 // certified gate's independent LP check
                 // (`verify_lia_lemma`): rational infeasibility only,
                 // integer-only conflicts fail closed.
@@ -4712,7 +5163,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // theory-constraint early return.  The stamp is pure bookkeeping
         // (direct-indexed, generation-stamped), and gating it on
         // `var_to_constraint` made `assigned_pol_of` return `None` forever
-        // for plain-Boolean atoms — notably the injective-distinct
+        // for plain-Boolean atoms – notably the injective-distinct
         // encoding's asserted result literal, whose polarity gate
         // (`any_result_true` in `nelson_oppen_combine`) then held the
         // co-located split machinery dead on every top-level asserted
@@ -4947,6 +5398,22 @@ impl TheoryCallback for TheoryManager<'_> {
             return TheoryCheckResult::Propagated(props);
         }
 
+        // Row-driven atom propagation (z3 `propagate_bounds_with_lp_solver`'s
+        // bound half; `NIXIE_APROP_ROW=1`, study arm – see
+        // `arith_row_propagations`). The propagation channel the wisa-class
+        // census measured: at every refuted leaf a third of the atoms were
+        // already forced by the arithmetic bounds of the others
+        // (`docs/studies/2026-11-24-kissat-z3-opportunity-audit.md`, A1).
+        #[cfg(feature = "std")]
+        if aprop_row_enabled()
+            && matches!(result, TheoryCheckResult::Sat)
+            && self.var_to_parsed_arith.contains_key(&var)
+            && let Some(props) = self.arith_row_propagations(var)
+        {
+            self.statistics.theory_propagations += props.len() as u64;
+            return TheoryCheckResult::Propagated(props);
+        }
+
         result
     }
 
@@ -4992,12 +5459,12 @@ impl TheoryCallback for TheoryManager<'_> {
         // Measured on the ASP class (duthen-50): 38 % of backtracks are
         // no-ops that previously scanned the whole trail, and the scan
         // itself (5.7G units/run over 12-byte atoms) was 99 % of
-        // on_backtrack's cost — removals were 39M units.
+        // on_backtrack's cost – removals were 39M units.
         if self.assignment_trail_max_level > level {
             // First entry above `level` via the contiguous parallel levels
             // array (a bare u32 scan).  The removal loop starts there:
             // [0, start) is provably all <= level, so skipping it is
-            // behavior-identical to the historical scan from index 0 —
+            // behavior-identical to the historical scan from index 0 –
             // same entries visited beyond `start`, same swap-removals,
             // same resulting arrangement.
             if let Some(mut i) = self.assignment_trail_levels.iter().position(|&l| l > level) {
@@ -5047,7 +5514,7 @@ impl TheoryCallback for TheoryManager<'_> {
         // them unable to name the literals it rests on.
         // Node indices only ever shrink through a scope pop (that is the
         // only path that removes EUF nodes mid-search), so the eviction
-        // pass below is needed exactly when at least one pop happened —
+        // pass below is needed exactly when at least one pop happened –
         // not on every backtrack.  Unconditional it scanned the whole
         // constants map per backtrack (thousands of entries on
         // symbolic-memory problems, tens of thousands of backtracks).
@@ -5085,15 +5552,15 @@ impl TheoryCallback for TheoryManager<'_> {
             }
         }
 
-        // ===== Restart resync (basis re-canonicalization) =====
+        // ======== Restart resync (basis re-canonicalization) ========
         //
         // On a backtrack to the ROOT (restart, or a level-0 unit learn), the
-        // shadow trail is exactly the set of level-0 atoms — small — so a
+        // shadow trail is exactly the set of level-0 atoms – small – so a
         // full reset+replay here is cheap, unlike the per-final-check resync
         // this replaces (which replayed the ENTIRE trail on every candidate
         // model: ~2/3 of all theory-layer work on UF+arith problems, and its
         // conflict channel never fired once across ~50k final checks on the
-        // differential corpus — see
+        // differential corpus – see
         // docs/studies/2026-09-10-per-final-check-resync.md).
         //
         // What the periodic rebuild buys:
@@ -5102,15 +5569,15 @@ impl TheoryCallback for TheoryManager<'_> {
         //   accumulate over the whole search otherwise (measured 430 ->
         //   9300+ rows on QF_UFLIA xs_8_13); every restart compacts back to
         //   the live root rows.
-        // * A canonical basis at each restart boundary: the LP vertex — and
+        // * A canonical basis at each restart boundary: the LP vertex – and
         //   with it `arith.value()` at the next candidates, which the
-        //   model-based Nelson–Oppen round reads — no longer depends on the
+        //   model-based Nelson–Oppen round reads – no longer depends on the
         //   entire pivot history of the search.
         //
         // The replay's result is discarded by design: at this point the
         // incremental solvers hold exactly the level-0 atoms (every higher
         // scope was just popped above), and the per-layer differential
-        // fuzzers verify incremental ≡ replay — so a Conflict here would be
+        // fuzzers verify incremental ≡ replay – so a Conflict here would be
         // a conflict the incremental layers also hold and will surface at
         // the next final_check.  Dropping it can delay a refutation by one
         // round; it can never fabricate one.

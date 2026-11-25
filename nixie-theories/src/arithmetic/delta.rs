@@ -369,7 +369,7 @@ impl From<DeltaRational> for BigDeltaRational {
 /// every state reachable with narrow values only executes the exact same
 /// comparisons it always did (the `Narrow`/`Narrow` arms are the old
 /// `DeltaRational` ops), while a wide value makes every consumer either
-/// compare exactly or explicitly decline — never wrap, never guess.
+/// compare exactly or explicitly decline – never wrap, never guess.
 #[derive(Debug, Clone)]
 pub enum BoundValue {
     /// The value fits `Rational64` width (the common case).
@@ -380,7 +380,7 @@ pub enum BoundValue {
 
 impl BoundValue {
     /// The narrow form when one exists (an `i64::MIN` numerator is not
-    /// narrow — see [`BigDeltaRational::narrow`]).
+    /// narrow – see [`BigDeltaRational::narrow`]).
     #[must_use]
     pub fn narrow(&self) -> Option<DeltaRational> {
         match self {
@@ -408,7 +408,7 @@ impl BoundValue {
     }
 
     /// Exact lexicographic comparison against an exact (possibly wide)
-    /// point value — the wide-point-aware counterpart of
+    /// point value – the wide-point-aware counterpart of
     /// [`Self::cmp_narrow`] for consumers that hold the variable's exact
     /// point from the wide point store.
     #[must_use]

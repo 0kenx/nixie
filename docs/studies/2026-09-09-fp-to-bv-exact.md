@@ -7,14 +7,14 @@
 ## Semantics (z3-probed, then implemented)
 
 * The pinned operand's exact value rounds to the **integer grid** under the
-  mode (one rounding step — the same first-principles grid logic as
+  mode (one rounding step – the same first-principles grid logic as
   `rational_to_fp`, on `BigInt`), then encodes at the target width
   (two's-complement for `fp.to_sbv`).
 * **Underspecification is exactly "the rounded value does not fit the
-  width"** — z3 rounds FIRST (`to_ubv` of −0.5 under RNE is the *defined*
+  width"** – z3 rounds FIRST (`to_ubv` of −0.5 under RNE is the *defined*
   `bv0`); only an out-of-range rounded value leaves the result free (z3:
-  any probe satisfiable — verified for 0/42/128/255 at width 8).
-* NaN and ±∞ decline (underspecified/huge — no fabricated value).
+  any probe satisfiable – verified for 0/42/128/255 at width 8).
+* NaN and ±∞ decline (underspecified/huge – no fabricated value).
 
 A sign bug on the way (unit-pinned by the probes): `fp_value_rational`
 initially dropped the sign bit, computing `RTN(−3.7) → 3`.
@@ -25,7 +25,7 @@ initially dropped the sign bit, computing `RTN(−3.7) → 3`.
    existing FP pin machinery (literal / class witness / define chain /
    in-pass pins); in-range values emit the guarded unit
    `(operand-pin guards) → (conv = bitvec-literal)`; out-of-range, NaN and
-   ∞ **decline**, leaving the conversion's atom free — which is precisely
+   ∞ **decline**, leaving the conversion's atom free – which is precisely
    the underspecified semantics.  The helper `fp_value_rounded_to_integer`
    (exact `FpValue → BigInt` per mode) is shared with the model builder.
 2. **Model builder**: `eval_bv` evaluates `BitVecConst` and
@@ -33,14 +33,14 @@ initially dropped the sign bit, computing `RTN(−3.7) → 3`.
    consults it for BV-sorted equalities (needed by the FP-fold
    fall-through's verification); `eq_satisfiable_via_underspecified_conv`
    lets an underspecified conversion equated with a constant verify as
-   **sat** — the free value is chosen, never fabricated.
+   **sat** – the free value is chosen, never fabricated.
 
 ## Validation
 
 * Differential (`tbvgen`, 4 seeds × 140: widths 8/16/32, both
   conversions, all five modes, exact dyadic values, in-range
   right/wrong-datum probes and underspecified any-probe):
-  **1120/1120 agree, zero unknowns** — even the underspecified cases
+  **1120/1120 agree, zero unknowns** – even the underspecified cases
   decide `sat` through the wildcard verification.
 * Directed probes r1–r8 (rounding, two's complement, overflow wildcards):
   all z3-consistent.
@@ -51,10 +51,10 @@ initially dropped the sign bit, computing `RTN(−3.7) → 3`.
 
 ## Probe-construction notes (recorded for future batteries)
 
-* SMT-LIB numerals have **no scientific notation** — `1.5e3` is rejected
+* SMT-LIB numerals have **no scientific notation** – `1.5e3` is rejected
   by z3 itself (an error followed by a vacuous `sat`); spell dyadics as
   exact plain decimals (`format(Decimal(f), 'f')`).
-* `to_ubv` of a negative input is NOT automatically underspecified — only
+* `to_ubv` of a negative input is NOT automatically underspecified – only
   the rounded value's fit matters (a battery bug this cycle caught twice).
 
 ## Scoped follow-ups

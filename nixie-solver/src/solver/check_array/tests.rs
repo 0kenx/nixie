@@ -375,7 +375,7 @@ fn a_cyclic_alias_returns_through_the_public_api() {
     );
 }
 
-// ===========================================================================
+// ========  ========
 // Array-axiom instantiation policy regressions (the QF_AUFLIA parity work).
 //
 // The lazy refinement loop used to mint an extensionality witness for every
@@ -387,7 +387,7 @@ fn a_cyclic_alias_returns_through_the_public_api() {
 // Every test below is a shape that was wrong (false `sat`, `unknown`, or a
 // timeout) under some intermediate policy during that rework; z3's verdict
 // is noted for each.
-// ===========================================================================
+// ========  ========
 
 /// Two aliased store chains over a common base with distinct indices, values
 /// that let the chains differ, and the pre-skolemized extensionality
@@ -600,10 +600,10 @@ fn conditional_store_equality_read_congruence_is_unsat() {
     assert_eq!(script_result(script), crate::SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Model-based instantiation of synthetic reads (the `memory`-alias cascade
 // fix; see docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Two 12-deep store chains over all-distinct symbolic indices with one
 /// planted alias and distinct anchor values – the `memory-alias` shape in

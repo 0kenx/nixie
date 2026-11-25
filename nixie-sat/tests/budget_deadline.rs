@@ -58,9 +58,9 @@ fn two_hours_ago() -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (a) A deadline already in the past stops the search.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn a_deadline_in_the_past_makes_solve_return_unknown() {
@@ -102,9 +102,9 @@ fn a_short_deadline_bounds_a_hard_refutation() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (b) Clearing the deadline restores unbounded behaviour.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn clearing_the_deadline_restores_unbounded_search() {
@@ -120,9 +120,9 @@ fn clearing_the_deadline_restores_unbounded_search() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (c) `reset()` keeps the budgets and zeroes the statistics.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn reset_preserves_the_budgets_and_zeroes_the_stats() {
@@ -130,7 +130,7 @@ fn reset_preserves_the_budgets_and_zeroes_the_stats() {
     // *which* verdict each solve reaches, and all three still hold here: the
     // two budgeted solves are cut off (`Unknown`) and the unbudgeted one
     // refutes (`Unsat`). The instance size only decides how long that last,
-    // unbudgeted refutation takes — the whole cost of the test — and it is the
+    // unbudgeted refutation takes – the whole cost of the test – and it is the
     // one solve no budget bounds.
     //
     // Measured in the dev profile (`[profile.dev]` is `opt-level = 1`) on the
@@ -138,7 +138,7 @@ fn reset_preserves_the_budgets_and_zeroes_the_stats() {
     //
     // | instance | unbudgeted refutation | this test |
     // |---|---|---|
-    // | PHP(8,7) | 43.9 s | 63.2 s — `cargo nextest` reports SLOW |
+    // | PHP(8,7) | 43.9 s | 63.2 s – `cargo nextest` reports SLOW |
     // | PHP(7,6) |  0.41 s |  0.42 s |
     //
     // The repo's `.config/nextest.toml` sets `slow-timeout = { period = "60s",
@@ -159,7 +159,7 @@ fn reset_preserves_the_budgets_and_zeroes_the_stats() {
     assert_eq!(solver.stats().decisions, 0);
 
     // The budgets survived the reset: the same problem rebuilt on this solver
-    // is still cut off. This is the property `BvSolver::reset` depends on — its
+    // is still cut off. This is the property `BvSolver::reset` depends on – its
     // `sat.reset()` must not silently re-arm an exhausted allowance, which is
     // why `BvSolver` accumulates its spend in a field of its own.
     add_pigeonhole(&mut solver, 7, 6);
@@ -176,9 +176,9 @@ fn reset_preserves_the_budgets_and_zeroes_the_stats() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // (d) A generous deadline does not disturb a normal solve.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn a_generous_deadline_still_lets_a_satisfiable_instance_answer_sat() {
@@ -195,9 +195,9 @@ fn a_generous_deadline_still_lets_an_unsatisfiable_instance_answer_unsat() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The decision budget.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn a_one_decision_budget_stops_a_hard_refutation() {
@@ -227,9 +227,9 @@ fn a_generous_decision_budget_does_not_change_a_verdict() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The budgets compose: whichever fires first ends the search.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn conflict_and_decision_budgets_compose() {

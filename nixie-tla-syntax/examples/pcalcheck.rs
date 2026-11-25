@@ -1,4 +1,4 @@
-//! `pcalcheck` — definition parity between two translations of the same
+//! `pcalcheck` – definition parity between two translations of the same
 //! PlusCal algorithm (ours and the oracle's).
 //!
 //! Compares what the *parser* sees, not what a grep sees: the oracle lays

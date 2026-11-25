@@ -175,7 +175,7 @@ impl LiaSolver {
                 if let (Some(lb), Some(ub)) = (lower, upper) {
                     // Integer-round the bounds EXACTLY (a wide bound's
                     // ceil/floor can leave i64; the probe then declines
-                    // that candidate — a heuristic).
+                    // that candidate – a heuristic).
                     use num_traits::ToPrimitive as _;
                     let (lb_int, ub_int) = (
                         lb.value.real_big().ceil().to_integer().to_i64(),

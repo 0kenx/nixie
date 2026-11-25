@@ -27,8 +27,8 @@ Residue files (base = preset default, BVE+ELS pre-search on):
 |---|---|---|---|---|---|
 | circuit64 | TO | **S 1117G** | TO | TO | TO |
 | rbsat | S 519G | S 1106G | **S 114G** | S 445G | S 443G |
-| crypto1 | TO | TO | TO | — | — |
-| worker550 | TO | TO | TO | — | — |
+| crypto1 | TO | TO | TO | – | – |
+| worker550 | TO | TO | TO | – | – |
 
 no_transred vs base on previously-damaged files:
 
@@ -57,7 +57,7 @@ no_transred vs base on previously-damaged files:
    collapses qwh (6x, prior data) and rbsat (2x); no_transred wins
    rbsat/6s167 but wrecks qwh/stable/constraints (2.4-4x); no_subsume and
    vivify+transred-only lose circuit64. Our subsume round already carries
-   the cadical `subsumelimited` propagation-scaled budget — the damage is
+   the cadical `subsumelimited` propagation-scaled budget – the damage is
    not a missing cap.
 4. What cadical has that we do not is *adaptive effort scheduling* across
    the whole inprobe family (tier-fractioned vivify budgets, per-instance
@@ -66,7 +66,7 @@ no_transred vs base on previously-damaged files:
 
 ## Verdict
 
-`enable_inprocessing` stays off in every preset — now confirmed with
+`enable_inprocessing` stays off in every preset – now confirmed with
 deterministic counts rather than load-tainted walls. The screen gates are
 reverted (throwaway worktree deleted).
 
@@ -76,6 +76,6 @@ reverted (throwaway worktree deleted).
 default arm first, then a `INPROCESS=1`-style arm without transred. That
 would capture circuit64 (default TOs, arm solves 1117G), rbsat (519G →
 114G via the arm), and 6s167 (51G → 22G) at bounded budgets while the
-default path keeps qwh/stable untouched — the same trade the seed
+default path keeps qwh/stable untouched – the same trade the seed
 portfolio already makes: pay a budget slice for a different search shape
 instead of perturbing the default.

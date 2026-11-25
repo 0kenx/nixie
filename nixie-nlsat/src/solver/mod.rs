@@ -943,7 +943,7 @@ impl NlsatSolver {
 
     /// The `Sat` gate.
     ///
-    /// On the rational search path this is `SolverResult::Sat` unchanged —
+    /// On the rational search path this is `SolverResult::Sat` unchanged –
     /// `algebraic_model_is_verified` short-circuits to `true` when no algebraic
     /// value is installed, so not a single existing verdict moves.
     ///
@@ -1011,8 +1011,8 @@ impl Default for NlsatSolver {
 /// variable's exact value as a [`CadPoint`]; [`Model::arith_values`] holds only
 /// those whose value is a rational, so that a caller which can only handle
 /// rationals (every caller that predates algebraic witnesses) sees a variable
-/// it cannot represent as simply absent rather than as a rounded — and
-/// therefore wrong — number.
+/// it cannot represent as simply absent rather than as a rounded – and
+/// therefore wrong – number.
 #[derive(Debug, Clone, Default)]
 pub struct Model {
     /// Boolean variable assignments.

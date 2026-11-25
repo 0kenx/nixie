@@ -1056,17 +1056,17 @@ fn test_undefined_plain_symbol_error_is_still_well_formed() {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // --preset: two domains, no silent fallthrough.
 //
 // The CLI serves SMT-layer presets (fast/balanced/thorough/minimal, applied
 // as Context options on SMT-LIB2 input) and SAT-core presets (the
 // `nixie_sat::ConfigPreset` names, applied to the DIMACS fast path).  Before
 // the fix these tests guard, an unknown `--preset` name was silently ignored
-// and no preset at all reached the CNF fast path — `--preset cadical` was a
+// and no preset at all reached the CNF fast path – `--preset cadical` was a
 // no-op on `--dimacs` input (found while setting up the SATCOMP 2025 3-way
 // benchmark; see docs/studies/2026-09-15-satcomp2025-3way-perf.md).
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn create_temp_cnf(content: &str) -> common::TempPath {
     common::TempPath::write("cli_integration", "cnf", content)
@@ -1280,7 +1280,7 @@ fn sat_seed_env_changes_trajectory_not_verdict() {
     );
     assert_eq!(c1a, c1b, "same seed must reproduce identical counters");
     assert_ne!(c1a, c2, "different seeds must move the counters");
-    // And the stats are real (non-zero) — the fast-path absorption works.
+    // And the stats are real (non-zero) – the fast-path absorption works.
     assert!(
         !c1a.ends_with("Conflicts: 0"),
         "fast path must report non-zero counters: {c1a}"

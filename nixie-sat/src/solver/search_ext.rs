@@ -62,7 +62,7 @@ impl Solver {
         self.real_theory_attached = theory.is_real_theory();
         // Sticky theory marker for the sweep's soundness gate
         // (`sweep_allowed`): once a real theory has driven this solver,
-        // destructive equivalence folding is off for the solver's life —
+        // destructive equivalence folding is off for the solver's life –
         // later no-theory inner solves (the quantifier path alternates
         // them) must not re-arm it.
         if self.real_theory_attached {
@@ -130,7 +130,7 @@ impl Solver {
                 self.refresh_binary_graph();
             }
             // Boolean propagation, then (when installed) in-search XOR
-            // propagation of the newly assigned literals — a falsified
+            // propagation of the newly assigned literals – a falsified
             // row surfaces exactly like a CNF conflict.
             if let Some(conflict) = self.propagate().or_else(|| self.xor_search_step()) {
                 self.stats.conflicts += 1;
@@ -700,7 +700,7 @@ impl Solver {
             *theory_processed = (*theory_processed).min(self.trail.assignments().len());
         }
         for &lit in units {
-            // Each unconditional unit is a theory tautology — record it as a
+            // Each unconditional unit is a theory tautology – record it as a
             // unit-clause lemma; the certified gate's congruence-closure
             // check verifies it (e.g. a reflexivity fact `t = t` verifies,
             // anything contingent fails and the certification declines).

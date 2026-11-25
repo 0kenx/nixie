@@ -1,15 +1,15 @@
 //! Gate structural hash-consing (`NIXIE_BV_GATE_SH=1`) regressions.
 //!
 //! The gate constructors memoize on canonical input-var pairs, so identical
-//! gates share one output variable and one clause set — z3's expression-level
+//! gates share one output variable and one clause set – z3's expression-level
 //! sharing at the gate layer.  It closes the "same product, two encodings"
 //! class (`2017-BuchwaldFried/Mul32·Mulh_u32`: high-half of a 96-bit mul of
-//! zero-extended operands vs a 64-bit mul — both cascade residues close in
+//! zero-extended operands vs a 64-bit mul – both cascade residues close in
 //! ~0.1 s under the flag, timeout without) and cracks two multiplier cells
 //! outright (`smulov2bw064` 1.5 s, `umulov1bw064`).
 //!
 //! Soundness posture (why this is safe): entries are inserted **only at the
-//! base scope** (`BvSolver::at_base_scope` — the same invariant that keeps
+//! base scope** (`BvSolver::at_base_scope` – the same invariant that keeps
 //! `term_to_bv` truthful), so a memo var's defining clauses are permanent;
 //! unified-era entries are wiped on `enter_unified`/`exit_unified`/`reset`
 //! alongside the other var-space-carrying tables.  Scoped (mid-search)
@@ -42,7 +42,7 @@ fn verdict(script: &str) -> String {
 }
 
 /// The BuchwaldFried shape: the high half of a 96-bit product of
-/// zero-extended operands equals the high half of the 64-bit product —
+/// zero-extended operands equals the high half of the 64-bit product –
 /// both multipliers share every partial product and adder, and the
 /// equality folds.
 #[test]
@@ -95,7 +95,7 @@ fn shared_gates_close_bitgathered_product() {
 
 /// Scoped correctness: gate-reused circuits built at one scope must not
 /// leak wrong definitions across a pop.  A definition-heavy goal is
-/// checked, popped, and re-checked with a contradictory second conjunct —
+/// checked, popped, and re-checked with a contradictory second conjunct –
 /// the popped scope's facts must not survive into the re-check.
 #[test]
 fn shared_gates_respect_pop_scopes() {

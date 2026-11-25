@@ -183,7 +183,7 @@ enum Head {
     DeclaredFun { name: String, ret: SortId },
     /// `bag.map`/`bag.filter`: the head carries the (bare, unary) function
     /// symbol plus its signature, parsed like the fp operators' rounding
-    /// mode — a function name is not a term in this surface.
+    /// mode – a function name is not a term in this surface.
     BagFun {
         op: String,
         func: String,
@@ -1022,7 +1022,7 @@ impl Parser<'_> {
     /// declaration to hang it on, and asserting a closure about a bound name
     /// at top level would be nonsense. Relativizing the body is the standard
     /// answer and the only sound one here: without it, `(forall ((m
-    /// RoundingMode)) phi)` would quantify over an unconstrained free sort —
+    /// RoundingMode)) phi)` would quantify over an unconstrained free sort –
     /// strictly *stronger* than the intended "for all five modes", so a
     /// formula true of every real mode could still come back `unsat`; and
     /// `(exists ((m RoundingMode)) phi)` would be strictly *weaker*, able to
@@ -1158,7 +1158,7 @@ impl Parser<'_> {
     }
 
     /// The function operand of `(bag.fold f t b)`: a binary function of
-    /// type `(-> T1 T2 T2)` — element first, accumulator second, with the
+    /// type `(-> T1 T2 T2)` – element first, accumulator second, with the
     /// second argument's sort equal to the codomain, exactly CVC5's
     /// `BAG_FOLD` type rule. Returns `(name, T1, T2)`.
     fn parse_bag_fold_fun_operand(&mut self, op: &str) -> Result<(String, SortId, SortId)> {
@@ -1463,7 +1463,7 @@ impl Parser<'_> {
             }
             // `bag.map f b` / `bag.filter p b`: the function operand is a
             // bare unary function symbol, parsed here the way the fp
-            // operators parse their rounding mode — a function name is not
+            // operators parse their rounding mode – a function name is not
             // a term in this surface (no lambdas, no function sorts), so
             // the generic operand path would reject it before the operator
             // ever saw it.
@@ -1480,7 +1480,7 @@ impl Parser<'_> {
                 )));
             }
             // `bag.fold f t b`: the same interception with a *binary*
-            // function — the remaining operands are the initial value and
+            // function – the remaining operands are the initial value and
             // the bag, checked against the signature at close time.
             "bag.fold" => {
                 let (func, elem_sort, acc_sort) = self.parse_bag_fold_fun_operand(&op)?;

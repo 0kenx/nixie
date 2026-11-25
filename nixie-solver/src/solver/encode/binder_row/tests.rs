@@ -234,12 +234,12 @@ fn the_bound_variable_survives_in_the_expansion() {
 /// inner rewrite was spliced back with `substitute` **across** the outer
 /// binder, whose bound variable is free in the replacement, so the splice was
 /// dropped and `(forall ((j …)) (forall ((i …)) φ))` yielded no rewrite at
-/// all — while the one-binder-list spelling of the identical formula was
+/// all – while the one-binder-list spelling of the identical formula was
 /// rewritten and refuted.
 ///
 /// The sweep is innermost-first now: the inner quantifier is rewritten first
 /// and the outer binder is rebuilt from the rewritten body, which never
-/// crosses the outer binder.  This test is the one that isolates that half —
+/// crosses the outer binder.  This test is the one that isolates that half –
 /// the end-to-end verdict is closed twice over (`quant_guard` guards the
 /// inner quantifier once an instance of the outer grounds it), so a verdict
 /// test alone cannot see this mechanism fail.
@@ -285,7 +285,7 @@ fn a_quantifier_nested_inside_another_is_rewritten_innermost_first() {
     );
     // The point of rebuilding rather than splicing: `j` must still be BOUND.
     // Splicing the inner rewrite across the outer binder makes `substitute`
-    // alpha-rename that binder to avoid capturing the replacement's `j` — and
+    // alpha-rename that binder to avoid capturing the replacement's `j` – and
     // the replacement still mentions the *old* `j`, which is then free.  A
     // formula that has gained a free variable is a different formula, and the
     // lemma built from it is a lemma about nothing.

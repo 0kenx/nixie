@@ -14,13 +14,13 @@ pub(super) struct UserState {
     /// SAT variable -> its watch entries. A watch `(term, lit)` answers
     /// literal `lit` from the fixed value of `term` and literal `!lit` from
     /// its negation, so this index is exactly equivalent to scanning
-    /// `watches` — which was O(watches) per justification literal of every
+    /// `watches` – which was O(watches) per justification literal of every
     /// consequence, quadratic for models registering thousands of watches
     /// (graph constraints). A variable may carry **several** entries: a
     /// term and its negation can both be watched (FSM guards `g` and `¬g`
     /// name one SAT variable with opposite phases), and each entry decodes
     /// the variable's assignment into its own term's fixation
-    /// independently — nothing is dropped.
+    /// independently – nothing is dropped.
     by_var: FxHashMap<nixie_sat::Var, Vec<(TermId, Lit)>>,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
@@ -161,7 +161,7 @@ impl Solver {
             self.user_state.literals.insert(negation, !lit);
             if seen.insert(term) {
                 // Several watches may share one SAT variable (a term and
-                // its negation — the FSM guard pattern — or two terms the
+                // its negation – the FSM guard pattern – or two terms the
                 // encoder maps to one variable). Every entry decodes the
                 // variable's assignment into its own term's fixation, so
                 // all of them are kept: nothing is silently dropped.
@@ -516,7 +516,7 @@ impl<T: TheoryCallback> TheoryCallback for UserCallback<'_, T> {
         // O(1) routing through `by_var`: every watch entry on this SAT
         // variable decodes the assignment into its own term's fixation (a
         // term and its negation both watched receive complementary
-        // values — each entry's `watched` phase does the decoding).
+        // values – each entry's `watched` phase does the decoding).
         if let Some(entries) = self.state.by_var.get(&lit.var()).cloned() {
             for (term, watched) in entries {
                 let value = if watched == lit {

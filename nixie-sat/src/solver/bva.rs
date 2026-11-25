@@ -5,8 +5,8 @@
 //! SAT 2023): find a set of `k ≥ 2` original clauses sharing a common
 //! literal set `G`, and replace each `C_i = G ∪ U_i` by
 //!
-//! * `(G ∨ t)` — one clause, and
-//! * `(¬t ∨ U_i)` — one per clause,
+//! * `(G ∨ t)` – one clause, and
+//! * `(¬t ∨ U_i)` – one per clause,
 //!
 //! with a fresh auxiliary `t`.  The encoding is the polarity-optimized
 //! Tseitin of `G ∨ (U_1 ∧ … ∧ U_k)` (which is exactly `∧_i (G ∨ U_i)` by
@@ -40,14 +40,14 @@
 //! * **Pre-search** (`enable_sbva`, `structured_bva`): one-shot before the
 //!   search, gates: decision level 0, base scope only (non-incremental),
 //!   no attached theory, no proof/LRAT tracer (introduced clauses and
-//!   retired originals have no derivation story yet — the doc's
+//!   retired originals have no derivation story yet – the doc's
 //!   requirement, not a TODO), bounded budgets.  Default off.  Matched
 //!   null: `NIXIE_SBVA_NULL=1` (scrambled rank key).
 //! * **Mid-search** (`enable_mid_bva`, `structured_bva_mid`, fired inside
 //!   `inprocess()` rounds): the same generation/rank/apply machinery with
 //!   effort budgets from the round's search-work window
 //!   ([`super::learn::InprocBudgets`]) and mid-search hygiene:
-//!   (a) groups containing a **live level-0 reason clause** are skipped —
+//!   (a) groups containing a **live level-0 reason clause** are skipped –
 //!   conflict analysis must never resolve against a retired clause;
 //!   (b) retired and added clauses' variables are re-marked for the
 //!   eliminator (`mark_elim_vars`) so its occurrence machinery sees the
@@ -55,14 +55,14 @@
 //!   (c) the caller rebuilds watches/BIG and re-propagates once after
 //!   introductions (new `(G ∨ t)`/`(¬t ∨ U_i)` clauses can be unit under
 //!   the level-0 trail: `G` fully false forces `t`, then `t` forces each
-//!   `U_i` — exactly the propagation the encoding guarantees, so a
+//!   `U_i` – exactly the propagation the encoding guarantees, so a
 //!   conflict there certifies Unsat against live clauses).
 //!   Default off; knobs `NIXIE_BVA_MID=1` / `NIXIE_BVA_MID_NULL=1` in
 //!   the `cnf_solve` example.
 //!
 //! **Determinism**: candidate collection iterates the pair index in
 //! **sorted key order** (not `HashMap` iteration, whose `RandomState`
-//! order is per-process random — ties in the rank key would otherwise
+//! order is per-process random – ties in the rank key would otherwise
 //! resolve nondeterministically across runs).  The rank key is
 //! `(saving, first clause id)`; ties between distinct groups sharing both
 //! are then broken by the sorted pair order, deterministic by
@@ -106,16 +106,16 @@ impl BvaOpts {
 impl Solver {
     /// Mid-search AND-gate factoring (kissat `factor.c`'s rewrite, single-hop
     /// slice): a group of `k ≥ 2` original binary clauses sharing a literal
-    /// `q` — `(x_1 ∨ q), …, (x_k ∨ q)` — becomes a fresh hub variable `t`
+    /// `q` – `(x_1 ∨ q), …, (x_k ∨ q)` – becomes a fresh hub variable `t`
     /// with
     ///
-    /// * `(¬t ∨ q)` — the shared consequence, one clause, and
-    /// * `(t ∨ x_i)` — one per partner,
+    /// * `(¬t ∨ q)` – the shared consequence, one clause, and
+    /// * `(t ∨ x_i)` – one per partner,
     ///
     /// deleting the originals.  Equisatisfiability (both directions):
     /// `q` true → set `t := true` (every `(t ∨ x_i)` satisfied, `(¬t ∨ q)`
     /// by `q`); `q` false → `(¬t ∨ q)` forces `¬t`, then every `(t ∨ x_i)`
-    /// forces `x_i` — exactly what the originals forced.  Any model of the
+    /// forces `x_i` – exactly what the originals forced.  Any model of the
     /// new clauses restricted to the original variables satisfies the
     /// originals, so no reconstruction record is needed.  Unit-propagation
     /// consequences are preserved through the hub (a falsified `q` or
@@ -124,7 +124,7 @@ impl Solver {
     ///
     /// This is deliberately NOT the literal-saving rule: the rewrite adds
     /// `+1` clause and `+2` literals per group.  The return is search
-    /// structure — the hub centralizes `k` shared implications, and the
+    /// structure – the hub centralizes `k` shared implications, and the
     /// introduced clauses re-arm elimination for the partners (each `x_i`
     /// now occurs in one fewer original).  kissat runs exactly this shape
     /// (its chain/hop generalization) inside elimination rounds; its
@@ -139,7 +139,7 @@ impl Solver {
     /// (default) = per-tail hubs (one `t` per shared-tail group);
     /// `NIXIE_ANDGATE=2` = kissat's 2-chain shape: one hub per pivot PAIR
     /// across ALL its shared tails (dividers `(t∨x_1)`,`(t∨x_2)` + one
-    /// quotient `(¬t∨q)` per shared tail — `2|Q|` clauses become `|Q|+2`).
+    /// quotient `(¬t∨q)` per shared tail – `2|Q|` clauses become `|Q|+2`).
     #[cfg(feature = "std")]
     fn andgate_pair_mode(&self) -> bool {
         std::env::var("NIXIE_ANDGATE").as_deref() == Ok("2")
@@ -154,7 +154,7 @@ impl Solver {
     /// `t := true` iff all tails true satisfies the new clauses under any
     /// original model; `t := false` forces exactly the `x_i` the originals
     /// forced.  Model-downward preservation: `t` true ⇒ all `q` true;
-    /// `t` false ⇒ both `x_i` true — either way every original
+    /// `t` false ⇒ both `x_i` true – either way every original
     /// `(x_i∨q)` is satisfied.  Candidate pairs are enumerated only among
     /// the highest-degree literals (degree = co-occurrence count), so the
     /// pass stays linear-ish in the binary count instead of quadratic.
@@ -165,7 +165,7 @@ impl Solver {
         // ¬x → q in the BIG encodes binary clause (x ∨ q), so the
         // implication targets of a literal ARE its binary co-occurrences.
         // This eliminates the O(N) DB scan + HashMap inserts per round
-        // — the wall bottleneck at worker-class scale (10M+ binaries).
+        // – the wall bottleneck at worker-class scale (10M+ binaries).
         let top: usize = std::env::var("NIXIE_ANDGATE_TOP")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -243,7 +243,7 @@ impl Solver {
                 // selection, bounded approximation): cap the number of
                 // tails per introduction to limit the blast radius.
                 // The full shared-tail set (up to 344 on worker) replaces
-                // 2|Q| clauses with |Q|+2 in one step — too aggressive
+                // 2|Q| clauses with |Q|+2 in one step – too aggressive
                 // (seeds 2-4 measured 2.8-7.5x worse). kissat grows the
                 // quotient one tail at a time; we approximate by keeping
                 // the K tails with the FEWEST other commitments (lowest
@@ -256,7 +256,7 @@ impl Solver {
                 let (tails_eff, ids_eff): (Vec<u32>, Vec<u32>) =
                     if max_tails > 0 && tails.len() > max_tails {
                         // Rank tails by their BIG in-degree (how many literals
-                        // imply this tail — lower = more specific); keep the
+                        // imply this tail – lower = more specific); keep the
                         // K most specific.
                         let mut ranked: Vec<(u32, u32, usize)> = tails
                             .iter()
@@ -348,7 +348,7 @@ impl Solver {
                 let mut touched: SmallVec<[Lit; 32]> = SmallVec::new();
                 touched.extend([t, t.negate(), l1, l2]);
                 // Tombstone retirement: raw `clauses::remove` (counter
-                // update, no BIG purge / watcher removal / DRAT) — the
+                // update, no BIG purge / watcher removal / DRAT) – the
                 // caller rebuilds watches/BIG once after the whole pass.
                 // This is the performance fix for the worker-class scale:
                 // `remove_clause`'s per-clause BIG purge was the wall
@@ -434,8 +434,8 @@ impl Solver {
             }
             // One entry per partner (a duplicate binary cannot exist in
             // the deduplicated database; a partner appearing via BOTH
-            // orientations of one clause — (q∨x) counted under tail q only
-            // once — is impossible since each clause contributes exactly
+            // orientations of one clause – (q∨x) counted under tail q only
+            // once – is impossible since each clause contributes exactly
             // one partner per tail).
             partners.sort_unstable();
             candidates.push(GateCandidate {
@@ -460,7 +460,7 @@ impl Solver {
                 }
                 h
             } else {
-                // (k, tie-break on tail code) — deterministic.
+                // (k, tie-break on tail code) – deterministic.
                 ((c.partners.len() as u64) << 32) | (c.tail as u64)
             };
         }
@@ -517,7 +517,7 @@ impl Solver {
             // Retire with full hygiene: BIG-edge purge, reason re-pointing,
             // watcher removal, DRAT deletion line, and the live counters
             // (`remove_clause`, unlike the raw `retire_clause`, keeps
-            // `num_original` exact — schedules key on it).
+            // `num_original` exact – schedules key on it).
             let gids: Vec<ClauseId> = group.iter().copied().collect();
             for cid in gids {
                 self.remove_clause(cid);
@@ -737,7 +737,7 @@ impl Solver {
                 continue;
             }
             // Mid-search hygiene (a): never retire a clause the trail still
-            // records as a propagation reason — level-0 facts can carry
+            // records as a propagation reason – level-0 facts can carry
             // original-clause reasons, and conflict analysis resolving
             // against a retired clause is unsound.
             if opts.mid_search
@@ -775,8 +775,8 @@ impl Solver {
                     self.mark_elim_vars(lits.iter().copied().chain(rest.iter().copied()));
                 }
                 // Pre-search at level 0 with no reasons on untouched
-                // originals: a raw delete is exact there (no BIG edges —
-                // members are ≥3-lit — and no reasons reference a clause
+                // originals: a raw delete is exact there (no BIG edges –
+                // members are ≥3-lit – and no reasons reference a clause
                 // never yet watched).  Mid-search, reason-members were
                 // skipped above and watches are rebuilt by the caller.
                 self.clauses.remove(*cid);

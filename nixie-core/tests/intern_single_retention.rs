@@ -44,9 +44,9 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::Cell;
 use std::alloc::System;
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Counting allocator
-// ---------------------------------------------------------------------------
+// ========  ========
 
 thread_local! {
     /// Net bytes handed out to *this* thread since the counter was armed.
@@ -122,9 +122,9 @@ fn measure<T>(f: impl FnOnce() -> T) -> (T, isize) {
     (value, bytes)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The measurement
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// Number of distinct string literals interned, per run.
 const TERM_COUNT: usize = 10_000;

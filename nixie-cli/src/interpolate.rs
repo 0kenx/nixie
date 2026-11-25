@@ -702,7 +702,7 @@ mod tests {
 
         // `cargo test` runs a module's tests as threads of one process (the
         // lock above covers that world); `cargo nextest` runs EVERY test as
-        // its own process, where a static lock guards nothing — a sibling
+        // its own process, where a static lock guards nothing – a sibling
         // test process's scratch file could appear between the before and
         // after snapshots and read as a false leak. The scratch name embeds
         // the creating process's id, so the scan filters by OUR pid: other

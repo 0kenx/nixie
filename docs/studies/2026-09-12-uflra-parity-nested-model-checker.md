@@ -6,7 +6,7 @@
 **Verdict:** **Landed.** The two z3-decidable-but-`unknown` corpus files
 (`FFT/smtlib.620487`, `FFT/smtlib.620535`) now answer `unsat`, matching z3;
 parity goes 174→176 Correct (of 177; the one Inconclusive is z3-side
-`Unknown`, pre-existing). The `misc/set*` sat family remains `unknown` —
+`Unknown`, pre-existing). The `misc/set*` sat family remains `unknown` –
 diagnosis and the concrete blocker are recorded below.
 
 ## The gap
@@ -28,7 +28,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
 1. **E-matching was already correct.** The engine produced the money lemma
    `(= (f3 f4 (+ f6 (- f5 f6))) (- (f3 f4 (- f5 f6))))` in round 0. The gap
    was downstream. (It also produces junk unsubstituted-body lemmas by
-   matching patterns against the pattern term itself — pre-existing,
+   matching patterns against the pattern term itself – pre-existing,
    harmless-but-noisy; not fixed here.)
 
 2. **Compound linear UF arguments never reached the arithmetic interface**
@@ -42,7 +42,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
    arguments anyway. Isolated reproducer (both through `assert` and through
    mid-search lemma encoding): ground disequality + the spelled-out positive
    instance is `unsat` in z3, `unknown` here.
-   **Fix:** `Solver::intern_compound_uf_args_into_arith` — internalize every
+   **Fix:** `Solver::intern_compound_uf_args_into_arith` – internalize every
    compound *linear* arith-sorted UF argument reachable from the encoded
    vocabulary with its **definitional row** (`x − Σ cᵢ·tᵢ = k`, a tautology
    that only names the fresh variable, same class as the const-arg pins).
@@ -58,7 +58,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
    the entries-as-ite-chain, Z3's macro expansion), Skolemize the negation,
    and **refute it with a nested full CDCL(T) solve**. `unsat` ⇒ the
    completed model satisfies the quantifier over the whole domain (a total
-   interpretation extending the ground model — genuine `sat` evidence);
+   interpretation extending the ground model – genuine `sat` evidence);
    `sat` ⇒ mine falsifiers from the instantiation set (entry args/results +
    assigned values, Z3's `restrict_sks_to_inst_set` + `value2expr`), each
    mined binding a sound instantiation lemma. Budgets: 4096 conflicts /
@@ -74,11 +74,11 @@ layers. Fixing any proper subset leaves the file `unknown`.
    same class: the completed model's "universe" for an *interpreted* sort is
    merely a **sample** of its values; restricting the Int Skolem to it made
    `2v+1 = y` "unsat" exactly when the true falsifier `(y−1)/2` fell outside
-   the sample — false `Satisfied` on a goal the
+   the sample – false `Satisfied` on a goal the
    `mbqi_unverified_quantifier_is_not_sat` audit family guards. Both fixed:
    assignment lookups and entry tables only apply to terms **free of bound
    variables**, and the universe restriction applies **only to uninterpreted
-   sorts** (Z3 restricts under `is_finite` — finite-model semantics).
+   sorts** (Z3 restricts under `is_finite` – finite-model semantics).
 
 5. **Cost control under forced re-runs.** The nested checker is the most
    expensive tool in the box; `scope_rebase_tests`' 600-rerun convergence
@@ -91,7 +91,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
    baseline cost (68 s vs 66 s baseline) and the whole workspace suite is
    11199/11199 with zero timeouts.
 
-## What did *not* work (negative results — do not retry blind)
+## What did *not* work (negative results – do not retry blind)
 
 - **Restricted nested solving as the falsifier miner**: re-solving with the
   Skolems confined to the instantiation set (the literal Z3 recipe) produced
@@ -101,7 +101,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
   and the blocking clauses chased values the model never showed. Replaced by
   **term-level combo mining**: enumerate instantiation-set combinations and
   evaluate the completed body with the module's own evaluator (which needed
-  exact constant folding of `+`/`-`/`*`/neg — added, `mk_numeric` refuses
+  exact constant folding of `+`/`-`/`*`/neg – added, `mk_numeric` refuses
   non-representable results rather than truncating).
 
 - **Unsat-side convergence via arbitrary falsifiers**: the unrestricted
@@ -112,7 +112,7 @@ layers. Fixing any proper subset leaves the file `unknown`.
 
 ## Remaining gap: the `set9`/`set16`/`set19` sat family
 
-**Update (2026-09-13, second pass — root cause found, pinned, not fixed).**
+**Update (2026-09-13, second pass – root cause found, pinned, not fixed).**
 Five more layers were peeled; each fix below is landed and pinned, and the
 family's *engine* is now understood end to end:
 
@@ -138,14 +138,14 @@ family's *engine* is now understood end to end:
 
 4. **Nested binders of instantiation lemmas had no owner.**  An instance of
    `forall s1 s2. (forall x. ...) => subset(s1,s2)` carries the inner
-   `forall` as a free Boolean — the SAT core picks a truth value its real
+   `forall` as a free Boolean – the SAT core picks a truth value its real
    meaning need not have.  Fixed: unit-asserted lemmas register their
-   binders, **polarity-aware** — positive universals and negative
+   binders, **polarity-aware** – positive universals and negative
    existentials as universals *guarded by the binder's own literal*
    (`add_guarded_quantifier`; instances are consequences exactly when the
    binder is true), positive existentials as witness obligations.  **A
    first cut registered the guarded universals with the e-matching engine
-   too — whose emission path is unit clauses only, dropping the guard —
+   too – whose emission path is unit clauses only, dropping the guard –
    and the A2/A3 pair went false-`unsat`** (the e-matched instance
    collided with A2's witness).  Caught by the corpus diff, fixed by
    excluding e-matching for lemma binders, pinned by
@@ -153,7 +153,7 @@ family's *engine* is now understood end to end:
 
 5. **The blocker (pre-existing, assert path).**  An asserted `forall` whose
    `exists` sits in a **non-head position** (`(=> (not (subset s1 s2))
-   (exists x. ...))` — an `Implies`, not an `Exists` body) is registered
+   (exists x. ...))` – an `Implies`, not an `Exists` body) is registered
    *unskolemized* (`register_asserted_forall`'s `body_is_exists` test only
    recognizes a bare `Exists` head).  Its instances therefore carry the
    `exists` node as an opaque Boolean: the model commits
@@ -165,7 +165,7 @@ family's *engine* is now understood end to end:
    under the `forall` (`SkolemizationContext::skolemize` already does the
    NNF walk; today it is only invoked for the head-`Exists` shape).  That
    is a broad trajectory change across UFLIA/AUFLIA and needs its own
-   study with the full parity gate — not attempted in this session.
+   study with the full parity gate – not attempted in this session.
 
 Cost-control note: removing the per-quantifier lifetime cap (experimenting
 with streak-based budgets) regressed the 600-rerun convergence pins from
@@ -179,7 +179,7 @@ The earlier text (kept for the record): the completion's universe seeding,
 mined counterexample lemmas, and round budget interacted so the rounds
 exhausted before all quantifiers were simultaneously satisfied; what is
 missing relative to Z3's `smt_model_finder` is candidate else/default
-searches per function (search, verify, revise) — still true for the *else*
+searches per function (search, verify, revise) – still true for the *else*
 choices, but the primary blocker is layer 5 above.
 
 ## Third pass (2026-09-13): nested-∃ skolemization landed; a false-`sat` found, contained, and root-caused
@@ -189,48 +189,48 @@ choices, but the primary blocker is layer 5 above.
 1. **NNF-Skolemization of the witness-in-implication shape**
    (`exists_skolem::head_is_rewritable_quantifier` +
    `contains_positive_exists`): an asserted `forall` whose body carries
-   an `exists` at *definite positive polarity* — the A2 set-theory axiom
-   `(=> (not (subset s1 s2)) (exists x ...))` — is now Skolemized at
+   an `exists` at *definite positive polarity* – the A2 set-theory axiom
+   `(=> (not (subset s1 s2)) (exists x ...))` – is now Skolemized at
    assert (`forall s. (not P) => phi s (sk s)`), so its instances carry a
    *ground* witness term and the ground solver searches for the witness
    instead of committing a free Boolean.  Both-polarity positions (`ite`
    conditions, `xor`, Boolean `=`) do not trigger (their NNF negative
    copies make the `exists` a universal; Skolemizing would weaken).  The
-   minimized A2+A3 pair now answers `sat` (z3 agrees) — the first
-   set-family verdict — though the full `set16` still needs per-function
+   minimized A2+A3 pair now answers `sat` (z3 agrees) – the first
+   set-family verdict – though the full `set16` still needs per-function
    else-search to converge.
 
 2. **A pre-existing false-`sat`, found by the 200-file differential and
    root-caused through three wrong containment hypotheses.**
    `AUFLIA/20170829-Rodin/smt4688353851435564037` (`:status unsat`, z3
-   `unsat`) answered `sat` — and dozens of archived `precompile/`
+   `unsat`) answered `sat` – and dozens of archived `precompile/`
    binaries answer `sat` too, so the defect is old; the second commit's
    universe-seeding fix merely made it *reachable* again.  The chain:
 
-   - *Not* the instantiation-budget hole (that veto — budget-exhausted
-     quantifiers no longer ride along as "satisfied" — is a real
+   - *Not* the instantiation-budget hole (that veto – budget-exhausted
+     quantifiers no longer ride along as "satisfied" – is a real
      hardening, but not this instance's mechanism).
    - *Not* the empty-mining mask (the aux-`sat`-with-no-relevant-falsifier
      case now reports an empty counterexample so the caller can veto).
    - The mechanism: the **legacy finite-exhaustion `Satisfied`** certified
-     a model the completed interpretation demonstrably refutes — the
+     a model the completed interpretation demonstrably refutes – the
      nested checker finds falsifiers *inside the finite universe* at the
      very tuples the sampling evaluation claims are true (a stale-entry
      TermId lookup in `evaluate_under_model`'s path).  Fix:
-     `ModelChecker::check_veto` — a second opinion at the moment the
+     `ModelChecker::check_veto` – a second opinion at the moment the
      legacy verdict is about to be accepted, memoized per (quantifier,
      model signature), with else-search parity (the closed-world
      completion can clear it), conservative on undetermined checks
      (`unknown` costs completeness; an unvetted liar costs soundness), and
      a 32-check lifetime budget.  The gate is evaluated **last** in the
-     conjunction — evaluating it eagerly cost the 600-rerun convergence
+     conjunction – evaluating it eagerly cost the 600-rerun convergence
      pins 20x (a nested solve per round per quantifier on goals the cheap
      gates disqualify anyway; found by a per-file A/B bisect in a clean
      worktree: 55s HEAD vs 1718s mine, then 66s with the lazy ordering).
 
 3. **The closed-world else-search** (bounded, one candidate): when the
    primary completion admits a falsifier, retry with every Bool-valued
-   function's `else` forced `false` — the completion under which
+   function's `else` forced `false` – the completion under which
    membership-style axioms are vacuously satisfied off their entry tables.
    Both are total extensions of the same entries, so an `unsat` under
    either is a sound satisfaction proof.  Gated on the body actually
@@ -252,7 +252,7 @@ to a single precisely-scoped mechanism:
 
 1. **Bool-valued else is closed-world by default** (`choose_else`): the
    entry-mode heuristic flipped a Bool function's else to `true` once a
-   lemma round pushed its true entries past its false ones — every fresh
+   lemma round pushed its true entries past its false ones – every fresh
    domain point then read `member(x, s) = true`, the union/intersection
    axioms failed at *every* new candidate, and the loop diverged over the
    infinite `Real` index domain.  `false`-unless-pinned is the standard
@@ -260,14 +260,14 @@ to a single precisely-scoped mechanism:
 
 2. **Redundant entries collapse** (`fold_apply` + the entry-cap gate): the
    enumerative seeder pins the function at every fresh candidate point,
-   and pins that agree with the else are pure noise — thousands of
+   and pins that agree with the else are pure noise – thousands of
    `member(x, s) = false` entries burying the structural pins and blowing
    the ite chain past every cap.  Entries whose result equals the else
    leaf are skipped; the cap counts only chain-relevant entries.
 
 3. **The residual mechanism (next session, precisely scoped)**: the SAT
    core commits a nested-`forall` binder's guard **false** to dodge its
-   consequence — `A3[a,b] = (forall x. member(x,a) => member(x,b)) =>
+   consequence – `A3[a,b] = (forall x. member(x,a) => member(x,b)) =>
    subset(a,b)` with the antecedent vacuously true under the closed-world
    completion, so committing the binder's Boolean false is the only way
    to keep `subset(a,b)` unconstrained.  The completed model inherits the
@@ -280,7 +280,7 @@ to a single precisely-scoped mechanism:
    when the completed model proves the binder's body constantly true
    (constant-collapse) while the SAT core commits it false, exclude that
    model arrangement (block the conjunction of the commitments the lie
-   rests on) — the next model must either produce a witness or flip the
+   rests on) – the next model must either produce a witness or flip the
    Boolean.  Also: `sync_guard_commitments` marking such a guard
    `guard_inactive` (vacuously satisfied) is the loophole that lets the
    dodge stand; lemma-registered binders should not get that treatment.
@@ -289,7 +289,7 @@ to a single precisely-scoped mechanism:
 
 The fourth pass's diagnosis ("per-function else search") was one layer
 short.  The actual missing piece: **`macro_to_interpretation` built an
-*empty* interpretation** — the macro solver correctly extracts
+*empty* interpretation** – the macro solver correctly extracts
 `seteq(s1,s2) = (s1 = s2)` from its defining axiom, but the defining body
 was dropped on the floor, so the completion fell back to entries+else and
 every reflexive pin had to be seeded individually (an unbounded chase for
@@ -300,17 +300,17 @@ definitional axioms).  Landed:
    arguments and evaluates the result under the same completion (depth
    capped at 16, arity mismatch declines).  When several axioms define the
    same function (`seteq` as equality *and* as double-subset), the
-   *simplest* body wins — the conjunction macro inherits other functions'
+   *simplest* body wins – the conjunction macro inherits other functions'
    else at symbolic points and breaks the equality axiom's own check.
 
 2. **Universe-distinctness folding for uninterpreted-sort equality** in
    the evaluator: two *ground* universe representatives are unequal by
-   construction — without the fold, a mined substitution's ite-chain
+   construction – without the fold, a mined substitution's ite-chain
    conditions `(= z a)` stayed symbolic and the falsifier the aux check
    found was never mined.  The first cut folded symbolic operands too
    (the universe contains bound-variable artifact terms from entry
    arguments!), fabricating `(= ?s1 ?s2) = false` and with it a fake
-   falsifier — the groundness guard is load-bearing.
+   falsifier – the groundness guard is load-bearing.
 
 3. **`p -> p` collapses in `deep_simplify`**: the reflexive-implication
    shape the set axioms instantiate into (`A3[z,z]`'s tautological
@@ -320,7 +320,7 @@ definitional axioms).  Landed:
 
 4. **Falsifier mining iterates the finite universe** for uninterpreted
    sorts (not just the instantiation set), and the MBQI bail counts a
-   *streak* of unproductive rounds (10) instead of a flat total — a flat
+   *streak* of unproductive rounds (10) instead of a flat total – a flat
    25 taxed every re-check 2.3x on the rerun convergence pins (63s ->
    150s single-threaded); the streak restores 88s while letting
    converging goals run past round 10.
@@ -328,7 +328,7 @@ definitional axioms).  Landed:
 The set family still answers `unknown`: after all of the above, the
 residual falsifiers sit at the *universe's compound elements*
 (`union(b,a)`, ...) whose subset diagonal pins the mining emits as
-duplicates of already-instantiated pairs — the ground solver satisfies
+duplicates of already-instantiated pairs – the ground solver satisfies
 the forcing equivalence by committing the *inner* nested binder's Boolean
 false (the committed-existential dodge from pass four, now the only
 remaining mechanism).  Model repair (Z3's `add_blocking_clause`) remains
@@ -337,14 +337,14 @@ the fix.
 ## Sixth pass (2026-09-13): the dodge's emission-side root cause found; repairs built, measured, reverted
 
 **Root cause (emission side), precise:** `deep_simplify_cached` had no
-`Forall`/`Exists` arms — quantifier nodes were *opaque* to the
+`Forall`/`Exists` arms – quantifier nodes were *opaque* to the
 instantiation post-simplifier.  A tautological-antecedent instance
 (`(forall x. P(x) => P(x)) => subset(z,z)`) therefore kept its wrapper,
 and the SAT core dodged the consequence by committing the wrapper's free
 Boolean FALSE.  Descending under the binder (letting the existing
 `p -> p` collapse fire) plus collapsing constant bodies (`forall x. true
 -> true`, sound under SMT-LIB's non-empty domains) turns such instances
-into forcing units at emission — structurally removing the dodge for the
+into forcing units at emission – structurally removing the dodge for the
 tautological class.
 
 **Built and measured, then reverted:** the binder descent + constant
@@ -354,14 +354,14 @@ the universe tuples, so *other* axioms over the same function instantiate
 forcing-ly), simplest-macro preference inside `solve_macros`, and a
 productive-check refund of the per-quantifier cap.  All sound (each
 verified against the FFT/Rodin/differential screens), and each moved the
-set-family convergence one step further — q14 certifies, q18's residual
+set-family convergence one step further – q14 certifies, q18's residual
 falsifier isolates to *compound* universe elements
 (`union(b,a), union(b,a)`) whose diagonal pins the enumerative seeder can
 no longer emit (its per-quantifier budget is spent by the time the
 compound term enters the universe).
 
 **Why reverted:** the collapses change every MBQI instance's clause
-shape, which shifts the SAT trajectory — the 600-rerun convergence pins
+shape, which shifts the SAT trajectory – the 600-rerun convergence pins
 (`scope_rebase_tests`) went 88s -> 132-167s single-threaded user time
 (a 1.5-1.9x trajectory cost, not a code-path cost; bisected against
 clean HEAD in a worktree).  Per the benchmarking discipline
@@ -377,7 +377,7 @@ them needs pins the seeder's exhausted budget cannot emit.  The repair
 is Z3's `add_blocking_clause` model repair at the escalation's
 duplicate-falsifier point: block the arrangement (the falsifier's
 supporting commitments), forcing the next model to either produce the
-witness or flip — plus re-landing the binder-descent collapses with the
+witness or flip – plus re-landing the binder-descent collapses with the
 matched-null measurement.
 
 ## Verification
@@ -390,7 +390,7 @@ matched-null measurement.
   I touch; the heaviest rerun pin measured single-threaded at 74 s vs 55 s
   clean HEAD (A/B worktree bisect).
 - 200-file random differential (AUFLIA/UFLRA/UFLIA, 10 s budget): **zero
-  wrong answers** — this is the screen that caught the Rodin false-`sat`.
+  wrong answers** – this is the screen that caught the Rodin false-`sat`.
 - Fourth pass: 150-file differential zero wrong; the heaviest rerun pin
   63 s single-threaded (55 s clean HEAD); the set-family rounds now run
   their full budget productively (the flat `subset` table is reached)
@@ -400,7 +400,7 @@ matched-null measurement.
   two FFT corpus files were added to the suite
   (`benchmarks/UFLRA/fft_62048{7,5}.smt2`) so the gap stays closed.
 - Regressions: `nixie-solver/tests/uflra_quantifier_regressions.rs` (7
-  tests) — the FFT shape, the spelled-out instance (assert path), the ground
+  tests) – the FFT shape, the spelled-out instance (assert path), the ground
   congruence pair (unsat + its satisfiable twin), the false-`Satisfied`
   shape over Int, the A2/A3 alternation never-wrong pin, the vacuous-
   membership never-wrong pin, and the Rodin goal never-falsely-satisfied
@@ -408,18 +408,18 @@ matched-null measurement.
 
 ## File map
 
-- `nixie-solver/src/mbqi/model_checker.rs` — new: the Z3-style nested model
+- `nixie-solver/src/mbqi/model_checker.rs` – new: the Z3-style nested model
   checker (completion evaluator, else/ite-chain interpretation, Skolemized
   refutation, term-level falsifier mining, budgets).
-- `nixie-solver/src/mbqi/integration/mod.rs` — escalation wiring (only on a
+- `nixie-solver/src/mbqi/integration/mod.rs` – escalation wiring (only on a
   cex-empty round), satisfaction accounting (`satisfied_by_checker` exempt
   from the finite-exhaustion gate), logic hint.
-- `nixie-solver/src/mbqi/model_completion.rs` — the universe-seeding gate
+- `nixie-solver/src/mbqi/model_completion.rs` – the universe-seeding gate
   counts function-entry arguments/results as domain evidence.
-- `nixie-solver/src/solver/mod.rs` — `intern_compound_uf_args_into_arith`
+- `nixie-solver/src/solver/mod.rs` – `intern_compound_uf_args_into_arith`
   (layer 2 repair; initial site + MBQI round boundary; memoized,
   push/pop-invalidated), `register_unit_lemma_quantifiers` +
   `register_lemma_binder` (polarity-aware, guarded, e-matching-excluded
   nested-binder registration), `collect_apply_args` helper.
-- `nixie-solver/src/solver/config.rs` — `set_logic` forwards the logic hint.
-- `nixie-solver/src/solver/trail.rs` — the new fields' scope invariants.
+- `nixie-solver/src/solver/config.rs` – `set_logic` forwards the logic hint.
+- `nixie-solver/src/solver/trail.rs` – the new fields' scope invariants.

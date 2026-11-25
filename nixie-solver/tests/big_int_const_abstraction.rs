@@ -179,7 +179,7 @@ fn big_const_scope_round_trip() {
 /// The certifier's ground path used to decline any goal carrying a
 /// `RealConst` literal (`harvest`'s vocabulary had no arm for it), so every
 /// mixed LIRA instance with a wide constant answered `unknown` on the `sat`
-/// side however good its model — the gap survey's biggest single
+/// side however good its model – the gap survey's biggest single
 /// certification class (16 of 156 members, seeds 20261000–02).  The widened
 /// ground path evaluates `Int` promoted to `BigRational`, exactly: `xr = 0`
 /// satisfies `xr/2 < 3/4` and `xi = 0` satisfies `xi + 2^63 > 0` under the

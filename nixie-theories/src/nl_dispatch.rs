@@ -2,7 +2,7 @@
 //!
 //! The four ground-search drivers (`nl_model_search`, `ania_ground`,
 //! `nia_cdcl`, `nl_dpll`) and the CDCL(T) fallback paths all speak this
-//! vocabulary, and they stay compiled in the no-`nlsat` build — only the
+//! vocabulary, and they stay compiled in the no-`nlsat` build – only the
 //! cell-decomposition core (`nlsat`, and the `nixie-nlsat` crate behind it) is
 //! feature-gated. Splitting the vocabulary out is what lets the OFF build keep
 //! answering QF_NIA nonlinear goals the searches can decide, exactly as
@@ -23,13 +23,13 @@ pub struct NlSatModel {
     /// see `nl_witness`).
     pub assignments: HashMap<TermId, BigRational>,
     /// Exact values (`root-obj` form) for EVERY variable of the problem,
-    /// populated only when at least one of them is irrational — then
+    /// populated only when at least one of them is irrational – then
     /// `assignments` is left empty. (Upstream v0.3.3.)
     pub algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
     /// TermId → Boolean value for every Boolean variable the search DECIDED:
     /// the free-Boolean case-split choices, and the grounded definition
     /// Booleans (`(= b φ)` conjuncts whose variable the grounding substituted
-    /// away — their value is `φ` under the numeric witness, NOT whatever a
+    /// away – their value is `φ` under the numeric witness, NOT whatever a
     /// model printer would default an unpinned Boolean to).  Empty on the
     /// algebraic channel.  A witness that omits these is not a model of the
     /// original formula even when every numeric value is right (the

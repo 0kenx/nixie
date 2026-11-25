@@ -10,30 +10,30 @@ QF_LIA 32/60, zero disagreements**.  Two subsequent re-run attempts were
 **load-contaminated and discarded** (never committed):
 
 - the BV-extract session's run (load 26–35; z3 itself dropped four
-  cells — recorded in that study),
+  cells – recorded in that study),
 - this session's run (load 7 → 43 mid-run): `bench_11463` (6.5 s calm)
-  and `bench_16217` (9.9 s calm) timed out at 10.07/10.19 s — exactly
-  the wall-watch readout's flagged fragile cells — and z3 lost
+  and `bench_16217` (9.9 s calm) timed out at 10.07/10.19 s – exactly
+  the wall-watch readout's flagged fragile cells – and z3 lost
   `bench_13079`.  Per-cell diff confirmed load-shape; the file was
   reverted.
 
 **The aggregate measurement stays pending a calm window** (load ≤ ~8
 sustained for 25 min).  What it will measure when it runs: the extract
 rules + gcd kernels + the SAT-core/graph/ctx_simplify landings +
-item 96's flag-gated channel (off by default — the table measures
+item 96's flag-gated channel (off by default – the table measures
 defaults).
 
 ## Deterministic signals from the (discarded) run
 
-- **Zero disagreements** at every attempt — the soundness canary held
+- **Zero disagreements** at every attempt – the soundness canary held
   under all landings.
 - QF_LIA solved-count stable at 32/60 across all three runs; the
   aggregate conflict counter moved 4 224 → 5 517 (the compounded
-  trajectory drift of many agents' semantics-inert landings —
+  trajectory drift of many agents' semantics-inert landings –
   gate-verified individually; the counter level is the nixie-vs-nixie
   datum to re-baseline at the next calm snapshot).
 - The CAV probes with item 96's channel flag
-  (`NIXIE_LIA_BRANCH_LEMMA=1`): still timeout — consistent with the
+  (`NIXIE_LIA_BRANCH_LEMMA=1`): still timeout – consistent with the
   pivot-storm addendum's finding that the per-LP churn (not the tree)
   gates that family; the Bareiss/row-denominator layer remains the
   prerequisite.
@@ -41,7 +41,7 @@ defaults).
 ## Standing fragile cells (unchanged from the wall-watch readout)
 
 `bench_16217` (9.9 s) and `bench_11463` (6.5 s) sit within 1.6× of the
-10 s cap — every loaded table run will bounce them.  The tactic-cascade
+10 s cap – every loaded table run will bounce them.  The tactic-cascade
 route (solve-eqs over the SAGE concat definitions) owns the former;
 SAT-core capacity the latter.
 
@@ -53,12 +53,12 @@ BVE landing):
 
 - **Load-robust signals (consistent across all three):** QF_LIA solved
   **33/60** held, zero disagreements, and **conflicts 4502 → 3209**
-  (−1293: the branch channel's effect on the standing slice —
+  (−1293: the branch channel's effect on the standing slice –
   consistent with the rung-3 campaign's 42 recoveries).  QF_BV 52-54/60
   vs z3 52-54 (the at-cap cells bouncing with load; z3's own set moves
-  too — no nixie-attributable change).
+  too – no nixie-attributable change).
 - **Walls untrusted in all three:** one run rode a concurrent
-  symbolized build (my mistake — median nixie/z3 1.88 against every
+  symbolized build (my mistake – median nixie/z3 1.88 against every
   calm measurement's ~0.52; discarded), two rode other agents'
   campaigns at load 10-83 (medians 2.03/2.67, z3's own geomean
   inflated ~1.7×; discarded per the discipline).  The standing wall
@@ -66,18 +66,18 @@ BVE landing):
   results file): LIA par2 9088, median 0.52, geomean comparison only
   against same-load pairs.
 - The 45-vars churn probe (`problem__022`) still produces no verdict at
-  30 s — the pivot VOLUME (internal B&B) is unchanged, as mapped; a
+  30 s – the pivot VOLUME (internal B&B) is unchanged, as mapped; a
   fresh symbolized profile of it is in the Bareiss study's addendum
   (the follow-up question resolved negative, ≤2 %).
 
-## 2026-09-21 (midday): the combined-tree calm snapshot — three discarded legs, one splice
+## 2026-09-21 (midday): the combined-tree calm snapshot – three discarded legs, one splice
 
 - 12:40 full run: LIA leg clean (load 4.9–8.3; 33/60, dis 0, conflicts
-  4502 — counter-stable with the campaign snapshot); **BV leg
+  4502 – counter-stable with the campaign snapshot); **BV leg
   contaminated** (load crept 10.8→26.9 from 12:45; z3 dropped to
-  52/60, nixie 53 — both below their calm levels).  BV leg discarded.
+  52/60, nixie 53 – both below their calm levels).  BV leg discarded.
 - 12:56 full run: the LIA leg itself rode load up to 15 (geomean 359.8
-  vs the clean 231.1, median 0.83 vs 0.56 — both solvers slowed);
+  vs the clean 231.1, median 0.83 vs 0.56 – both solvers slowed);
   whole run discarded.
 - 13:29 BV-only leg (the deterministic slice re-run alone): clean
   (load 7.2–8.2), spliced with the 12:40 LIA leg into the committed
@@ -87,16 +87,16 @@ BVE landing):
   today; a full 8-min two-leg window never held, a 3-min single-leg
   window did.  A `for family in QF_BV` copy of `run_perf.sh` placed in
   `bench/smt_perf/` (same SCRIPT_DIR depth) re-runs one leg on the
-  identical slice — the splice vehicle.
+  identical slice – the splice vehicle.
 
 ## 2026-09-21 (early afternoon): LIA leg reproduces at true calm; the at-cap conflict-total caveat
 
 At sustained load ~7 (the first true-calm window of the day): QF_LIA
-**33/60, par2 9100, both-solved median 0.52-0.55, 0 disagreements** —
+**33/60, par2 9100, both-solved median 0.52-0.55, 0 disagreements** –
 the campaign snapshot's numbers reproduce exactly.  Note on the
-conflict TOTAL: 4502 here vs the morning's 3209 — the total is
+conflict TOTAL: 4502 here vs the morning's 3209 – the total is
 load-sensitive through WHICH at-cap cells complete (a ~1300-conflict
 cell in the ~9 s band bounces); per-cell counters are the reliable
 datum, totals only at identical completion sets.  The BV leg ran into
-a mid-run load spike (69; z3's own solved set dropped 54→52 — the
+a mid-run load spike (69; z3's own solved set dropped 54→52 – the
 contamination canary); discarded, full re-run pending the next window.

@@ -2,7 +2,7 @@
 //!
 //! [`Solver::model_refutes_assertions`] is the last gate before a `Sat` leaves
 //! the ground branch of `check_core`.  When it fires, the candidate assignment
-//! on the table is not a model of the assertions — but *the search was not
+//! on the table is not a model of the assertions – but *the search was not
 //! finished*, and the formula may well have other models the CDCL(T) core
 //! would have reached had it been asked to keep going.  Conceding `Unknown` on
 //! the first unlucky candidate turned every single one into a lost `sat`.
@@ -10,16 +10,16 @@
 //! This module supplies the missing step: **exclude that one assignment and
 //! re-solve**, up to the configured round budget.
 //!
-//! # A search restriction, not a lemma — and why that distinction is the
+//! # A search restriction, not a lemma – and why that distinction is the
 //! whole soundness argument
 //!
 //! A blocking clause here is emphatically **not** a consequence of the
 //! assertions.  The gate fires on two different things (see
 //! [`super::model_eval::EvalOutcome`]):
 //!
-//! * `Value(Bool(false))` — the model genuinely falsifies an assertion.  A
+//! * `Value(Bool(false))` – the model genuinely falsifies an assertion.  A
 //!   clause excluding it *would* be entailed.
-//! * `Unrepresentable` — the *evaluator's* fixed-width `Rational64` arithmetic
+//! * `Unrepresentable` – the *evaluator's* fixed-width `Rational64` arithmetic
 //!   could not represent an intermediate result.  That is a statement about
 //!   the evaluator, not about the assignment: the assignment may be a
 //!   perfectly good model that this particular checker cannot certify.  A
@@ -28,13 +28,13 @@
 //! Because the second trigger exists, the clauses this module adds are treated
 //! as a *restriction of the search space*, not as knowledge:
 //!
-//! * A `Sat` found afterwards is still a real `Sat` — it is a surviving
+//! * A `Sat` found afterwards is still a real `Sat` – it is a surviving
 //!   assignment, re-verified by the same gate, and a restricted search can
 //!   only ever return genuine models of the unrestricted problem.
 //! * An `Unsat` found afterwards means "no model outside the excluded region",
 //!   which is **not** `unsat`.  While [`Solver::model_blocking_active`] is
 //!   nonzero, every SAT-core-derived `Unsat` is therefore surfaced as
-//!   [`SolverResult::Unknown`] with no unsat core — see
+//!   [`SolverResult::Unknown`] with no unsat core – see
 //!   [`Solver::blocking_clauses_present`].
 //!
 //! The verdict lattice this produces is `Unknown -> {Sat, Unknown}`: the
@@ -43,13 +43,13 @@
 //!
 //! (This replaces this fork's earlier inline `block_current_model`, which
 //! negated the *decision path* but never downgraded a later `Unsat` over its
-//! own clauses — the restriction-vs-lemma distinction above is exactly what
+//! own clauses – the restriction-vs-lemma distinction above is exactly what
 //! that mechanism was missing.)
 //!
 //! # Two opposite-direction "drop a literal" rules
 //!
-//! 1. **MBQI's all-or-nothing reason clause** turns a *reason* — a set of
-//!    terms whose conjunction the quantifier refutes — into a blocking
+//! 1. **MBQI's all-or-nothing reason clause** turns a *reason* – a set of
+//!    terms whose conjunction the quantifier refutes – into a blocking
 //!    clause.  Dropping a reason term that names no SAT literal there does
 //!    not weaken the clause, it **strengthens** it into a claim the reason
 //!    never made.
@@ -57,7 +57,7 @@
 //! 2. **Here the clause is a projection, not a reason.**  Its meaning is "not
 //!    exactly this assignment (restricted to the mapped variables)", and a
 //!    projection onto fewer variables is a *stronger* restriction that
-//!    excludes a superset of assignments — sound in this direction precisely
+//!    excludes a superset of assignments – sound in this direction precisely
 //!    because the clause is a search restriction whose `Unsat` is already
 //!    downgraded.  What is *not* acceptable is projecting onto **nothing**:
 //!    an empty clause is the false clause.  An empty projection **declines**
@@ -77,8 +77,8 @@
 //! [`super::trail::ContextState`] so it is restored in lockstep.
 //!
 //! (Ported from upstream v0.3.3.  Adaptation: this fork removed the
-//! wall-clock refinement ceiling on principle — "an overall unaffordable
-//! search is the user's `timeout_ms`'s business" — so the round budget is the
+//! wall-clock refinement ceiling on principle – "an overall unaffordable
+//! search is the user's `timeout_ms`'s business" – so the round budget is the
 //! only bound here, with no `affordable` gate.)
 
 use nixie_sat::{LBool, Lit, Var};
@@ -126,7 +126,7 @@ impl Solver {
             match self.sat.model_value(var) {
                 LBool::True => lits.push(Lit::neg(var)),
                 LBool::False => lits.push(Lit::pos(var)),
-                // Deliberately dropped, never guessed — see the module header.
+                // Deliberately dropped, never guessed – see the module header.
                 LBool::Undef => {}
             }
         }
@@ -136,7 +136,7 @@ impl Solver {
     /// Exclude the candidate assignment currently on the SAT trail.
     ///
     /// Returns `true` when a blocking clause was added (the caller owes a
-    /// theory rebase and a re-solve) and `false` when this module declines —
+    /// theory rebase and a re-solve) and `false` when this module declines –
     /// the feature is off, the round budget is spent, or the assignment
     /// projects onto no mapped variable at all.  On `false` the solver is
     /// left exactly as it was found.
@@ -144,7 +144,7 @@ impl Solver {
     /// # Why `add_clause` returning `false` still counts as blocked
     ///
     /// `false` from [`nixie_sat::Solver::add_clause`] means the clause was
-    /// refused as an unconditional (level-0) conflict — the SAT core is now
+    /// refused as an unconditional (level-0) conflict – the SAT core is now
     /// trivially unsat.  That is still a *successful* restriction of the
     /// search space, and the counter has already been bumped, so the next
     /// solve reports `Unsat` and [`Self::blocking_clauses_present`]
@@ -178,7 +178,7 @@ impl Solver {
     /// `add_clause` left the SAT core at the refuted candidate's trail, and
     /// the incremental theory solvers still hold that candidate's facts (only
     /// level-scoped `pop` is available, no surgical undo), so the next round
-    /// must be driven from a rebased state — exactly as the case-split and
+    /// must be driven from a rebased state – exactly as the case-split and
     /// array-axiom repair paths do.
     pub(super) fn block_refuted_model_and_rebase(&mut self) -> bool {
         if !self.block_refuted_model() {

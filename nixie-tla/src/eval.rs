@@ -2,8 +2,8 @@
 //!
 //! # What this is for
 //!
-//! It is the semantic half of validation. Structural checks — SANY parity,
-//! level parity, lowering coverage — cannot tell a correct lowering from a
+//! It is the semantic half of validation. Structural checks – SANY parity,
+//! level parity, lowering coverage – cannot tell a correct lowering from a
 //! well-formed wrong one. Evaluating a lowered term and comparing the answer
 //! against TLC's can.
 //!
@@ -11,7 +11,7 @@
 //!
 //! Ground, finite terms: no free variables, no `'`, and every set it has to
 //! enumerate must be finite and small. Anything else returns an error naming
-//! the reason rather than a value — an evaluator that guesses is worse than no
+//! the reason rather than a value – an evaluator that guesses is worse than no
 //! evaluator, because the differential would then be comparing two guesses.
 //!
 //! `CHOOSE` is deliberately **not** evaluated. TLA+ says only that it picks
@@ -155,7 +155,7 @@ impl Evaluator {
     /// Evaluate an **action** between two states.
     ///
     /// `Next` is of this shape. An unprimed name reads `state`, and a name
-    /// under a `'` reads `next` — which is what `'` means in TLA+: not a
+    /// under a `'` reads `next` – which is what `'` means in TLA+: not a
     /// different variable, but the *same* expression evaluated in the
     /// successor state.
     ///
@@ -205,7 +205,7 @@ impl Evaluator {
             // value before the step.
             //
             // A binder's variable is not in the successor map, so it falls
-            // through — and cannot collide with a state variable's name
+            // through – and cannot collide with a state variable's name
             // either, because lowering renames every binder uniquely. A
             // `CONSTANT` falls through for the same reason and is unchanged by
             // the step, which is what a constant is.
@@ -241,7 +241,7 @@ impl Evaluator {
             Kera::Opaque(n, args) if n.as_str() == "FunAsSeq" && args.len() == 2 => {
                 // The cast, as the replay oracle reads it: the function's
                 // `1..len` prefix as a sequence value. `len` beyond the
-                // function's domain reads an undefined position — refused,
+                // function's domain reads an undefined position – refused,
                 // not defaulted, the same honesty the encoding applies.
                 let func = self.go(&args[0], env)?;
                 let len = self.go(&args[1], env)?;
@@ -268,14 +268,14 @@ impl Evaluator {
                 }
                 standard_operator(n.as_str(), &vals)
             }
-            // `CHOOSE x \\in S : P` — deterministic here, as the *replay*
+            // `CHOOSE x \\in S : P` – deterministic here, as the *replay*
             // oracle needs it to be. TLA+ leaves the element unspecified but
             // fixed; this evaluator fixes it as the smallest member of the
             // filter in `Value`'s order, which is one legitimate reading and
             // is stable across runs (a hash-ordered choice would make the
             // differential corpus nondeterministic). The encoding is free to
-            // pick a different member — congruence only forces *equal filters
-            // to equal values* — so a trace whose replay hinges on which
+            // pick a different member – congruence only forces *equal filters
+            // to equal values* – so a trace whose replay hinges on which
             // member was picked still fails replay honestly.
             Kera::Choose { var, set, body } => {
                 let all: Vec<Value> = self.set_of(set, env)?.into_iter().collect();
@@ -347,7 +347,7 @@ impl Evaluator {
             // `x \in Nat` is decidable even though `Nat` is not a value this
             // evaluator can build. The standard infinite sets have no finite
             // extension, so they are answered by the *kind* of the value
-            // rather than by membership in a set — which is the only thing
+            // rather than by membership in a set – which is the only thing
             // they are ever used for in a state predicate, and the whole
             // reason a specification may say `x \in Nat` at all.
             //
@@ -370,15 +370,15 @@ impl Evaluator {
                     _ => false,
                 }))
             }
-            // `f \in [S -> T]` is answered structurally — the domain is `S`
-            // and every value on it is in `T` — because the function set
+            // `f \in [S -> T]` is answered structurally – the domain is `S`
+            // and every value on it is in `T` – because the function set
             // itself is not a value this evaluator can build, and enumerating
             // one would be both impossible and unnecessary. This mirrors the
             // encoder's `FunSet` membership arm exactly, which is the point:
             // the encoder and the replay must agree on what the predicate
             // *says*, or every trace through one reads as a counterexample to
             // the other.
-            // `s \in Seq(S)`, pointwise — the mirror of the encoder's arm,
+            // `s \in Seq(S)`, pointwise – the mirror of the encoder's arm,
             // so a trace the encoder found replays. `Seq` is not a value
             // this evaluator can build either; the elements are the whole
             // question, and a literal tuple's elements are right there.
@@ -547,7 +547,7 @@ impl Evaluator {
             //
             // It terminates because each round either defines a new point or
             // stops, and there are finitely many points. A definition that is
-            // not well founded — `f[x] == f[x] + 1` — defines nothing, and is
+            // not well founded – `f[x] == f[x] + 1` – defines nothing, and is
             // reported rather than looped on.
             Kera::RecFun {
                 name,
@@ -707,7 +707,7 @@ impl Evaluator {
                         // The unsafe read on the wrong tag: TLA+ leaves the
                         // value unspecified and Apalache returns "some value"
                         // of the payload type. The evaluator refuses rather
-                        // than inventing one — a replay that hinges on an
+                        // than inventing one – a replay that hinges on an
                         // invented value is not a replay.
                         Err(EvalErrorKind::Unsupported(
                             "`VariantGetUnsafe` on the wrong tag (the value is unspecified)".into(),
@@ -937,7 +937,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
     }
 
     match (name, args.len()) {
-        // ---- Sequences ----
+        // ======== Sequences ========
         ("Len", 1) => Ok(Value::Int(as_seq(arg(0)?)?.len() as i128)),
         ("Head", 1) => as_seq(arg(0)?)?
             .first()
@@ -981,7 +981,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
             }
         }
 
-        // ---- FiniteSets ----
+        // ======== FiniteSets ========
         ("Cardinality", 1) => match arg(0)? {
             Value::Set(s) => Ok(Value::Int(s.len() as i128)),
             other => Err(EvalErrorKind::Type {
@@ -991,12 +991,12 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
         },
         ("IsFiniteSet", 1) => Ok(Value::Bool(matches!(arg(0)?, Value::Set(_)))),
 
-        // ---- Bags ----
+        // ======== Bags ========
         // The standard module's own representation is normative here: a bag
         // IS a function whose range is the positive naturals (`Bags.tla`),
         // so every operator below is the module's definition evaluated over
         // `Value`'s function shapes (`Fun`, and the tuple/record functions).
-        // Nothing introduces a separate bag value — two equal functions are
+        // Nothing introduces a separate bag value – two equal functions are
         // the same bag, and the probe comparison against TLC depends on
         // exactly that.
         ("IsABag", 1) => Ok(Value::Bool(match arg(0)? {
@@ -1016,7 +1016,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
                     found: f.kind().into(),
                 });
             };
-            // `BagToSet(B) == DOMAIN B` — the domain, exactly; a non-bag
+            // `BagToSet(B) == DOMAIN B` – the domain, exactly; a non-bag
             // function's zero-valued entries are in its domain too.
             Ok(Value::Set(entries.into_iter().map(|(k, _)| k).collect()))
         }
@@ -1086,7 +1086,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
             Ok(Value::fun(merged))
         }
         // `B1 (-) B2`: subtract per element, then keep only the positive
-        // entries — the definition's `{d \in DOMAIN B : B[d] > 0}` filter.
+        // entries – the definition's `{d \in DOMAIN B : B[d] > 0}` filter.
         ("\\ominus", 2) => {
             let (a, b) = (arg(0)?, arg(1)?);
             let (Some(ea), Some(eb)) = (Value::function_entries(a), Value::function_entries(b))
@@ -1185,7 +1185,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
             }
             Ok(Value::Int(total))
         }
-        // `SubBag(B)`: the set of all subbags — every choice of a positive
+        // `SubBag(B)`: the set of all subbags – every choice of a positive
         // multiplicity per element of every subset of the domain. The
         // product is bounded by the evaluator's set-size limit like any
         // other enumeration.
@@ -1208,7 +1208,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
                 let copies = usize::try_from(n).unwrap_or(0).min(i128::MAX as usize);
                 let mut next = Vec::with_capacity(bags.len() * (copies + 1));
                 for bag in &bags {
-                    // The accumulator's spelling may be the tuple function —
+                    // The accumulator's spelling may be the tuple function –
                     // read it through the function view and rebuild through
                     // the normalising constructor, like every other arm.
                     let m: BTreeMap<Value, Value> = Value::function_entries(bag)
@@ -1226,7 +1226,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
             Ok(Value::Set(bags.into_iter().collect()))
         }
 
-        // ---- TLC ----
+        // ======== TLC ========
         // `d :> e` is the one-element function, `f @@ g` merges two with the
         // left winning on a shared key.
         (":>", 2) => {
@@ -1293,7 +1293,7 @@ fn arith(op: ArithOp, x: i128, y: i128) -> Result<Value> {
         // TLA+ defines `\div` and `%` only for a *positive* divisor: `a % b`
         // is required to lie in `0 .. b-1`, which says nothing when `b < 0`.
         // Rust's `/` and `%` truncate towards zero, which is not the TLA+
-        // answer even when `b > 0`, so `div_euclid` / `rem_euclid` are used —
+        // answer even when `b > 0`, so `div_euclid` / `rem_euclid` are used –
         // and a non-positive divisor is declined rather than guessed at.
         ArithOp::Div => {
             if y <= 0 {
@@ -1412,7 +1412,7 @@ fn update(base: Value, at: Value, to: Value) -> Result<Value> {
 ///
 /// The standard infinite sets are answered by the value's kind (exactly as
 /// the `\in` arm above does); everything else by the ordinary set-of walk.
-/// This exists so a structural rewrite — `f \in [S -> T]`'s pointwise half —
+/// This exists so a structural rewrite – `f \in [S -> T]`'s pointwise half –
 /// can test a *value* it already holds rather than re-wrapping it in a term.
 fn value_in_set(
     this: &mut Evaluator,

@@ -55,7 +55,7 @@ fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize, wide: bool) -> Vec
     }
     while f.len() < nclauses {
         // Capacity note: a tautology-free clause over `nvars` variables
-        // holds at most `nvars` literals (one polarity per variable) —
+        // holds at most `nvars` literals (one polarity per variable) –
         // clamp the target length or the rejection loop below never
         // terminates for `len > nvars` (the original generator bug).
         let len = (2 + (rand(seed) as usize) % (if wide { 5 } else { 3 })).min(nvars);
@@ -135,8 +135,8 @@ fn gate_cfg(interval: u64, null: bool) -> SolverConfig {
     }
 }
 
-/// Hub generator: binaries sharing a common tail literal — the AND-gate
-/// pattern — plus the spine/random body.
+/// Hub generator: binaries sharing a common tail literal – the AND-gate
+/// pattern – plus the spine/random body.
 fn gen_hub_formula(seed: &mut u64, nvars: usize) -> Vec<Vec<i32>> {
     let mut f = Vec::new();
     let hubs = 2 + (rand(seed) as usize) % 3;
@@ -181,7 +181,7 @@ fn gen_hub_formula(seed: &mut u64, nvars: usize) -> Vec<Vec<i32>> {
 /// AND-gate factoring differential soundness: hub-dense formulas force
 /// introductions mid-search; verdicts must agree with the off arm and SAT
 /// models must satisfy the ORIGINAL clauses (the rewrite is
-/// model-preserving downward — see `solver/bva.rs`).
+/// model-preserving downward – see `solver/bva.rs`).
 #[test]
 fn mid_andgate_differential_soundness() {
     let mut seed: u64 = 0xB4A1_2029;
@@ -398,7 +398,7 @@ fn mid_bva_null_arm_soundness() {
 
 /// The encoding's level-0-units path: an introduced `(G ∨ t)` whose `G` is
 /// fully false at level 0 must force `t` and then each `U_i`, exactly as
-/// the retired originals did — and a formula that the originals falsify at
+/// the retired originals did – and a formula that the originals falsify at
 /// level 0 must answer Unsat (not Sat) with the pass on.  Group shape:
 /// k = 4 clauses over G = {a, b} (saving = (4−1)·2 − 5 = 1 > 0).
 #[test]
@@ -415,7 +415,7 @@ fn mid_bva_falsified_group_stays_unsat() {
     assert_eq!(r_on, SolverResult::Unsat, "mid-BVA must not flip Unsat→Sat");
 }
 
-/// Pigeonhole with a tiny interval and mid-BVA on must stay Unsat — the
+/// Pigeonhole with a tiny interval and mid-BVA on must stay Unsat – the
 /// pass runs every conflict and must never break the refutation
 /// (companion to `pigeonhole_inprocessing_interval_1_stays_unsat`).
 /// Pigeons > holes is the unsatisfiable direction.

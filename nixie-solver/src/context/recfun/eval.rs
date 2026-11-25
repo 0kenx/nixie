@@ -26,7 +26,7 @@
 //!   which is answered `None` (uncertified) rather than followed.
 //! * **Two finite budgets.** [`EVAL_BUDGET`] bounds evaluation steps and
 //!   [`MAX_EVAL_APPS`] bounds distinct application evaluations, so a definition
-//!   that diverges *without* repeating a key — `loop(x) = loop(x + 1)` — still
+//!   that diverges *without* repeating a key – `loop(x) = loop(x + 1)` – still
 //!   stops.
 //!
 //! Failing to certify is never a wrong answer: it only costs the round its
@@ -51,8 +51,8 @@ const EVAL_BUDGET: u64 = 200_000;
 /// `loop(x) = loop(x + 1)`, where every unfolding produces a fresh key and no
 /// re-entry is ever detected.
 ///
-/// Sized for the recursion depths a real definition reaches — a `fact`/`fib`
-/// certification needs one evaluation per distinct argument — while keeping the
+/// Sized for the recursion depths a real definition reaches – a `fact`/`fib`
+/// certification needs one evaluation per distinct argument – while keeping the
 /// cost of *failing* to certify bounded: the whole schedule re-attempts the
 /// certification once per fuel round, so a budget an order of magnitude larger
 /// buys nothing and makes an honest `unknown` take an order of magnitude longer
@@ -117,7 +117,7 @@ enum Task {
 /// reduced to an actual value. If the model leaves an application unevaluated
 /// and the evaluator returns the same unevaluated term, the two `TermId`s are
 /// *equal* and would falsely certify. (`utils::stats::is_ground` is not this
-/// check — `(+ 1 2)` is ground and is not a value.)
+/// check – `(+ 1 2)` is ground and is not a value.)
 fn is_value(manager: &TermManager, term: TermId) -> bool {
     matches!(
         manager.get(term).map(|t| &t.kind),
@@ -181,7 +181,7 @@ impl Context {
                 // The re-computation did not finish, so the model was neither
                 // confirmed nor refuted, and the partial values the evaluator
                 // did reach came from a chain it abandoned. Reporting them as
-                // *learned* would be sound but useless — they are the divergent
+                // *learned* would be sound but useless – they are the divergent
                 // tail, not the disagreement.
                 return Certification::Inconclusive;
             };

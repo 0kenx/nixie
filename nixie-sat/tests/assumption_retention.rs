@@ -179,7 +179,7 @@ fn repeated_calls_on_one_solver_agree_with_a_fresh_solver() {
     }
 }
 
-/// Clauses added *between* calls, over fresh variables and old ones alike —
+/// Clauses added *between* calls, over fresh variables and old ones alike –
 /// the pattern of a core-guided MaxSAT loop (`nixie-opt`'s PMRES relaxes each
 /// core with fresh selector and blocking variables and calls again).  Every
 /// answer must agree with a fresh solver given the same clauses and the
@@ -234,7 +234,7 @@ fn clauses_added_between_calls_keep_every_answer_right() {
 ///
 /// The core walk keyed assumptions by variable, so the failed `¬x` (added to
 /// the core first) shadowed the `x` decided before it and the core came back
-/// `{¬x}` — satisfiable on its own, and a false explanation for a caller that
+/// `{¬x}` – satisfiable on its own, and a false explanation for a caller that
 /// turns cores into conflict clauses (found by `nixie-theories`'
 /// `bv_root_scoped_definitions` differential test, where `a <u b` and
 /// `a >=u b` assert the same comparison gate in both polarities).

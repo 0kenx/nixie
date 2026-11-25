@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 /// A subtree's Boolean-atom set (see
 /// [`crate::ast::manager::query::simplify`]'s `subtree_bool_atoms`):
 /// sorted ascending by `TermId.0`.  Membership is a binary search and
-/// unions are two-pointer merges — no hashing anywhere in the
+/// unions are two-pointer merges – no hashing anywhere in the
 /// construction.  Shared through `Arc` in the manager-level
 /// `subtree_atom_cache` (cross-assertion reuse; see its field doc).
 pub(crate) type AtomSet = SmallVec<[TermId; 4]>;
@@ -100,7 +100,7 @@ pub struct TermManager {
     /// `hash_term_key` value of term `i`'s `(kind, sort)`.  Append-only and
     /// written exactly once per term (next to the single `terms.push`), so it
     /// is consistent by construction.  The hashcons probe compares this 8-byte
-    /// entry before loading the full `Term` from the arena — the dominant
+    /// entry before loading the full `Term` from the arena – the dominant
     /// per-candidate cost of parsing large inputs (scan #3 item #2b).
     pub(super) hashes: Vec<u64>,
     /// True constant
@@ -116,14 +116,14 @@ pub struct TermManager {
     /// append-only arena; `gc` only prunes the intern table), so entries
     /// are valid for the manager's whole lifetime.  Without it, the ctx
     /// walk re-solves the same `(ite, value)` pair under every split
-    /// path and the bottom-up/ctx pair re-solves each other's output —
+    /// path and the bottom-up/ctx pair re-solves each other's output –
     /// the interning flood that hung the large nec-smt members' walks.
     pub(super) eq_solve_cache: FxHashMap<(TermId, TermId), Option<TermId>>,
     /// Memo for [`crate::ast::manager::builder`]'s `bvmul` AC
     /// canonicalization: the canonical chain id of a (canonical-pair
     /// ordered) input pair.  A pure function of immutable terms (valid
     /// for the manager's lifetime, ids never reused), so shared meganode
-    /// chains pay the flatten+sort+fold once — the substitution fixpoints
+    /// chains pay the flatten+sort+fold once – the substitution fixpoints
     /// rebuild the same chains millions of times.
     pub(super) ac_mul_cache: std::cell::RefCell<FxHashMap<(TermId, TermId), TermId>>,
     /// Memo for [`crate::tactic::quantifier::predicates::contains_quantifier`]:
@@ -134,10 +134,10 @@ pub struct TermManager {
     /// (a found quantifier aborts the walk early, so the visited prefix
     /// is not all quantifier-free); every *sub*term of a quantifier-free
     /// root is quantifier-free, so one walk populates the whole DAG. The
-    /// pipeline asks this per assertion at several stages — without the
+    /// pipeline asks this per assertion at several stages – without the
     /// memo each call re-walks the assertion DAG with a fresh visited set.
     /// `RefCell` because the queries arrive through `&TermManager` (the
-    /// manager is not `Sync` — its interner is single-threaded — so plain
+    /// manager is not `Sync` – its interner is single-threaded – so plain
     /// interior mutability is sound here).
     pub(super) quantifier_free_cache: std::cell::RefCell<FxHashSet<TermId>>,
     /// Same shape as `quantifier_free_cache`, for set/bag-sortedness (see
@@ -227,7 +227,7 @@ impl TermManager {
     /// Create a new term manager presized for `expected_terms` interned
     /// terms. Purely an allocation hint: the tables grow identically from
     /// any starting capacity, so answers and TermIds are the same as from
-    /// [`TermManager::new`] — but goals that will intern tens of thousands
+    /// [`TermManager::new`] – but goals that will intern tens of thousands
     /// of terms (the graph and CP drivers) avoid the intermediate
     /// table-growth copies, which profiled as a quarter of a pure-Boolean
     /// goal's assertion pipeline.
@@ -291,8 +291,8 @@ impl TermManager {
 
     /// Does `term`'s DAG contain any quantifier? Memoized: terms whose
     /// completed traversal found none are recorded (with every visited
-    /// subterm) in the `quantifier_free_cache` field, so repeated queries —
-    /// and sibling assertions sharing subterms — become set lookups.
+    /// subterm) in the `quantifier_free_cache` field, so repeated queries –
+    /// and sibling assertions sharing subterms – become set lookups.
     /// Exact by construction: term content is immutable, ids are never
     /// reused, and only full negative traversals populate the cache.
     #[must_use]
@@ -301,7 +301,7 @@ impl TermManager {
             return false;
         }
         // Iterative DAG walk (no native recursion over user terms).  A
-        // popped node already in the cache is proven free — its whole
+        // popped node already in the cache is proven free – its whole
         // subtree is skipped, so sibling assertions sharing a meganode
         // prefix stop re-walking it.
         let cache_now = self.quantifier_free_cache.borrow();
@@ -450,7 +450,7 @@ impl TermManager {
         false
     }
 
-    /// Does `term`'s DAG contain a nonlinear arith product — a `Mul`
+    /// Does `term`'s DAG contain a nonlinear arith product – a `Mul`
     /// with at least two non-constant operands?  Memoized like
     /// [`Self::contains_quantifier`] (see `nonlinear_free_cache`).  The
     /// check-side NIA detection rescans every assertion otherwise.
@@ -515,7 +515,7 @@ impl TermManager {
                 // array (see `hashes`) screens out foreign-bucket candidates
                 // at ~12x the density of the Term arena, so a candidate Term
                 // is loaded only on a hash match (exact compare still
-                // follows — a hash match alone never proves identity).
+                // follows – a hash match alone never proves identity).
                 hashes.get(id.0 as usize).is_some_and(|h| *h == hash)
                     && terms
                         .get(id.0 as usize)
@@ -548,7 +548,7 @@ impl TermManager {
     /// when no such term exists.  The read-only half of the interning
     /// write path (`Self::intern`, private)
     /// for callers that must not mint terms (e.g. probing whether an
-    /// equality atom between two terms already exists — creating it would
+    /// equality atom between two terms already exists – creating it would
     /// be exactly the quadratic blowup the probe exists to avoid).
     #[must_use]
     pub fn find_interned(&self, kind: &TermKind, sort: SortId) -> Option<TermId> {
@@ -720,7 +720,7 @@ impl TermManager {
 /// mapping is cloned once, the memo and the domain prefilter are built
 /// once, and every term substitutes through [`TermManager::
 /// substitute_session`] sharing them.  The per-call `substitute` form
-/// re-clones the mapping and allocates a fresh memo per term — on loops
+/// re-clones the mapping and allocates a fresh memo per term – on loops
 /// over definitions sharing meganode prefixes that re-walked every
 /// shared prefix per definition (the bzip2recover class spent a third
 /// of its run there).  Cache sharing across one mapping is the
@@ -786,7 +786,7 @@ impl TermManager {
 pub struct SubstitutionBuilder {
     /// The substitution mapping
     mapping: FxHashMap<TermId, TermId>,
-    /// Shared cache for substitution results — the DENSE-SLAB form
+    /// Shared cache for substitution results – the DENSE-SLAB form
     /// ([`SubstMemo`]): this cache lives for a whole elimination campaign
     /// whose walks cover a large fraction of the manager's term-id space,
     /// so per-node probes are array reads instead of hashes (the

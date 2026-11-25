@@ -35,7 +35,7 @@ pub(crate) struct Harvest {
     /// Whether a Real-sorted value can flow into the evaluation: a Real
     /// literal (`2.5`, `(/ 1 3)`) or a Real-sorted free constant. The
     /// quantifier machinery downstream (critical sets, region enumeration)
-    /// is written for `Int` — a Real value moves atoms' crossing points off
+    /// is written for `Int` – a Real value moves atoms' crossing points off
     /// the critical set, so [`super::prepare`] declines such goals unless
     /// they are GROUND (no quantifiers, no uninterpreted functions), where
     /// one exact evaluation under the concrete model decides with no
@@ -128,11 +128,11 @@ pub(crate) fn supported_children(kind: &TermKind) -> Option<SmallVec<[TermId; 4]
         TermKind::Div(l, r) | TermKind::Mod(l, r) => {
             // Euclidean `div`/`mod` are part of the vocabulary since the
             // evaluator grew exact `div_euclid`/`rem_euclid` arms (a
-            // zero divisor still declines there — uninterpreted per
+            // zero divisor still declines there – uninterpreted per
             // SMT-LIB).  Note the soundness shape: these children take
             // `Position::Value` in `region_stable`, so a *bound variable*
-            // under a division is rejected — the region-enumeration
-            // argument does not hold for `div`'s jumps — while ground
+            // under a division is rejected – the region-enumeration
+            // argument does not hold for `div`'s jumps – while ground
             // goals (the big-const `sat` certification this serves)
             // evaluate exactly.  The historical blanket exclusion is why
             // `(> (+ (mod (+ x 2^63) 3) y) 2)`-shaped goals answered

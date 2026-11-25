@@ -2,7 +2,7 @@
 
 **Status: FIXED (2026-09-09, `fix(mbqi): make finite-exhaustion Satisfied
 prove real domain coverage`).**  The issue was pre-existing (not introduced
-by the 2026-09 quantifier-ownership work — the pre-fix binary answered the
+by the 2026-09 quantifier-ownership work – the pre-fix binary answered the
 same wrong `sat` via the free-Boolean hole rather than via model approval).
 
 **Resolution summary:** the file refutes through E-matching depth nixie does
@@ -66,6 +66,6 @@ smt-lib/non-incremental/UF/20190906-CLEARSY/0016/00779.smt2   (:status unsat)
 
 Classic SMT-LIB families, stratified 965-file sample: `WRONG` 1 (this file),
 `agree` 186, `gap_z3_only` 463, `both_unknown` 262. The gap is dominated by
-UFLIA (163/244 z3-only) and LIA (108/112) — E-matching throughput and
+UFLIA (163/244 z3-only) and LIA (108/112) – E-matching throughput and
 nonlinear-in-LIA contract strictness, both recorded as follow-ups in
 `docs/quantifier_handling.md`.

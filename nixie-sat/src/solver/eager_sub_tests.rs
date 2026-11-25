@@ -2,8 +2,8 @@
 //! cadical `analyze.cpp::eagerly_subsume_recently_learned_clauses`).
 //!
 //! The arm retires learned clauses subsumed by each freshly learned clause
-//! (newest-first, ≤ 20 candidates). Sound by construction — both clauses
-//! are consequences of the formula and the subsumer is strictly stronger —
+//! (newest-first, ≤ 20 candidates). Sound by construction – both clauses
+//! are consequences of the formula and the subsumer is strictly stronger –
 //! but the retirement path (live trail reasons re-pointed to `Decision`,
 //! watch/BIG purges) and the trajectory change deserve differential
 //! verification: verdicts must agree and models must be valid.
@@ -102,7 +102,7 @@ fn eager_sub_verdict_agreement_random_cnf() {
 /// The subset check itself: a planted duplicate of a to-be-learned shape
 /// must be retired. Constructed directly: learn two clauses where the
 /// second subsumes the first by construction is search-dependent, so this
-/// tests the checker through the public path with a forced pair — the
+/// tests the checker through the public path with a forced pair – the
 /// random differential above carries the load; here we only pin that the
 /// stats counters exist and stay consistent (tried >= removed).
 #[test]

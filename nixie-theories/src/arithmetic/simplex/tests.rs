@@ -351,10 +351,10 @@ mod tests_2 {
         // Final contract (Dutertre–de Moura, bounds-only backtracking):
         // variables are permanent and rows are permanent definitions, while
         // the BOUNDS the scope asserted are rolled back.  The tableau never
-        // shrinks on backtrack — a row without bounds constrains nothing and
+        // shrinks on backtrack – a row without bounds constrains nothing and
         // its content-cache entry stays valid.  (This used to restore a
         // pre-scope basis snapshot, dropping post-snapshot rows; the
-        // snapshot machinery is gone — see `Simplex::pop`.)
+        // snapshot machinery is gone – see `Simplex::pop`.)
         assert_eq!(simplex.tableau.len(), rows_before_pop);
         assert_eq!(simplex.num_original_vars(), 3);
         assert!(simplex.get_lower(y).is_none());
@@ -368,7 +368,7 @@ mod tests_2 {
         simplex.add_eq(again, 1);
         // Re-asserting the first form re-uses the row while it is still
         // basic (its content-cache entry names a live defining row); if a
-        // pivot removed it in the meantime, the re-intern rebuilds it —
+        // pivot removed it in the meantime, the re-intern rebuilds it –
         // one row either way, never a duplicate.
         assert!(simplex.tableau.len() >= rows_before_pop);
         assert!(simplex.check().is_ok());
@@ -569,7 +569,7 @@ mod tests_2 {
     // a pivot whose substitution leaves `Rational64` width must NEVER
     // commit a silently-wrapped coefficient. With the wide store, the
     // overflowing row is captured EXACTLY (its meaning intact, pivoting
-    // and propagation excluded from it) and the pivot succeeds — the old
+    // and propagation excluded from it) and the pivot succeeds – the old
     // contract (refuse + resource_limit) survives only for the genuinely
     // undecidable cases (a wide ENTERING row). What must hold either way:
     // no wrapped value in the narrow tableau, and the wide row's exact
@@ -593,7 +593,7 @@ mod tests_2 {
 
         // A second row also referencing `b`, with a huge coefficient of its
         // own. Substituting `b`'s new (huge) `d`-coefficient into this row
-        // multiplies two `i64::MAX`-scale values together — the overflow
+        // multiplies two `i64::MAX`-scale values together – the overflow
         // site.  The `+ d` term keeps the row's coefficient GCD at 1 so
         // canonicalization cannot shrink it.
         let mut row_c = LinExpr::new();
@@ -606,7 +606,7 @@ mod tests_2 {
         if ok {
             // The overflow was captured: row `c` left the narrow tableau
             // and lives exactly in the wide store (its `d`-coefficient is
-            // ±i64::MAX·i64::MAX-scale — beyond `Rational64`, exactly
+            // ±i64::MAX·i64::MAX-scale – beyond `Rational64`, exactly
             // representable in `BigRational`).
             assert!(
                 !simplex.tableau.contains_key(&c),
@@ -645,14 +645,14 @@ mod tests_2 {
 
     // Regression (2026-09-15, the last unchecked release-wrap site in the
     // simplex): `on_nonbasic_bound_change`'s delta propagation multiplied and
-    // accumulated `DeltaRational`s with the bare `Ratio` operators — a
+    // accumulated `DeltaRational`s with the bare `Ratio` operators – a
     // `Δ · c` past `i64` on a wide-coefficient row PANICKED in debug (the
     // debug-panic sweep's `mul_r64_fast` abort via `note_bound_change`) and
     // silently WRAPPED in release, corrupting the dependent basic's
     // assignment for every later decision. The fix is the item-14 pattern:
     // checked multiply/add, exact `BigRational` retry of that one row with a
     // narrowed final (the intermediates overflow while the row's final
-    // value fits — magnitudes cancel), and a staleness-flag defer only when
+    // value fits – magnitudes cancel), and a staleness-flag defer only when
     // the final itself does not fit.
     #[test]
     fn nonbasic_bound_change_delta_overflow_recovers_exact_and_never_wraps() {
@@ -672,13 +672,13 @@ mod tests_2 {
         let s = simplex.intern_row(row);
 
         // y: 0 → 1. The delta `1 · (−MAX)` FITS, so this step runs the
-        // ordinary fast path and lands `s = −MAX` — the pre-overflow state
+        // ordinary fast path and lands `s = −MAX` – the pre-overflow state
         // the wide propagation then departs from.
         simplex.set_lower(y, Rational64::one(), 1);
         assert_eq!(simplex.assignment[s as usize].real, -max);
 
-        // x: 0 → 2. The increment `Δ · c = 2·MAX` leaves `i64` — unchecked,
-        // this is the abort/wrap site — but the row's final value
+        // x: 0 → 2. The increment `Δ · c = 2·MAX` leaves `i64` – unchecked,
+        // this is the abort/wrap site – but the row's final value
         // `MAX·2 − MAX·1 + 0 = MAX` fits, so the exact retry must recover it
         // incrementally: `assignment[s] = MAX`, no staleness, no wrap.
         simplex.set_lower(x, Rational64::from_integer(2), 2);
@@ -696,7 +696,7 @@ mod tests_2 {
 
     // Regression (same site, the snap delta): the `new − old` subtraction
     // itself can leave `i64` width when a non-basic jumps between deep
-    // opposite bounds — a debug panic and a silent release wrap that would
+    // opposite bounds – a debug panic and a silent release wrap that would
     // have propagated a fabricated delta to every dependent. The fix defers
     // to the full re-derivation: the snapped value itself is committed (it
     // is a bound value, exact), the dependents are left for `crash_basis`.
@@ -706,7 +706,7 @@ mod tests_2 {
         let x = simplex.new_var();
         let y = simplex.new_var();
 
-        // Row `s = x + y` — an ordinary narrow row whose basic assignment
+        // Row `s = x + y` – an ordinary narrow row whose basic assignment
         // would receive the (wrapped) snap delta.
         let mut row = LinExpr::new();
         row.terms.push((x, Rational64::one()));
@@ -722,13 +722,13 @@ mod tests_2 {
 
         // Loosen the upper, then tighten the lower to +MAX: the window is
         // [MAX, MAX] (not crossed) and the snap must move x from −MAX to
-        // MAX — a delta of 2·MAX that `i64` cannot hold.
+        // MAX – a delta of 2·MAX that `i64` cannot hold.
         simplex.set_upper(x, max, 3);
         simplex.set_lower(x, max, 4);
 
         // The snapped value is committed exactly (a bound value); the
         // propagation is skipped and the vector flagged stale for the next
-        // consumer's `crash_basis` — never a wrapped delta.
+        // consumer's `crash_basis` – never a wrapped delta.
         assert_eq!(
             simplex.assignment[x as usize].real, max,
             "the snapped non-basic value must be committed exactly, not wrapped"
@@ -969,7 +969,7 @@ mod soi_differential {
                         // Both feasible: the SOI assignment must satisfy
                         // every bound AND every tableau row (the stored
                         // basic assignment must equal its row evaluated at
-                        // the nonbasic assignments — a divergent delta
+                        // the nonbasic assignments – a divergent delta
                         // propagation shows up here, not in the bounds).
                         for v in 0..soi.assignment.len() {
                             let val = soi.assignment[v];
@@ -1010,7 +1010,7 @@ mod soi_differential {
                     (Err(stdc), Ok(())) => {
                         // The simplex `Ok(())` contract: feasible, OR a
                         // resource limit was hit (overflow/budget) and the
-                        // caller must treat the answer as inconclusive —
+                        // caller must treat the answer as inconclusive –
                         // an inconclusive SOI is acceptable (same contract
                         // as the standard driver), not a wrong answer.
                         if soi.resource_limit_reached() {
@@ -1063,7 +1063,7 @@ mod soi_differential {
                         }
                         if ok_model {
                             panic!(
-                                "STD SPURIOUS CONFLICT seed={seed} n={n} rows={rows}: std={stdc:?} — SOI model validated"
+                                "STD SPURIOUS CONFLICT seed={seed} n={n} rows={rows}: std={stdc:?} – SOI model validated"
                             );
                         } else {
                             panic!(
@@ -1287,7 +1287,7 @@ mod canonical_form {
     #[test]
     fn negative_scale_is_never_applied() {
         // All-negative coefficients: the factor is positive (gcd of
-        // absolute values), so signs are preserved — negating would flip
+        // absolute values), so signs are preserved – negating would flip
         // the strict-bound meaning downstream.
         let (terms, _) = form(vec![(0, r(-4, 1)), (1, r(-6, 1))], Rational64::zero());
         assert_eq!(terms, vec![(0, r(-2, 1)), (1, r(-3, 1))]);
@@ -1338,7 +1338,7 @@ mod canonical_form {
 
 // Regression (2026-09-15, the wide-store value fabrication): the exact
 // value of a WIDE-basic variable must never be read from the raw
-// `assignment` entry — that entry is only maintained while the exact
+// `assignment` entry – that entry is only maintained while the exact
 // value narrows, and an unrepresentable one leaves it stale on purpose
 // (the false-`sat` class read a fabricated integral `0` for a variable
 // whose true value was `−9 − 41/2⁶³`). `delta_value_exact` re-derives
@@ -1360,7 +1360,7 @@ fn wide_basic_reads_and_branch_bounds_are_exact() {
     s.set_lower(t, Rational64::from_integer(3), 1);
 
     // Wide row: x = t/2⁶³ − 83010348301752982313/2⁶³. At t = 3 the
-    // exact value is −9 − 41/2⁶³·… (numerator ≈ 8.3·10¹⁹ — beyond i64).
+    // exact value is −9 − 41/2⁶³·… (numerator ≈ 8.3·10¹⁹ – beyond i64).
     s.wide_rows.insert(
         x,
         BigLinExpr {
@@ -1400,7 +1400,7 @@ fn wide_basic_reads_and_branch_bounds_are_exact() {
 
 // Regression (2026-09-15, the silent wide-dependent skip): a bound
 // change on a non-basic whose dependent row lives in the WIDE store
-// used to skip that dependent silently — no update, no staleness flag —
+// used to skip that dependent silently – no update, no staleness flag –
 // leaving the wide basic's entry stale by exactly Δ·coef. The skip now
 // flags the vector so the next guard re-derives everything.
 #[test]
@@ -1434,7 +1434,7 @@ fn wide_dependent_bound_change_flags_staleness() {
 // Regression (2026-09-16, the wide-chain false `unsat` root cause):
 // `derive_basic_bound`'s mid-walk exact retry recomputes the WHOLE
 // directional sum, but the walk used to CONTINUE adding the remaining
-// terms on top of the full recomputation — double-counting the
+// terms on top of the full recomputation – double-counting the
 // post-overflow terms. On the wide-chain shape the retry returned the
 // correct full sum and the walk then re-added the remaining term,
 // planting a bound that violated the model and refuting a satisfiable
@@ -1472,7 +1472,7 @@ fn basic_bound_exact_retry_does_not_double_count() {
 
     // The slack's bound slots are not allocated until a bound is
     // stored, and the propagation's apply loop (pre-existing behavior)
-    // skips vars without slots — so the derivation itself is asserted
+    // skips vars without slots – so the derivation itself is asserted
     // here, via the propagated bound it produces.
     simplex.propagate_bounds();
     let props = simplex.get_propagated();
@@ -1483,14 +1483,14 @@ fn basic_bound_exact_retry_does_not_double_count() {
             && p.value.cmp_narrow(&want) == core::cmp::Ordering::Equal),
         "the row's exact value at the pins is 3 (the exact-retry result);              a different propagated lower is the double-count: {props:?}"
     );
-    // (`derive_basic_bound` returns at most one direction per call —
+    // (`derive_basic_bound` returns at most one direction per call –
     // the lower; the upper derives on the next fixpoint pass.)
 }
 
 // Regression (2026-09-17, the item-54 false `unsat`): a row whose
-// SUBSTITUTED constant exceeds `i64` — here `3·yi − md − dv + 1` with the
+// SUBSTITUTED constant exceeds `i64` – here `3·yi − md − dv + 1` with the
 // pinned basic `yi = pin + 2^62`, whose substitution yields the constant
-// `3·2^62 + 1` — is interned through the positive width rescale
+// `3·2^62 + 1` – is interned through the positive width rescale
 // (`scale_big_to_narrow`).  The rescale preserves the zero-bound
 // CONSTRAINT semantics but changes the slack's DEFINING FORM to
 // `form / λ`, so integrality of the requested form must not transfer to
@@ -1544,7 +1544,7 @@ fn intern_row_reports_rescaled_for_width_rescale() {
 
     // Control: the same shape with a small pin constant interns `Exact`
     // (the plain substitution path), and its row keeps integral
-    // coefficients — the property Gomory cuts and branch-and-bound rely
+    // coefficients – the property Gomory cuts and branch-and-bound rely
     // on for integer-marked slacks.
     let mut s2 = Simplex::new();
     let yi2 = s2.new_var();
@@ -1575,7 +1575,7 @@ fn intern_row_reports_rescaled_for_width_rescale() {
 
 // Regression (2026-09-17, the `wisas_xs_8_13` livelock): the standard
 // driver's repair pivot used to snap the leaving variable to its LOWER
-// bound regardless of which bound it violated — an upper violation at
+// bound regardless of which bound it violated – an upper violation at
 // `1/2` over `[-1,0]` snapped to `-1`, and the overshoot (the whole bound
 // interval) landed on the entering variable through the row equation,
 // manufacturing a mirrored violation of the same size.  With two-sided
@@ -1606,10 +1606,10 @@ fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
     s.basic[b as usize] = true;
     s.column_push_known(a, b);
 
-    // crash_basis snaps `a` to its lower (-1), so `b` derives 1/2 — above
+    // crash_basis snaps `a` to its lower (-1), so `b` derives 1/2 – above
     // its upper 0.  The repair pivot on (leaving=b, entering=a) must snap
     // b to the VIOLATED bound (0), landing a at -1/2: both feasible.
-    // (Pre-fix: b snapped to -1, a derived 1/2 — violated; the mirrored
+    // (Pre-fix: b snapped to -1, a derived 1/2 – violated; the mirrored
     // row re-derived the mirror image, and the pair cycled to the pivot
     // budget.)
     s.assignment_current = false;
@@ -1635,7 +1635,7 @@ fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
 
 // Regression (2026-09-17, the wide-driven repair step): a violated wide
 // row whose achievable range OVERLAPS its bound window is repairable in
-// principle, but wide rows had no pivot — the convergence classification
+// principle, but wide rows had no pivot – the convergence classification
 // declined the whole check (`resource_limit`, honest `unknown`; the
 // wide-LP endgame's named residual, the wall the `NIXIE_S6_PINNED`
 // trade analysis measured at site 1950).  The pivot's wide-leaving branch
@@ -1646,7 +1646,7 @@ fn repair_pivot_snaps_the_leaving_var_to_its_violated_bound() {
 // Shape: `t` is wide-basic over `a` (`t = W·a − 5W + 1`, W = 2^62), with
 // `t ∈ [0,0]` and `a ∈ [0,10]`.  At `a = 0` the row value is `−5W + 1`
 // (violates the lower 0) while the achievable range `[−5W+1, 5W+1]`
-// straddles the window — the pre-fix classification hit exactly this arm
+// straddles the window – the pre-fix classification hit exactly this arm
 // and declined; the repair pivots (entering `a`), snaps `t` to 0, and `a`
 // lands at `5 − 1/W` (inside its window, and the solved row narrows).
 #[test]
@@ -1699,7 +1699,7 @@ fn violated_wide_row_with_overlapping_range_is_repaired() {
 // on the NLA interval probes): a scoped probe may tighten a bound PAST the
 // opposite one (a crossed window is the probe's infeasibility signal), and
 // the snap-into-window parks the nonbasic at a point only the TIGHTENED
-// side justified — restoring that side at `pop` then widens the window
+// side justified – restoring that side at `pop` then widens the window
 // away from the point, leaving the nonbasic OUTSIDE its restored window
 // (invisible to `find_violating`, which scans basics only).  The pop now
 // re-snaps every non-basic the undo left outside its window and flags the
@@ -1719,11 +1719,11 @@ fn pop_resnaps_a_nonbasic_left_outside_its_restored_window() {
     s.push();
     s.set_upper(x, Rational64::zero(), 3);
     // window [6, 0] is empty; the sequential clamp parks x at the upper 0
-    // (below the surviving lower) — the probe's infeasibility shape.
+    // (below the surviving lower) – the probe's infeasibility shape.
     s.pop();
 
     // After the pop the upper is restored to 10; the nonbasic must be back
-    // inside [6, 10] (pre-fix it stayed at 0 — below the lower, with no
+    // inside [6, 10] (pre-fix it stayed at 0 – below the lower, with no
     // search mechanism able to see or repair it).
     let viol = s.debug_verify_invariant();
     assert!(
@@ -1741,7 +1741,7 @@ fn pop_resnaps_a_nonbasic_left_outside_its_restored_window() {
 
 // Regression (2026-09-17, the unsat-side gap's wide-classification
 // members): `wide_row_refuted_by_bounds` bailed (`return None`) whenever
-// ANY achievable-range endpoint was unbounded — including the side
+// ANY achievable-range endpoint was unbounded – including the side
 // irrelevant to the violation.  `v2 = v1 + c` with `v1 >= 0` (unbounded
 // above) and `v2 <= 0`: the MIN side alone refutes (`min = c > 0 =
 // upper`), but the unbounded MAX side hid it, the repair found no
@@ -1787,7 +1787,7 @@ fn wide_row_refutation_survives_an_unbounded_irrelevant_side() {
 /// upper) instead of picking the pair's wrong-side endpoint: the crossed
 /// state belongs to the crossing channel (`record_crossing` exports the
 /// conflict), and an interval derivation over an EMPTY interval fabricates
-/// a bound no antecedent implies — the `NIXIE_S6_NDIR2` false-`unsat`
+/// a bound no antecedent implies – the `NIXIE_S6_NDIR2` false-`unsat`
 /// (seed 20261123: a v19/v63-family crossed window fed dir2/dir1
 /// derivations whose planted bounds refuted six atoms that are all TRUE
 /// at z3's model `xi = 120`).
@@ -1802,7 +1802,7 @@ fn derivation_through_a_crossed_window_declines_instead_of_fabricating() {
     s.set_upper(x, Rational64::zero(), 2);
 
     // `derive_bound_big_parts` (the wide interval walk the slice-6
-    // selectors share): a crossed COLUMN window must decline — pre-fix,
+    // selectors share): a crossed COLUMN window must decline – pre-fix,
     // the `want_min == a_first` endpoint pick chose the pair's WRONG side
     // exactly when inverted, fabricating a bound no antecedent implies.
     // (`derive_basic_bound` is deliberately NOT tested here: it reads
@@ -1834,7 +1834,7 @@ fn derivation_through_a_crossed_window_declines_instead_of_fabricating() {
     }
 }
 
-// ===== Z3 `patch_basic_columns` (the cheap integrality move) =====
+// ======== Z3 `patch_basic_columns` (the cheap integrality move) ========
 
 #[test]
 fn patching_deltas_solve_the_congruence() {
@@ -1855,7 +1855,7 @@ fn patching_deltas_solve_the_congruence() {
     let (dp, dm) = Simplex::patching_deltas(&Rational64::new(2, 3), &Rational64::new(1, 3))
         .expect("solution exists (denom 3 | 3)");
     assert_eq!((dp, dm), (1, -2));
-    // No solution when denom(x) ∤ denom(α): x = 1/2, α = 1/3 (2 ∤ 3 —
+    // No solution when denom(x) ∤ denom(α): x = 1/2, α = 1/3 (2 ∤ 3 –
     // 1/2 + δ/3 is never an integer for integral δ).
     assert!(Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::new(1, 3)).is_none());
     // The divided case DOES solve (2 | 4): 1/2 + (1/4)δ ∈ ℤ at δ = 2.
@@ -1867,7 +1867,7 @@ fn patching_deltas_solve_the_congruence() {
         "δ={dp} must make the value integral, got {v}"
     );
     // α integral (no fractional part): the caller never asks, but the math
-    // degrades to δ ≡ 0 (mod 1) — decline rather than fabricate.
+    // degrades to δ ≡ 0 (mod 1) – decline rather than fabricate.
     assert!(Simplex::patching_deltas(&Rational64::new(1, 2), &Rational64::one()).is_none());
 }
 
@@ -1875,7 +1875,7 @@ fn patching_deltas_solve_the_congruence() {
 fn patch_int_columns_makes_fractional_basic_integral() {
     // The genuine patchable shape: after feasibility, the integer basic x
     // sits at -1/3 with row `x = -1/3 + (1/3)·t1 - (2/3)·y`; moving the
-    // integer nonbasic y by -2 lands x on 1 — a pure value move, no
+    // integer nonbasic y by -2 lands x on 1 – a pure value move, no
     // pivot, no row added (Z3 `patch_basic_columns`).
     let mut s = Simplex::new();
     let x = s.new_var();
@@ -1943,7 +1943,7 @@ fn patch_int_columns_declines_and_rolls_back_when_blocked() {
 #[test]
 fn patch_int_columns_declines_without_fractional_int_coefficients() {
     // x's row carries only INTEGRAL coefficients on integer nonbasics
-    // (2x + 2y + 1 <= 0, x - y <= 0): nothing to patch through — decline
+    // (2x + 2y + 1 <= 0, x - y <= 0): nothing to patch through – decline
     // with the fractional value preserved.
     let mut s = Simplex::new();
     let x = s.new_var();
@@ -1975,7 +1975,7 @@ fn patch_int_columns_declines_without_fractional_int_coefficients() {
 #[test]
 fn patch_int_columns_declines_on_fractional_nonbasic() {
     // A fractional nonbasic integer column can never be repaired by an
-    // integral move — the pass must decline immediately.
+    // integral move – the pass must decline immediately.
     let mut s = Simplex::new();
     let x = s.new_var();
     s.set_lower(x, Rational64::new(1, 2), 0);
@@ -1985,7 +1985,7 @@ fn patch_int_columns_declines_on_fractional_nonbasic() {
 }
 // scratch debug appended as a test
 
-// ===== gcd kernels: the power-of-two fast path and the u64-range cast =====
+// ======== gcd kernels: the power-of-two fast path and the u64-range cast ========
 
 #[test]
 fn gcd_u64_matches_reference_and_fast_paths() {
@@ -2058,7 +2058,7 @@ fn gcd_u64_matches_reference_and_fast_paths() {
 }
 
 /// Deterministic LCG for the fraction-free equivalence grids (no `rand`
-/// dependency; the grid must be reproducible exactly across runs — a
+/// dependency; the grid must be reproducible exactly across runs – a
 /// property failure's seed is only meaningful that way).
 struct FfLcg(u64);
 impl FfLcg {
@@ -2101,9 +2101,9 @@ fn ff_random_rational(rng: &mut FfLcg) -> Rational64 {
 }
 
 /// A random canonical row over `nvars` variables (merged, zero-free,
-/// reduced — the tableau's stored shape).  Merges go through the crate's
+/// reduced – the tableau's stored shape).  Merges go through the crate's
 /// CHECKED rational add (the generator's wide class can produce additions
-/// that overflow `i64` intermediates — those terms are simply dropped, the
+/// that overflow `i64` intermediates – those terms are simply dropped, the
 /// grid only needs rows the canonical store itself could hold).
 fn ff_random_row(rng: &mut FfLcg, nvars: u32) -> LinExpr {
     let mut e = LinExpr::new();
@@ -2133,7 +2133,7 @@ fn ff_random_row(rng: &mut FfLcg, nvars: u32) -> LinExpr {
 /// The cached `IntRow` mirrors the canonical row: every per-term value
 /// `n/D` equals the stored coefficient, and the joint gcd is 1 (the
 /// minimal common denominator).  Returns false when the row is over budget
-/// (the honest tail — callers keep the per-term path for those).
+/// (the honest tail – callers keep the per-term path for those).
 fn ff_encoding_is_faithful(row: &LinExpr) -> Option<bool> {
     let enc = int_row_from_lin(row)?;
     let d = enc.denom as i128;
@@ -2173,9 +2173,9 @@ fn ff_encoding_is_faithful(row: &LinExpr) -> Option<bool> {
 }
 
 /// The fraction-free substitution is BIT-IDENTICAL to the historical
-/// per-term rational fast path — same canonical coefficient values, same
+/// per-term rational fast path – same canonical coefficient values, same
 /// term ORDER (row order first, appended entering terms after), same
-/// zero-term dropping — and its declines are exactly the rational path's
+/// zero-term dropping – and its declines are exactly the rational path's
 /// declines (a final that does not fit `Rational64` refuses in both; the
 /// rational path can additionally decline on intermediate overflow, where
 /// the integer path still succeeds).  This is what lets it share the pivot
@@ -2233,7 +2233,7 @@ fn substitute_row_ff_matches_rational_reference_seeded_grid() {
             (Some(new_int), Some(ref_row)) => {
                 both += 1;
                 // The INTEGER path's product materializes to exactly the
-                // rational reference (value-identity, order included — the
+                // rational reference (value-identity, order included – the
                 // laziness contract).
                 let lin = materialize_lin(&new_int);
                 assert_eq!(lin.terms, ref_row.terms, "term vector (order included)");
@@ -2270,10 +2270,10 @@ fn substitute_row_ff_matches_rational_reference_seeded_grid() {
 /// `gcd(g, n) = n % g == 0 ? g : gcd(g, n % g)` for `g > 0`).  This pins
 /// the identity on the walk's four measured shapes directly against a
 /// reference naive chain computed in the test:
-/// * stabilized `g` — every merged numerator divisible (the 93 %-shape);
-/// * mid-walk residue — one numerator reduces `g`, the rest divide it;
-/// * early exit — a coprime numerator drives `g` to 1 (no reduction);
-/// * wide operands — values past `u64::MAX` take the `gcd_i128` walk.
+/// * stabilized `g` – every merged numerator divisible (the 93 %-shape);
+/// * mid-walk residue – one numerator reduces `g`, the rest divide it;
+/// * early exit – a coprime numerator drives `g` to 1 (no reduction);
+/// * wide operands – values past `u64::MAX` take the `gcd_i128` walk.
 #[test]
 fn substitute_row_ff_division_first_walk_matches_naive_chain() {
     // `row` = (nums, c_r, d_r) carrying `entering_var` with numerator
@@ -2354,7 +2354,7 @@ fn substitute_row_ff_division_first_walk_matches_naive_chain() {
     };
 
     // Stabilized g: d = 4*9 = 36, c = 24 -> g0 = 12; every merged
-    // numerator (240, 336, append 12) divisible by 12 — the r == 0 fast
+    // numerator (240, 336, append 12) divisible by 12 – the r == 0 fast
     // case at every step.
     check(
         &[(1, 24), (2, 36), (7, 3)],
@@ -2440,7 +2440,7 @@ fn int_row_budget_boundaries() {
 /// Cache coherence invariant: after a solving session with real pivots
 /// (and a push/pop cycle), every fraction-free cache entry points at the
 /// tableau's CURRENT row for its variable.  Pointer validation is the
-/// soundness argument for reading cached encodings — this pins that the
+/// soundness argument for reading cached encodings – this pins that the
 /// maintenance sites (pivot commits, wide captures, migrations, resets)
 /// actually leave it true.
 #[test]
@@ -2488,7 +2488,7 @@ fn integer_tableau_rows_materialize_consistently_after_pivots() {
         }
         int_rows += 1;
         // Materialize and verify: the row evaluates (over the current
-        // assignment) to the basic's own assignment value — the invariant
+        // assignment) to the basic's own assignment value – the invariant
         // the delta propagation maintained.
         let lin = simplex.row_lin(var).expect("row exists");
         let vi = var as usize;
@@ -2573,8 +2573,8 @@ fn born_entering_row_matches_the_canonical_solved_form() {
 }
 
 // Regression (2026-09-21, the simplex pivot-cap/resource-limit family):
-// a NON-BASIC resting at one of its current bounds — here its UPPER, parked
-// by a tighten-then-loosen bound sequence — must keep its value through
+// a NON-BASIC resting at one of its current bounds – here its UPPER, parked
+// by a tighten-then-loosen bound sequence – must keep its value through
 // every re-derivation.  The historical `crash_basis` AND
 // `update_assignment` entry loops re-snapped such a variable to the
 // PREFERRED (lower) bound, silently relocating the search point: each wide
@@ -2597,7 +2597,7 @@ fn rederivation_preserves_nonbasic_parked_at_upper_bound() {
     s.set_upper(x, Rational64::from_integer(10), 4);
 
     // Park x (non-basic) at its UPPER bound: tighten the lower to 10 (the
-    // bound writer snaps x onto it), then loosen the lower back to 0 — the
+    // bound writer snaps x onto it), then loosen the lower back to 0 – the
     // value 10 stays inside the window, so no re-snap fires, and x rests at
     // its upper bound exactly the way a repair's leaving snap would have
     // left it.

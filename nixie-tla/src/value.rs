@@ -1,8 +1,8 @@
 //! TLA+ values, and printing them the way TLC does.
 //!
 //! The point of having values at all is **semantic** validation. Everything
-//! the front end has been checked against so far — SANY parity, level parity,
-//! lowering coverage — is structural. None of it would have caught the
+//! the front end has been checked against so far – SANY parity, level parity,
+//! lowering coverage – is structural. None of it would have caught the
 //! `INSTANCE` visibility bug, which produced a perfectly well-formed kernel
 //! term that read the wrong module's variables.
 //!
@@ -50,8 +50,8 @@ impl Value {
         Self::Set(items.into_iter().collect())
     }
 
-    /// The `(key, value)` entries of any **function-shaped** value — `Fun`,
-    /// and the tuple and record functions — in key order. TLA+ has one
+    /// The `(key, value)` entries of any **function-shaped** value – `Fun`,
+    /// and the tuple and record functions – in key order. TLA+ has one
     /// function type and three literal spellings for it, and a bag *is* a
     /// function (`Bags.tla`), so the bag operators read their operand
     /// through this view. `None` for values that are not functions.
@@ -74,8 +74,8 @@ impl Value {
 
     /// A function value, normalised.
     ///
-    /// **A tuple *is* a function on `1..n` in TLA+** — there is no separate
-    /// sequence type — so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one
+    /// **A tuple *is* a function on `1..n` in TLA+** – there is no separate
+    /// sequence type – so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one
     /// value and must compare equal. The empty map is `<<>>` for the same
     /// reason: its domain is `1..0`.
     ///
@@ -84,7 +84,7 @@ impl Value {
     /// key and a `BTreeSet` element, so `Eq` and `Ord` have to agree; an
     /// equality that crossed the two variants while a derived `Ord` still
     /// ordered them by discriminant would break every set and function built
-    /// out of them — `{<<1, 2>>, [i \in 1..2 |-> i]}` would have two members.
+    /// out of them – `{<<1, 2>>, [i \in 1..2 |-> i]}` would have two members.
     /// Normalising makes the invariant representational, and `Ord` stays
     /// derived and consistent.
     ///

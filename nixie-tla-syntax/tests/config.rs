@@ -4,7 +4,7 @@
 //! (`docs/src/apalache/tlc-config.md`) and implemented in
 //! `TlcConfigLexer.scala` / `TlcConfigParserApalache.scala`. These pin the
 //! productions, the two extensions the published EBNF omits and real files
-//! use, and — most importantly — the places where a wrong answer is quieter
+//! use, and – most importantly – the places where a wrong answer is quieter
 //! than a rejection.
 
 use nixie_tla_syntax::{BehaviorSpec, ConfigErrorKind, ConfigValue as V, parse_config};
@@ -17,7 +17,7 @@ fn err(src: &str) -> ConfigErrorKind {
     parse_config(src).expect_err("should not parse").kind
 }
 
-// ---- constants ----
+// ======== constants ========
 
 #[test]
 fn an_integer_assignment() {
@@ -40,7 +40,7 @@ fn a_negative_integer_is_one_token() {
     assert_eq!(c.assignments.get("N"), Some(&V::Int("-7".into())));
 }
 
-/// A bare identifier on the right of `=` is a **model value** — an
+/// A bare identifier on the right of `=` is a **model value** – an
 /// uninterpreted constant distinct from every other value. `NoVal = NoVal` is
 /// not circular, and reading it as a reference to the left-hand name would be.
 #[test]
@@ -114,7 +114,7 @@ fn an_empty_constant_section() {
     assert_eq!(c.invariants, ["Inv"]);
 }
 
-// ---- the two extensions the published EBNF omits ----
+// ======== the two extensions the published EBNF omits ========
 
 /// `MCPaxos.cfg` writes `Ballot <-[Voting] MCBallot`: replace `Ballot` inside
 /// the `Voting` instance. Apalache's parser rejects this; TLC accepts it.
@@ -192,7 +192,7 @@ fn a_module_qualified_assignment_is_recorded_uninterpreted() {
     );
 }
 
-// ---- behaviour ----
+// ======== behaviour ========
 
 #[test]
 fn init_and_next() {
@@ -233,7 +233,7 @@ fn no_behaviour_specification_at_all() {
 
 /// `INIT`/`NEXT` and `SPECIFICATION` both say how the system moves, and a file
 /// giving both does not say which to believe. Reported rather than resolved by
-/// a precedence rule nobody wrote down — picking one silently would check a
+/// a precedence rule nobody wrote down – picking one silently would check a
 /// different specification than the author configured.
 #[test]
 fn two_behaviour_specifications_are_refused() {
@@ -257,7 +257,7 @@ fn init_without_next_is_refused() {
     ));
 }
 
-// ---- lists, comments, layout ----
+// ======== lists, comments, layout ========
 
 #[test]
 fn singular_and_plural_keywords_are_one_production() {
@@ -271,7 +271,7 @@ fn singular_and_plural_keywords_are_one_production() {
     assert_eq!(cfg("ACTION_CONSTRAINTS A B").action_constraints, ["A", "B"]);
 }
 
-/// A list ends where the next option begins — there is no separator.
+/// A list ends where the next option begins – there is no separator.
 #[test]
 fn a_list_stops_at_the_next_keyword() {
     let c = cfg("INVARIANT TypeOK Correctness\nPROPERTY Liveness\nSPECIFICATION Spec");
@@ -314,7 +314,7 @@ fn check_deadlock() {
     ));
 }
 
-// ---- read but not acted on ----
+// ======== read but not acted on ========
 
 /// Recognised and recorded, never silently skipped: a caller deciding whether
 /// to trust a verdict needs to know what of the author's configuration was
@@ -337,7 +337,7 @@ fn a_file_with_nothing_to_ignore_reports_nothing() {
     assert!(cfg("INVARIANT Inv").unused_options().is_empty());
 }
 
-// ---- diagnostics ----
+// ======== diagnostics ========
 
 #[test]
 fn an_error_carries_a_position() {

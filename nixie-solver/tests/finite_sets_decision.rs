@@ -2,7 +2,7 @@
 //!
 //! Every membership atom gets its defining axioms when the assertion is
 //! encoded (`solver::set_theory`), so the SAT layer and EUF decide sets
-//! together. These tests are the evidence that it *decides* — each asserts a
+//! together. These tests are the evidence that it *decides* – each asserts a
 //! formula whose status is known independently.
 
 use nixie_core::{TermId, TermManager};
@@ -115,7 +115,7 @@ fn difference_requires_the_negative_side() {
         let d = tm.mk_set_minus(a, b);
         let in_d = tm.mk_set_member(x, d);
         let in_b = tm.mk_set_member(x, b);
-        // In `a \ b` and also in `b` — impossible.
+        // In `a \ b` and also in `b` – impossible.
         vec![in_d, in_b]
     });
     assert_eq!(got, SolverResult::Unsat);
@@ -230,9 +230,9 @@ fn cardinality_of_a_known_set_is_decided() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-// ---------------------------------------------------------------------------
-// String-literal distinctness — regressions for a false `sat`
-// ---------------------------------------------------------------------------
+// ========  ========
+// String-literal distinctness – regressions for a false `sat`
+// ========  ========
 //
 // Found through the TLA+ arena's `Cardinality` encoding, which guards each
 // indicator with an element equality. Two independent gaps made a string
@@ -286,7 +286,7 @@ fn a_variable_cannot_equal_two_string_literals() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-/// Two variables pinned to different literals cannot be equal — the shape the
+/// Two variables pinned to different literals cannot be equal – the shape the
 /// `Cardinality` de-duplication actually builds.
 #[test]
 fn variables_at_distinct_literals_are_distinct() {
@@ -339,9 +339,9 @@ fn an_open_string_equality_is_still_satisfiable() {
     assert_eq!(got, SolverResult::Sat);
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Cardinality
-// ---------------------------------------------------------------------------
+// ========  ========
 //
 // Exact where a set's members are confined to a statically known list, and
 // declined (degrading `Sat` to `Unknown`) where they are not. The candidates
@@ -421,7 +421,7 @@ fn cardinality_counts_distinct_members_separately() {
     assert_eq!(s.check(&mut tm), SolverResult::Unsat);
 }
 
-/// Over **string** elements — the exact shape that exposed the string-literal
+/// Over **string** elements – the exact shape that exposed the string-literal
 /// false `sat`, since the de-duplication guards are element equalities.
 #[test]
 fn cardinality_over_string_elements() {
@@ -491,7 +491,7 @@ fn cardinality_of_an_opaque_set_is_decided() {
     );
 }
 
-// ---- conditional sets -------------------------------------------------
+// ======== conditional sets ========
 //
 // `ite` at a set sort is *structured*, and the reduction has to treat it so.
 // The generic mux pass (`eliminate_nonbool_ite`) does own this sort, but it
@@ -557,10 +557,10 @@ fn cardinality_of_a_conditional_set_is_exact() {
     assert_eq!(got, SolverResult::Unsat);
 }
 
-// ---- set terms under a binder ----------------------------------------
+// ======== set terms under a binder ========
 //
 // `survey` walks into quantifier bodies, and a bound variable in this AST is
-// an ordinary named `Var` — so a set-sorted bound name is indistinguishable
+// an ordinary named `Var` – so a set-sorted bound name is indistinguishable
 // from a free one, and the axioms land at the top level where that name reads
 // free. That is sound, and these pin it: every axiom the reduction emits is a
 // *tautology of the theory of finite sets in all its variables*, so reading a
@@ -568,7 +568,7 @@ fn cardinality_of_a_conditional_set_is_exact() {
 // variable. What it is not is complete, which costs `Unknown`, never a wrong
 // answer.
 
-/// `1 \in t /\ (\E t : t = {})` is satisfiable — the inner `t` is a different
+/// `1 \in t /\ (\E t : t = {})` is satisfiable – the inner `t` is a different
 /// variable, and the extensionality axioms must not force the outer one empty.
 #[test]
 fn a_shadowed_set_binder_does_not_constrain_the_free_name() {
@@ -605,7 +605,7 @@ fn a_quantified_membership_is_never_answered_sat() {
     assert_ne!(solver.check(&mut tm), SolverResult::Sat);
 }
 
-// ---- the honesty gate is scoped ----
+// ======== the honesty gate is scoped ========
 
 /// `set.card` of an opaque set is not reduced, so the gate goes up and a `Sat`
 /// resting on it degrades to `Unknown`. Retracting that assertion must bring
@@ -641,7 +641,7 @@ fn popping_lowers_the_set_honesty_gate() {
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
 
-// ---- membership under a *derived* equality --------------------------------
+// ======== membership under a *derived* equality ========
 //
 // There is no set theory *solver*: `TermTheory::Set` is classified and nothing
 // consumes it, so `set.member` is not a congruence-closed symbol and two
@@ -650,11 +650,11 @@ fn popping_lowers_the_set_honesty_gate() {
 // invisible, and each of the first three below answered `sat`.
 //
 // The reduction now relates every pair of same-sorted set terms, which is what
-// congruence would have given. The fourth is the case that always worked — the
-// equality is written down — and is here so a regression cannot quietly narrow
+// congruence would have given. The fourth is the case that always worked – the
+// equality is written down – and is here so a regression cannot quietly narrow
 // the fix back to it.
 
-/// `5 \in (store a 1 {})[1]` — the select reduces to the empty set, so no
+/// `5 \in (store a 1 {})[1]` – the select reduces to the empty set, so no
 /// element is in it.
 #[test]
 fn membership_in_a_set_read_out_of_an_array() {
@@ -745,7 +745,7 @@ fn syntactic_equality_between_set_variables() {
 /// `a = {1}`, `b = {}`, `c = {}`, `d = {2}` with `a # b` and `c # d` is
 /// satisfiable: 1 witnesses the first, 2 the second. The extensionality
 /// witness used to be named from a counter that restarts on every `reduce`
-/// call — and `reduce` runs once per `assert`, over the whole stack — so the
+/// call – and `reduce` runs once per `assert`, over the whole stack – so the
 /// same name, and therefore the same hash-consed variable, could be handed to
 /// a different pair on a later call. One element then had to witness both
 /// disequalities, which no theory says, and a satisfiable problem could come
@@ -786,7 +786,7 @@ fn two_disequalities_need_two_witnesses() {
 /// (set.member x S)  (= y x)  (not (set.member y S))
 /// ```
 ///
-/// were three unrelated variables and this answered `sat`. It is `unsat` —
+/// were three unrelated variables and this answered `sat`. It is `unsat` –
 /// `y` *is* `x`, and `x` is in `S`.
 ///
 /// It was found from the most ordinary specification there is:

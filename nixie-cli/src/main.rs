@@ -967,16 +967,16 @@ pub(crate) enum SmtPreset {
 /// of silently ignoring) a preset it cannot honor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CliPreset {
-    /// SMT-layer preset — applies on SMT-LIB2 input paths.
+    /// SMT-layer preset – applies on SMT-LIB2 input paths.
     Smt(SmtPreset),
-    /// SAT-core preset (`nixie_sat::ConfigPreset`) — applies to the DIMACS
+    /// SAT-core preset (`nixie_sat::ConfigPreset`) – applies to the DIMACS
     /// fast path and to `cnf_bench`-style CNF solving.
     Sat(nixie_sat::ConfigPreset),
 }
 
 /// Resolve a `--preset` name against both domains.
 ///
-/// Errors on unknown names — never silently fall through (AGENTS.md):
+/// Errors on unknown names – never silently fall through (AGENTS.md):
 /// a typo like `--preset cadicla` must stop the run, not solve with an
 /// unintended default configuration.
 pub(crate) fn parse_preset(name: &str) -> Result<CliPreset, String> {
@@ -1062,7 +1062,7 @@ pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) -> Result<(),
             Ok(CliPreset::Sat(_)) => {}
             // Names were validated in `main` before any work started; a
             // failure here means a caller bypassed that gate (e.g. a
-            // library consumer) — report it, never guess.
+            // library consumer) – report it, never guess.
             Err(e) => preset_err = Some(e),
         }
     }
@@ -1302,8 +1302,8 @@ enum ScriptOutcome {
 /// Run `ctx.execute_script(script)` under a hard wall-clock `timeout`.
 ///
 /// `Context`/`Solver` do expose a cooperative deadline for an in-progress
-/// `check-sat` — `SolverConfig::timeout_ms` reaches both SAT engines and the
-/// theory callbacks — but it is *cooperative*: it is polled between CDCL loop
+/// `check-sat` – `SolverConfig::timeout_ms` reaches both SAT engines and the
+/// theory callbacks – but it is *cooperative*: it is polled between CDCL loop
 /// iterations, and a single `propagate()` over a large clause database is not
 /// itself interruptible, so it bounds the search without bounding the process.
 /// Enforcing a *hard* wall-clock bound from the CLI therefore still requires
@@ -2072,7 +2072,7 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
             // `--stats` (or `STATS=1` for A/B scripts): deterministic
             // search counters plus the graph propagator's maintenance
             // counters on stderr, so stdout stays valid SMT-LIB output.
-            // The flag existed but was never wired — it silently did
+            // The flag existed but was never wired – it silently did
             // nothing.
             if args.stats || std::env::var_os("STATS").is_some() {
                 let stats = ctx.stats();
@@ -2167,6 +2167,11 @@ pub(crate) fn execute_and_format(ctx: &mut Context, script: &str, args: &Args) -
 struct ProfDump {
     guard: pprof::ProfilerGuard<'static>,
     path: std::path::PathBuf,
+    /// `NIXIE_PPROF_TEXT=<path>`: also write the sampled stacks as
+    /// collapsed text (`root;...;leaf <samples>`, one stack per line,
+    /// most-sampled first) — the form `awk`/`sort` can attribute without
+    /// reading an SVG. Opt-in, so the default dump stays a single file.
+    text_path: Option<std::path::PathBuf>,
 }
 
 #[cfg(feature = "pprof-signal")]
@@ -2179,7 +2184,53 @@ impl ProfDump {
                 .build()
                 .expect("start profiler"),
             path: path.into(),
+            text_path: std::env::var_os("NIXIE_PPROF_TEXT").map(std::path::PathBuf::from),
         }
+    }
+
+    /// The report's stacks as collapsed text (see `text_path`). Inlined
+    /// frames of one frame join with `->`, outermost first, exactly as the
+    /// unwinder reports them.
+    #[cfg(feature = "pprof-signal")]
+    fn collapsed_stacks(report: &pprof::Report) -> String {
+        use std::fmt::Write as _;
+        let mut rows: Vec<(&pprof::Frames, isize)> =
+            report.data.iter().map(|(f, n)| (f, *n)).collect();
+        rows.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.frames.len().cmp(&b.0.frames.len()))
+        });
+        let mut out = String::new();
+        for (frames, count) in rows {
+            let mut first = true;
+            for frame in &frames.frames {
+                if !first {
+                    out.push(';');
+                }
+                first = false;
+                let mut sym_first = true;
+                for sym in frame {
+                    if !sym_first {
+                        out.push_str("->");
+                    }
+                    sym_first = false;
+                    let name = sym.name.as_deref().unwrap_or(b"?");
+                    let name = String::from_utf8_lossy(name);
+                    let _ = write!(out, "{name}");
+                    // Source position of this (possibly inlined) frame:
+                    // `basename:line`, so a text consumer can attribute
+                    // samples to lines without reading an SVG/protobuf.
+                    if let (Some(file), Some(line)) = (sym.filename.as_deref(), sym.lineno) {
+                        let file = file.to_string_lossy();
+                        if let Some(base) = file.rsplit('/').next() {
+                            let _ = write!(out, "@{base}:{line}");
+                        }
+                    }
+                }
+            }
+            let _ = writeln!(out, " {count}");
+        }
+        out
     }
 }
 
@@ -2192,6 +2243,18 @@ impl Drop for ProfDump {
                 && report.flamegraph(&mut file).is_err()
             {
                 eprintln!("[pprof] flamegraph write failed");
+            }
+            if let Some(text_path) = &self.text_path {
+                let text = Self::collapsed_stacks(&report);
+                if let Some(dir) = text_path.parent() {
+                    let _ = std::fs::create_dir_all(dir);
+                }
+                if std::fs::write(text_path, text).is_err() {
+                    eprintln!(
+                        "[pprof] collapsed-stack write failed: {}",
+                        text_path.display()
+                    );
+                }
             }
         }
     }

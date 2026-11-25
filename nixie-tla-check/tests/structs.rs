@@ -3,7 +3,7 @@
 //! They used to be **structural only**: taken apart by the encoder before
 //! anything reached the solver, with no SMT sort of their own. The stated
 //! reason was that an SMT array forces one sort across every index, so
-//! `<<1, "a">>` could not be array-backed — which is true, and does not apply
+//! `<<1, "a">>` could not be array-backed – which is true, and does not apply
 //! to a datatype, where each field carries its own sort. Z3 and CVC5 model
 //! them this way.
 //!
@@ -55,7 +55,7 @@ fn fails(vars: &str, init: &str, body: &str) {
     );
 }
 
-// ---- a record-valued state variable ----
+// ======== a record-valued state variable ========
 
 #[test]
 fn a_record_variable_has_a_sort() {
@@ -102,7 +102,7 @@ fn domain_of_a_record_variable() {
     holds("r", "r = [a |-> 1, b |-> 2]", "\"c\" \\notin DOMAIN r");
 }
 
-// ---- a tuple-valued state variable ----
+// ======== a tuple-valued state variable ========
 
 #[test]
 fn a_tuple_variable_has_a_sort() {
@@ -125,7 +125,7 @@ fn except_on_a_tuple_variable() {
     holds("t", "t = <<1, 2>>", "[t EXCEPT ![1] = 9] = <<9, 2>>");
 }
 
-// ---- sets of tuples: the shape that motivated this ----
+// ======== sets of tuples: the shape that motivated this ========
 
 /// `Set(<<Str, Str>>)` was the most common unsortable state type in the
 /// corpus. Its members come out of the theory as datatype terms and have to
@@ -142,7 +142,7 @@ fn a_set_of_tuples_is_a_state_variable() {
 /// (landed 2026-09-15, mirroring Z3's `theory_finite_set_size::
 /// add_eq_axioms`). Before that rule the support recursion did not follow
 /// equalities and the claim was honestly `Unknown`; the test pins the
-/// improvement — and its sibling keeps the genuine decline: a variable
+/// improvement – and its sibling keeps the genuine decline: a variable
 /// with **no** pinning equality still has unknown members.
 #[test]
 fn cardinality_of_a_pinned_set_variable_is_exact() {
@@ -162,7 +162,7 @@ fn cardinality_of_a_pinned_set_variable_is_exact() {
 #[test]
 fn cardinality_of_an_unpinned_set_variable_decides() {
     // The invariant does not hold of *every* state, and the violation is
-    // witnessed by a real model (the slack encoding plus synthesis) — not
+    // witnessed by a real model (the slack encoding plus synthesis) – not
     // a guess.
     assert!(matches!(
         claim("s", "TRUE", "Cardinality(s) = 2"),
@@ -211,9 +211,9 @@ fn a_quantifier_over_a_set_of_tuples() {
     holds("x", "x = 0", "\\E p \\in {<<1, 2>>, <<3, 4>>} : p[2] = 4");
 }
 
-// ---- functions into records ----
+// ======== functions into records ========
 
-/// `(Str -> [..])` — a function whose range is a record — was the other big
+/// `(Str -> [..])` – a function whose range is a record – was the other big
 /// unsortable state type.
 #[test]
 fn a_function_into_a_record() {
@@ -229,10 +229,10 @@ fn a_function_into_a_record() {
     );
 }
 
-// ---- what is still refused ----
+// ======== what is still refused ========
 
-/// An **open** record — one where inference only ever saw field accesses, so
-/// the value may carry fields this type does not list — is refused. A datatype
+/// An **open** record – one where inference only ever saw field accesses, so
+/// the value may carry fields this type does not list – is refused. A datatype
 /// over the known fields would make two records that differ only in the rest
 /// compare *equal*, which hides a counterexample rather than manufacturing
 /// one.

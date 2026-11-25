@@ -1,7 +1,7 @@
 //! Finite bags (multisets): the count reduction, end to end.
 //!
 //! A bag is a finite map from elements to multiplicities, and the theory
-//! reduces every constraint to arithmetic over `bag.count` terms — the
+//! reduces every constraint to arithmetic over `bag.count` terms – the
 //! SMT-LIB bags draft as CVC5 implements it (`src/theory/bags`), compiled
 //! to the same eager shape as the finite-set theory:
 //!
@@ -23,7 +23,7 @@
 //! Every case's status was cross-checked against CVC5 1.3.4 while writing
 //! (the whole battery lives in the landing commit's message; the two
 //! cardinality-over-unknown-support cases where CVC5 times out are noted
-//! inline — the count+slack skeleton refutes them instantly and the
+//! inline – the count+slack skeleton refutes them instantly and the
 //! arithmetic is one line).
 
 use nixie_solver::SolverResult;
@@ -45,7 +45,7 @@ fn solve_smt(script: &str) -> SolverResult {
     }
 }
 
-// ===== the pointwise identities =====
+// ======== the pointwise identities ========
 
 #[test]
 fn count_of_make_and_empty() {
@@ -199,7 +199,7 @@ fn setof_squashes_to_one() {
     );
 }
 
-// ===== membership, subbag, extensionality =====
+// ======== membership, subbag, extensionality ========
 
 #[test]
 fn member_is_positive_count() {
@@ -330,7 +330,7 @@ fn extensional_equality_is_pointwise() {
     );
 }
 
-// ===== cardinality =====
+// ======== cardinality ========
 
 #[test]
 fn card_sums_the_multiplicities() {
@@ -360,7 +360,7 @@ fn card_sums_the_multiplicities() {
         SolverResult::Sat
     );
     // A **closed** compound's support is exactly its makes, so its size
-    // is the exact sum — no slack. This was a false `sat` before the
+    // is the exact sum – no slack. This was a false `sat` before the
     // closed/opaque split (CVC5 1.3.4: `unsat`).
     assert_eq!(
         solve_smt(
@@ -436,7 +436,7 @@ fn card_slack_covers_unknown_elements() {
     );
 }
 
-// ===== element sorts and exactness =====
+// ======== element sorts and exactness ========
 
 #[test]
 fn tuple_elements_count_by_value() {
@@ -511,7 +511,7 @@ fn nested_compounds_compose() {
     );
 }
 
-// ===== the surface =====
+// ======== the surface ========
 
 #[test]
 fn negative_multiplicities_clamp_to_zero() {
@@ -584,10 +584,10 @@ fn opaque_counts_are_nonnegative() {
     );
 }
 
-// ===== the model: count-driven values and the readback =====
+// ======== the model: count-driven values and the readback ========
 
 /// A bag variable's value assembles from the counts the arithmetic
-/// solver valued, and prints as the canonical disjoint union — so the
+/// solver valued, and prints as the canonical disjoint union – so the
 /// printed model re-reads as itself. The `@bag_ext_*` witnesses merge by
 /// *value* into the element cells (they are ordinary elements the
 /// tableau values, usually equal to a real one; their consistency axioms
@@ -614,7 +614,7 @@ fn bag_variable_value_prints() {
 }
 
 /// `bag.count`, `bag.card` and `bag.member` queries answer with numbers
-/// and Booleans — including *query-only* cards, whose assertion stack
+/// and Booleans – including *query-only* cards, whose assertion stack
 /// never constrained one (folded from the installed value, which is
 /// evaluation of a verified object, not a guess).
 #[test]
@@ -769,10 +769,10 @@ fn refuted_across_push_pop() {
     );
 }
 
-// ===== the fuzz campaign's finds (each was a wrong verdict) =====
+// ======== the fuzz campaign's finds (each was a wrong verdict) ========
 
 /// `b = ∅ ∧ |b| = 1` must refute: equal bags have equal sizes, and `|∅|`
-/// folds to 0 — the aggregate the per-element equations cannot see
+/// folds to 0 – the aggregate the per-element equations cannot see
 /// through the slack. Without the rule this answered `sat` (fuzz-found;
 /// CVC5: `unsat`; the set theory has always had the analogue).
 #[test]
@@ -802,7 +802,7 @@ fn equality_forces_equal_cardinality() {
 
 /// The counting sum de-duplicates: a bag pinned to `(2:3)` keeps
 /// `|(2:3)| = 3` even though the extensionality witnesses usually equal
-/// the real elements — summing every spelling counted one cell twice,
+/// the real elements – summing every spelling counted one cell twice,
 /// forced the slack to absorb the duplicate, and pinned the witnesses
 /// away from the values the disequality directions needed. This exact
 /// shape answered `unsat` before the guards (CVC5: `sat`).
@@ -822,7 +822,7 @@ fn counting_dedups_equal_valued_elements() {
 
 /// The lattice rewrites: a max-union with `a` on either side already
 /// covers every copy `a` has, so the subtract-difference is empty and
-/// the remove-difference is empty — the pointwise identities close
+/// the remove-difference is empty – the pointwise identities close
 /// shapes the element-list reduction cannot (fuzz-found false-`sat`;
 /// CVC5: `unsat`).
 #[test]
@@ -863,7 +863,7 @@ fn lattice_rewrites_close_difference_shapes() {
 }
 
 /// `bag.count` is a function of the element: `¬((1:3) ⊑ b)` beside
-/// `count(1,b) ≥ 5` must refute — the witness element (valued 1) needs
+/// `count(1,b) ≥ 5` must refute – the witness element (valued 1) needs
 /// `count(witness, b) < 3`, and the witness's count equals `count(1,b)`
 /// by congruence. The purified arithmetic encoding gave each count term
 /// its own column with no congruence tie (an `apply` would get it from
@@ -884,7 +884,7 @@ fn count_is_congruent_in_its_element() {
 }
 
 /// `a ⊑ b → |a| ≤ |b|`: a subbag against a closed bag forces the whole
-/// (unknown-support) size down, not just the known elements —
+/// (unknown-support) size down, not just the known elements –
 /// `b ⊑ ((1:-1) ⧵ (x:0))` is `b ⊑ ∅`, which empties `b`, contradicting
 /// `|b| = 2`. Answered `sat` before the rule (fuzz-found; CVC5:
 /// `unsat`).
@@ -915,9 +915,9 @@ fn subbag_bounds_the_cardinality() {
     );
 }
 
-// ===== the ite/congruence holes (differential probes, pre-choose) =====
+// ======== the ite/congruence holes (differential probes, pre-choose) ========
 
-/// A bag-shaped `ite` is *determined* by its branches — its counts are
+/// A bag-shaped `ite` is *determined* by its branches – its counts are
 /// `ite(c, count(e,a), count(e,b))`, never free integers. Before the arm
 /// landed, `count_definition` fell through to the opaque treatment and
 /// `x ≤ 0 ∧ count(1, ite(x > 0, (1:2), (2:2))) = 1` answered `sat`
@@ -948,7 +948,7 @@ fn ite_bags_counts_follow_the_branches() {
         SolverResult::Sat
     );
     // An ite of closed bags is closed: its support is exactly the
-    // branches' makes, so the cardinality is the exact sum — no slack.
+    // branches' makes, so the cardinality is the exact sum – no slack.
     assert_eq!(
         solve_smt(
             "(set-logic ALL)\n\
@@ -961,7 +961,7 @@ fn ite_bags_counts_follow_the_branches() {
     );
 }
 
-/// `|ite(c, a, b)| = ite(c, |a|, |b|)` exactly — over *opaque* operands
+/// `|ite(c, a, b)| = ite(c, |a|, |b|)` exactly – over *opaque* operands
 /// too, where the count identities alone tie the sums but not the ite's
 /// own slack: `|A| = 5 ∧ b = ite(¬c, A, ∅) ∧ |b| = 6` must refute through
 /// the ite's cardinality, not through branch support.
@@ -995,7 +995,7 @@ fn ite_cardinality_is_the_branch_cardinality() {
 }
 
 /// `bag.count` is a function of the bag **value**, so a *derived* equality
-/// — EUF congruence `f x = f 0` from `x = 0` — ties the counts with no
+/// – EUF congruence `f x = f 0` from `x = 0` – ties the counts with no
 /// surveyed equality atom anywhere. Before the pair-congruence pass the
 /// purified encoding gave each count term its own integer column and
 /// `x = 0 ∧ count(1, f x) = 2 ∧ count(1, f 0) = 5` answered `sat`
@@ -1056,7 +1056,7 @@ fn counts_follow_derived_equality_congruence() {
     );
 }
 
-// ===== bag.choose =====
+// ======== bag.choose ========
 
 /// The CVC5 `BAG_CHOOSE` semantics end to end: `choose` of a nonempty bag
 /// is a member, congruent in the bag, and the builder folds
@@ -1162,7 +1162,7 @@ fn choose_unfolds_over_ite() {
 /// value; the empty bag's choose is unspecified (any value models it, the
 /// count is 0). The `count(3,b) = 2 ∧ choose(b) = 3` case is the
 /// card-mint regression: the choose axiom must not mint `bag.card` for a
-/// bag the formula never cardinalized — its slack column rolled the bag
+/// bag the formula never cardinalized – its slack column rolled the bag
 /// back to `∅`.
 #[test]
 fn choose_models_and_queries() {
@@ -1186,7 +1186,7 @@ fn choose_models_and_queries() {
         "{joined}"
     );
 
-    // Query-only choose: completes from the installed value — a member
+    // Query-only choose: completes from the installed value – a member
     // with its multiplicity, never a falsifying 0.
     let mut context = nixie_solver::Context::new();
     let out = context
@@ -1282,7 +1282,7 @@ fn subbag_queries_fold_from_values() {
     assert!(joined.contains("((bag.subbag b b) true)"), "{joined}");
 }
 
-// ===== bag.map / bag.filter =====
+// ======== bag.map / bag.filter ========
 
 /// `bag.map` end to end: a `define-fun`'s body is inlined per element
 /// (the parser's call-site substitution, so the reduction's images and the
@@ -1292,7 +1292,7 @@ fn subbag_queries_fold_from_values() {
 /// directions.
 #[test]
 fn map_counts_follow_the_function() {
-    // Defined function: `count(2, map (+1) (1:3)) = 3` — and no other
+    // Defined function: `count(2, map (+1) (1:3)) = 3` – and no other
     // element reaches 2.
     assert_eq!(
         solve_smt(
@@ -1315,7 +1315,7 @@ fn map_counts_follow_the_function() {
     // The builder must not mint `f(x)` applications for a defined
     // function: `f = *2` sends 1 to 2, so `count(2, map f (1:2)) = 0`
     // refutes. (Before the make/⊎ normalizations were dropped from the
-    // builder, this answered `sat` — the leaked uninterpreted app was
+    // builder, this answered `sat` – the leaked uninterpreted app was
     // free to differ from the definition.)
     assert_eq!(
         solve_smt(
@@ -1380,7 +1380,7 @@ fn map_counts_follow_the_function() {
     );
     // An opaque domain's unknown support can map anywhere: the per-element
     // slack keeps this *satisfiable* (a false `unsat` here is the worst
-    // class — the encoding claimed the unknown elements contribute
+    // class – the encoding claimed the unknown elements contribute
     // nothing).
     assert_eq!(
         solve_smt(
@@ -1395,7 +1395,7 @@ fn map_counts_follow_the_function() {
     );
 }
 
-/// `bag.filter`: `count(x, filter p b) = ite(p(x), count(x, b), 0)` —
+/// `bag.filter`: `count(x, filter p b) = ite(p(x), count(x, b), 0)` –
 /// exact per element (filter only removes), `|filter p b| <= |b|`.
 #[test]
 fn filter_keeps_the_satisfying_elements() {
@@ -1496,10 +1496,10 @@ fn map_and_filter_models_answer() {
 /// A **core** wrong verdict the `bag.all`/`bag.some` work uncovered, kept
 /// here because the reproducer is bags: `purify_numeric_uf_args` proxies
 /// numeric constants globally, and a proxy minted in a *later* assert split
-/// the count spellings — the first assert's `count(2, b)` stayed raw, later
+/// the count spellings – the first assert's `count(2, b)` stayed raw, later
 /// asserts' became `count(proxy, b)`, two arithmetic columns with no tie
 /// (counts are columns, not EUF applications; the reduction's
-/// element-congruence axiom — the only tie — was itself rewritten by the
+/// element-congruence axiom – the only tie – was itself rewritten by the
 /// same substitution into a tautology and folded away). With the count
 /// equation asserted *before* the `(p 2)` assert that creates the proxy,
 /// `(count(2,b) = 1) ∧ (count(2,filter) = 0) ∧ (p 2)` answered `sat`
@@ -1532,7 +1532,7 @@ fn count_spellings_survive_late_purification() {
     }
 }
 
-/// `bag.all`/`bag.some` — CVC5's `ALL_FILTER`/`SOME_FILTER` lowerings,
+/// `bag.all`/`bag.some` – CVC5's `ALL_FILTER`/`SOME_FILTER` lowerings,
 /// applied at parse time: `all p b ⇔ filter p b = b` and
 /// `some p b ⇔ filter p b ≠ ∅`. The extensionality witnesses make both
 /// directions exact.
@@ -1624,7 +1624,7 @@ fn all_and_some_lower_through_the_filter() {
     );
 }
 
-// ===== bag.fold =====
+// ======== bag.fold ========
 // The reference is CVC5's `BAG_FOLD` (element first, accumulator second:
 // `combine_i = f(elements_i, combine_{i-1})` in `reduceFoldOperator`,
 // `evaluateBagFold` in `bags_utils.cpp`). The reduction unrolls a ground
@@ -1686,7 +1686,7 @@ fn fold_over_empty_is_the_initial_value() {
 
 #[test]
 fn fold_multiplicity_copies_each_application() {
-    // (bag 4 3) folds to f(4, f(4, f(4, t))) — three applications, not
+    // (bag 4 3) folds to f(4, f(4, f(4, t))) – three applications, not
     // one: plus/4/0 gives 12. A zero multiplicity is the empty bag.
     let script = |expected: &str| {
         format!(
@@ -1711,7 +1711,7 @@ fn fold_multiplicity_copies_each_application() {
 
 #[test]
 fn fold_over_ite_takes_the_branch() {
-    // fold(f, t, ite(c, a, b)) = ite(c, fold_a, fold_b) — the branch-picking
+    // fold(f, t, ite(c, a, b)) = ite(c, fold_a, fold_b) – the branch-picking
     // identity the count and cardinality rules take.
     let script = |expected: &str| {
         format!(
@@ -1733,7 +1733,7 @@ fn fold_over_ite_takes_the_branch() {
 fn fold_declines_order_sensitive_functions() {
     // sub is not exchange-law: fold(sub, 0, {1,2}) depends on the
     // enumeration order, which the eager reduction must not guess. The
-    // honest answer is Unknown — never a fixed-order verdict.
+    // honest answer is Unknown – never a fixed-order verdict.
     assert_eq!(
         solve_smt(
             "(set-logic ALL)\n\
@@ -1892,7 +1892,7 @@ fn map_under_different_functions_is_not_congruence_identified() {
     // The EUF congruence identity must carry the function symbol: before
     // it did, `map f b` and `map g b` shared one operator identity over
     // the same domain, so equal domains congruence-identified two
-    // different images — a false equality the layer would then commit
+    // different images – a false equality the layer would then commit
     // (and a script pinning the two images differently would refute
     // through it: a false `unsat`).
     assert_eq!(

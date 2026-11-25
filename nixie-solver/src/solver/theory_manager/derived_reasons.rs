@@ -71,7 +71,7 @@ pub(crate) struct DerivedReasons {
     /// from their base scope.  Absolute: maintained across every
     /// `TheoryManager` that drives those solvers (see the module docs).
     depth: usize,
-    /// Candidate theory lemmas recorded during the current search — each a
+    /// Candidate theory lemmas recorded during the current search – each a
     /// clause body over `Eq` atoms as `(atom term, literal polarity)` pairs
     /// (see `TheoryCallback::record_lemma` in nixie-sat).  Solver-owned
     /// because the `TheoryManager` is a per-search local; never cleared on

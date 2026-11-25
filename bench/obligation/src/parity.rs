@@ -6,14 +6,14 @@
 //! `0 = xor(c_v)`: the instance is UNSAT iff the total charge is odd, and
 //! *every proper subset* of the equations is satisfiable (the incidence
 //! matrix of a connected graph has row rank V-1 over GF(2)). The
-//! contradiction cannot be localized — that is the point.
+//! contradiction cannot be localized – that is the point.
 //!
 //! Realizations:
 //! * `mixed-bool-int`: some vertex equations as Bool XOR chains, others as
-//!   LIA sums `sum(i_e) = c_v + 2*k_v`, edge values linked across sorts —
+//!   LIA sums `sum(i_e) = c_v + 2*k_v`, edge values linked across sorts –
 //!   the obstruction must be reconciled across theories.
 //! * `mixed-boundary`: same, but the link `i_e = ite(b_e,1,0)` is replaced
-//!   by an exact div/mod chain that maps the two Booleans to 0/1 — the
+//!   by an exact div/mod chain that maps the two Booleans to 0/1 – the
 //!   `Boundary` production joined into the obstruction.
 //! * `bv`: width-1 BV XOR chains.
 //! * `cnf`: Tseitin-encoded DIMACS for the pure SAT core.
@@ -228,9 +228,9 @@ pub fn build(seed: u64, p: &Params, odd: bool) -> Result<Data, String> {
     Ok(data)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Emission
-// ---------------------------------------------------------------------------
+// ========  ========
 
 struct Parts {
     decls: Vec<String>,
@@ -346,7 +346,7 @@ fn witness_text(d: &Data) -> Option<String> {
 
 /// Search for an exact div/mod chain mapping `true -> 1`, `false -> 0`:
 /// `(mod (div (ite b C1 C0) D) 2)` with C0 an even multiple of D and C1 an
-/// odd multiple of D (possibly negative — Euclidean semantics probed).
+/// odd multiple of D (possibly negative – Euclidean semantics probed).
 fn find_wrap(rng: &mut Rng) -> String {
     for _ in 0..64 {
         let d = rng.range_i64(3, 16);

@@ -1,17 +1,17 @@
-# Finite Fields (`QF_FF`) — theory design
+# Finite Fields (`QF_FF`) – theory design
 
 **Binary extensions:** the initial bounded binary fragment is now supported;
 see §14 and its audit for syntax, API, solving limits and proof modes.
 
 **Status:** Phases 0–6 implemented (2026-09-14); `QF_UFFF` (the
-Phase-6 combination remainder) landed 2026-09-16 — see §7.1 for the
+Phase-6 combination remainder) landed 2026-09-16 – see §7.1 for the
 as-built arrangement architecture. §6.5's split GB landed 2026-09-16 as
 the monolithic-first fallback with cvc5's admit discipline (see
-`docs/studies/2026-09-16-ff-split-gb-chain-capacity.md` — the study also
+`docs/studies/2026-09-16-ff-split-gb-chain-capacity.md` – the study also
 records why operand flattening under the split is a measured negative),
-and the **variable-subset window decomposition** — the design's actual
+and the **variable-subset window decomposition** – the design's actual
 §6.5, bases over overlapping variable clusters with support-fitting
-exchange — landed 2026-09-17 as the third fallback level (see
+exchange – landed 2026-09-17 as the third fallback level (see
 `docs/studies/2026-09-17-ff-window-decomposition.md`: chain 128×192 and
 256×384 now solve; windows do the local elimination, the exchange
 propagates boundary pins along the chain, one union cascade closes the
@@ -44,8 +44,8 @@ follow-up in `split_gb.{h,cpp}`.
 
 ## 0. Recommendation, and where I would push back
 
-**Build it.** The target — `x ∈ 𝔽_p`, `p` a 254-bit prime, polynomial constraints from
-R1CS/PLONK circuits — is a fragment where the two reductions available today are not
+**Build it.** The target – `x ∈ 𝔽_p`, `p` a 254-bit prime, polynomial constraints from
+R1CS/PLONK circuits – is a fragment where the two reductions available today are not
 merely slow but structurally wrong (§1), and where the dedicated procedure is
 *simpler* than most theories Nixie already has: no ordering, no overflow, no
 rounding, no interpretation gap. The signature is four operators and one predicate.
@@ -84,7 +84,7 @@ And one thing I would deliberately not copy: cvc5 asserts `modulus.isProbablePri
 and supports prime order only. Keep that restriction in the *solver*, but do not bake
 it into the *sort*: carry a field description behind a `FieldId` so `GF(2^k)` (AES,
 Binius-style binary towers) can be added later without an AST migration. A non-prime
-modulus must produce an honest error at `declare-sort`/parse time — never a silent
+modulus must produce an honest error at `declare-sort`/parse time – never a silent
 reinterpretation as ℤ_n (`AGENTS.md` → *No silent fallthrough*).
 
 Phasing and exit criteria are in §11. The short form: Phase 0–2 (AST + 𝔽_p algebra +
@@ -93,13 +93,13 @@ competitive.
 
 ---
 
-## 1. Why a dedicated theory — the reductions really are unavailable
+## 1. Why a dedicated theory – the reductions really are unavailable
 
 **Bit-vectors have the wrong modulus.** Encoding `x ∈ 𝔽_p` as a 254-bit BV requires
 every field operation to be followed by an explicit reduction `mod p`, and `mod` by a
 non-power-of-two constant is not a BV operation: it needs a quotient variable and a
 multiplication. One field multiply becomes a 254×254 bit multiplier (~1.3·10⁵ AND
-gates), plus a 254×254 multiply for the quotient, plus comparisons — order 10⁵ clauses
+gates), plus a 254×254 multiply for the quotient, plus comparisons – order 10⁵ clauses
 per constraint. A small circom circuit is 10⁴–10⁶ R1CS constraints. This is not a
 constant-factor problem.
 
@@ -108,8 +108,8 @@ unbounded ℤ keeps the syntax honest but throws away every fact that makes the 
 decidable: that every nonzero element is invertible, that `x(x−1) = 0 ⟹ x ∈ {0,1}`,
 that the solution set is a variety over a finite field. Those arrive as nonlinear
 diophantine side conditions; Nixie's NIA path (branch-and-cut, relaxation, NLSAT) has
-no rule that exploits finiteness of 𝔽_p, and the invertibility encoding —
-`a ≠ b ⟺ ∃w. (a−b)·w = 1`, the single most useful fact in this theory — is not
+no rule that exploits finiteness of 𝔽_p, and the invertibility encoding –
+`a ≠ b ⟺ ∃w. (a−b)·w = 1`, the single most useful fact in this theory – is not
 available at all in ℤ.
 
 **The theory itself is small.** Semantics of a conjunction of 𝔽_p literals reduces
@@ -125,7 +125,7 @@ code path, not as a second architecture.
 
 ---
 
-## 2. Surface syntax and semantics — match cvc5 exactly
+## 2. Surface syntax and semantics – match cvc5 exactly
 
 Verified against `../temp/cvc5/src/parser/smt2/{smt2_state,smt2_term_parser}.cpp` and
 `src/theory/ff/{kinds.toml,theory_ff_rewriter.cpp}`.
@@ -188,7 +188,7 @@ pub struct FieldDesc {
 }
 ```
 
-Why `FieldId` and not `FiniteField(Arc<BigUint>)`: `SortKind` is the interner key —
+Why `FieldId` and not `FiniteField(Arc<BigUint>)`: `SortKind` is the interner key –
 it is hashed and compared on every sort lookup (`Sorts::intern`), and it is matched in
 341 places across 41 files. A `u32` payload keeps those comparisons O(1) and gives the
 derived field data (Montgomery constants, root-finding parameters) a home that is
@@ -201,7 +201,7 @@ unsupported case *visible in the type system* instead of implied by a missing br
 ### 3.2 Terms
 
 ```rust
-// nixie-core/src/ast/term.rs — mirrors the existing BitVecConst shape
+// nixie-core/src/ast/term.rs – mirrors the existing BitVecConst shape
 TermKind::FfConst { value: BigInt, field: FieldId },
 TermKind::FfAdd(SmallVec<[TermId; 4]>),
 TermKind::FfMul(SmallVec<[TermId; 4]>),
@@ -210,8 +210,8 @@ TermKind::FfBitsum(SmallVec<[TermId; 4]>),
 ```
 
 Flat variants, consistent with `BvAdd`/`FpAdd`, rather than one grouped
-`TermKind::Ff(FfOp, …)`. The grouped form would shrink the blast radius — `TermKind::`
-appears at ~8 900 sites — but every existing walker, rewriter, model evaluator and
+`TermKind::Ff(FfOp, …)`. The grouped form would shrink the blast radius – `TermKind::`
+appears at ~8 900 sites – but every existing walker, rewriter, model evaluator and
 printer is written against flat variants, and a nested enum would buy compile-time
 convenience at the cost of an inconsistent AST. The breakage *is* the forcing
 function: exhaustive matches that do not handle a field term must fail to compile
@@ -266,14 +266,14 @@ limbs. A 1-limb specialization is legitimate *only* as a `const L: usize` /
 `enum Backend` dispatch whose arithmetic is exact for that width; the wide path must
 never be reached with a truncated value.
 
-Constant-time is explicitly **not** a requirement — this is a solver, not a crypto
+Constant-time is explicitly **not** a requirement – this is a solver, not a crypto
 library, and pretending otherwise costs speed for no benefit here.
 
 ### 4.2 Univariate polynomials over 𝔽_p
 
 Dense coefficient vectors. Schoolbook multiply, Karatsuba above a measured crossover;
 NTT only if it earns its place (BN254's scalar field has 2-adicity 28 and Goldilocks
-is NTT-native, so the option is real — but degrees in this application are small, so
+is NTT-native, so the option is real – but degrees in this application are small, so
 treat NTT as a later optimization with a benchmark attached, not a design premise).
 Needed: `divrem`, `gcd`, `pow_mod(f)`, derivative, squarefree part, monic
 normalization.
@@ -284,13 +284,13 @@ Mirrors `uni_roots.cpp`:
 
 1. `distinct_roots_poly(f) = gcd(f, x^p − x mod f)`, where `x^p mod f` is computed by
    repeated squaring in `𝔽_p[x]/(f)`. The result is the product of the distinct linear
-   factors of `f` — i.e. exactly the roots, squarefree.
+   factors of `f` – i.e. exactly the roots, squarefree.
 2. Equal-degree splitting: for shift `a`, `gcd(g(x), (x+a)^((p−1)/2) − 1)` splits `g`
    with probability ≈ ½ per shift. cvc5 samples `a` at random; **we walk
    `a = 0, 1, 2, …` deterministically**, which is equally effective in practice and
    keeps the solver reproducible. `p = 2` is a special case (trace map).
 3. Return roots sorted by value (not by string representation, which is the hack cvc5
-   uses because CoCoA cannot order ring elements — we can).
+   uses because CoCoA cannot order ring elements – we can).
 
 Cost: `O(deg(f)² log p)` field multiplications. Degrees here are small; `log p ≈ 254`.
 
@@ -310,7 +310,7 @@ Buchberger with Gebauer–Möller criteria and the normal selection strategy;
 degree-reverse-lex for the UNSAT test (cheapest order); F4-style batched linear-algebra
 reduction as the scaling path. Note the reason this is tractable at all: **over 𝔽_p
 there is no coefficient growth.** The pathology that makes Gröbner bases over ℚ
-explode simply does not exist here — which is why [OKTB23] works.
+explode simply does not exist here – which is why [OKTB23] works.
 
 Budget: a step counter (S-pairs processed, reductions performed), surfaced through
 `ResourceManager`, never elapsed time. Exceeding the budget yields `Unknown`, and the
@@ -326,7 +326,7 @@ that feeds the GB is an index-sorted `Vec`.
 Every basis element carries cofactors expressing it in the input generators:
 `g = Σ cᵢ fᵢ`. cvc5 gets this by instrumenting CoCoA's reduction callbacks
 (`core.cpp`, `Tracer`); we thread a sparse cofactor row through `s_polynomial` and
-through each reduction step. Memory cost is real, so make it a flag — but default it
+through each reduction step. Memory cost is real, so make it a flag – but default it
 **on** whenever a core or proof may be requested, and force it on in certified mode.
 
 This is what turns "UNSAT because the GB is {1}" into a checkable object: verifying
@@ -346,9 +346,9 @@ the basis computation that produced it.
 
 ## 5. The decision procedure for a conjunction ([OKTB23] core)
 
-Input: the asserted literals in one field — `p(x⃗) = 0` and `q(x⃗) ≠ 0`.
+Input: the asserted literals in one field – `p(x⃗) = 0` and `q(x⃗) ≠ 0`.
 
-**Step 1 — encode.** Two passes, as in `cocoa_encoder.h`, because the polynomial ring's
+**Step 1 – encode.** Two passes, as in `cocoa_encoder.h`, because the polynomial ring's
 variables must be known before any polynomial is built:
 
 - equality `a = b` → generator `enc(a) − enc(b)`;
@@ -358,15 +358,15 @@ variables must be known before any polynomial is built:
   generator set** so the front end (§6) can exploit bit structure and so cores can
   exclude it (it is a definition, not a fact).
 
-**Step 2 — Gröbner basis, degrevlex.** If the basis is a single nonzero constant, the
-ideal is the whole ring: **UNSAT**. The core comes from the tracer (§4.6) — the subset
+**Step 2 – Gröbner basis, degrevlex.** If the basis is a single nonzero constant, the
+ideal is the whole ring: **UNSAT**. The core comes from the tracer (§4.6) – the subset
 of *asserted facts* whose generators appear with nonzero cofactor, with definitional
 generators (bitsum, witnesses, field polys) filtered out. Never return the whole fact
 set as the "core" when a traced core is available; cvc5 does that when tracing is off,
 and it costs the SAT core a great deal of pruning.
 
-**Step 3 — `FindZero` (model construction).** Two explicit heap stacks — one of ideals,
-one of branchers — never native recursion (`AGENTS.md` → *Deep input must not overflow
+**Step 3 – `FindZero` (model construction).** Two explicit heap stacks – one of ideals,
+one of branchers – never native recursion (`AGENTS.md` → *Deep input must not overflow
 the stack*; cvc5 already flattens its Fig. 5 recursion this way in `multi_roots.cpp`).
 At each node:
 
@@ -378,10 +378,10 @@ At each node:
   2. **zero-dimensional** ideal → pick an unassigned variable, compute its minimal
      polynomial modulo the ideal, branch on its roots;
   3. **positive-dimensional** → round-robin over (variable, value) pairs. This is
-     complete — any solution assigns *some* value to the first variable — but it is
+     complete – any solution assigns *some* value to the first variable – but it is
      `p`-sized, and for a 254-bit prime it will not finish.
 
-**Step 4 — the honesty gate.** If the stack empties, the branching was exhaustive and
+**Step 4 – the honesty gate.** If the stack empties, the branching was exhaustive and
 UNSAT is genuine. If it empties *because a budget was exhausted*, it is not. The return
 type must distinguish these:
 
@@ -398,13 +398,13 @@ cvc5 collapses the last two into "trivial conflict = all facts", which is sound 
 because its budget exhaustion throws instead. Ours must be explicit: this is exactly
 the "unjustified conflict yields `Unknown`, never `Unsat`" rule.
 
-**Step 5 — validate the model, always.** Substitute and evaluate every asserted literal
+**Step 5 – validate the model, always.** Substitute and evaluate every asserted literal
 in 𝔽_p. This is exact and costs one pass; there is no excuse for skipping it, and a
 model that fails validation is an internal error that must surface as `Unknown` plus a
 loud diagnostic, never as `Sat` (`AGENTS.md` → *No fabrication*). In certified mode,
 re-verify the UNSAT certificate the same way.
 
-**Where `Unknown` comes from** (the complete list — a theory that cannot enumerate its
+**Where `Unknown` comes from** (the complete list – a theory that cannot enumerate its
 own incompleteness is not honest):
 non-prime modulus; extension field; GB step budget exhausted; `FindZero` budget
 exhausted (in practice: the positive-dimensional round-robin at a large prime);
@@ -412,7 +412,7 @@ minimal-polynomial computation budget exhausted; a model that fails validation.
 
 ---
 
-## 6. Field-aware front end — the difference between a demo and a tool
+## 6. Field-aware front end – the difference between a demo and a tool
 
 Everything below is sound-by-construction (ideal-preserving substitution, or
 propagation with an explicit reason) and all of it runs *before* the GB.
@@ -420,12 +420,12 @@ propagation with an explicit reason) and all of it runs *before* the GB.
 1. **Constant propagation.** A generator `x − c` eliminates `x` everywhere. On
    circuit-derived systems this cascades a long way: witness computation is mostly
    straight-line.
-2. **Linear core — sparse Gaussian elimination over 𝔽_p.** Partition generators into
+2. **Linear core – sparse Gaussian elimination over 𝔽_p.** Partition generators into
    linear and nonlinear; keep the linear part in reduced row-echelon form; substitute
    pivots into the nonlinear part; an inconsistent row is an immediate UNSAT whose core
    is that row's support. This is the LRA tableau discipline Nixie already runs
    (sparse exact rows, pivot selection, incremental updates) transplanted to 𝔽_p, where
-   it is strictly easier — no bounds, no ordering, no anti-cycling rule, termination is
+   it is strictly easier – no bounds, no ordering, no anti-cycling rule, termination is
    immediate. *Hypothesis to measure, not to assume:* R1CS from circom is dominated by
    linear constraints, so this should remove most generators before any GB runs.
 3. **Bit constraints and bitsums.** Detect `x·(x−1) = 0` / `x² − x = 0` → `x ∈ {0,1}`.
@@ -433,7 +433,7 @@ propagation with an explicit reason) and all of it runs *before* the GB.
    are bits and `n < log₂ p` (no wraparound), `s` determines every `bᵢ`; and two
    bitsums of equal width that are equal propagate bitwise equalities. This is
    `split_gb.cpp`'s `BitProp::getBitEqualities` ("extraProp") and it is the rule that
-   makes range checks and comparisons tractable — which is most of what a circuit does
+   makes range checks and comparisons tractable – which is most of what a circuit does
    that is not field arithmetic.
 4. **Structural decomposition.** Connected components of the variable-sharing graph are
    independent subproblems. Trivial to implement, and the single most reliable way to
@@ -442,16 +442,16 @@ propagation with an explicit reason) and all of it runs *before* the GB.
    variable subsets and exchange only the consequences each admits. **Landed in
    three levels** (2026-09-16/17): the 2-way linear/nonlinear split under cvc5's
    `admit` discipline as the monolithic-first fallback; then the **window
-   decomposition** — overlapping variable clusters (8-var cap, support-driven
+   decomposition** – overlapping variable clusters (8-var cap, support-driven
    growth), a Gröbner basis per window, an exchange fixpoint admitting
    support-fitting linear polys and univariates, and one union cascade that
    completes to the component's true basis (the union of window ideals IS the
    component ideal). cvc5's `splitGb` is generic over k generator sets (the 2-way
    split is the k=2 reading); cvc5's conflict-driven `splitFindZero` loop remains
-   unported — our FindZero consumes the union instead.
+   unported – our FindZero consumes the union instead.
 
 **Measurement discipline.** Items 1–4 change what the procedure *does*, deterministically
-— report solved counts and step counts, no matched null needed. But any *selection
+– report solved counts and step counts, no matched null needed. But any *selection
 heuristic inside* the GB (pair selection, variable order) reshuffles a chaotic search
 the same way SAT branching does, and a claimed improvement there ships with a matched
 null per `docs/BENCHMARKING.md`. Tick counters only; never wall-clock.
@@ -460,7 +460,7 @@ null per `docs/BENCHMARKING.md`. Tick counters only; never wall-clock.
 
 ## 7. CDCL(T) integration and theory combination
 
-**Multiplexing.** `FfTheory { subs: FxHashMap<FieldId, SubTheory> }` — one sub-solver
+**Multiplexing.** `FfTheory { subs: FxHashMap<FieldId, SubTheory> }` – one sub-solver
 per modulus, exactly as cvc5 does. No inference relates 𝔽_p and 𝔽_q, so the split is
 free.
 
@@ -470,12 +470,12 @@ conjunction. No new atom shapes, no internal case splitting, no theory-specific
 encoding in `encode.rs`. FF is, in wiring terms, one of the easiest theories Nixie can
 gain.
 
-**Effort levels.** Full-effort: the whole procedure (§5). Lower effort: §6.1–6.3 only —
+**Effort levels.** Full-effort: the whole procedure (§5). Lower effort: §6.1–6.3 only –
 propagation and the linear core are cheap enough to run on every theory check and can
 produce conflicts and propagations long before a GB would be justified.
 
 **Scoping.** Facts live on a level-marked trail; `push`/`pop` truncate it. Every derived
-artifact — GB, echelon form, model, core — is invalidated whenever the trail moves.
+artifact – GB, echelon form, model, core – is invalidated whenever the trail moves.
 **Recommendation: recompute from the trail rather than incrementally undoing a GB.**
 Incremental rollback of a basis is a soundness trap, and scope leakage is a bug class
 this codebase has already bled from (`AGENTS.md` → *State must be scope-consistent*).
@@ -485,8 +485,8 @@ an invariant checker.
 **Explanations.** A conflict is a subset of the *asserted* literals, taken from the
 tracer. Never a synthesized clause.
 
-**Placement.** Phase 3 can land as an eager whole-problem dispatch —
-`dispatch_ff_solver`, modelled on `check_nlsat.rs`'s `dispatch_nl_solver` — which
+**Placement.** Phase 3 can land as an eager whole-problem dispatch –
+`dispatch_ff_solver`, modelled on `check_nlsat.rs`'s `dispatch_nl_solver` – which
 decides pure conjunctive `QF_FF` goals (the common shape for circuit queries) without
 touching the CDCL(T) loop. Phase 4 promotes it to a real theory for goals with Boolean
 structure.
@@ -497,7 +497,7 @@ correct route is polite combination: EUF is smooth and finitely witnessable, so
 `T_FF ⊕ EUF` is decided by guessing arrangements over shared FF-sorted terms, with EUF
 adapting to the FF side's cardinality. Two practical obligations:
 
-- the FF solver must accept both equalities and disequalities over shared terms — it
+- the FF solver must accept both equalities and disequalities over shared terms – it
   does, via witnesses;
 - an arrangement with `k` pairwise-distinct shared terms is satisfiable only if
   `k ≤ p`. For ZK primes this is vacuous; for `𝔽_2`, `𝔽_3` it is not, and **omitting
@@ -519,13 +519,13 @@ sketches, in the shape the dispatch layer could carry honestly:
   mints it a variable, the enumerator assigns it, the exact evaluator
   looks it up. Application arguments are never descended into by any
   FF walk (an application contributes exactly its result field to
-  slice routing — a foreign-field argument belongs to its own field's
+  slice routing – a foreign-field argument belongs to its own field's
   slice).
 - **Batch congruence closure** (`nixie-theories/src/ff_euf.rs`) over
   the FF-sorted subterms of the goal's atoms: merges from the asserted
   equalities of the current Boolean model, closed under congruence by
   a fresh-signature-table fixpoint (no incremental signature
-  maintenance to get wrong — a stale entry is structurally impossible
+  maintenance to get wrong – a stale entry is structurally impossible
   when every round rebuilds).
 - **Model-guided arrangement search.** Per Boolean model, the closure's
   merge classes become extra literals for the FF slices; the FF
@@ -540,7 +540,7 @@ sketches, in the shape the dispatch layer could carry honestly:
   pass cannot build is an `unknown`, never a broken model.
 - **Cardinality at both ends.** The spine guard (top-level `distinct`
   over k > p terms, pigeonhole certificate) and, per Boolean model, the
-  interface guard over `distinct` families the model asserts in full —
+  interface guard over `distinct` families the model asserts in full –
   built from pair literals *after* construction-time folding, so a pair
   whose equality folds to `true` (the family is refutable outright)
   never inflates the count. That folding interaction was a real false
@@ -551,9 +551,9 @@ sketches, in the shape the dispatch layer could carry honestly:
   (each shrink re-runs the root check, so the surviving subset really
   refutes) or the traced FF core when it names only assignment literals.
 
-Verified by `nixie-solver/tests/ff_ufff_oracle.rs` — brute force over
+Verified by `nixie-solver/tests/ff_ufff_oracle.rs` – brute force over
 *every* model (variable assignments × function tables) at `p ∈
-{2,3,5,7}` — plus the congruence/cardinality/certified-mode
+{2,3,5,7}` – plus the congruence/cardinality/certified-mode
 regressions in `ff_ufff_regression.rs`.
 
 Known gaps, deliberately honest: multi-field congruence-dependence
@@ -568,18 +568,18 @@ refutations certify through the checker's independent EUF loop).
 **Models.** A `FieldId`-indexed map from variable to value; `get-value` on an arbitrary
 FF term evaluates by exact substitution. Printing is `#f<v>m<p>`.
 
-**UNSAT certificate — the easy half.** Cofactors `cᵢ` with `Σ cᵢ fᵢ = 1`: an explicit
+**UNSAT certificate – the easy half.** Cofactors `cᵢ` with `Σ cᵢ fᵢ = 1`: an explicit
 ideal-membership (weak Nullstellensatz) certificate, checkable by one round of
-polynomial arithmetic. Emit it as a first-class proof rule carrying the cofactors —
+polynomial arithmetic. Emit it as a first-class proof rule carrying the cofactors –
 `ProofRule::TheoryLemma { theory: "FF" }` with an opaque payload is acceptable as a
 first step, but a theory lemma with no checkable content is the "unjustified conflict"
 the soundness rules forbid, so the rule should carry the certificate from the start.
 
-**UNSAT by branch exhaustion — the hard half.** When UNSAT comes from `FindZero`
+**UNSAT by branch exhaustion – the hard half.** When UNSAT comes from `FindZero`
 closing the tree rather than from `1 ∈ I`, there is no single cofactor certificate. The
 proof is a case tree: each branch step says "these are all the roots of this univariate
 polynomial in 𝔽_p", and each leaf carries a certificate. That branch step *is*
-checkable — `f = ∏(x − rᵢ)·q` with `gcd(q, x^p − x) = 1` — but it is real work.
+checkable – `f = ∏(x − rᵢ)·q` with `gcd(q, x^p − x) = 1` – but it is real work.
 **Honest fallback:** until it exists, certified mode downgrades branch-exhaustion
 UNSATs to `Unknown` rather than emitting an unchecked proof. Disequality witnesses are
 fresh Skolems and must appear in the certificate's signature.
@@ -593,14 +593,14 @@ fresh Skolems and must appear in the certificate's signature.
 | No silent fallthrough | New `SortKind`/`TermKind` variants break every exhaustive match; non-prime modulus, extension fields and unsupported operators raise errors, never defaults |
 | No fabrication | `FfOutcome` separates `Exhausted` from `OutOfBudget`; mandatory model validation in 𝔽_p; cores are subsets of asserted literals; certificates re-checked in certified mode |
 | No stack overflow on deep input | `FindZero` is two explicit heap stacks; the term→polynomial encoder is an explicit-stack walk like every other term walk in the codebase |
-| Exact bignums | Montgomery limbs sized to `p`; no `u64` fast path that truncates; the modulus is `BigUint` end to end, including through the parser (which today cannot even represent it — §3.3) |
+| Exact bignums | Montgomery limbs sized to `p`; no `u64` fast path that truncates; the modulus is `BigUint` end to end, including through the parser (which today cannot even represent it – §3.3) |
 | Scope consistency | Level-marked fact trail; every derived artifact invalidated on trail movement; recompute rather than roll back a basis |
-| No `unwrap`/`expect` | Field context lookups, root extraction and cofactor bookkeeping all return `Result`; the "impossible" cases (a univariate polynomial with no variable index, an unassigned variable in a zero-dimensional ideal — both `Assert`/`Unreachable` in cvc5) become representable-state errors here |
+| No `unwrap`/`expect` | Field context lookups, root extraction and cofactor bookkeeping all return `Result`; the "impossible" cases (a univariate polynomial with no variable index, an unassigned variable in a zero-dimensional ideal – both `Assert`/`Unreachable` in cvc5) become representable-state errors here |
 | Determinism | Derandomized Rabin shifts; step-budgeted GB; index-sorted iteration everywhere; no wall-clock anywhere in the policy path |
 
 ---
 
-## 10. How this gets verified — there is no Z3 oracle
+## 10. How this gets verified – there is no Z3 oracle
 
 **Z3 has no finite-field theory.** `./bench/z3_parity/run_parity.sh`, the project's
 soundness canary, cannot cover `QF_FF` at all. That absence has to be replaced, not
@@ -616,7 +616,7 @@ waved at. In ascending order of strength:
    It is also where the combination cardinality guard (§7) gets its regression.
 3. **Planted-solution fuzzing at real primes.** Sample `z ∈ 𝔽_pⁿ`, generate constraints
    satisfied by `z`: ground truth is `sat`, so any `unsat` is a hard failure at n = 1.
-   Mutated instances have no ground truth — use them for crash/assertion testing only,
+   Mutated instances have no ground truth – use them for crash/assertion testing only,
    never for verdict scoring.
 4. **Algebraic property tests.** Reduction is confluent modulo the basis; the basis
    generates the same ideal as the input (membership agrees both ways); root sets match
@@ -626,12 +626,12 @@ waved at. In ascending order of strength:
    small circom → R1CS → `.smt2` converter: each R1CS row `⟨a,z⟩·⟨b,z⟩ = ⟨c,z⟩` is one
    `ff.mul`/`ff.add` equality, so the mapping is mechanical.
 6. **Optional external comparator.** An *installed* cvc5 binary may be used as a
-   differential oracle exactly as `z3 4.16.0` is used today — consulted as a process,
+   differential oracle exactly as `z3 4.16.0` is used today – consulted as a process,
    never linked, `deny.toml` untouched. It cannot be a gate, since a cvc5 install is
    not assumable, and the comparator must stay honest (`Unknown` never counts as a
    match).
 
-Plus a `fuzz/` target for the parser + solver on FF inputs — the `#f…m…` literal and
+Plus a `fuzz/` target for the parser + solver on FF inputs – the `#f…m…` literal and
 bignum sort index are new lexer surface, and new lexer surface is where fuzzers earn
 their keep.
 
@@ -665,7 +665,7 @@ A useful solver exists at the end of Phase 3; a competitive one at the end of Ph
   bit propagation needs to see it. Following that is the low-risk choice.
 - **Under-constrainedness is the question users actually ask.** The industrial ZK query
   is usually not "is this system satisfiable" but "is the witness unique given the
-  inputs" — i.e. `∃ x, x'` agreeing on inputs and differing on outputs, expressible in
+  inputs" – i.e. `∃ x, x'` agreeing on inputs and differing on outputs, expressible in
   `QF_FF` by doubling the circuit. Worth documenting as an idiom, and worth considering
   as a front-end mode once Phase 5 lands; that, not raw satisfiability, is where the
   demand is.
@@ -680,7 +680,7 @@ A useful solver exists at the end of Phase 3; a competitive one at the end of Ph
   Finite Fields*, CAV 2023. <https://doi.org/10.1007/978-3-031-37703-7_8>
 - **[split-GB]** A. Ozdemir et al., *Split Gröbner Bases for Satisfiability Modulo
   Finite Fields* (cited by `split_gb.h`).
-- cvc5 source (read-only spec): `../temp/cvc5/src/theory/ff/` — `Readme.md` maps every
+- cvc5 source (read-only spec): `../temp/cvc5/src/theory/ff/` – `Readme.md` maps every
   file to its figure in [OKTB23]; `sub_theory.cpp` (Fig. 2), `core.cpp` (Fig. 4),
   `multi_roots.cpp` (Figs. 5–6), `uni_roots.cpp` (root finding), `cocoa_encoder.h`
   (two-pass encoding), `theory_ff_rewriter.cpp` (normal form),

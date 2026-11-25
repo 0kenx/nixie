@@ -35,7 +35,7 @@ enum CommandStep {
 ///
 /// SMT-LIB lets this position hold either a literal mode symbol or any
 /// `RoundingMode`-sorted term. Nixie supports the two spellings a real
-/// benchmark uses — a literal, or a declared/bound rounding-mode symbol — and
+/// benchmark uses – a literal, or a declared/bound rounding-mode symbol – and
 /// the distinction survives to the builder because the two are compiled very
 /// differently: a literal becomes the corresponding `TermKind::Fp*` node
 /// directly, while a symbolic mode has to be expanded into a five-way `ite`
@@ -389,8 +389,8 @@ impl<'a> Parser<'a> {
     /// symbolic mode as well as a literal one.
     ///
     /// A literal spelling always wins: the ten mode names are SMT-LIB-reserved
-    /// so nothing may shadow them. Otherwise a symbol that resolves — through
-    /// the `let`/quantifier bindings first, then the declared constants — to a
+    /// so nothing may shadow them. Otherwise a symbol that resolves – through
+    /// the `let`/quantifier bindings first, then the declared constants – to a
     /// `RoundingMode`-sorted term is taken symbolically. Anything else falls
     /// through to [`Parser::parse_rounding_mode`], which produces exactly the
     /// error it always did (so a typo'd mode name still reads as
@@ -414,8 +414,8 @@ impl<'a> Parser<'a> {
 
     /// The `RoundingMode`-sorted term a bare symbol denotes, if any.
     ///
-    /// `None` means the symbol is not a rounding mode — either undeclared, or
-    /// declared at some other sort — and the caller reports it as such.
+    /// `None` means the symbol is not a rounding mode – either undeclared, or
+    /// declared at some other sort – and the caller reports it as such.
     pub(super) fn rounding_mode_symbol_term(&mut self, symbol: &str) -> Option<TermId> {
         let rm_sort = self.manager.sorts.rounding_mode_sort;
         if let Some(&term) = self.bindings.get(symbol) {
@@ -1085,12 +1085,12 @@ impl<'a> Parser<'a> {
             _ => {
                 // Genuinely unrecognized (e.g. vendor/tooling-specific)
                 // commands are skipped for lenient interoperability, same
-                // as before — but now OBSERVABLY: the consumer receives
+                // as before – but now OBSERVABLY: the consumer receives
                 // [`Command::Unsupported`] and prints SMT-LIB's
                 // `unsupported` (z3's observable behavior) instead of the
                 // historical silent no-op (a script whose only `(check-sat)`
                 // sat inside a stray form executed nothing and exited 0
-                // silently — indistinguishable from success).
+                // silently – indistinguishable from success).
                 // Commands with real solving-semantics impact are
                 // special-cased above and rejected honestly instead.
                 let mut depth = 1;

@@ -57,7 +57,7 @@ impl MBQIIntegration {
                     // Saturated: every relevant instance, and every instance
                     // at a representative of the unnamed region, was emitted
                     // in an earlier round or is a tautology, and the ground
-                    // solver still found a model — so by the completeness
+                    // solver still found a model – so by the completeness
                     // argument for this fragment the goal is `Sat`.
                     MBQIResult::Satisfied
                 } else {
@@ -91,7 +91,7 @@ impl MBQIIntegration {
             // Record against the (quantifier, binding) key *before* the
             // tautology filter below.  Saturation is detected purely by this
             // key (never by the result term), so recording every relevant
-            // tuple — even those whose body collapses to `true` — is what lets
+            // tuple – even those whose body collapses to `true` – is what lets
             // a later round observe "nothing fresh" and conclude `Satisfied`
             // soundly.
             self.record_instantiation(&inst);

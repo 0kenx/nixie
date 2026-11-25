@@ -7,7 +7,7 @@ use crate::sort::{SortId, SortKind};
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{Euclid, One, Signed, ToPrimitive, Zero};
-// ---------------------------------------------------------------------------
+// ========  ========
 // Constant folding at construction time (Z3's `arith_rewriter` policy).
 //
 // Ground arithmetic is decided the moment the term is built, exactly and in
@@ -39,14 +39,14 @@ use num_traits::{Euclid, One, Signed, ToPrimitive, Zero};
 //   `rem_euclid`, the exact semantics the theory's defining axioms assert
 //   (`m = n·q + r ∧ 0 ≤ r < |n|`), so the folder and the axiomatiser can
 //   never disagree about a value.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The SMT-LIB sort of an arithmetic node over `operands`: `Int` unless an
 /// operand is `Real`-sorted (`Int` is a subsort of `Real`, so one Real
 /// operand makes the node Real).  This is the standard's mixed-arithmetic
 /// rule and the fix for a whole mislabeling class: `mk_add` used to take the
 /// sort from `args[0]`, so `(+ xi yr)` was `Int`-sorted while `(+ yr xi)`
-/// was `Real`-sorted — the same value, two labels, and the `Int` label
+/// was `Real`-sorted – the same value, two labels, and the `Int` label
 /// feeds integer-only reasoning (`assert_eq`'s GCD test, strict-inequality
 /// tightening) a row whose value can be fractional.
 fn unified_arith_sort<'a>(
@@ -68,7 +68,7 @@ fn unified_arith_sort<'a>(
 
 /// View a term as an integer constant (for folding), by value.
 #[must_use]
-/// Exact integer square root (floor) via Newton — used by `mk_sqrt`'s
+/// Exact integer square root (floor) via Newton – used by `mk_sqrt`'s
 /// perfect-square fold.
 fn isqrt_bigint(n: &BigInt) -> BigInt {
     if n.is_zero() {
@@ -112,7 +112,7 @@ fn real_const_of(t: TermId, manager: &TermManager) -> Option<BigRational> {
 }
 
 /// Fold a comparison of two numeric constants (Int/Real mixtures compare
-/// as exact rationals — `Int` is a subsort of `Real`), returning the
+/// as exact rationals – `Int` is a subsort of `Real`), returning the
 /// truth value when both sides are numerals.  Z3's `arith_rewriter` folds
 /// numeral comparisons; without this, `3.5 > 3` survived as an atom only
 /// the tableau could close.
@@ -197,7 +197,7 @@ impl TermManager {
         // Canonical residue: a width-`w` bit-vector denotes a value in
         // `[0, 2^w)`.  SMT-LIB's `(_ bvN W)` reads `N` modulo `2^W` (z3
         // parity: `(= (_ bv4 1) (_ bv0 1))` is VALID), and hash-consing
-        // must never see two terms for one value — an out-of-range literal
+        // must never see two terms for one value – an out-of-range literal
         // that stays raw makes `(_ bv4 1)` and `(_ bv0 1)` distinct terms,
         // and every value-comparing fold then folds `(= 4 0)` to `false`:
         // a false `sat` on `(not (= (_ bv4 1) (_ bv0 1)))`.  Negative
@@ -798,13 +798,13 @@ impl TermManager {
             && !b.is_zero()
         {
             // Euclidean division: the unique `q` with `m = n·q + r`,
-            // `0 ≤ r < |n|` — exactly the defining axiom pair `arith_axioms`
+            // `0 ≤ r < |n|` – exactly the defining axiom pair `arith_axioms`
             // asserts for `(div m n)`.
             return self.mk_int(a.div_euclid(&b));
         }
         // Identity folds for a CONSTANT divisor of ±1 over a symbolic
         // dividend (Z3's `arith_rewriter` folds these too):
-        // `div_euclid(t, 1) = t` and `div_euclid(t, -1) = -t` — true for
+        // `div_euclid(t, 1) = t` and `div_euclid(t, -1) = -t` – true for
         // every `t` by the Euclidean defining pair (`t = 1·t + 0` with
         // `0 ≤ 0 < 1`, resp. `t = (-1)·(-t) + 0`).  Folding removes the
         // term from the div-axiom feed entirely: an identity needs no
@@ -836,8 +836,8 @@ impl TermManager {
             // Real division by a NONZERO CONSTANT linearizes exactly:
             // `(/ x c) ≡ (* x (1/c))` in the rationals (Z3's `arith_rewriter`
             // does the same rewrite).  This is what makes real division by
-            // numerals DECIDABLE — the reciprocal of a `Rational64` is its
-            // numerator/denominator swap, so it is always representable —
+            // numerals DECIDABLE – the reciprocal of a `Rational64` is its
+            // numerator/denominator swap, so it is always representable –
             // where the bare `Div` node is deliberately left undefined by
             // `arith_axioms` (its defining identity `x = y·q` is nonlinear)
             // and every atom mentioning it gates to `unknown`.  A symbolic
@@ -860,7 +860,7 @@ impl TermManager {
     // propagation, `nixie-theories/src/trans/`).  The builders only fold
     // the cases whose value is an EXACT rational (e^0 = 1, log 1 = 0,
     // sin 0 = 0, cos 0 = 1, atan 0 = 0, sqrt of a perfect-square rational);
-    // everything else stays symbolic — a transcendental of a constant is a
+    // everything else stays symbolic – a transcendental of a constant is a
     // genuinely irrational value and folding it to a float would be a
     // fabrication.
 
@@ -950,7 +950,7 @@ impl TermManager {
     }
 
     /// The arithmetic constant of a term, as an exact `BigRational` (`Real`
-    /// or `Int` constants alike — `Int` embeds into `Real`).
+    /// or `Int` constants alike – `Int` embeds into `Real`).
     fn arith_const_of(&self, t: TermId) -> Option<BigRational> {
         match self.get(t).map(|x| &x.kind) {
             Some(TermKind::RealConst(r)) => Some(BigRational::new(
@@ -1194,7 +1194,7 @@ impl TermManager {
         self.intern(TermKind::SetSubset(a, b), sort)
     }
 
-    // ===================== finite bags (multisets) =====================
+    // ======== finite bags (multisets) ========
     //
     // Mirrors the finite-set builders above; CVC5's `bags_rewriter.cpp` is
     // the reference for the normalizations. Multiplicities are `Int`s, and
@@ -1224,12 +1224,12 @@ impl TermManager {
         }
     }
 
-    /// `(bag e n)` — `n` copies of `e` (CVC5 `BAG_MAKE`), normalized:
+    /// `(bag e n)` – `n` copies of `e` (CVC5 `BAG_MAKE`), normalized:
     /// zero copies is the empty bag.
     ///
     /// A negative literal `n` is a parser error (the draft requires
     /// multiplicities nonnegative); the builder leaves a nonliteral `n`
-    /// alone — the count identities stay consistent either way, and the
+    /// alone – the count identities stay consistent either way, and the
     /// reduction treats `count` as the plain integer it is.
     pub fn mk_bag_make(&mut self, element: TermId, n: TermId) -> TermId {
         // A nonpositive literal multiplicity clamps to zero copies (CVC5
@@ -1262,7 +1262,7 @@ impl TermManager {
         self.intern(TermKind::BagUnionMax(a, b), sort)
     }
 
-    /// `(bag.union_disjoint a b)`, normalized: `∅ ⊎ b = b` only — the sum
+    /// `(bag.union_disjoint a b)`, normalized: `∅ ⊎ b = b` only – the sum
     /// is **not** idempotent (`b ⊎ b` doubles every multiplicity), so no
     /// `a = a` fold exists.
     pub fn mk_bag_union_disjoint(&mut self, a: TermId, b: TermId) -> TermId {
@@ -1357,7 +1357,7 @@ impl TermManager {
         self.intern(TermKind::BagDifferenceRemove(a, b), sort)
     }
 
-    /// `(bag.count x b)` — an `Int`, folded over the constructors:
+    /// `(bag.count x b)` – an `Int`, folded over the constructors:
     /// `count(x, ∅) = 0` and `count(x, (bag y n)) = ite(x = y, n, 0)`.
     ///
     /// This fold *is* the reduction's base identity, applied at build
@@ -1382,7 +1382,7 @@ impl TermManager {
         self.intern(TermKind::BagCount(element, bag), sort)
     }
 
-    /// `(bag.member x b)` — a `Bool`, folded over the constructors:
+    /// `(bag.member x b)` – a `Bool`, folded over the constructors:
     /// nothing is in `∅`; `x ∈ (bag y n)` is `x = y ∧ n ≥ 1` (with a
     /// literal `n` the comparison folds to a constant).
     pub fn mk_bag_member(&mut self, element: TermId, bag: TermId) -> TermId {
@@ -1427,7 +1427,7 @@ impl TermManager {
         self.intern(TermKind::BagCard(bag), sort)
     }
 
-    /// `(bag.setof b)` — duplicate removal, normalized: `setof ∅ = ∅`.
+    /// `(bag.setof b)` – duplicate removal, normalized: `setof ∅ = ∅`.
     pub fn mk_bag_setof(&mut self, bag: TermId) -> TermId {
         if self.is_bag_empty(bag) {
             return bag;
@@ -1436,9 +1436,9 @@ impl TermManager {
         self.intern(TermKind::BagSetof(bag), sort)
     }
 
-    /// `(bag.choose b)` — some element of `b`, CVC5's rewriter
+    /// `(bag.choose b)` – some element of `b`, CVC5's rewriter
     /// normalizations: `choose (bag y c) = y` for a literal `c > 0` (the
-    /// make with `c ≤ 0` has already folded to `∅`, whose choose stays —
+    /// make with `c ≤ 0` has already folded to `∅`, whose choose stays –
     /// an unspecified element), and `choose ∅` stays.
     ///
     /// The result sort is the bag's element sort; a non-bag operand is a
@@ -1462,11 +1462,11 @@ impl TermManager {
         self.intern(TermKind::BagChoose(bag), sort)
     }
 
-    /// `(bag.map f b)` — the pointwise image. Only the empty fold happens
+    /// `(bag.map f b)` – the pointwise image. Only the empty fold happens
     /// here (`map f ∅ = ∅(codomain)`): the make/⊎ normalizations of
     /// CVC5's rewriter would mint `f(x)` applications, and for a
     /// **defined** function that leaks an uninterpreted app the
-    /// definition never constrains — the parser inlines call sites, the
+    /// definition never constrains – the parser inlines call sites, the
     /// builder has no defs table, and `count(2, map f (1:2)) = 0` with
     /// `f = *2` answered `sat` (CVC5: `unsat`) before this was dropped.
     /// The reduction owns the per-element work with the defs table.
@@ -1489,7 +1489,7 @@ impl TermManager {
         )
     }
 
-    /// `(bag.filter p b)` — the satisfying sub-bag. As with `bag.map`, only
+    /// `(bag.filter p b)` – the satisfying sub-bag. As with `bag.map`, only
     /// the empty fold happens here; the make/⊎ normalizations stay with
     /// the reduction (which owns the predicate's definition). `pred` is
     /// the predicate's *name*; the result sort is the operand's own.
@@ -1508,11 +1508,11 @@ impl TermManager {
         )
     }
 
-    /// `(bag.fold f t b)` — `f : (-> T1 T2 T2)` folded over `b`'s elements
+    /// `(bag.fold f t b)` – `f : (-> T1 T2 T2)` folded over `b`'s elements
     /// with multiplicity, starting from `t` (CVC5 `BAG_FOLD`; element
     /// first, accumulator second). The result sort is the initial value's
-    /// own. Only the empty fold happens here — `fold(f, t, ∅) = t` under
-    /// every semantics — because the make/⊎/ite unrollings need the
+    /// own. Only the empty fold happens here – `fold(f, t, ∅) = t` under
+    /// every semantics – because the make/⊎/ite unrollings need the
     /// function's *body*, which only the solver's reduction (with the
     /// `define-fun` table) can inline.
     pub fn mk_bag_fold(&mut self, func: &str, init: TermId, bag: TermId) -> TermId {
@@ -1580,7 +1580,7 @@ impl TermManager {
         self.intern(TermKind::SetUniv(set_sort), set_sort)
     }
 
-    /// `(rel.join r s)` — relation composition.
+    /// `(rel.join r s)` – relation composition.
     ///
     /// Normalized: joining with the empty relation is the empty relation.
     /// Sorts are the operands' shared structure; the operands themselves are
@@ -1595,7 +1595,7 @@ impl TermManager {
     }
 
     /// `Set (r1[0..n₁-1) ++ r2[1..n₂))`: the join **drops** the shared
-    /// middle column (CVC5's `RelBinaryOperatorTypeRule` — `(A,B) ⨝ (B,C)`
+    /// middle column (CVC5's `RelBinaryOperatorTypeRule` – `(A,B) ⨝ (B,C)`
     /// is the classic composition over `(A,C)`).
     fn rel_join_sort(&mut self, r1: TermId, r2: TermId) -> SortId {
         let (Some(e1), Some(e2)) = (self.set_element_sort_of(r1), self.set_element_sort_of(r2))
@@ -1625,7 +1625,7 @@ impl TermManager {
         self.sorts.set(tuple)
     }
 
-    /// `(rel.product r s)` — cartesian product. Normalized: a product with
+    /// `(rel.product r s)` – cartesian product. Normalized: a product with
     /// the empty set is empty.
     pub fn mk_rel_product(&mut self, r: TermId, s: TermId) -> TermId {
         let sort = self.rel_product_sort(r, s);
@@ -1635,7 +1635,7 @@ impl TermManager {
         self.intern(TermKind::SetRelProduct(r, s), sort)
     }
 
-    /// `(rel.transpose r)` — the converse relation. The result's tuple sort
+    /// `(rel.transpose r)` – the converse relation. The result's tuple sort
     /// is the operand's reversed, so no fold applies (except through the
     /// empty set).
     pub fn mk_rel_transpose(&mut self, r: TermId) -> TermId {
@@ -1650,7 +1650,7 @@ impl TermManager {
         self.intern(TermKind::SetRelTranspose(r), sort)
     }
 
-    /// `(rel.iden s)` — the identity relation over the set `s`.
+    /// `(rel.iden s)` – the identity relation over the set `s`.
     ///
     /// The operand is a plain set; the result pairs its elements. The
     /// result's sort is `Set (Tuple A A)` where `A` is the operand's
@@ -1888,8 +1888,8 @@ impl TermManager {
 
     /// `(_ tuple.select i t)`: the `i`-th component (zero-based).
     ///
-    /// Folds over a constructor argument — `sel_i(mk_tuple(..))` **is**
-    /// the component — which is what makes the relation operators'
+    /// Folds over a constructor argument – `sel_i(mk_tuple(..))` **is**
+    /// the component – which is what makes the relation operators'
     /// derived tuples normalize: `rev((1, 2))` becomes the literal
     /// `(2, 1)`, its membership atom hash-consed with the user's.
     pub fn mk_tuple_select(&mut self, index: usize, tuple: TermId) -> TermId {
@@ -1918,7 +1918,7 @@ impl TermManager {
         self.sorts.set(element)
     }
 
-    /// `(set.choose s)` — some element of `s`.
+    /// `(set.choose s)` – some element of `s`.
     ///
     /// The result sort is the set's element sort; a non-set operand is a
     /// caller error the type rules catch, and falls back to `Int` the same
@@ -3135,7 +3135,7 @@ impl TermManager {
         // re-nested in sorted (id-ascending) left-fold order.  Ring
         // arithmetic mod 2^w makes associativity and commutativity of
         // `bvmul` UNCONDITIONAL, so this is an equivalence at every width
-        // — and it collapses e.g. `(= (* x (* y z)) (* z (* x y)))` to
+        // – and it collapses e.g. `(= (* x (* y z)) (* z (* x y)))` to
         // `mk_eq(t, t)` at assert time (binary canonical_pair alone cannot
         // see through differing nestings).
         // No re-entry: the flattened children are KEYS here, never rebuilt
@@ -3152,7 +3152,7 @@ impl TermManager {
 
     /// Flatten `lhs * rhs` over nested `BvMul` children into the sorted
     /// operand multiset, then left-fold-rebuild.  Returns `None` when the
-    /// flattened chain is exactly `lhs` then `rhs` (the input shape — no
+    /// flattened chain is exactly `lhs` then `rhs` (the input shape – no
     //  work to do), so the intern above stays the common path.
     fn ac_canonical_bv_mul(&mut self, lhs: TermId, rhs: TermId) -> Option<TermId> {
         const MAX_AC_OPERANDS: usize = 64;
@@ -3166,11 +3166,11 @@ impl TermManager {
         // canonical iff its flattened operand list is sorted and
         // left-folded; appending `rhs` (a non-mul leaf) to a canonical
         // `lhs` chain preserves that when `rhs` is greater than lhs's
-        // max operand — which, in a canonical chain, is lhs's own
+        // max operand – which, in a canonical chain, is lhs's own
         // non-mul `rhs` child.  Chains in the manager are canonical by
         // induction (every mul routes through here, and the fold below
         // emits sorted left-folds), so this is O(1) where the flatten
-        // would be O(chain) — the guard is what keeps the assert side
+        // would be O(chain) – the guard is what keeps the assert side
         // of mul-dense meganode DAGs from paying the flatten per node.
         let kind_of = |t: TermId| self.get(t).map(|d| &d.kind);
         let rhs_is_mul = matches!(kind_of(rhs), Some(TermKind::BvMul(..)));
@@ -3429,7 +3429,7 @@ impl TermManager {
     /// * `x udiv 0` → all-ones (SMT-LIB hardware reading, matching
     ///   [`bv_fold::bv_udiv`]'s constant case);
     /// * `x udiv 1` → `x`;
-    /// * `x udiv 2^k` → `x >>l k` — the rule that collapses the
+    /// * `x udiv 2^k` → `x >>l k` – the rule that collapses the
     ///   quantization chains (`Sydr/cjpeg`: JPEG dequantization by powers
     ///   of two, where the width-64 divider networks were the entire
     ///   circuit budget) into a wire permutation with no divider at all.
@@ -3608,7 +3608,7 @@ impl TermManager {
     /// splices align piecewise instead of hiding inside a shift node.
     /// Gated because the concat-spine term shapes change the blast for
     /// every const-shift in the corpus (the reverted structural-rewriting
-    /// study's rules belonged to this family and measured zero cells then —
+    /// study's rules belonged to this family and measured zero cells then –
     /// re-measured now that the NOT-descent cascade composes with them).
     fn shift_wiring_enabled() -> bool {
         #[cfg(feature = "std")]
@@ -3617,8 +3617,8 @@ impl TermManager {
             static FLAG: OnceLock<bool> = OnceLock::new();
             // Default **on** (2026-09-12): the 509-file matched-null A/B
             // measured 287 vs 286 with zero verdict flips, and the serial
-            // gains are deterministic — `mcm/54` 6.1× (43.5 → 7.1 s,
-            // crossing the cap), bitrev 1.5–2× at every width — with RWS
+            // gains are deterministic – `mcm/54` 6.1× (43.5 → 7.1 s,
+            // crossing the cap), bitrev 1.5–2× at every width – with RWS
             // verdicts identical across the family and the boundary movers
             // measured as load noise (vlsat3_g00 21.0 vs 21.5 s,
             // VS3-A7 15.8 vs 15.8 s serially).
@@ -3637,7 +3637,7 @@ impl TermManager {
     /// Folds two literals; a zero distance is the identity; and, under
     /// (the `NIXIE_BV_SHIFT_WIRING` gate), a constant distance `0 < k < w`
     /// rewires to `concat(x[w-1-k:0], 0^k)` (Z3 `mk_bv_shl`'s numeral
-    /// case — the syntactic convergence piece for shift-heavy identities).
+    /// case – the syntactic convergence piece for shift-heavy identities).
     pub fn mk_bv_shl(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if let Some(width) = self.bv_binop_width(lhs, rhs) {
             match self.fold_bv_shift(lhs, rhs, width, bv_fold::bv_shl) {
@@ -3648,7 +3648,7 @@ impl TermManager {
             // Constant-distance shift → concat/extract wiring (Z3
             // `mk_bv_shl`'s numeral case): `x << k =
             // concat(x[w-1-k:0], 0^k)` for `0 < k < w`, gated by
-            // `NIXIE_BV_SHIFT_WIRING=1` (default off — the wiring is what
+            // `NIXIE_BV_SHIFT_WIRING=1` (default off – the wiring is what
             // makes shift-heavy identities converge *syntactically* under
             // the simplify cascade, at the price of concat-spine terms).
             if Self::shift_wiring_enabled()
@@ -3866,7 +3866,7 @@ mod arith_folding_tests {
     /// Identity folds for a constant ±1 divisor over a SYMBOLIC dividend
     /// (Z3's `arith_rewriter` policy): `div(t, 1) = t`, `div(t, -1) = -t`,
     /// `mod(t, ±1) = 0`.  Folding removes the term from the div-axiom feed
-    /// entirely — the gap survey's pure-equality GCD class stayed `unknown`
+    /// entirely – the gap survey's pure-equality GCD class stayed `unknown`
     /// with the Div node present and refutes by GCD once folded.
     fn div_mod_by_pm_one_fold_to_identity_over_symbolic_dividend() {
         let mut m = TermManager::new();
@@ -3985,7 +3985,7 @@ mod ac_bv_mul_tests {
     }
 
     /// AC canonicalization (the wienand-class lever): every nesting and
-    /// ordering of one `bvmul` operand multiset must intern to ONE term —
+    /// ordering of one `bvmul` operand multiset must intern to ONE term –
     /// that identity is exactly what collapses
     /// `(= (* x (* y z)) (* z (* x y)))` to `true` at assert time.
     #[test]
@@ -4041,7 +4041,7 @@ mod ac_bv_mul_tests {
     }
 
     /// Mismatched widths must never enter the AC path (no well-defined
-    /// product to normalize) — the guard returns None and the plain
+    /// product to normalize) – the guard returns None and the plain
     /// intern stands.
     #[test]
     fn bvmul_ac_path_requires_same_width() {

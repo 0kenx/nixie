@@ -2,7 +2,7 @@
 
 The instruments the round-4 passes (`TODO.md` "cargo-formal intake") measured with, copied
 from the round's scratch directory by re-fix pass 14 (decision (62)).  They drive release
-*probes* — one tiny binary per build over `oxiz_solver::Context::execute_script` — under
+*probes* – one tiny binary per build over `oxiz_solver::Context::execute_script` – under
 `$OXIZ_ROUND4_SCRATCH/probes/probe_<name>/target/release/probe_<name>`.  The scratch root
 comes from `OXIZ_ROUND4_SCRATCH` (default `<repo>/target/round4`); `--root` defaults to the
 repository these scripts live in.  No absolute path is written in any file here.  How the

@@ -1,11 +1,11 @@
 //! The rational Gröbner engines' soundness battery (the twin of
 //! `ff_gb_seed_dedup_regression.rs`): random product systems over ℚ,
-//! engine vs brute-force (no criteria, every pair) — whole-ring
+//! engine vs brute-force (no criteria, every pair) – whole-ring
 //! agreement, mutual ideal membership, leading-monomial agreement, and
 //! the honest-refusal contract of the iteration cap.
 //!
 //! Background: the engines' chain criterion was the *simplified*
-//! unsound form (bare `lm_k | lcm`, with tautological side-checks) —
+//! unsound form (bare `lm_k | lcm`, with tautological side-checks) –
 //! the same missed-refutation class root-caused in the 𝔽_p engine on
 //! 2026-09-18. The sound form (zero-pairs bookkeeping: a pair is
 //! discardable only when the chain's precondition actually holds) is
@@ -39,7 +39,7 @@ fn affine(rng: &mut Rng, nvars: usize, vars: [usize; 2]) -> Polynomial {
     ])
 }
 
-/// Random product-of-affine-forms system minus a random constant —
+/// Random product-of-affine-forms system minus a random constant –
 /// the FF battery's family over ℚ (some of these are whole-ring).
 fn system(seed: u64, nvars: usize, ncons: usize) -> Vec<Polynomial> {
     let mut rng = Rng(seed);
@@ -58,7 +58,7 @@ fn system(seed: u64, nvars: usize, ncons: usize) -> Vec<Polynomial> {
     inputs
 }
 
-/// Brute-force Buchberger: every pair, no criteria, full reduction —
+/// Brute-force Buchberger: every pair, no criteria, full reduction –
 /// the reference for small systems.
 fn brute_basis(inputs: &[Polynomial]) -> Vec<Polynomial> {
     let mut basis: Vec<Polynomial> = inputs.iter().map(|p| p.primitive()).collect();
@@ -98,9 +98,9 @@ fn is_nonzero_constant(p: &Polynomial) -> bool {
 fn engine_agrees_with_brute_force() {
     // Shapes sized for BigRational arithmetic in test time: a 4x5
     // NON-whole-ring system exceeds ten minutes of honest cascade
-    // (the engine computes REAL S-polys now — before 2026-09-18 it was
+    // (the engine computes REAL S-polys now – before 2026-09-18 it was
     // a decorated no-op, instant and vacuous; measured: 4x4 non-ring
-    // completes in ~20 ms, 4x5 non-ring does not finish — a capacity
+    // completes in ~20 ms, 4x5 non-ring does not finish – a capacity
     // fact to price before ANY wiring, not a soundness question). The
     // shapes here cover duplicate-lm seeds, whole-ring systems, and
     // multi-admission cascades.
@@ -139,14 +139,14 @@ fn engine_agrees_with_brute_force() {
             let nf = reduce(t, &engine);
             assert!(
                 nf.is_zero(),
-                "brute element outside the engine ideal at seed {seed:#x} — the engine dropped an element"
+                "brute element outside the engine ideal at seed {seed:#x} – the engine dropped an element"
             );
         }
         // Leading-monomial agreement (a reduced GB is unique for a
         // fixed order over a field). The brute basis is NOT
         // inter-reduced (it admits every nonzero remainder), so
-        // interreduce it first — mirroring the engine's own final
-        // pass — or the lm sets differ spuriously.
+        // interreduce it first – mirroring the engine's own final
+        // pass – or the lm sets differ spuriously.
         let interreduced = |basis: &[Polynomial]| -> Vec<Polynomial> {
             let mut out = Vec::new();
             for (i, p) in basis.iter().enumerate() {
@@ -197,7 +197,7 @@ fn engine_is_deterministic() {
 fn membership_refuses_rather_than_guessing_on_truncation() {
     // Whatever the outcome, `ideal_membership` must not fabricate a
     // verdict: Ok(decided) only on a completed basis, Err on the cap.
-    // (The engine actually computes S-polys now — before 2026-09-18 it
+    // (The engine actually computes S-polys now – before 2026-09-18 it
     // was a decorated no-op, so "large" systems completed instantly
     // and vacuously. Sized to finish in test time.)
     let inputs = system(0x5EED_0042, 4, 5);

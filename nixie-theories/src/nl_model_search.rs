@@ -418,7 +418,7 @@ pub(crate) fn ground_bool_interface_eqs_with_defs(
 
 /// Collect the conjunct-level Boolean definitions `(= b φ)` (see
 /// [`ground_bool_interface_eqs_with_defs`]).  Pure collection: no term is
-/// created, so this also serves callers that only need the map — e.g. the
+/// created, so this also serves callers that only need the map – e.g. the
 /// dispatch-level witness completion below.
 pub(crate) fn collect_bool_defs_into(
     assertions: &[TermId],
@@ -509,15 +509,15 @@ fn ground_with_defs(
 /// Boolean variables, which the verified (grounded) formula no longer
 /// mentions.  Two sources:
 ///
-/// * `choices` — the free-Boolean case split's assignments (part of the
+/// * `choices` – the free-Boolean case split's assignments (part of the
 ///   satisfying assignment by construction);
-/// * `defs` — the grounding's `bool_var := φ` map: the definition conjunct
+/// * `defs` – the grounding's `bool_var := φ` map: the definition conjunct
 ///   `(= b φ)` became the tautology `(= φ φ)`, so the verified formula never
 ///   constrains the RECORDED value of `b`; pin `b := eval(φ)` under the
 ///   numeric witness (iterated to a fixpoint for definition chains).
 ///
 /// A definition whose `φ` stays unevaluable under the witness is left
-/// unpinned — the publication gate (`refuted_under`) abstains on unpinned
+/// unpinned – the publication gate (`refuted_under`) abstains on unpinned
 /// Booleans rather than fabricating a value.
 fn truth_pins(
     numeric: &HashMap<TermId, BigRational>,
@@ -1813,7 +1813,7 @@ impl<'a> Relaxation<'a> {
                 let fval = self.simplex.value(vid);
                 // Range over the NARROW parts only: a wide bound makes the
                 // range unreadable here (the branch heuristic then treats
-                // the variable as unbounded — a heuristic choice, never a
+                // the variable as unbounded – a heuristic choice, never a
                 // verdict).
                 let range = match (self.simplex.get_lower(vid), self.simplex.get_upper(vid)) {
                     (Some(lo), Some(hi)) => lo

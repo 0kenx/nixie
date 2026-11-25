@@ -11,8 +11,8 @@
 //! A bound variable of a datatype sort occurs in the fragment only as an
 //! uninterpreted function's or an array's argument and on one side of an
 //! equality guard (`eu_walk` rejects a selector or tester over it), so the
-//! projection needs one value distinct from every *named* value — every value
-//! the goal's terms of the sort denote — and nothing else: an equality guard
+//! projection needs one value distinct from every *named* value – every value
+//! the goal's terms of the sort denote – and nothing else: an equality guard
 //! then reads the same at every unnamed value and at the representative.
 //! This module builds one: it enumerates ground values of the sort in size
 //! order (constructors in declaration order, scalar fields from `0` upward)

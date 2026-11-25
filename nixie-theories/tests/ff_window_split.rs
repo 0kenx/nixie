@@ -6,7 +6,7 @@
 //!
 //! ROUTING, the part small tests could never pin before: the systems
 //! here are sized (see `ROUTING_BUDGET`'s probe note) so that the
-//! monolithic cascade AND the 2-way split budget out first — a `Model`
+//! monolithic cascade AND the 2-way split budget out first – a `Model`
 //! verdict at that budget can only have come through the window path.
 //! If the window path regresses, these tests degrade to `OutOfBudget`
 //! and fail; no instrumentation needed.
@@ -36,11 +36,11 @@ impl Rng {
 }
 
 /// A planted locality chain over 𝔽_p in the CORPUS family's shape
-/// (`bench/ff/gen_chain.py` — the residue-pass structure is
+/// (`bench/ff/gen_chain.py` – the residue-pass structure is
 /// load-bearing): rows and quads come in passes at base offsets
 /// 6k with row offset r ∈ {0,1,2} and quad offset pairs
 /// (2,4), (3,5), (4,6), plus the closing row {3,4,5} and seam quads
-/// {1,2,3},{5,6,7},{7,8,9} — ~1.5 constraints per variable. A naive
+/// {1,2,3},{5,6,7},{7,8,9} – ~1.5 constraints per variable. A naive
 /// stride-6 ring (this file's first generator) chains the RREF
 /// eliminations globally and nothing window-shaped survives (measured
 /// in the 2026-09-17 study addendum).
@@ -175,10 +175,10 @@ const P: u32 = 65537;
 /// budget-outs, the 2-way split's nl-GB budget-outs, and the verdict
 /// arrives via 8 eight-variable windows + the worklist exchange + the
 /// union cascade (a `split-merged` basis). This turns the routing
-/// property — previously only measurable on the release corpus — into a
+/// property – previously only measurable on the release corpus – into a
 /// per-run test invariant: a window-path regression degrades the
 /// outcome to `OutOfBudget` and fails here. (Recalibrated 2^16 → 2^18
-/// when the unsound GM second criterion was disabled — the window GBs
+/// when the unsound GM second criterion was disabled – the window GBs
 /// process more pairs now; the monolithic and split nl-GB still
 /// budget-out far below any budget that completes the windows.)
 const ROUTING_BUDGET: u64 = 1 << 18;
@@ -216,7 +216,7 @@ fn corrupted_chain_never_answers_sat() {
     let mut manager = TermManager::new();
     // Corrupt one quad's RHS (emission index 30 lands inside the second
     // pass): the chain may or may not expose the corruption within the
-    // routing budget, but `sat` is impossible — the model-validation
+    // routing budget, but `sat` is impossible – the model-validation
     // gate would have to fail first, and that path answers Unknown.
     let (field, assertions) = planted_chain(&mut manager, &p, 48, Some(30));
     let outcome = check_conjunction(&manager, field, &assertions, ROUTING_BUDGET);

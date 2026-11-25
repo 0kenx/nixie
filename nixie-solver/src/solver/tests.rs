@@ -618,7 +618,7 @@ fn test_config_balanced_characteristics() {
     assert_eq!(config.restart_strategy, RestartStrategy::Glucose);
 
     // Conservative limits (the interval is 2000 since the 2026-11-19 SMT-
-    // path re-measure — see the field's doc in `types.rs`)
+    // path re-measure – see the field's doc in `types.rs`)
     assert_eq!(config.variable_elimination_limit, 1000);
     assert_eq!(config.inprocessing_interval, 2000);
 }
@@ -2258,7 +2258,7 @@ fn set_config_propagates_search_fields_into_live_sat_engine() {
 /// This is the structural form of the wrong `sat` in
 /// `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`.
 /// `process_constraint`'s negative-`Eq` branch informs EUF and the bit-vector
-/// solver, never arithmetic — the simplex has no `≠` — so the trichotomy
+/// solver, never arithmetic – the simplex has no `≠` – so the trichotomy
 /// clause is the *only* channel by which a `false` equality atom becomes a
 /// strict bound on the tableau.  An atom without one is a hole through which
 /// the tableau may give the two sides equal values while the Boolean level

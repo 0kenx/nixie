@@ -3,15 +3,15 @@
 //!
 //! The completion (decision (40)) replaces a candidate's arrays by a certified
 //! interpretation where it can, and decision (48) keeps a candidate that
-//! already satisfies every assertion as printed.  Everywhere else — a goal
-//! the completion declines — the `sat` used to publish the candidate
+//! already satisfies every assertion as printed.  Everywhere else – a goal
+//! the completion declines – the `sat` used to publish the candidate
 //! unchecked, and recheck 13 measured 141 falsifying models in 2,574 `sat`s
 //! of one fuzz campaign.  This is the net under all of it: at a quantified
 //! array `Sat` whose model no certificate has covered, `Context` renders every
 //! declared constant exactly as `(get-model)` would, parses the printed values
 //! back into terms, and hands them here; the completion's own certificate
 //! (a validity query per universal, a witness per `exists`, one check over
-//! the assertions — `certificate_passes`) is discharged over that
+//! the assertions – `certificate_passes`) is discharged over that
 //! interpretation.  A model that does not certify is withheld: `(get-model)`
 //! answers an error naming the first assertion that fails and, where an exact
 //! evaluation finds one, the point it fails at.  The verdict is untouched
@@ -49,8 +49,8 @@ impl Solver {
                 .is_some_and(|certified| certified == model.assignments())
     }
 
-    /// Certify `printed` — every declared constant mapped to its printed
-    /// value, parsed back into a term — against `goal`: the asserted terms
+    /// Certify `printed` – every declared constant mapped to its printed
+    /// value, parsed back into a term – against `goal`: the asserted terms
     /// with every uninterpreted function replaced by its printed table
     /// (`context::model_fmt::printed_check`).  `originals` are the asserted
     /// terms as written, quoted by the error.  `Err` carries the reason, for
@@ -104,8 +104,8 @@ impl Solver {
     /// This is what completes a goal whose groups need different treatment:
     /// `¬∃i. a0[i] = #b0` beside `∃i. a1[i] = #b1` and `∃i. a1[i] = #b0`
     /// (a fuzzed script, `fuzz_qc` seed 29093020) has a constant completion
-    /// for `a0` and none for `a1`, whose printed candidate — the two Skolem
-    /// witnesses over `#b0` — is right as it stands.
+    /// for `a0` and none for `a1`, whose printed candidate – the two Skolem
+    /// witnesses over `#b0` – is right as it stands.
     pub(crate) fn complete_around_printed(
         &mut self,
         goal: &[TermId],
@@ -259,7 +259,7 @@ impl Goal {
     }
 
     /// Why `completion` fails: the first assertion that does not certify on
-    /// its own, and — where an exact evaluation finds one — a point at which
+    /// its own, and – where an exact evaluation finds one – a point at which
     /// one of its universals is false.
     fn explain_failure(
         &self,

@@ -106,18 +106,18 @@ Per-family solved counts (Nixie columns are before/after):
 | SAT / uuf250-1065 | 2 | 2 | 2 | 2 | 2 | 2 |
 | SAT / uuf50-218 | 2 | 2 | 2 | 2 | 2 | 2 |
 | SAT / uuf75-325 | 2 | 2 | 2 | 2 | 2 | 2 |
-| SMT / AUFLIA | 4 | 1 | 1 | 1 | — | — |
-| SMT / QF_ANIA | 4 | 1 | 1 | 3 | — | — |
-| SMT / QF_AUFLIA | 4 | 4 | 3 | 4 | — | — |
-| SMT / QF_BV | 4 | 2 | 3 | 3 | — | — |
-| SMT / QF_IDL | 4 | 3 | 3 | 3 | — | — |
-| SMT / QF_LIA | 4 | 1 | 1 | 4 | — | — |
-| SMT / QF_NIA | 4 | 0 | 0 | 2 | — | — |
-| SMT / QF_UF | 4 | 4 | 4 | 4 | — | — |
-| SMT / QF_UFIDL | 4 | 2 | 2 | 3 | — | — |
-| SMT / QF_UFLIA | 4 | 3 | 3 | 3 | — | — |
-| SMT / UF | 4 | 1 | 1 | 2 | — | — |
-| SMT / UFLRA | 4 | 2 | 2 | 3 | — | — |
+| SMT / AUFLIA | 4 | 1 | 1 | 1 | – | – |
+| SMT / QF_ANIA | 4 | 1 | 1 | 3 | – | – |
+| SMT / QF_AUFLIA | 4 | 4 | 3 | 4 | – | – |
+| SMT / QF_BV | 4 | 2 | 3 | 3 | – | – |
+| SMT / QF_IDL | 4 | 3 | 3 | 3 | – | – |
+| SMT / QF_LIA | 4 | 1 | 1 | 4 | – | – |
+| SMT / QF_NIA | 4 | 0 | 0 | 2 | – | – |
+| SMT / QF_UF | 4 | 4 | 4 | 4 | – | – |
+| SMT / QF_UFIDL | 4 | 2 | 2 | 3 | – | – |
+| SMT / QF_UFLIA | 4 | 3 | 3 | 3 | – | – |
+| SMT / UF | 4 | 1 | 1 | 2 | – | – |
+| SMT / UFLRA | 4 | 2 | 2 | 3 | – | – |
 
 Migration gains and losses at the cap:
 

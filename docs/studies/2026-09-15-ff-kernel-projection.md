@@ -2,8 +2,8 @@
 
 **Date:** 2026-09-15
 **Verdict:** do not ship. The definitional-layer structural issue *is*
-resolvable — this experiment proved it, producing exactly the clean
-binomials predicted — but resolving it by projection trades the
+resolvable – this experiment proved it, producing exactly the clean
+binomials predicted – but resolving it by projection trades the
 re-expansion problem for two measured new ones: **dense image relations**
 and **destruction of the component decomposition**. Split-GB remains the
 architecture that gets both properties at once.
@@ -19,10 +19,10 @@ discussion that followed.
    (`t − poly` joins the generator list). Each generator's affine part
    is collapsed into a definition variable as well, so *no nonlinear
    generator mentions a raw user variable*.
-2. **Projection**: variables appearing only in linear generators — the
-   user variables — are eliminated by restricted-pivot Gaussian
+2. **Projection**: variables appearing only in linear generators – the
+   user variables – are eliminated by restricted-pivot Gaussian
    elimination (pure linear algebra, no Gröbner work), producing:
-   - `I_L`: the image relations — linear consequences over the
+   - `I_L`: the image relations – linear consequences over the
      surviving `t` variables (the graph ideal's intersection with
      t-space), and
    - one extraction row per eliminated variable (`w = −(Σ c·v + k)`,
@@ -30,14 +30,14 @@ discussion that followed.
 3. The Gröbner cascade then runs on `binomials ∪ I_L` in t-space only.
 
 Satisfiability is exactly preserved (proved by construction; the oracle
-suites stayed green throughout — the exhaustive oracle additionally
+suites stayed green throughout – the exhaustive oracle additionally
 caught a collapse bug (`monomials · t_ℓ` instead of `+ t_ℓ`) and an
 extraction-ordering bug during development).
 
 ## What worked
 
 - **The binomials came out clean.** The projected generators for the
-  chain corpus are exactly `x_i·x_j − k` — the re-expansion failure mode
+  chain corpus are exactly `x_i·x_j − k` – the re-expansion failure mode
   of the first study is gone at the definitional layer, as predicted.
 - One corpus goal improved: sparse 32×48 at BN254 went
   `unknown` → `sat` (0.4 s).
@@ -58,7 +58,7 @@ extraction-ordering bug during development).
 
 1. **Dense image relations.** `I_L` is the left kernel of the definition
    matrix. Even for the *locality-structured* chain corpus (sliding
-   3-variable windows), the kernel vectors are **dense** — banded
+   3-variable windows), the kernel vectors are **dense** – banded
    structure with random entries does not make a sparse kernel. The
    dumped `I_L` rows carry 8–11 terms over far-apart `t` variables, and
    every Gröbner reduction through them re-inflates exactly the way the
@@ -73,16 +73,16 @@ extraction-ordering bug during development).
 
 ## Conclusion
 
-The question this experiment set out to answer — *is the structural
-issue resolvable?* — has a precise answer now: **yes at the definitional
+The question this experiment set out to answer – *is the structural
+issue resolvable?* – has a precise answer now: **yes at the definitional
 layer, and the resolution is representable as clean binomials; but the
 projected system concentrates the coupling into dense linear relations
 and loses the decomposition, so the net effect on real-shaped goals is
 negative.** The hardness of `V(binarials) ∩ L` is intrinsic to the
 coupling, not to the representation.
 
-What would get both properties — binomial cleanliness AND decomposition
-— is maintaining separate bases over variable subsets *in the original
+What would get both properties – binomial cleanliness AND decomposition
+– is maintaining separate bases over variable subsets *in the original
 space*, exchanging only elements whose support fits another cluster:
 split-GB. Both flattening studies now converge on the same
 recommendation, and Phase 7's experiment is pre-registered twice over.
@@ -91,7 +91,7 @@ recommendation, and Phase 7's experiment is pre-registered twice over.
 
 - The **chain corpus** (`bench/ff/bn254_chain_planted_*`): locality-
   structured R1CS goals that today answer honest `unknown` at every
-  size — the cleanest capacity marker for the split-GB experiment (one
+  size – the cleanest capacity marker for the split-GB experiment (one
   component, so the current component decomposition cannot help them at
   all).
 - This study.

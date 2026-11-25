@@ -5,13 +5,13 @@
 **Stage 1:** `docs/studies/2026-09-07-bv-unification-stage1.md` (baseline here
 = `precompile/482b806`).
 
-**Verdict: flipped.**  The handover's pre-registered flip condition — "after
+**Verdict: flipped.**  The handover's pre-registered flip condition – "after
 unification, rebuild the order encoding and re-measure its table; if it beats
-pairwise by ≥ 1.5× on the n ≥ 300 cells, flip the BitVec row" — is met with
+pairwise by ≥ 1.5× on the n ≥ 300 cells, flip the BitVec row" – is met with
 room to spare: **3.7–57× on every n ≥ 300 cell** (mixed goals through the
 unified path; same-binary, flag-off control for pairwise), with the
-campaign's headline cell — n=2000 w=16 sat, a timeout under *every*
-architecture measured to date — solving in **17 s**.
+campaign's headline cell – n=2000 w=16 sat, a timeout under *every*
+architecture measured to date – solving in **17 s**.
 
 ## What landed
 
@@ -28,10 +28,10 @@ architecture measured to date — solving in **17 s**.
   every derived value as a deterministic decision phase.  Hand-derived
   "pass-through" hints are *wrong* for descending half-cleaners (their swap
   routes through the mux arms even at `c = false`) and pin a non-model as
-  the guided descent — measured 43k decisions at n=9 and 137 s at n=17
+  the guided descent – measured 43k decisions at n=9 and 137 s at n=17
   where propagation-derived phases need ~2k decisions / 5 ms.
 - **The solver-side handoff** (`nixie-solver/src/solver/bv_unified.rs`): the
-  assertion spine records a *spec* exactly at fact positions — a
+  assertion spine records a *spec* exactly at fact positions – a
   `distinct` over same-width BVs at arity > 32 with the cheap generation
   preconditions; the unified link pass builds the network in its
   `build_with` window; a spec still pending at `check` entry materialises
@@ -42,7 +42,7 @@ architecture measured to date — solving in **17 s**.
   term true (the spine unit); every other occurrence reads the pinned var
   and the model has all wires distinct (see `order.rs`'s module docs).
 - **Equality guards.**  The network refutes duplicate arguments only
-  through the full sort — structurally hard for resolution (measured 4M
+  through the full sort – structurally hard for resolution (measured 4M
   conflicts at n=16; an n=300 explicit-equality cell timed out).  For each
   argument pair that already has an equality atom, the encoder emits the
   valid clause `distinct -> ~(x_i = x_j)`: an asserted `(= x_i x_j)` now
@@ -50,7 +50,7 @@ architecture measured to date — solving in **17 s**.
   This turned the unsat cells from timeouts into wins (n=300: 0.56 s vs
   pairwise's 0.78 s; n=2000: 9.4 s vs timeout).
 - **Gates kept conservative:** ground-constant arguments stay pairwise
-  (pinned wires defeat the identity guidance — measured timeouts on
+  (pinned wires defeat the identity guidance – measured timeouts on
   constant-mixed shapes that pairwise solves); `n <= 2^w` (the pigeonhole
   short-circuit's own bound, which also guarantees the identity fits);
   50 M-clause size cap; `NIXIE_BV_DISTINCT_ORDER=0` disables.
@@ -73,7 +73,7 @@ same-binary flag-off control)
 
 The one sub-1.5× cell (unsat n=100) is below the flip threshold's n ≥ 300
 scope and within 10 ms absolute.  The dispatch path (pure QF_BV goals) keeps
-its pairwise row — that flip is stage 3 (dispatch unification), unchanged
+its pairwise row – that flip is stage 3 (dispatch unification), unchanged
 here.
 
 ## Verification
@@ -93,7 +93,7 @@ here.
 
 The Attack-3 prediction held exactly: with circuits in the main core,
 comparator decisions propagate per-decision and the identity phases guide
-the whole descent — the sat cells collapse from "search for an arrangement"
+the whole descent – the sat cells collapse from "search for an arrangement"
 to "walk the arrangement".  Two things the original experiment could not
 have: the equality guards (its unsat regression, 3.3× at n=300, became a
 1.4× win) and propagation-derived phases (hand hints pin a non-model; the
@@ -103,6 +103,6 @@ n=2000 cell).
 ## Stage 3 (next): dispatch unification
 
 The pure-QF_BV dispatch still solves its own embedded instance with the
-pairwise row — the flip above covers mixed goals only.  Unifying the
+pairwise row – the flip above covers mixed goals only.  Unifying the
 dispatch (or routing pure goals through the unified path) is the remaining
 pre-registered decision (flip condition 1's corpus geomean).

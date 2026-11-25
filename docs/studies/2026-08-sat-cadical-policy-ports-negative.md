@@ -8,13 +8,13 @@ implemented behind study switches and run through the
 common-random-number pairing via `Solver::set_random_seed`, deterministic
 metric = conflicts-to-verdict, treatment/matched-null ratio). **Both failed
 the null comparison.** The switches stay in the tree (`doc(hidden)`, env-gated,
-default-off) so the studies can be reproduced; no default behavior changed —
+default-off) so the studies can be reproduced; no default behavior changed –
 verified by bit-identical trajectories on the tracking instances.
 
 ## Study 1: mode-gated heuristic bumping (cadical `bump_variable`)
 
 `NIXIE_BUMP_MODE_GATE=1`: conflict bumps reach only the active mode's
-structure — VSIDS scores in stable, VMTF queue in focused — instead of the
+structure – VSIDS scores in stable, VMTF queue in focused – instead of the
 historical double maintenance. `NIXIE_BUMP_MODE_GATE_NULL=1`: same structural
 change, but stable-mode score bumps go to *random* variables of the same
 count (scrambled signal).
@@ -32,7 +32,7 @@ screen killed it:
 | stable-300 (SAT) | 929,883 | 823,985 | 431,532 | **1.909** |
 
 (The first three rows are from the reduce study's shared screening below;
-mode-gate rows: see git history of this file for the 4-instance screen —
+mode-gate rows: see git history of this file for the 4-instance screen –
 constraints_17 0.49, mrpp 0.58, but 6s167-opt 1.18 *null-better* and mrpp
 1.11 worse than baseline.) Verdict: heterogeneous chaos with no consistent
 treatment/null separation → dropped.
@@ -61,7 +61,7 @@ clauses chosen uniformly at random (partial Fisher–Yates).
 | frb65-12-2 | SAT | 423,828 | 546,220 | 465,249 | 1.174 |
 | si2-b03m-m800-03 | SAT | 42,320 | 42,849 | 43,905 | 0.976 |
 | Break_unsat_06_07 | UNSAT | 32,990 | 34,196 | 34,977 | 0.978 |
-| g2-ak128boothbg2msisc | SAT | TO×3 arms @60 s | — | — | — |
+| g2-ak128boothbg2msisc | SAT | TO×3 arms @60 s | – | – | – |
 | barman-pfile06-022 | UNSAT | 1,267 | 1,200 | 1,190 | 1.008 |
 
 T/N geomean: UNSAT 0.943, SAT ≈0.99 (excluding the all-timeout instance).
@@ -103,11 +103,11 @@ First contact on `6s167-opt` (single seed):
 
 Null beats treatment; killed without a full study. Note this also corrects
 an earlier misdiagnosis: "52 stable phases" in the stats line is
-`restarts_stable` (restarts *during* stable mode), not mode switches —
+`restarts_stable` (restarts *during* stable mode), not mode switches –
 the real default flip count is 35, not wildly far from CaDiCaL's 2 but
 still ~17×.
 
-A 4-seed check confirmed the kill with better evidence — per-seed T/N =
+A 4-seed check confirmed the kill with better evidence – per-seed T/N =
 0.99 / 0.60 / 1.70 / 1.52, i.e. pure chaos redistribution with no
 consistent direction:
 
@@ -160,7 +160,7 @@ checked separately for the big effects):
 | **`--reduce=0 --stabilize=0`** | **1.58 s** | – |
 
 Reading: clause-database reduction carries essentially the whole gap, and
-roughly half of that is an *interaction* — with a bloated database the
+roughly half of that is an *interaction* – with a bloated database the
 per-conflict tick rate inflates (2330 vs 903 ticks/conflict), which mistimes
 the tick-driven stabilize switch; turning stabilization off recovers most of
 the loss even with no reduction at all. Reduction's search benefit in
@@ -168,12 +168,12 @@ CaDiCaL is substantially "keep the tick clock calibrated", not a direct
 clause-quality effect.
 
 Nixie calibration on the same instance: **403 ticks/conflict** (its DB stays
-small through on-the-fly subsumption — net 1,941 live learned clauses at
+small through on-the-fly subsumption – net 1,941 live learned clauses at
 exit, and disabling its scheduled reduce changes conflicts by <1 %,
 170,039 → 168,562). Nixie has no DB bloat and no tick inflation, yet still
 needs 170k conflicts. So neither "add cadical's reduce" nor "fix tick
 inflation" can be nixie's fix: the disease is not present in the same form.
-The shared observable — nixie lands where CaDiCaL-with-no-reduce lands —
+The shared observable – nixie lands where CaDiCaL-with-no-reduce lands –
 remains unexplained by any single-policy delta tested so far (four ports,
 all null-neutral or null-beaten).
 
@@ -263,14 +263,14 @@ The distributions of learnt size, backjump ratio, and restart cadence are
 **the same**. The divergence is the *depth trajectory*: CaDiCaL opens very
 deep (mean level 62–81, trails up to ~3.7k in the first 15 % of conflicts)
 and holds level ≈30–40 throughout. Nixie starts at ≈32 and **monotonically
-decays** to level ≈11–12 by the end — classic re-treading of shallow,
+decays** to level ≈11–12 by the end – classic re-treading of shallow,
 already-refuted space while conflicts keep accumulating. This decay under
 identical restart cadence is the first observable that cleanly separates
 the solvers; any future fix attempt has a measurable target: hold decision
 depth up through the late search.
 
 (Dead ends recorded for completeness: disabling trail-reuse via
-`REUSE=0` leaves this instance's trajectory bit-identical — the knob does
+`REUSE=0` leaves this instance's trajectory bit-identical – the knob does
 not reach this path.)
 
 ## Remaining candidates from the original list
@@ -286,7 +286,7 @@ search power" should now be treated as refuted for single-policy ports.
 The ablation adds a sharper constraint: whatever makes CaDiCaL fast is not
 reproducible by changing reduction, stabilization, scores, phases,
 minimization, shrink, OTFS, or rephase *in isolation in Nixie*, and inside
-CaDiCaL only reduction matters — largely through keeping the tick clock
+CaDiCaL only reduction matters – largely through keeping the tick clock
 calibrated. The most plausible remaining hypotheses:
 
 1. **Ordering/interleaving of inprocessing** (probe → elim → subsume →

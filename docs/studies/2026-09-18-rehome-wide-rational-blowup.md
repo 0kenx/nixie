@@ -21,7 +21,7 @@ equally slow:
 | hand-folded instance | pre-fold `740c16bd` | **691 s** | sat |
 
 The folded *shape* is the slow thing; the fold just produces it. CDCL
-trajectory reshuffle made fast-then-slow, not wrong-then-right — the
+trajectory reshuffle made fast-then-slow, not wrong-then-right – the
 verdict stays `sat` (model `xi = 658812288346769706`) throughout.
 
 ## Where the time goes (perf, release + symbols)
@@ -43,7 +43,7 @@ Over 60% of the runtime is bignum GCD/shift/division under exact
 div/mod axioms carry denominators 3, 4, 5, 7, 10; every pivot compounds
 them and every `Ratio` operation pays a full bignum GCD reduction, on
 numerators seeded by ±2³¹ and −2⁶² literals. Classic exact-rational
-simplex blowup — the standard cures are fraction-free (integer-preserving)
+simplex blowup – the standard cures are fraction-free (integer-preserving)
 tableaus or delayed normalization; **naive deferral is unsound here**
 because `Ratio`'s canonical form is load-bearing for its `Ord` (the
 solver compares bounds through it).
@@ -51,7 +51,7 @@ solver compares bounds through it).
 ## The delta-debugged minimal shape
 
 `docs/studies/assets/2026-09-18-rehome-wide-rational-blowup-*.smt2`
-(original, hand-folded, minimal). The minimal core — still >100 s on
+(original, hand-folded, minimal). The minimal core – still >100 s on
 both binaries:
 
 ```scheme
@@ -66,7 +66,7 @@ both binaries:
 (check-sat)
 ```
 
-(unsat; the shrinker's verdict drifted from the original's sat — the
+(unsat; the shrinker's verdict drifted from the original's sat – the
 slowness survives the verdict change, so both files are kept.)
 
 ## What landed
@@ -74,7 +74,7 @@ slowness survives the verdict change, so both files are kept.)
 - The big test is `#[ignore]`d out of the default suite with the
   explicit-run recipe (the `pete_cxs_bp` precedent), a 25×60 s nextest
   override for that explicit run, and the un-ignore condition named
-  (fraction-free tableaus / delayed normalization — the item-76 design).
+  (fraction-free tableaus / delayed normalization – the item-76 design).
   **The defect it guards stays covered in the default suite** by the
   two-disjunct core (`rehome_false_unsat_seed_20261102_core_decides_sat`,
   34 s), which pins the same item-69 fabricated-singleton false refutation.
@@ -83,7 +83,7 @@ slowness survives the verdict change, so both files are kept.)
 
 This is your item-76 machinery: `eval_big_raw` / `derive_var_bound_big_parts`
 / `update_assignment` are the hot frames under the `Ratio` churn. The
-profile above is the whole story — denominators compound per pivot, GCD
+profile above is the whole story – denominators compound per pivot, GCD
 per operation. If the bound-shadowing fix design includes a
 normalization policy, this reproducer pair (original vs folded, same
 verdict, 80× apart) is the regression to measure it against.

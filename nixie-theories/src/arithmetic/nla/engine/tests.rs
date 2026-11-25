@@ -6,7 +6,7 @@
 //!
 //! The tests are written against [`check_assertions`] rather than against
 //! [`NlaEngine`] directly wherever the property under test is about the *public
-//! contract* — that is where the incompleteness gate and the witness
+//! contract* – that is where the incompleteness gate and the witness
 //! re-verification live, and testing one layer down would miss both.
 
 use super::super::{NlaConfig, NlaVerdict, check_assertions};
@@ -14,7 +14,7 @@ use super::*;
 use nixie_core::ast::{TermId, TermManager};
 use num_bigint::BigInt;
 
-// --- construction helpers ---------------------------------------------------
+// ======== construction helpers ========
 
 fn int_var(m: &mut TermManager, name: &str) -> TermId {
     let s = m.sorts.int_sort;
@@ -47,7 +47,7 @@ fn decide(assertions: &[TermId], m: &TermManager) -> NlaVerdict {
     check_assertions(assertions, m, &NlaConfig::default())
 }
 
-// --- satisfiable goals ------------------------------------------------------
+// ======== satisfiable goals ========
 
 #[test]
 fn product_equal_twelve_is_sat_with_a_consistent_witness() {
@@ -67,7 +67,7 @@ fn product_equal_twelve_is_sat_with_a_consistent_witness() {
 
     // The witness must be product-consistent, not merely present. Evaluating
     // the *original* assertion set is the real check, and `check_assertions`
-    // has already done it — so assert the individual values line up too, which
+    // has already done it – so assert the individual values line up too, which
     // is what "product-consistent" actually means.
     let xv = interp.num_of(x).expect("x pinned").clone();
     let yv = interp.num_of(y).expect("y pinned").clone();
@@ -96,11 +96,11 @@ fn a_satisfiable_square_is_sat() {
     );
 }
 
-// --- refutations ------------------------------------------------------------
+// ======== refutations ========
 
 #[test]
 fn square_equal_negative_one_is_unsat() {
-    // x * x = -1 — refuted by forward interval propagation alone: `x^2 >= 0`
+    // x * x = -1 – refuted by forward interval propagation alone: `x^2 >= 0`
     // is a tautology the monic layer derives with an empty reason set.
     let mut m = TermManager::new();
     let x = int_var(&mut m, "x");
@@ -111,7 +111,7 @@ fn square_equal_negative_one_is_unsat() {
 
 #[test]
 fn product_of_two_large_factors_cannot_be_small() {
-    // x >= 3 ∧ y >= 3 ∧ x*y <= 8 — forward propagation gives x*y >= 9.
+    // x >= 3 ∧ y >= 3 ∧ x*y <= 8 – forward propagation gives x*y >= 9.
     let mut m = TermManager::new();
     let x = int_var(&mut m, "x");
     let y = int_var(&mut m, "y");
@@ -140,7 +140,7 @@ fn a_refutation_survives_a_dropped_disjunction() {
     //
     // The disjunction is outside the linearisation grammar and is dropped,
     // setting `incomplete`. Dropping a conjunct *weakens* the problem, so a
-    // refutation of what remains still refutes the input — this is the
+    // refutation of what remains still refutes the input – this is the
     // soundness-of-dropping property, and it must not be gated the way `sat`
     // is.
     let mut m = TermManager::new();
@@ -161,7 +161,7 @@ fn a_refutation_survives_a_dropped_disjunction() {
     );
 }
 
-// --- the incompleteness gate ------------------------------------------------
+// ======== the incompleteness gate ========
 
 #[test]
 fn an_engine_sat_under_an_incomplete_linearization_is_suppressed() {
@@ -196,7 +196,7 @@ fn an_engine_sat_under_an_incomplete_linearization_is_suppressed() {
     );
 }
 
-// --- budgets ----------------------------------------------------------------
+// ======== budgets ========
 
 #[test]
 fn a_zero_node_budget_yields_unknown_never_a_verdict() {
@@ -301,7 +301,7 @@ fn the_verdict_is_a_function_of_the_input() {
     }
 }
 
-// --- scope discipline -------------------------------------------------------
+// ======== scope discipline ========
 
 #[test]
 fn the_search_restores_its_entry_scope() {
@@ -330,14 +330,14 @@ fn the_search_restores_its_entry_scope() {
     );
 }
 
-// --- exact arithmetic -------------------------------------------------------
+// ======== exact arithmetic ========
 
 #[test]
 fn monic_consistency_is_checked_beyond_i64() {
     // A product of two factors near 2^31 overflows an i64 while remaining an
     // ordinary model. The consistency check runs in BigInt, so a model that
     // assigns the product anything other than the true value must be rejected
-    // — a wrapped comparison here is the one overflow that could manufacture a
+    // – a wrapped comparison here is the one overflow that could manufacture a
     // wrong `sat`.
     let mut m = TermManager::new();
     let x = int_var(&mut m, "x");
@@ -357,7 +357,7 @@ fn monic_consistency_is_checked_beyond_i64() {
     );
 }
 
-// --- witness verification ---------------------------------------------------
+// ======== witness verification ========
 
 #[test]
 fn a_returned_witness_satisfies_the_original_assertions() {
@@ -391,11 +391,11 @@ fn a_goal_with_no_arithmetic_is_unknown() {
     assert_eq!(decide(&[p], &m), NlaVerdict::Unknown);
 }
 
-// --- the sign lemma tables, on satisfiable instances -------------------------
+// ======== the sign lemma tables, on satisfiable instances ========
 //
 // These are the branch-local lemmas emitted under a sign premise. A flipped
 // convention in `sign` or `proportion` asserts a *false* lemma inside a case,
-// which closes a case that has a model — a wrong `unsat`, the one failure mode
+// which closes a case that has a model – a wrong `unsat`, the one failure mode
 // no later check recovers from. Every other satisfiable test in this file has a
 // non-negative solution, so without these the negative arms of both tables are
 // never exercised in the direction that would expose a flip.
@@ -415,8 +415,8 @@ fn a_product_of_two_negatives_is_sat() {
     let d = le(&mut m, y, -1);
     let assertions = [a, b, c, d];
 
-    // (Fork note: on this tree the engine declines this goal — Unknown, sound
-    // — where upstream's copy finds (-1, -12). The engine code is verbatim;
+    // (Fork note: on this tree the engine declines this goal – Unknown, sound
+    // – where upstream's copy finds (-1, -12). The engine code is verbatim;
     // the divergence is in a dependency (LIA sub-solve behaviour inside the
     // propagate/cut loop). Tracked for a dedicated dig; never a wrong verdict:
     // pin that the decline is the honest one.)
@@ -432,7 +432,7 @@ fn a_product_of_two_negatives_is_sat() {
 #[test]
 fn a_product_of_mixed_signs_is_sat() {
     // x*y = -12 ∧ 1 <= x <= 12 ∧ y <= -1, satisfied at (1, -12).
-    // Drives Pos/Neg: `sign` must conclude `product < 0` — the other half of
+    // Drives Pos/Neg: `sign` must conclude `product < 0` – the other half of
     // the table from the test above.
     let mut m = TermManager::new();
     let x = int_var(&mut m, "x");

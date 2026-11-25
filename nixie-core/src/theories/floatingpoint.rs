@@ -2,15 +2,15 @@
 //!
 //! Implements a lightweight theory of IEEE 754 floating-point terms: it tracks
 //! the registered floating-point terms, recognises the literals and the
-//! special values among them, instantiates the axioms it can state as terms —
+//! special values among them, instantiates the axioms it can state as terms –
 //! with the guards that make them true, since most of the "obvious" identities
-//! fail for NaN or for negative zero — keeps equality classes, and reports a
+//! fail for NaN or for negative zero – keeps equality classes, and reports a
 //! conflict when two different literal values are forced into one class.
 //!
 //! It does not evaluate rounded arithmetic: only the exact, rounding-free
 //! operations (`fp.neg`, `fp.abs`) are folded. This is `nixie-core`'s
-//! self-contained layer, not the solver's floating-point theory — that is
-//! `nixie_theories::fp` — and finding no conflict here says nothing about
+//! self-contained layer, not the solver's floating-point theory – that is
+//! `nixie_theories::fp` – and finding no conflict here says nothing about
 //! satisfiability.
 //!
 //! Reference: Z3's `src/smt/theory_fpa.cpp`
@@ -284,7 +284,7 @@ impl FloatingPointTheory {
     /// The registered term denoting a special value of a sort, if one was seen
     ///
     /// Returns the first term of that sort registered for that value. `None`
-    /// means no registered term of this sort denotes it — never that no such
+    /// means no registered term of this sort denotes it – never that no such
     /// value exists.
     #[must_use]
     pub fn special_value_term(&self, sort: SortId, value: SpecialValue) -> Option<TermId> {
@@ -483,18 +483,18 @@ impl FloatingPointTheory {
     /// The identities of floating-point arithmetic mostly need a side
     /// condition to be true, and the terms built here carry it:
     ///
-    /// * `AddIdentity` — `not (fp.isZero x) ⟹ fp.add(rm, x, +0) = x`. The
+    /// * `AddIdentity` – `not (fp.isZero x) ⟹ fp.add(rm, x, +0) = x`. The
     ///   guard is not decoration: `fp.add(RNE, -0, +0)` is `+0`, not `-0`.
-    /// * `MulIdentity` — `fp.mul(rm, x, 1.0) = x`, which needs no guard.
-    /// * `MulZero` — `fp.isPositive x ∧ not (fp.isInfinite x) ⟹
+    /// * `MulIdentity` – `fp.mul(rm, x, 1.0) = x`, which needs no guard.
+    /// * `MulZero` – `fp.isPositive x ∧ not (fp.isInfinite x) ⟹
     ///   fp.mul(rm, x, +0) = +0`. Without the guard it is false for negative
     ///   `x` (which gives `-0`), for infinities and for NaN.
-    /// * `NegInvolution` — `fp.neg(fp.neg(x)) = x`.
-    /// * `AbsNonNegative` — `not (fp.isNaN x) ⟹ fp.geq(fp.abs x, +0)`;
+    /// * `NegInvolution` – `fp.neg(fp.neg(x)) = x`.
+    /// * `AbsNonNegative` – `not (fp.isNaN x) ⟹ fp.geq(fp.abs x, +0)`;
     ///   every comparison against NaN is false, including this one.
-    /// * `NaNPropagation` — `term = NaN`.
-    /// * `InfinityAxiom` — the guarded form of the named property.
-    /// * `CompareNaN` — the conjunction stating that all five ordering
+    /// * `NaNPropagation` – `term = NaN`.
+    /// * `InfinityAxiom` – the guarded form of the named property.
+    /// * `CompareNaN` – the conjunction stating that all five ordering
     ///   predicates are false for the pair.
     ///
     /// Returns `None` when the axiom does not fit its term: the term is not in
@@ -710,11 +710,11 @@ impl FloatingPointTheory {
     ///
     /// Two rules are applied to a fixpoint:
     ///
-    /// * *exact evaluation* — `fp.neg` and `fp.abs` of a literal are computed.
+    /// * *exact evaluation* – `fp.neg` and `fp.abs` of a literal are computed.
     ///   They are the only floating-point operations that need no rounding, so
     ///   they are the only ones folded here; `fp.add` and friends are left to
     ///   `nixie_theories::fp`.
-    /// * *congruence* — two applications of the same operator (with the same
+    /// * *congruence* – two applications of the same operator (with the same
     ///   rounding mode) whose arguments are pairwise known equal are equal.
     ///
     /// Each deduced equality is merged into this theory's classes and returned

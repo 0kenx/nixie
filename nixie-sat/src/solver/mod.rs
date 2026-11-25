@@ -138,13 +138,13 @@ pub(super) struct BinaryImplicationGraph {
     /// sentinels, factoring products): every append's id is strictly
     /// greater than any id in the primary (ids are append-only and the
     /// primary froze at layout time), so primary-then-extra is globally
-    /// id-ascending — the chronological order the old single per-literal
+    /// id-ascending – the chronological order the old single per-literal
     /// `Vec` held.
     extra: Vec<Vec<(Lit, ClauseId)>>,
     /// 1 bit per code: whether `extra[code]` is nonempty (a short `extra`
     /// or a short bitset reads as all-empty, matching the lazy-`extra`
-    /// contract).  The propagate hot path checks this bitset FIRST — one
-    /// load of an L2-resident word — so the overwhelmingly-empty overflow
+    /// contract).  The propagate hot path checks this bitset FIRST – one
+    /// load of an L2-resident word – so the overwhelmingly-empty overflow
     /// lookups stop missing DRAM on the Vec-of-Vec headers (measured on
     /// the ASP class: extra_list was 23.8 % of a duthen-50 run and 95 % of
     /// 100M calls returned empty).
@@ -247,7 +247,7 @@ impl BinaryImplicationGraph {
     /// Grow the code-indexed arrays to at least `n` codes, preserving the
     /// CSR invariant: every new code's span is empty and starts where the
     /// last existing span ended (`span_end`'s new entries copy the current
-    /// total — filling 0 would alias code 0's span and misread its edges
+    /// total – filling 0 would alias code 0's span and misread its edges
     /// as the new code's after a mid-search `new_var` growth).
     fn ensure_codes(&mut self, n: usize) {
         if n <= self.span_end.len() {
@@ -259,8 +259,8 @@ impl BinaryImplicationGraph {
         self.extra_nonempty.resize(n.div_ceil(64), 0);
         // `extra` (the per-literal overflow lists) grows LAZILY on first
         // append: materializing one empty `Vec` header per code zeroed
-        // 24 bytes x 2*num_vars — 380 MB of page-faulted writes on the
-        // 7.9M-var anatomy, `extend_with`'s 7.4% of the whole load run —
+        // 24 bytes x 2*num_vars – 380 MB of page-faulted writes on the
+        // 7.9M-var anatomy, `extend_with`'s 7.4% of the whole load run –
         // for lists that stay empty outside search-time appends (learned
         // binaries, congruence sentinels, factoring products).  Readers
         // go through `extra_of`, which treats a short `extra` as all-
@@ -325,7 +325,7 @@ impl BinaryImplicationGraph {
         }
     }
 
-    /// `(start, live_len)` of `code`'s primary span in the flat buffer —
+    /// `(start, live_len)` of `code`'s primary span in the flat buffer –
     /// the propagation hot loop's snapshot (index-based iteration, no
     /// borrow held across `&mut self` calls).
     #[inline]
@@ -386,7 +386,7 @@ impl BinaryImplicationGraph {
     /// sized it, so this only tightens the flat buffer's `Vec` margin and
     /// the overflow lists. It deliberately does NOT fold non-empty
     /// overflow into the primary: the fold would have to grow the flat
-    /// buffer (a full realloc — a 2x transient on binary-dense
+    /// buffer (a full realloc – a 2x transient on binary-dense
     /// instances), and every current caller runs it with empty overflow
     /// straight after a rebuild.
     fn shrink(&mut self) {
@@ -398,7 +398,7 @@ impl BinaryImplicationGraph {
     /// Used to purge binary implications when a clause is retracted so the graph
     /// does not accumulate stale (and, after slot reuse, misleading) edges.
     /// The primary span is compacted in place (order-preserving memmove) so
-    /// per-literal id-ascending order — the walk's merge contract — never
+    /// per-literal id-ascending order – the walk's merge contract – never
     /// breaks; the overflow is `retain`ed like the old per-literal `Vec`.
     fn remove_clause_edges(&mut self, trigger: Lit, clause_id: ClauseId) {
         let idx = trigger.code() as usize;
@@ -429,12 +429,12 @@ impl BinaryImplicationGraph {
     /// Bulk dead-edge compaction (the factor pass's analogue of kissat's
     /// eager O(1) watch removal, amortized): drop every primary edge and
     /// overflow entry whose clause id is `dead[cid]`, preserving per-code
-    /// order.  Only valid between rounds — propagation never runs on a
+    /// order.  Only valid between rounds – propagation never runs on a
     /// tombstoned graph (the caller rebuilds before re-propagating).
     ///
     /// The read cursor walks the ORIGINAL span offsets (running sum of the
     /// pre-compaction `live` counts) while the write cursor trails it at
-    /// the compacted prefix — reading at the rewritten `span_end` offsets
+    /// the compacted prefix – reading at the rewritten `span_end` offsets
     /// instead (the bug this replaced) made every literal after the first
     /// dropped edge read the wrong span and silently emptied the graph
     /// mid-pass.
@@ -483,7 +483,7 @@ impl BinaryImplicationGraph {
         self.extra_entries >= 1_000_000 && self.extra_entries >= self.edges.len()
     }
 
-    // ---- two-phase CSR build (count, layout, fill) --------------------
+    // ======== two-phase CSR build (count, layout, fill) ========
 
     /// Reset to an empty graph over `num_vars` variables, keeping the
     /// flat buffer's allocation for the fill pass to reuse.
@@ -567,7 +567,7 @@ pub trait TheoryCallback {
     /// A theory-proposed decision for the next branch, consulted before
     /// the SAT heuristic picks freely. `None` (the default) leaves
     /// branching entirely to the heuristic. The search skips a proposal
-    /// whose literal is already assigned, so proposals may be stale —
+    /// whose literal is already assigned, so proposals may be stale –
     /// this is a heuristic channel only: any literal it returns is a
     /// legal decision, and the soundness of the search does not depend
     /// on it. (MonoSAT's `-decide-theories` is the reference design.)
@@ -607,8 +607,8 @@ pub trait TheoryCallback {
     /// Record a **theory lemma**: the disjunction of exactly these literals
     /// is valid in the theory. Called from the CDCL(T) loop for every
     /// theory conflict clause and every propagation explanation
-    /// (materialized or lazy). Downstream consumers — certified mode's
-    /// independently verified EUF lemma pass — treat the recording as a
+    /// (materialized or lazy). Downstream consumers – certified mode's
+    /// independently verified EUF lemma pass – treat the recording as a
     /// *candidate*: nothing is trusted until the consumer re-verifies it.
     /// Default: not recorded.
     fn record_lemma(&mut self, _clause: &[Lit]) {}
@@ -663,7 +663,7 @@ pub struct SolverConfig {
     pub random_polarity_prob: f64,
     /// Random-polarity probability override while in **stable** mode
     /// (cadical parity: random decisions default OFF and phase guidance is
-    /// a stable-mode mechanism — target phases; the standing-gap loss-class
+    /// a stable-mode mechanism – target phases; the standing-gap loss-class
     /// files are model-finding instances where 2 % random polarity provably
     /// breaks phase-guided descent).  `None` ⇒ same as
     /// `random_polarity_prob` (the historical behaviour).
@@ -701,7 +701,7 @@ pub struct SolverConfig {
     pub enable_bve: bool,
     /// Structured bounded variable addition (k-way common-literal-set
     /// extraction, pre-search slice; `solver/bva.rs`).  Default off: this
-    /// is a first slice pending its corpus study — see
+    /// is a first slice pending its corpus study – see
     /// `docs/studies/2026-08-sbva.md`.  Experiment knob `NIXIE_SBVA=1`
     /// (and `NIXIE_SBVA_NULL=1` for the matched-null arm).
     pub enable_sbva: bool,
@@ -709,7 +709,7 @@ pub struct SolverConfig {
     /// slice): candidate introductions fired inside `inprocess()` rounds
     /// under effort budgets, with mid-search hygiene (live-reason groups
     /// skipped, eliminator re-marking, watch/BIG rebuild + re-propagation
-    /// after introductions).  Default off — study arm
+    /// after introductions).  Default off – study arm
     /// `docs/studies/2026-09-07-inproc-effort-schedule.md` follow-up #0
     /// (kissat's `factor` owns up to 71 % of its ticks on the worker
     /// class).  Knobs `NIXIE_BVA_MID=1` / `NIXIE_BVA_MID_NULL=1` in
@@ -741,14 +741,14 @@ pub struct SolverConfig {
     /// level-filtered trail (landed with it).  Default **off**: cadical
     /// defaults it on, but our measurements are neutral-to-slightly-negative
     /// (single-seed tracking 0.92× paired, bimodal per file; 10-seed null
-    /// study p=0.14) — see
+    /// study p=0.14) – see
     /// docs/studies/2026-08-chronoreusetrail-rejected.md.  Revisit with a
     /// full multi-seed study before flipping.
     pub chrono_reuse: bool,
     /// Per-solver max-gap restart floor (the portfolio arm's config-level
     /// form of `NIXIE_RESTART_MAXGAP`; `None` = off).  Fires a focused
     /// restart whenever the gap since the last restart reaches this many
-    /// conflicts — the flat MiniSAT-lineage floor whose measured operating
+    /// conflicts – the flat MiniSAT-lineage floor whose measured operating
     /// point is 1000 (tail geomean 1.46×, worker_550 2.18× 10/10, 6s167
     /// 0.99×; 2026-09-07 campaign max-gap matrix).  A default flip failed
     /// the solved-at-cap bar corpus-wide, so this stays per-arm /
@@ -758,14 +758,14 @@ pub struct SolverConfig {
     /// Drought-gated max-gap floor (config form of
     /// `NIXIE_RESTART_DROUGHT_MAXGAP`; `None` = off).  Same flat floor as
     /// [`SolverConfig::restart_maxgap`] but armed only while the fast glue
-    /// EMA is above the drought glue gate (see learn.rs) — the uniform-huge-glue
+    /// EMA is above the drought glue gate (see learn.rs) – the uniform-huge-glue
     /// signature (measured class: avg LBD 224-762; everything the ungated
     /// floor hurts sits at ≤26).  Inert by construction off the class.
     pub restart_drought_maxgap: Option<u64>,
     /// Late-enable gate for `chrono_reuse` (cadical `chronoreusetrail`):
     /// reuse stops fire only once the search has seen this many conflicts.
     /// **Measured dead as a default** (standing-gap study, 2026-08-21):
-    /// the ungated port's residue wins need reuse from conflict 0 — a
+    /// the ungated port's residue wins need reuse from conflict 0 – a
     /// 400 k gate captured 0/25 residue files while still flipping (and
     /// losing) noL, whose default trajectory runs 1.5 M conflicts.  Kept
     /// as A/B infrastructure with `NIXIE_CHRONO_REUSE_AFTER`;
@@ -780,14 +780,14 @@ pub struct SolverConfig {
     /// Run the inprocessing passes as an unconditional **pre-search
     /// collapse** (BVE fixpoint, ELS one-shot, inprocess/vivify pre-passes)
     /// instead of deferring them to the conflict schedule.  Default `false`
-    /// (cadical parity: CaDiCaL schedules every pass on the conflict clock —
-    /// its first elimination lands around 1e4 conflicts — so instances that
+    /// (cadical parity: CaDiCaL schedules every pass on the conflict clock –
+    /// its first elimination lands around 1e4 conflicts – so instances that
     /// solve early never pay for or get structurally damaged by the passes;
     /// measured on ITC2021_Early_3: cadical eliminates zero variables and
     /// finishes in 1164 conflicts, our pre-search collapse eliminated 1903
     /// and needed 5040; with conflict scheduling the stack matches the
     /// default exactly there and keeps its hard-file wins, 48/60 paired
-    /// files faster, geomean 6.3×, sign p<1e-4 over 10 seeds — see
+    /// files faster, geomean 6.3×, sign p<1e-4 over 10 seeds – see
     /// docs/studies/2026-08-inprocessing-schedule.md).
     pub presearch_collapse: bool,
 
@@ -887,7 +887,7 @@ pub struct SolverConfig {
     pub walk_effort: u64,
     /// Pre-walk propagation warmup (cadical `opts.warmup`, default ON there):
     /// before a walk round, decide+propagate to a full assignment IGNORING
-    /// conflicts and seed the walk from it — ProbSAT cannot discover
+    /// conflicts and seed the walk from it – ProbSAT cannot discover
     /// propagation chains, so this gives local search a consistent start.
     /// Default OFF in Nixie pending measurement (see the walk study).
     pub walk_warmup: bool,
@@ -917,7 +917,7 @@ pub struct SolverConfig {
     /// 2 = matched null). During the SAT phase, decisions use the longest
     /// conflict-free trail prefix instead of CaDiCaL target/saved phases.
     /// Mode 2 keeps the same toggle, copies and number of choices but
-    /// complements the sticky polarity — the matched null for this lever.
+    /// complements the sticky polarity – the matched null for this lever.
     pub sat_caching: u8,
 }
 
@@ -1093,7 +1093,7 @@ pub struct SolverStats {
     /// Number of propagations
     pub propagations: u64,
     /// Propagations performed *inside inprocessing* (vivification, XOR
-    /// reasoning) — kept separate from `propagations` (search BCP) so
+    /// reasoning) – kept separate from `propagations` (search BCP) so
     /// cross-solver props/conflict comparisons stay honest: kissat reports
     /// search-only counters, and blending the two inflated nixie's
     /// measured props/conflict by the whole inprocessing share.
@@ -1127,13 +1127,13 @@ pub struct SolverStats {
     /// Number of variables eliminated by bounded variable elimination (BVE).
     pub bve_eliminated: u64,
     /// Number of auxiliary variables introduced by (mid-search) structured
-    /// BVA — each merges a `k ≥ 2` clause group sharing a common literal
+    /// BVA – each merges a `k ≥ 2` clause group sharing a common literal
     /// set (`solver/bva.rs`).
     pub bva_introduced: u64,
     /// Auxiliary hub variables introduced by the kissat `factor.c` port
     /// (quotient chains; `solver/factor.rs`).
     pub factor_introduced: u64,
-    /// Kitten (embedded sub-solver) ticks consumed by sweep rounds — the
+    /// Kitten (embedded sub-solver) ticks consumed by sweep rounds – the
     /// budget currency of the sweep port (kissat `kitten_ticks`).
     /// Deterministic work counter, never wall clock.
     pub kitten_ticks: u64,
@@ -1250,7 +1250,7 @@ pub struct SolverStats {
     /// `stats.shrunken`).
     pub shrunken: u64,
     /// Antecedent clauses rewritten in place by analyze-time OTFS
-    /// (`NIXIE_OTFS`; cadical `stats.otfs.strengthened`) — the pivot literal
+    /// (`NIXIE_OTFS`; cadical `stats.otfs.strengthened`) – the pivot literal
     /// plus level-0-falsified literals dropped when the accumulated
     /// resolvent is smaller than the antecedent.
     pub otfs_strengthened: u64,
@@ -1563,7 +1563,7 @@ pub struct Solver {
     pub(crate) eager_sub_override: Option<bool>,
     /// Elimination ballast anatomy (NIXIE_LOG_ELIM round line):
     /// resolvents added / clauses retired by the backward pass /
-    /// OTF antecedent shrinks fired in the resolvent loop — the
+    /// OTF antecedent shrinks fired in the resolvent loop – the
     /// Timetable phase-collapse diagnosis counters.
     pub(super) diag_elim_added: u64,
     pub(super) diag_elim_bw_retired: u64,
@@ -1704,7 +1704,7 @@ pub struct Solver {
     /// Per-mode glue averages (current/saved), swapped on stable/focused
     /// transitions (cadical `swap_averages`).
     pub(super) glue_current: GlueAverages,
-    /// Conflict index at the last restart (any mode) — the denominator of
+    /// Conflict index at the last restart (any mode) – the denominator of
     /// the current restart gap (T1 stall trigger; see `learn.rs`).
     pub(super) last_restart_conflict: u64,
     /// EMA (window 8) of observed restart gaps in conflicts. cadical's
@@ -1712,7 +1712,7 @@ pub struct Solver {
     /// glue stream is uniform-huge (worker_550/qwh class, avg LBD 241–517)
     /// the fast EMA never crosses 1.10× slow and focused restarts stop
     /// firing entirely (measured 19 restarts per 25.5k conflicts vs
-    /// cadical's 226 — the 2026-09-07 tier-1 diagnosis). This EMA feeds the
+    /// cadical's 226 – the 2026-09-07 tier-1 diagnosis). This EMA feeds the
     /// opt-in stall trigger (`NIXIE_RESTART_STALL=<multiplier>`), never the
     /// default path.
     pub(super) restart_gap_ema: f64,
@@ -1730,7 +1730,7 @@ pub struct Solver {
     /// Matched-null machinery for the T1 stall trigger
     /// (`NIXIE_RESTART_STALL_NULL=1`): a ring of recent restart gaps and a
     /// second EMA fed from *pseudo-randomly reordered* ring entries. Same
-    /// gap magnitudes, same window — the alignment between the current gap
+    /// gap magnitudes, same window – the alignment between the current gap
     /// and the threshold carries no stall information. Only touched when
     /// the null is armed (the PRNG draw would otherwise perturb other
     /// seeded consumers and break default-off trajectory identity).
@@ -1822,14 +1822,14 @@ pub struct Solver {
     pub(super) binary_graph: BinaryImplicationGraph,
     /// Bulk-load deferral latch (see [`Solver::begin_deferred_big`]):
     /// while set, `attach_watchers` suppresses BIG edge insertion for
-    /// binaries (phantom tick counts still bump — they are re-derived by
+    /// binaries (phantom tick counts still bump – they are re-derived by
     /// the flush's rebuild anyway) and the caller MUST end the bulk load
     /// with [`Solver::finish_deferred_big`], which materializes the whole
     /// graph in one exact-size CSR build. The DIMACS parser wraps its
     /// clause loop in this pair.
     pub(super) deferred_big_attach: bool,
     /// Long-watch bulk-load deferral latch (commit-B's slice 6): while set,
-    /// `attach_watchers` registers nothing for 3+-literal clauses —
+    /// `attach_watchers` registers nothing for 3+-literal clauses –
     /// [`Solver::finish_deferred_watches`] materializes every watcher in one
     /// counting-sort CSR build from the arena (`add_clause` stores its
     /// selected pair at `lits[0..2]`, so the rebuild re-derives exactly the
@@ -1850,7 +1850,7 @@ pub struct Solver {
     /// Per-pass deltas of the most recent `inprocess()` round
     /// (`[els, units, shrunk, subsumed, transred-removed, transred-failed,
     /// vivify-shortened, vivify-subsumed]`),
-    /// written only when `NIXIE_INPROC_TRACE` is on.  Purely diagnostic —
+    /// written only when `NIXIE_INPROC_TRACE` is on.  Purely diagnostic –
     /// never read by search logic (2026-09-04 gating follow-up telemetry).
     /// Slots 6-7 were added 2026-09-12 for the inprocessing-amplitude
     /// diagnosis: vivify's shortenings were previously invisible (they tick
@@ -1879,13 +1879,13 @@ pub struct Solver {
     pub(super) subsume_dirty_list: Vec<u32>,
     /// Reused scratch for `subsume_round` (2026-09-07 amortization: the
     /// per-round `vec![SmallVec::new(); 2·num_vars]` occurrence array was a
-    /// ~90 MB alloc/free per round on big-DB instances — the dominant round
+    /// ~90 MB alloc/free per round on big-DB instances – the dominant round
     /// wall cost).  Contents are cleared per round; capacity persists.
     pub(super) subsume_scratch: SubsumeScratch,
     /// Reused ELS/Tarjan scratch (2026-09-17 amortization: the per-round
     /// `vec![-1; 2·V]` / `vec![0; 2·V]` / `vec![false; 2·V]` allocations
     /// were the `extend_with`+`memset` hotspot in inprocessing-heavy
-    /// profiles — b21 attributed ~2.5 % of whole-run time to their fills
+    /// profiles – b21 attributed ~2.5 % of whole-run time to their fills
     /// alone).  `index` is epoch-stamped (no fill); `on_stack` is balanced
     /// set/reset by construction; `lowlink` is written before first read;
     /// only `sub` keeps its semantic identity fill per round.
@@ -1897,7 +1897,7 @@ pub struct Solver {
     pub(super) subsume_database_oracle: bool,
 
     /// kissat `flags(lit).factor` (set wherever `kissat_mark_added_literal`
-    /// runs — our `mark_subsume_lit` sites): literal codes whose clause set
+    /// runs – our `mark_subsume_lit` sites): literal codes whose clause set
     /// changed since they were last factored.  Drives the chain factor's
     /// candidate gating (`solver/factor.rs`).
     pub(super) factor_dirty: Vec<bool>,
@@ -1970,13 +1970,13 @@ pub struct Solver {
     /// budgets; set by the round site under `NIXIE_INPROC_SCHED`).
     pub(super) inproc_budgets: InprocBudgets,
 
-    /// kissat `statistics.used[mode].glue[glue]` — per-mode used-by-glue
+    /// kissat `statistics.used[mode].glue[glue]` – per-mode used-by-glue
     /// histogram feeding the dynamic tier bounds of `kissat_tier_limits`
     /// (`NIXIE_KISSAT_REDUCE`; glue clamped to 31).
     pub(super) kissat_used_hist: [[u64; 32]; 2],
 
     /// In-search XOR propagation state (`solver/xor.rs`; `NIXIE_XORSEARCH`).
-    /// `None` on the default path — one `is_some` check per hooked call.
+    /// `None` on the default path – one `is_some` check per hooked call.
     pub(super) xor_search: Option<Box<self::xor::XorSearch>>,
     /// A real (non no-op) theory callback is attached to the running search.
     /// Set for the duration of [`Solver::solve_with_theory`] when the
@@ -1988,13 +1988,13 @@ pub struct Solver {
     /// assignments the theory callback observes.  Destructive preprocessing
     /// (BVE elimination, ELS folding, pure-literal elimination) skips frozen
     /// variables, which lets those passes run under a REAL theory when the
-    /// caller has frozen the theory-mapped set — the transforms then only
+    /// caller has frozen the theory-mapped set – the transforms then only
     /// touch Boolean-structure (Tseitin/gate) variables the theory never
     /// sees.  Frozen forever once frozen: the set only ever shrinks what the
     /// passes may do, so retaining entries past a hypothetical un-mapping is
     /// the conservative direction.
     pub(super) frozen_vars: rustc_hash::FxHashSet<Var>,
-    /// Whether [`Solver::freeze_theory_vars`] has been called — the
+    /// Whether [`Solver::freeze_theory_vars`] has been called – the
     /// precondition that relaxes the `real_theory_attached` gates.
     pub(super) theory_vars_frozen: bool,
     /// Chronological backtracking helper
@@ -2018,14 +2018,14 @@ pub struct Solver {
     ///
     /// [`Solver::void_elimination_promises`] re-asserts these clauses as
     /// live originals the moment a later `add_clause` mentions the pin's
-    /// opposite polarity — see that method for why the pin alone is then no
+    /// opposite polarity – see that method for why the pin alone is then no
     /// longer a sound model reconstruction.
     pub(super) pure_deleted_clauses: Vec<(Lit, Vec<SmallVec<[Lit; 8]>>)>,
     /// Variables whose extension-stack obligations were voided because a
     /// later `add_clause` reintroduced them: their retired clauses have been
     /// resurrected as live originals, so [`Solver::save_model`]'s backward
     /// walk must no longer toggle their witnesses (a toggle could now
-    /// falsify one of the reintroduced live clauses — the walk's repair
+    /// falsify one of the reintroduced live clauses – the walk's repair
     /// direction was chosen against the *retired* obligation set only).
     pub(super) ext_rementioned: rustc_hash::FxHashSet<Var>,
     /// One-shot latch: once equivalent-literal substitution has rewritten the
@@ -2095,11 +2095,11 @@ pub struct Solver {
     /// pre-search fixpoint loop's productivity gate.
     pub(super) last_elim_eliminated: u64,
     /// Originals live when the pre-search ELS fold (`NIXIE_ELS_PRESEARCH`)
-    /// started — the denominator of the fold-collapse ratio.  0 when the
+    /// started – the denominator of the fold-collapse ratio.  0 when the
     /// arm never ran.
     pub(super) fold_orig_at_entry: usize,
     /// Originals retired by the pre-search ELS fixpoint (fold plus its
-    /// subsumption) — the numerator of the fold-collapse ratio that gates
+    /// subsumption) – the numerator of the fold-collapse ratio that gates
     /// the BVE-after-fold skip policy (`NIXIE_FOLD_BVE_SKIP`, see
     /// `try_scheduled_elimination`).
     pub(super) fold_retired: usize,
@@ -2166,7 +2166,7 @@ pub struct Solver {
     /// Level-0 units forced by `add_clause`'s effective-unit path during
     /// parsing, waiting for their LRAT flush at solve entry (emitting them
     /// mid-parse would allocate derived ids inside the original-clause
-    /// prefix and desynchronize every later original's id — see the
+    /// prefix and desynchronize every later original's id – see the
     /// ForceUnitAtLevelZero sites). Each entry is `(forced literal, forcing
     /// clause)`.
     pub(super) pending_parse_unit_flushes: Vec<(crate::literal::Lit, ClauseId)>,
@@ -2357,7 +2357,7 @@ impl Solver {
             // Under the bulk-load deferral latch the edges are suppressed;
             // `finish_deferred_big` materializes them (plus these phantom
             // counts, re-derived by its `phantom_reset`) in one exact-size
-            // CSR build from the arena — same edges, same order, no
+            // CSR build from the arena – same edges, same order, no
             // per-literal doubling churn.
             if !self.deferred_big_attach {
                 self.binary_graph.add(l0.negate(), l1, cid);
@@ -2370,7 +2370,7 @@ impl Solver {
         if self.deferred_watch_attach {
             // Slice-6 deferral: the counting-sort build at
             // `finish_deferred_watches` re-derives both watchers from the
-            // stored `lits[0..2]` — the same pair, with zero per-literal
+            // stored `lits[0..2]` – the same pair, with zero per-literal
             // overflow churn during the load.
             return;
         }
@@ -2396,7 +2396,7 @@ impl Solver {
     /// The `NIXIE_CHRONO_REUSE` / `NIXIE_CHRONO_ALWAYS` experiment overrides
     /// are re-applied here: presets hard-set both fields (`chrono_reuse:
     /// false` everywhere), which used to stomp the env knobs read in
-    /// `SolverConfig::default` — the switches were dead for any
+    /// `SolverConfig::default` – the switches were dead for any
     /// preset-built solver (found while preparing the reuse re-study;
     /// `docs/studies/2026-08-chronoreusetrail-rejected.md` follow-up).
     #[must_use]
@@ -3018,9 +3018,9 @@ impl Solver {
         // guarantee every dropped literal is falsified by a level-0 unit,
         // so under the negation of `kept` those units falsify the dropped
         // literals and the OLD clause becomes unit (or conflicting) on the
-        // kept ones — an empty chain is unverifiable by a checker that
+        // kept ones – an empty chain is unverifiable by a checker that
         // only replays hints (found on 6s167 --bve, 2026-09-02). Dropped
-        // literals without a recorded unit (vivify's non-level-0 drops —
+        // literals without a recorded unit (vivify's non-level-0 drops –
         // that path never runs under proofs) keep the historical
         // empty-chain emission.
         let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
@@ -3047,12 +3047,12 @@ impl Solver {
     /// Emit a **self-subsuming-resolution** strengthen (`subsume_round`'s
     /// arm): the strengthened clause `kept = c \ {lits[idx]}` is the
     /// resolvent of `c` with `subsumer` on the dropped literal's variable.
-    /// RUP chain: `[c id, subsumer id]` — under `¬kept` every `subsumer`
+    /// RUP chain: `[c id, subsumer id]` – under `¬kept` every `subsumer`
     /// literal except the flipped one is false (the subsumer's other
     /// literals all occur in `kept`), so the subsumer is unit on it,
     /// propagation falsifies the dropped literal, and `c` conflicts.
     /// Returns `false` (emitting nothing) when a parent's LRAT id is
-    /// unbound — the caller then skips the strengthen entirely (weaker
+    /// unbound – the caller then skips the strengthen entirely (weaker
     /// elimination, never an unverifiable chain).
     fn proof_strengthen_clause_res(
         &mut self,
@@ -3253,14 +3253,14 @@ impl Solver {
     }
 
     /// Test/differential override for the AND-gate elimination arm
-    /// (`NIXIE_AND_GATES`) — same rationale as [`Self::set_otfs`].
+    /// (`NIXIE_AND_GATES`) – same rationale as [`Self::set_otfs`].
     #[doc(hidden)]
     pub fn set_and_gates(&mut self, on: bool) {
         self.and_gates_override = Some(on);
     }
 
     /// Test/differential override for the eager-subsumption arm
-    /// (`NIXIE_EAGER_SUB`) — same rationale as [`Self::set_otfs`].
+    /// (`NIXIE_EAGER_SUB`) – same rationale as [`Self::set_otfs`].
     #[doc(hidden)]
     pub fn set_eager_sub(&mut self, on: bool) {
         self.eager_sub_override = Some(on);
@@ -3286,7 +3286,7 @@ impl Solver {
     /// Deliberately **not** `cfg`-gated on `std`: `nixie_time::Instant` exists on
     /// every target. Where no clock exists (`wasm32-unknown-unknown`, or a
     /// `--no-default-features` build) the clock is frozen at t = 0, so the
-    /// deadline never fires and this is a documented no-op — such callers
+    /// deadline never fires and this is a documented no-op – such callers
     /// should bound the search with [`Solver::set_max_conflicts`] /
     /// [`Solver::set_max_decisions`] instead. See the `nixie_time` crate docs.
     pub fn set_deadline(&mut self, deadline: Option<nixie_time::Instant>) {
@@ -3633,11 +3633,11 @@ impl Solver {
 
     /// Create `n` new variables in one call (bulk `new_var`).
     ///
-    /// Same final state as `n` sequential [`Self::new_var`] calls — every
+    /// Same final state as `n` sequential [`Self::new_var`] calls – every
     /// per-variable/per-literal table is grown once to the final size with
     /// the same fill values, then the two heap structures (`vsids`, `chb`)
     /// get the same per-var insertions in the same order (all-equal
-    /// activities make each insertion O(1), so the loop is cheap) — but
+    /// activities make each insertion O(1), so the loop is cheap) – but
     /// without the per-call `resize` traffic.  Sequential growth of ~25
     /// tables one variable at a time measured 18.6 s of wall on a
     /// 9.4M-variable DIMACS header (2 µs/var: amortized-doubling reallocs
@@ -3721,7 +3721,7 @@ impl Solver {
         // CSR-B world only.  The Vec-world exact-capacity arm has now
         // priced negative TWICE, under both lenses: instructions (+5.4%
         // user on the load cells, 2026-09-21) AND page faults (660-725k
-        // vs 613k baseline on the anatomy — mimalloc RECYCLES the freed
+        // vs 613k baseline on the anatomy – mimalloc RECYCLES the freed
         // doubling blocks, so the push-growth path's churn reuses pages
         // while 15.8M fresh exact allocations touch new slabs).  Do not
         // retry a third time without a different allocator.
@@ -3736,7 +3736,7 @@ impl Solver {
     ///
     /// Deliberately NOT the full `rebuild_watches_and_binary_graph`:
     /// the BIG was built incrementally during the load (identical edges,
-    /// id order — the deferred-BIG pair's validated equivalence) and the
+    /// id order – the deferred-BIG pair's validated equivalence) and the
     /// phantom counters were bumped at exactly the same attach sites, so
     /// re-running those passes would only pay their cost a second time.
     /// The counting sort over the stored `lits[0..2]` pairs is the whole
@@ -3803,8 +3803,8 @@ impl Solver {
     /// Begin a deferred bulk load for the binary implication graph:
     /// `attach_watchers` suppresses BIG edges (but still bumps the phantom
     /// tick counts) while the latch is set; the caller must later call
-    /// [`Solver::finish_deferred_big`] — which materializes the graph in
-    /// one exact-size CSR build — before the next propagation.
+    /// [`Solver::finish_deferred_big`] – which materializes the graph in
+    /// one exact-size CSR build – before the next propagation.
     pub fn begin_deferred_big(&mut self) {
         self.deferred_big_attach = true;
     }
@@ -3961,7 +3961,7 @@ impl Solver {
             self.subsume_dirty_list.push(code as u32);
         }
         // kissat `kissat_mark_added_literal` sets the subsume and factor
-        // dirty bits together — mirror it (the chain factor's candidate
+        // dirty bits together – mirror it (the chain factor's candidate
         // gating; see `solver/factor.rs`).
         if self.factor_dirty.len() <= code {
             self.factor_dirty.resize(code + 1, false);
@@ -3989,7 +3989,7 @@ impl Solver {
     /// that the extension-stack walk can always toggle the witness to repair
     /// them. Both promises hold in a one-shot solve. Both are broken the
     /// moment the caller asserts a new clause mentioning the eliminated
-    /// variable in a constraining polarity — and CDCL(T) refinement loops do
+    /// variable in a constraining polarity – and CDCL(T) refinement loops do
     /// exactly that between `solve_with_theory` rounds (MBQI instantiation
     /// lemmas and lazy Tseitin encodings re-mentioning atoms and helper
     /// variables; observed as an invalid `Sat` witness on Rodin/
@@ -4004,7 +4004,7 @@ impl Solver {
     /// stops toggling its witnesses. The search then enforces the
     /// reintroduced clause and the restored ones together; overlap with any
     /// elimination-time resolvents is harmless (they stay entailed), and a
-    /// variable is resurrected at most once — its eliminated marker stays
+    /// variable is resurrected at most once – its eliminated marker stays
     /// set, so no later round re-eliminates it.
     fn void_elimination_promises(&mut self, lits: &[Lit]) {
         let mut pending = self.take_elimination_obligations(lits);
@@ -4027,9 +4027,9 @@ impl Solver {
     fn take_elimination_obligations(&mut self, lits: &[Lit]) -> Vec<SmallVec<[Lit; 8]>> {
         let mut obligations = Vec::new();
         // No pins recorded and no BVE obligation table built: nothing to
-        // guard (the common case — both tables start empty and stay empty
+        // guard (the common case – both tables start empty and stay empty
         // until an elimination pass actually runs; `elim_var_flag` alone is
-        // checked per-literal below, keeping this O(1) — a whole-array scan
+        // checked per-literal below, keeping this O(1) – a whole-array scan
         // here made define-heavy ingestions quadratic).
         if self.pure_literal_reconstruction.is_empty() && self.bve_def.is_empty() {
             return obligations;
@@ -4075,7 +4075,7 @@ impl Solver {
             .collect();
         for var in reintroduced {
             self.ext_rementioned.insert(var);
-            // Resurrect every extension-stack entry whose witness is `var` —
+            // Resurrect every extension-stack entry whose witness is `var` –
             // exactly the clauses retired *by this variable's* elimination
             // (both sides push the pivot as the witness).
             let mut resurrect: Vec<SmallVec<[Lit; 8]>> = Vec::new();
@@ -4305,7 +4305,7 @@ impl Solver {
 
                 if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
                     self.trail.assign_propagation_at(forced, clause_id, 0);
-                    // LRAT: defer the unit flush to solve entry — emitting a
+                    // LRAT: defer the unit flush to solve entry – emitting a
                     // derived unit here would allocate a *derived* id inside
                     // the original-clause prefix (which must stay contiguous
                     // 1..K in file order for the checker's CNF numbering);
@@ -4358,7 +4358,7 @@ impl Solver {
         // Load-time fast path: with an empty trail every literal ranks
         // `(1, u32::MAX)` (`watch_rank`'s undefined case), the strict `>`
         // tie-break then keeps `best = 0` and `second = 1`, and both swaps
-        // are self-swaps — the two argmax scans are provably identity maps
+        // are self-swaps – the two argmax scans are provably identity maps
         // and are skipped wholesale.  This is the bulk-load shape (every
         // `add_clause` of a fresh parse; the two scans were ~5.2% of run on
         // load-dominated classes).  `pre_check_effective_unit` above may
@@ -4406,7 +4406,7 @@ impl Solver {
         // it did. Apply that decision now that `clause_id` exists.
         if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
             self.trail.assign_propagation_at(forced, clause_id, 0);
-            // LRAT: deferred like the binary branch above — see the comment
+            // LRAT: deferred like the binary branch above – see the comment
             // there for the original-prefix id-contiguity argument.
             self.pending_parse_unit_flushes.push((forced, clause_id));
         }
@@ -4491,7 +4491,7 @@ impl Solver {
         self.clauses.get(cid).map(|v| &v.lits[..])
     }
 
-    /// Write the current formula as DIMACS — the env-gated blast-vs-search
+    /// Write the current formula as DIMACS – the env-gated blast-vs-search
     /// split tool (`NIXIE_DUMP_CNF`; see
     /// `docs/handovers/2026-09-09-bv-false-sat.md`).
     #[cfg(feature = "std")]
@@ -4541,8 +4541,8 @@ impl Solver {
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
         // Env-gated CNF snapshot (blast-vs-search split tool): the first
-        // solve entry writes the current formula — live clauses plus
-        // level-0 trail units — to NIXIE_DUMP_CNF. One-shot per process.
+        // solve entry writes the current formula – live clauses plus
+        // level-0 trail units – to NIXIE_DUMP_CNF. One-shot per process.
         #[cfg(feature = "std")]
         {
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -4560,7 +4560,7 @@ impl Solver {
         // Defensive deferral flush: a bulk loader that aborted between
         // `begin_deferred_big` and `finish_deferred_big` must not reach
         // propagation with an unmaterialized graph (a missing BIG edge is
-        // a lost binary implication).  Same for the long-watch deferral —
+        // a lost binary implication).  Same for the long-watch deferral –
         // an unwatched clause is a missed propagation or conflict.
         self.finish_deferred_big();
         self.finish_deferred_watches();
@@ -4570,7 +4570,7 @@ impl Solver {
             return SolverResult::Unknown;
         }
         // LRAT: emit the derived units that `add_clause`'s effective-unit
-        // path deferred during parsing. Safe here — the original-clause
+        // path deferred during parsing. Safe here – the original-clause
         // prefix is complete, so these derived ids start past it. Must run
         // before the initial propagation below: that propagate's own unit
         // flushes reference these literals as antecedents, and the search's
@@ -4658,8 +4658,8 @@ impl Solver {
 
         // Pre-search equivalent-literal extraction at full effort (kissat
         // `probe_initially` shape; follow-up to the 2026-09-05 study):
-        // iterate the ELS round — BIG refresh, AND/XOR gate-congruence
-        // augmentation, SCC fold, clause rewrite — to a fixpoint (bounded)
+        // iterate the ELS round – BIG refresh, AND/XOR gate-congruence
+        // augmentation, SCC fold, clause rewrite – to a fixpoint (bounded)
         // *before* search, instead of the single mid-search one-shot at
         // `lim_elim`.  Equivalences extracted here shrink the formula the
         // search actually sees (kissat merges ~27 % of 6s167-opt's variables
@@ -4742,7 +4742,7 @@ impl Solver {
         // (`solver/xor.rs`): detect strict parity-class clause groups,
         // Gaussian-eliminate the GF(2) system, seed phases with the
         // solution.  Sound by construction (phases are preferences; no
-        // verdicts produced — an inconsistent system is traced, not
+        // verdicts produced – an inconsistent system is traced, not
         // answered, pending a proof story).  Telemetry: 22 standing-corpus
         // files carry strict groups, incl. mdp-28-14 (one of the four
         // unsolved).  Default off pending the corpus A/B.
@@ -4775,7 +4775,7 @@ impl Solver {
             }
         }
         // In-search XOR propagation (`solver/xor.rs::xor_search_step`,
-        // `NIXIE_XORSEARCH=1`): the CryptoMiniSat-shaped integration — the
+        // `NIXIE_XORSEARCH=1`): the CryptoMiniSat-shaped integration – the
         // GF(2) matrix folds every assigned trail literal, derives units
         // with materialized entailed reason clauses (assign-with-reason,
         // full CDCL participation), and surfaces falsified rows as
@@ -4799,7 +4799,7 @@ impl Solver {
         // a full assignment decide+propagate-style (conflicts ignored),
         // `walk_round` improves it by bounded flips over the original
         // clauses, and the round's best assignment is written into the
-        // saved phases — the search then starts from the walk's local
+        // saved phases – the search then starts from the walk's local
         // optimum.  Oracle-phase measurements (same day) bound the class:
         // the descent files (worker/shuffling/qwh/stable/x9-09054) are
         // 5-20x better under their own models' phases, with x9-09054
@@ -4903,8 +4903,8 @@ impl Solver {
         // kitten port, `solver/sweep.rs`): prove equivalences and backbone
         // units with the embedded sub-solver over bounded cone
         // environments, then fold through the substitution round. Runs
-        // regardless of `sched_parity` — it is new pass content, not a
-        // relocation of an existing cadical pass — under its own gates
+        // regardless of `sched_parity` – it is new pass content, not a
+        // relocation of an existing cadical pass – under its own gates
         // (level 0, base scope, no proof, theory-safe; `sweep_allowed`).
         // Effort: kissat's `SET_EFFORT_LIMIT` reference at preprocess time
         // is its `mineffort` floor, so the window here is 0 and the budget
@@ -4979,7 +4979,7 @@ impl Solver {
             self.fold_orig_at_entry = fold_orig_at_entry;
         }
 
-        // ===== CDCL search =====
+        // ======== CDCL search ========
         //
         // One search loop for every caller.  Historically `solve` carried its
         // own inlined copy of the CDCL loop while `solve_with_theory` carried
@@ -5200,7 +5200,7 @@ impl Solver {
         // literals and requires the deleted flag to be clear): a stale edge
         // of a deleted binary keeps PROPAGATING (the binary loop does not
         // consult the deleted flag) and re-records reasons pointing at the
-        // deleted clause — the exact re-establishment the debug invariant
+        // deleted clause – the exact re-establishment the debug invariant
         // caught on Break_unsat_06_07.
         self.purge_binary_edges(cid);
         if let Some(v) = self.clauses.get(cid).filter(|c| !c.deleted) {
@@ -5251,13 +5251,13 @@ impl Solver {
     /// This is a full-database scan (`clauses.iter_ids()`), not a watch-list
     /// walk: the two-watched-literal scheme only indexes each clause under
     /// two of its literals, so a watch walk under `var` would miss clauses
-    /// that merely contain it.  Diagnostics-grade only — never call this on
+    /// that merely contain it.  Diagnostics-grade only – never call this on
     /// a hot path.
     ///
     /// Used by the BV model-validity net's mismatch dump
     /// (`NIXIE_NET_DUMP_CLAUSES` in `nixie-solver`'s unified verify) to
     /// answer "is this gate's defining clause present at all, and under
-    /// which indices?" — the observation that separates era-crossing from
+    /// which indices?" – the observation that separates era-crossing from
     /// clause-removal hypotheses, and the one that resolved the net's
     /// false-positive mode (BVE/ELS elimination; see
     /// `docs/studies/2026-09-11-bv-constflow-results.md`, appendix).
@@ -5379,7 +5379,7 @@ impl Solver {
     /// Equivalence mass of the **parse-time** binary-implication graph:
     /// `(vars in non-trivial SCCs, vars in SCCs of size >= 3, largest SCC
     /// literal count)`.  Read-only iterative Tarjan over `binary_graph`
-    /// (no refresh, no gate augmentation, no mutation) — the pre-existing
+    /// (no refresh, no gate augmentation, no mutation) – the pre-existing
     /// mutual-implication structure, which is exactly the input the ELS
     /// SCC fold consumes modulo congruence augmentation.  Diagnostic
     /// accessor for the ELS-gating studies (`SCC_MASS=1`); deterministic
@@ -5463,7 +5463,7 @@ impl Solver {
     }
 
     /// Study knob (doc-hidden measurement API): arm or disarm the
-    /// equivalence-substitution pass after construction — the ELS-gate
+    /// equivalence-substitution pass after construction – the ELS-gate
     /// study decides its per-instance gate after parse
     /// (`docs/studies/2026-09-06-els-gate-density-study.md`). Not a public
     /// configuration surface.
@@ -5579,7 +5579,7 @@ impl Solver {
     #[must_use]
     pub fn trail_falsifies_live_clause(&self) -> bool {
         // Under `push`/`pop` the old blanket bypass made this guard dead
-        // code for exactly its main consumer — the CDCL(T) layer, which
+        // code for exactly its main consumer – the CDCL(T) layer, which
         // always scopes.  The bypass existed because LEARNED clauses from
         // popped scopes can legitimately be falsified by a later model
         // (their scoping assumptions are gone), so scanning them fires
@@ -5903,7 +5903,7 @@ impl Solver {
         // Elimination/ELS bookkeeping refers to the previous formula's
         // clauses and variables: stale extension-stack entries (and the
         // `bve_*`/equiv maps feeding `var_eliminated`) would corrupt model
-        // reconstruction and branching-skip decisions of the next solve —
+        // reconstruction and branching-skip decisions of the next solve –
         // obligations of clauses that no longer exist.  Cleared with the
         // other per-formula state.
         self.ext_stack.clear();

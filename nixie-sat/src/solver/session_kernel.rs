@@ -8,7 +8,7 @@ impl Solver {
     pub(super) fn propagate_session(&mut self) -> Option<ClauseId> {
         // Const-generic MIRROR specialization: the whole driver (and the
         // list kernel it calls) compiles without a single CSR check when
-        // the dual-write shadow is off — the flag-off binary must be
+        // the dual-write shadow is off – the flag-off binary must be
         // instruction-identical to the pre-mirror code (measured: the
         // per-literal Option checks alone cost 1.2% instructions on
         // 6s167-class instances).
@@ -101,7 +101,7 @@ impl Solver {
                         };
                         let implied_code = implied.index();
                         // Kissat's shape (inlineassign.h): ONE prefetch per
-                        // assignment — the first watch-list line of the
+                        // assignment – the first watch-list line of the
                         // implied literal, which the scan touches when the
                         // queue reaches it.  The former edges-span +
                         // overflow prefetches here (3 issues per binary
@@ -110,7 +110,7 @@ impl Solver {
                         // issuing them, and dropping the two BIG lines is a
                         // consistent −3…−6 % median on the binary-heavy
                         // cells (duthen-50, hdp/3365, minigzip 492/562,
-                        // 2026-11-20) with counters bit-identical — the
+                        // 2026-11-20) with counters bit-identical – the
                         // prefetch is state-free, so the trajectory is
                         // untouched.
                         if let Some(list) = destinations.get(implied_code) {
@@ -125,7 +125,7 @@ impl Solver {
             }
             // The swapped-dual scan (`NIXIE_CSR_SCAN=1`, slice 4's gate):
             // the CSR's span+overflow are the PRIMARY scan target and the
-            // taken `Vec` list is the mirror — the roles of slice 2
+            // taken `Vec` list is the mirror – the roles of slice 2
             // exchanged, validated by the same drift comparison.  The span
             // is copied out so the kernel's CSR pushes (index upkeep,
             // overflow mirrors) never alias the scanned slice.
@@ -139,7 +139,7 @@ impl Solver {
             let csr_arm = false;
             // Unified CSR-primary in-place scan (commit-B and swapped-dual
             // share it): the entries buffer splits around the scanned
-            // literal's live span — the cursor scans the span in place
+            // literal's live span – the cursor scans the span in place
             // (no copy), pushes append into the head/tail halves at their
             // destination's live end, and the commit publishes the
             // compacted span.  A spilled literal's tail (if any) is
@@ -151,7 +151,7 @@ impl Solver {
             } else {
                 core::mem::take(&mut destinations[code])
             };
-            // The pre-scan combined length — computed BEFORE the spill
+            // The pre-scan combined length – computed BEFORE the spill
             // tail detaches (the charge drives restart/stable schedules;
             // an undercount here diverges the whole trajectory).
             let watches_len = if csr_arm {
@@ -227,7 +227,7 @@ impl Solver {
             #[cfg_attr(not(feature = "bcp-work"), allow(unused_mut))]
             let mut result = if csr_arm && let Some(c) = csr.as_mut() {
                 let (span, mut ctx) = c.scan_split(code);
-                // Primary mode: no Vec mirror, no Vec destinations — the
+                // Primary mode: no Vec mirror, no Vec destinations – the
                 // dest struct carries CSR only (the swapped-dual shape
                 // survives behind the legacy opt-out for A/B validation).
                 let swapped_dual = crate::watched::csr_scan_enabled();
@@ -275,7 +275,7 @@ impl Solver {
                     }
                 } else if let Some(fb) = fbv.take() {
                     // Conflict in the span pass: the spill tail was never
-                    // visited — it returns UNTRUNCATED.
+                    // visited – it returns UNTRUNCATED.
                     dest.ctx.put_fallback(fb);
                 }
                 dest.ctx.commit(r1.write);

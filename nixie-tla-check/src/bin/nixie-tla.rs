@@ -1,4 +1,4 @@
-//! `nixie-tla` — bounded model checking of a TLA+ specification, from the
+//! `nixie-tla` – bounded model checking of a TLA+ specification, from the
 //! command line, emitting counterexamples in the Informal Trace Format.
 //!
 //! # Why this looks like `apalache-mc`
@@ -13,8 +13,8 @@
 //! ```
 //!
 //! collects `*.itf.json` from `DIR`, and replays each trace against a driver.
-//! Matching that command line — and the exit codes, which Apalache documents
-//! and callers branch on — makes this binary a drop-in: point the tool at it
+//! Matching that command line – and the exit codes, which Apalache documents
+//! and callers branch on – makes this binary a drop-in: point the tool at it
 //! instead and nothing else changes.
 //!
 //! Where it *cannot* be a drop-in it says so out loud rather than pretending.
@@ -59,7 +59,7 @@ const EXIT_SYSTEM: u8 = 255;
 /// What the command line asked for.
 ///
 /// `init`, `next` and `inv` are [`Option`]/`Vec` because a `--config=` file
-/// can supply them — that is Apalache's precedence: the command line wins,
+/// can supply them – that is Apalache's precedence: the command line wins,
 /// with a warning, and what it does not say comes from the file.
 struct Args {
     /// `check` or `simulate`; see `main`'s note on the difference.
@@ -69,7 +69,7 @@ struct Args {
     init: Option<String>,
     /// `--next=`; the `.cfg`'s `NEXT` when absent; `Next` when neither says.
     next: Option<String>,
-    /// `--inv=NAME` or `--inv=A,B` — a comma-separated list, as in Apalache.
+    /// `--inv=NAME` or `--inv=A,B` – a comma-separated list, as in Apalache.
     inv: Option<Vec<String>>,
     /// Extra definitions to assume, from `--cinit`.
     cinit: Option<String>,
@@ -86,7 +86,7 @@ struct Args {
     /// `--no-deadlock`: do not look for deadlocks. Apalache's default is to
     /// look; a `.cfg`'s `CHECK_DEADLOCK FALSE` says the same thing.
     no_deadlock: bool,
-    /// `--seed=N`: the simulation PRNG's seed. Deterministic by design —
+    /// `--seed=N`: the simulation PRNG's seed. Deterministic by design –
     /// the same seed gives byte-identical sampled behaviour, where
     /// Apalache's is not reproducible.
     seed: u64,
@@ -106,8 +106,8 @@ struct Args {
     /// `--inv`. Apalache's `check --temporal=P`.
     temporal: Option<String>,
     /// `--paranoid` (issue #20, step 6): probe every frame's containment
-    /// obligation at every step — `Init /\ Trans_{<k} /\ ~(v@k \subseteq
-    /// U_k)` must be `Unsat` — and refuse the check (exit 255, cause named)
+    /// obligation at every step – `Init /\ Trans_{<k} /\ ~(v@k \subseteq
+    /// U_k)` must be `Unsat` – and refuse the check (exit 255, cause named)
     /// when it is not. Off by default: the frame derivation's fixpoint
     /// argument already guarantees containment, and the probes roughly
     /// double the query count.
@@ -115,7 +115,7 @@ struct Args {
 }
 
 const USAGE: &str = "\
-nixie-tla — bounded model checking of a TLA+ specification
+nixie-tla – bounded model checking of a TLA+ specification
 
 USAGE:
     nixie-tla <check|simulate> [OPTIONS] --out-dir=DIR SPEC.tla
@@ -280,7 +280,7 @@ fn parse_args() -> Result<Args, String> {
                         .map_err(|_| "`--max-error` needs a whole number".to_string())?;
                 }
                 // Apalache's `--max-run` is the number of random simulation
-                // runs — emphatically not `--max-error`. Accepting it as an
+                // runs – emphatically not `--max-error`. Accepting it as an
                 // alias silently changed how many counterexamples a caller
                 // asked for, which changes the verdict surface, not the
                 // plumbing.
@@ -291,17 +291,17 @@ fn parse_args() -> Result<Args, String> {
                             .map_err(|_| "`--max-run` needs a whole number".to_string())?,
                     );
                 }
-                // ---- the option table for everything else ----
+                // ======== the option table for everything else ========
                 //
                 // One line per option, each in exactly one of three classes:
-                // * `Implemented` — handled above;
-                // * `AcceptedNoEffect` — performance-only knobs Apalache
+                // * `Implemented` – handled above;
+                // * `AcceptedNoEffect` – performance-only knobs Apalache
                 //   documents; accepted with a printed note so scripts do
                 //   not break, and **never** an option that changes a
                 //   verdict (`--view`, `--no-deadlock`, `--max-run`,
                 //   `--temporal`, `--config` are all handled for real above
                 //   or refused);
-                // * `Refused` — semantics Nixie does not have, with the
+                // * `Refused` – semantics Nixie does not have, with the
                 //   reason said out loud (exit 255, not a silent ignore).
                 other => match other {
                     "debug"
@@ -359,7 +359,7 @@ fn parse_args() -> Result<Args, String> {
 /// Apalache has these as their own subcommands, and a ported script uses
 /// them as a cheap syntax gate. The exits are the checking codes that
 /// match: 150 for a file that does not parse, 120 for one that does not
-/// type check, 0 otherwise — and nothing is *checked*.
+/// type check, 0 otherwise – and nothing is *checked*.
 fn front_end_mode(mode: &str, it: &mut impl Iterator<Item = String>) -> u8 {
     // Only the spec path (and `--config`, for the constants a type check
     // may need) makes sense here; everything else is a checking option.
@@ -480,7 +480,7 @@ fn main() -> ExitCode {
 #[allow(clippy::too_many_lines)]
 /// The `simulate` arm: sampled behaviours (issue #28), not a search. The
 /// exit codes are Apalache's, and the "no error" message says what it is
-/// about — the sampled runs, never an exhaustive claim.
+/// about – the sampled runs, never an exhaustive claim.
 fn run_simulate(args: &Args, bmc: &mut Bmc, tm: &mut TermManager) -> u8 {
     let runs = args.max_runs.unwrap_or(100);
     let outcome = match bmc.simulate(runs, args.length, args.seed, args.output_traces, tm) {
@@ -557,13 +557,13 @@ fn run(args: &Args) -> u8 {
     // it does **not** do what Apalache's does. Apalache simulates: it walks
     // random behaviours, cheaply, without exhausting the space. This is a
     // bounded *exhaustive* check, which finds a counterexample within
-    // `--length` whenever one exists — stronger per trace and far more
+    // `--length` whenever one exists – stronger per trace and far more
     // expensive at the lengths simulation is usually run at. Said out loud
     // because a caller that asked for cheap sampling and got exhaustive
     // search deserves to know why it is slow.
     if args.simulate {
         // `--max-run` counts simulation runs. Under `check` it is refused
-        // rather than reinterpreted — the old alias made `--max-run=5`
+        // rather than reinterpreted – the old alias made `--max-run=5`
         // mean `--max-error=5`, which is a different number of *answers*,
         // not a different pace.
     } else if let Some(runs) = args.max_runs {
@@ -598,7 +598,7 @@ fn run(args: &Args) -> u8 {
 
     // A missing file or a foreign extension is an invocation error (255), not
     // a parse error (150): Apalache's split, and the one a wrapper can act on
-    // — 150 says "your specification is malformed", 255 says "you pointed me
+    // – 150 says "your specification is malformed", 255 says "you pointed me
     // at the wrong thing".
     if !args.spec.exists() {
         eprintln!("error: no such file: {}", args.spec.display());
@@ -635,7 +635,7 @@ fn run(args: &Args) -> u8 {
     // A TLC configuration is read **only** when `--config` names it. That is
     // Apalache's own default (flipped in 0.25.0), and the divergence was
     // dangerous in both directions: reading `<Spec>.cfg` unasked applied its
-    // `CONSTRAINT` — pruning exactly the behaviour a violation lived in —
+    // `CONSTRAINT` – pruning exactly the behaviour a violation lived in –
     // while a caller porting from TLC expected `CONSTANTS` to pin what made
     // the spec finite. With `--config` the file supplies `INIT`, `NEXT`,
     // `INVARIANT` and `CONSTANTS`, and a command-line value overrides the
@@ -677,8 +677,8 @@ fn run(args: &Args) -> u8 {
                 // No INIT/NEXT in the file: the defaults or the command line
                 // decide, exactly as when there is no file at all.
                 nixie_tla_syntax::BehaviorSpec::Unspecified => {}
-                // `SPECIFICATION` names a temporal behaviour spec — `Spec ==
-                // Init /\ [][Next]_vars /\ WF…` — which a bounded
+                // `SPECIFICATION` names a temporal behaviour spec – `Spec ==
+                // Init /\ [][Next]_vars /\ WF…` – which a bounded
                 // unrolling of `Init`/`Next` does not answer. Refused by
                 // name rather than approximated: checking `Init /\ Next`
                 // against such a spec would silently drop the temporal half.
@@ -698,7 +698,7 @@ fn run(args: &Args) -> u8 {
             }
         }
         None => {
-            // Apalache's own hint, in its own words — including naming the
+            // Apalache's own hint, in its own words – including naming the
             // file by its *name*, not the caller's whole path, which is what
             // `warnIfTLCConfigIsPresent` prints.
             if cfg_default_path.exists() {
@@ -715,7 +715,7 @@ fn run(args: &Args) -> u8 {
         }
     }
 
-    // Precedence: the command line wins, with a warning naming both sides —
+    // Precedence: the command line wins, with a warning naming both sides –
     // `ApalacheConfigResolver.overrideString`'s contract, which a caller
     // scripts against.
     let resolve = |cli: &Option<String>, cfg: Option<String>, what: &str| -> String {
@@ -890,7 +890,7 @@ fn run(args: &Args) -> u8 {
     // counterexample, so asking again without ruling that one out returns it
     // forever; each trace found is blocked before the next query. Blocking
     // only narrows the search, so a later trace is still a real model of the
-    // encoded formula — and is still replayed before it is written.
+    // encoded formula – and is still replayed before it is written.
     let mut found = 0usize;
     let mut undecided: Option<String> = None;
     while found < args.max_errors {
@@ -918,7 +918,7 @@ fn run(args: &Args) -> u8 {
                 break;
             }
             // A reachable state with no successor. The same exit code as a
-            // counterexample — Apalache's — with the distinction in the
+            // counterexample – Apalache's – with the distinction in the
             // message: "Deadlock", not "Error".
             Outcome::Deadlock { step } => {
                 println!("The outcome is: Deadlock");
@@ -927,8 +927,8 @@ fn run(args: &Args) -> u8 {
                 );
                 return EXIT_COUNTEREXAMPLE;
             }
-            // Every behaviour stopped short of the bound. Exit 0 — Apalache's
-            // code — with the outcome line saying what actually happened,
+            // Every behaviour stopped short of the bound. Exit 0 – Apalache's
+            // code – with the outcome line saying what actually happened,
             // because "no error" and "nothing ran that far" are different
             // facts a caller may treat differently.
             Outcome::ExecutionsTooShort => {
@@ -1033,7 +1033,7 @@ fn run(args: &Args) -> u8 {
 }
 
 /// Write one counterexample as `violation<n>.itf.json` (check) or one
-/// sampled trace as `example<k>.itf.json` (simulate — Apalache's naming).
+/// sampled trace as `example<k>.itf.json` (simulate – Apalache's naming).
 fn write_itf_as(prefix: &str, bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> {
     let Some(doc) = bmc.counterexample_itf(spec) else {
         eprintln!("the counterexample could not be read back, so no ITF was written");
@@ -1064,7 +1064,7 @@ fn exit_for(e: &SetupError) -> u8 {
         SetupError::Types(_) | SetupError::NoSort { .. } => EXIT_TYPES,
         // A violated assumption is not a counterexample and not a defect in
         // the specification's *other* parts: TLC and Apalache report it and
-        // abort, which is the 255 bucket here. It must never read as 12 —
+        // abort, which is the 255 bucket here. It must never read as 12 –
         // there is no behaviour to show.
         SetupError::AssumptionViolated { .. } => EXIT_SYSTEM,
         // A frame the paranoid probe refused is a declined check, not a

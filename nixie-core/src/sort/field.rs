@@ -170,7 +170,7 @@ const MR_LARGE_EXTRA_BASES: [u64; 58] = [
 /// Deterministic (seed-free) primality classification of `n ≥ 2`.
 ///
 /// Returns [`Primality`] and is a pure function of `n`: no randomness, no
-/// clock, so the same modulus always interns to the same verdict — a
+/// clock, so the same modulus always interns to the same verdict – a
 /// reproducibility requirement (`AGENTS.md` → *Determinism*; parity runs and
 /// differential fuzzing break otherwise).
 fn classify_primality(n: &BigUint) -> Primality {
@@ -231,7 +231,7 @@ fn classify_primality(n: &BigUint) -> Primality {
     };
 
     let bound_33: BigUint = {
-        // 3,317,044,064,679,887,385,961,981 — above u64; assembled digit-wise
+        // 3,317,044,064,679,887,385,961,981 – above u64; assembled digit-wise
         // from its decimal representation to avoid a bignum literal.
         let mut v = BigUint::zero();
         for chunk in [3u32, 317, 44, 64, 679, 887, 385, 961, 981] {
@@ -410,7 +410,7 @@ impl FieldTable {
 /// cofactor, for error messages. Trial division only: composites reaching
 /// this path were already Miller–Rabin-screened, so the smallest factor is
 /// tiny in practice; the loop is capped and falls back to reporting the
-/// number itself when the cap is hit (the message stays truthful — it names
+/// number itself when the cap is hit (the message stays truthful – it names
 /// *a* divisor only when one was found).
 fn smallest_factor_with_cofactor(n: &BigUint) -> (BigUint, BigUint) {
     use num_integer::Integer;

@@ -1,4 +1,4 @@
-//! A string equality used as an `ite` **condition** is not decided — false `sat`.
+//! A string equality used as an `ite` **condition** is not decided – false `sat`.
 //!
 //! No TLA+ here: the terms are built straight onto `nixie-core`, so this is a
 //! solver-level reproducer. Found by the TLA+ arena encoding, where
@@ -27,7 +27,7 @@ fn probe(label: &str, expect: SolverResult, build: impl FnOnce(&mut TermManager)
 }
 
 fn main() {
-    // ---- controls: the string theory itself works ----
+    // ======== controls: the string theory itself works ========
 
     probe(
         "x=\"a\" /\\ y=\"b\" /\\ x=y            [asserted atom]",
@@ -56,7 +56,7 @@ fn main() {
         },
     );
 
-    // ---- control: the same `ite` shape over integers works ----
+    // ======== control: the same `ite` shape over integers works ========
 
     probe(
         "i=1 /\\ j=2 /\\ ite(i=j,1,0) # 0     [int condition]",
@@ -74,7 +74,7 @@ fn main() {
         },
     );
 
-    // ---- the defect: a string equality as an `ite` condition ----
+    // ======== the defect: a string equality as an `ite` condition ========
     // Variables pinned to distinct literals, so no constant folding is
     // possible and the equality can only be settled by the theory.
 

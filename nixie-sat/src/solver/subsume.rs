@@ -30,21 +30,21 @@ use crate::clause::{ClauseId, ClauseTier};
 
 /// The subsume round's scheduling mode.
 ///
-/// * `0` — full scan every round (the legacy schedule): every live clause
+/// * `0` – full scan every round (the legacy schedule): every live clause
 ///   scheduled, every literal scanned, every checked clause connected.
-/// * `1` — cadical's dirty-literal schedule: clauses with >= 2 literals
+/// * `1` – cadical's dirty-literal schedule: clauses with >= 2 literals
 ///   flagged dirty (touched by additions/strengthenings since the last
 ///   round) are candidates; checks scan only dirty literals; only
 ///   all-dirty clauses connect.
-/// * `2` — **randomized partial subsumption (the default since
+/// * `2` – **randomized partial subsumption (the default since
 ///   2026-09-07)**: identical machinery, but the flagged set is a fresh
 ///   random slice of the literal space each round (same size as the
 ///   natural marking rate).  Measured on the 54-file corpus x 5 seeds
 ///   (`docs/studies/2026-09-07-inproc-effort-schedule.md`): conflicts
 ///   geomean **0.908x vs full** and wall **0.910x** (the recency arm
-///   measured 1.08x — T/N 1.153, the recency semantic is negative at our
+///   measured 1.08x – T/N 1.153, the recency semantic is negative at our
 ///   round cadence), P(solve) 179 vs 176, 0 verdict mismatches over 1060
-///   cells.  Mechanism: rotating partial hygiene — coverage cycles
+///   cells.  Mechanism: rotating partial hygiene – coverage cycles
 ///   through the whole database without re-checking known-clean pairs
 ///   (full scan's waste) and without recency's systematic blind spots.
 ///
@@ -85,7 +85,7 @@ pub(super) fn subsume2_mode() -> SubsumeScheduleMode {
 /// Matched null for the dirty schedule (env `NIXIE_SUBSUME2_NULL=1`,
 /// implies the schedule): at each round end the dirty set is REPLACED by
 /// the same number of codes drawn uniformly over the literal space
-/// (deterministic xorshift) instead of cleared — identical schedule
+/// (deterministic xorshift) instead of cleared – identical schedule
 /// magnitudes and timing, the correlation with "touched since the last
 /// round" severed.  If the treatment's recency signal carries the value,
 /// treatment < null; under chaos they are indistinguishable.
@@ -114,7 +114,7 @@ pub(super) fn subsume2_fullk() -> u64 {
 
 /// Hot-literal probabilistic connect (env `NIXIE_SUBSUME2_HOTP=permille`,
 /// implies the schedule): a clause that is NOT all-dirty connects with
-/// probability p — on the least-occurring AMONG ITS DIRTY literals, so it
+/// probability p – on the least-occurring AMONG ITS DIRTY literals, so it
 /// is discoverable exactly by the candidates plausibly containing it
 /// (candidates scan only dirty literals; a clean-literal watch would be
 /// invisible).  Bounded occs growth: p x (clauses with hot literals).
@@ -165,7 +165,7 @@ pub(super) fn subsume_round_trace_enabled() -> bool {
 }
 
 /// Solver-level scratch for `subsume_round` (reused across rounds; see
-/// `Solver::subsume_scratch`).  Plain data — taken/replaced wholesale via
+/// `Solver::subsume_scratch`).  Plain data – taken/replaced wholesale via
 /// `mem::take` so the pass body keeps disjoint-local borrows.
 #[derive(Default, Clone, Debug)]
 pub(crate) struct SubsumeScratch {
@@ -273,7 +273,7 @@ enum SubCheck {
     Subsumed { subsumer: ClauseId },
     /// All but one literal of `d` occur in `c`, and that one occurs
     /// complemented: remove `remove` from `c` (self-subsuming resolution).
-    /// `subsumer` carries the resolving clause's id — under an attached
+    /// `subsumer` carries the resolving clause's id – under an attached
     /// proof the strengthened clause's RUP chain is the resolution pair
     /// `[c, subsumer]` (see the strengthen arm below).
     Strengthen { remove: Lit, subsumer: ClauseId },
@@ -287,7 +287,7 @@ impl Solver {
     /// width-8 cubes on `circuit_48in64out` never become subsumers. Z3's first
     /// simplify instead walks every occurrence of the minimum-occurrence
     /// variable (both polarities) and shrinks 168k cubes to ~69k mixed-width
-    /// clauses. This pass is that slice — original clauses only, level 0.
+    /// clauses. This pass is that slice – original clauses only, level 0.
     ///
     /// Auto-runs on wide-uniform CNFs (modal original width ≥6 covering ≥75%
     /// of size≥3 originals, ≥1000 such clauses). One backward round by default
@@ -297,7 +297,7 @@ impl Solver {
     /// A round either runs to completion or not at all: when the projected
     /// pair-check count exceeds [`PRESEARCH_SSR_CHECK_CAP`] the whole pass
     /// (rounds and the follow-up probe) is skipped. A capped partial round is
-    /// the worst regime — `2026-09-10-z3-lut-ssr-presearch.md` measured extra
+    /// the worst regime – `2026-09-10-z3-lut-ssr-presearch.md` measured extra
     /// rounds and partial flattening as trajectory-negative, and on
     /// `si2-b03m-m800-03` the old truncate-at-cap behaviour burned 7 s of
     /// pre-search work for a 19 % conflict reduction that never paid for it
@@ -576,7 +576,7 @@ impl Solver {
                 }
                 // The occurrence lists are frozen once the scan phase starts
                 // (clauses are only deleted/strengthened in the DB, never
-                // re-inserted here), so the candidate list is read in place —
+                // re-inserted here), so the candidate list is read in place –
                 // the pre-fix per-candidate `Vec` clone was pure allocation
                 // churn (multi-GB of memcpy on wide-uniform formulas).
                 for &c2_id in occs[list].iter() {
@@ -980,7 +980,7 @@ impl Solver {
                         // Proof emission comes FIRST (it reads the full
                         // pre-shrink clause): the strengthened clause
                         // `kept = c \ {remove}` is the resolvent of `c` with
-                        // `subsumer` on `remove`'s variable — under `¬kept`
+                        // `subsumer` on `remove`'s variable – under `¬kept`
                         // every `subsumer` literal except the flipped one is
                         // false, the subsumer is unit on it, propagation
                         // makes `remove` false, and `c` conflicts. The
@@ -1023,12 +1023,12 @@ impl Solver {
                     minsize = size;
                 }
             }
-            // cadical: connect only clauses whose EVERY literal is dirty —
+            // cadical: connect only clauses whose EVERY literal is dirty –
             // a clean literal means candidates never scan the list this
             // clause would join, so connecting it is pure waste.
             // HOT-LITERAL PROBABILISTIC CONNECT (`NIXIE_SUBSUME2_HOTP`): a
             // not-all-dirty clause still connects with probability p, but
-            // on the least-occurring AMONG ITS DIRTY literals — random
+            // on the least-occurring AMONG ITS DIRTY literals – random
             // clean-literal placement would be invisible to candidates
             // (they scan only dirty literals); a dirty-literal watch is
             // discoverable by exactly the candidates plausibly containing
@@ -1076,7 +1076,7 @@ impl Solver {
         if dirty {
             // Round end (cadical): clear the dirty set.  The randomized
             // mode (default) instead re-places the same count of codes
-            // uniformly (deterministic xorshift) — the measured winner.
+            // uniformly (deterministic xorshift) – the measured winner.
             let null_arm = subsume2_null() || subsume2_mode() == SubsumeScheduleMode::RandomSlice;
             for &code in &self.subsume_dirty_list {
                 let c = code as usize;

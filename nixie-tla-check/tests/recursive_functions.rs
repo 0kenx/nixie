@@ -1,4 +1,4 @@
-//! `f[x \in S] == … f[…] …` — functions defined in terms of themselves.
+//! `f[x \in S] == … f[…] …` – functions defined in terms of themselves.
 //!
 //! Ordinary TLA+, with no `RECURSIVE` keyword, and how Fibonacci, factorial
 //! and every "sum of a sequence" is written. Inlining such a definition
@@ -11,8 +11,8 @@
 //! it is there. The body is encoded once per point with the function itself in
 //! scope, so `f[k-1]` inside it is a `select` on the very array being defined.
 //!
-//! The evaluator ties the same knot differently — repeated refinement until
-//! nothing changes — so a counterexample here is confirmed by an
+//! The evaluator ties the same knot differently – repeated refinement until
+//! nothing changes – so a counterexample here is confirmed by an
 //! implementation that does not share the encoder's trick.
 
 use nixie_core::TermManager;
@@ -119,7 +119,7 @@ fn a_recursion_that_counts_upwards() {
     );
 }
 
-/// Used twice, it must be the *same* function — one array, not two, or
+/// Used twice, it must be the *same* function – one array, not two, or
 /// `f[3] = f[3]` could come out false.
 #[test]
 fn two_uses_are_one_function() {

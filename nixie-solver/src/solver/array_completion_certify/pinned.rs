@@ -20,7 +20,7 @@
 //! the constant an `ite` condition or an implication guard compares the bound
 //! variable with) and the value the candidate model gives each index-sort
 //! constant (`Goal::scalar_pins`).  They are ordered by value, so the
-//! interpretation — and the model printed from it — is a property of the goal
+//! interpretation – and the model printed from it – is a property of the goal
 //! and not of term-id allocation or of a hash iteration order.
 //!
 //! # Where the values come from, and why a wrong one costs nothing
@@ -30,12 +30,12 @@
 //! assertions with every maximal `forall` replaced by its instances at the
 //! points plus one representative of every gap the points leave in the
 //! orders a guard can use (`gap_representatives`; re-fix pass 13, where a
-//! single smallest unnamed value could fall outside a guarded region) — the
+//! single smallest unnamed value could fall outside a guarded region) – the
 //! instances at those representatives are what constrain the default.  A satisfying assignment is only a *proposal*: the
 //! concrete interpretation built from it is evaluated on the same sample and
-//! then goes through the very certificate the constant search uses — a
+//! then goes through the very certificate the constant search uses – a
 //! validity query per universal over *every* point of its sort, plus one over
-//! the assertions — before anything is installed.  A proposal that is wrong
+//! the assertions – before anything is installed.  A proposal that is wrong
 //! anywhere is refused there, so the fill query can make the search find an
 //! interpretation, never make it accept a wrong one.  A point whose proposed
 //! value equals the default is dropped, so the printed interpretation carries
@@ -280,7 +280,7 @@ impl Goal {
 }
 
 /// Run the fill query and read back the value it proposes for each symbol
-/// (`None` where the model gives it no literal value — that point then takes
+/// (`None` where the model gives it no literal value – that point then takes
 /// the default).  `None` overall when the query is not `Sat`.
 fn run_fill_query(
     goal: TermId,
@@ -318,9 +318,9 @@ fn index_sort(term: TermId, manager: &TermManager) -> Option<SortId> {
     }
 }
 
-/// The smallest value of `sort` that `named` does not contain — the
+/// The smallest value of `sort` that `named` does not contain – the
 /// representative of the region every pinned interpretation reads as its
-/// default — or `None` when the sort has no such value or is not one this
+/// default – or `None` when the sort has no such value or is not one this
 /// search enumerates.
 pub(super) fn unnamed_point(
     sort: SortId,
@@ -370,11 +370,11 @@ pub(super) fn unnamed_point(
 /// named points `named` (decision (41), re-fix pass 13): over a bit-vector
 /// sort `r ± 1 (mod 2^w)` beside every named `r` and the four ends of the
 /// unsigned and signed orders; over `Int` `r ± 1` (or `0` when nothing is
-/// named); over `Bool` whichever value is not named — each only if unnamed.
+/// named); over `Bool` whichever value is not named – each only if unnamed.
 ///
 /// One *smallest* unnamed value was not enough: under a guard it can fall
 /// outside the guarded region, and then no sampled instance constrains the
-/// default — `∀i ≥ 2. a[i] = #b1` beside `a[0] = #b0` sampled `{0, 2}` plus
+/// default – `∀i ≥ 2. a[i] = #b1` beside `a[0] = #b0` sampled `{0, 2}` plus
 /// the representative `1`, below the guard, so the fill query left the
 /// default free and the certificate refused the `#b0` it picked.  These are
 /// the same regions `mbqi::sat_certify::unnamed_region` represents.
@@ -431,7 +431,7 @@ pub(super) fn gap_representatives(
 }
 
 /// A total order on literals by value (bit-vectors, then integers, then
-/// Booleans), so the points — and the store chain printed from them — do not
+/// Booleans), so the points – and the store chain printed from them – do not
 /// depend on the order terms were interned in.  Reals and anything else sort
 /// last, by term id.
 fn literal_key(term: TermId, manager: &TermManager) -> Option<(u8, BigInt)> {

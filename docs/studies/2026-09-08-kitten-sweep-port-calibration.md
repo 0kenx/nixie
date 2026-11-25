@@ -1,24 +1,24 @@
-# Kitten Sweep Port — Calibration and First Screen (2026-09-07/08)
+# Kitten Sweep Port – Calibration and First Screen (2026-09-07/08)
 
-**Arm under test:** `NIXIE_SWEEP=1` — the kissat `kitten.c` + `sweep.c`
+**Arm under test:** `NIXIE_SWEEP=1` – the kissat `kitten.c` + `sweep.c`
 port (`nixie-sat/src/kitten.rs`, `nixie-sat/src/solver/sweep.rs`),
 default OFF. Commit `47d090c` (+ the two memory-bug fixes it carries).
 
-**Mandate:** `docs/handovers/2026-09-07-kitten-sweep-port.md` — build the
+**Mandate:** `docs/handovers/2026-09-07-kitten-sweep-port.md` – build the
 missing *equivalence-content* (sweep) rather than another gate, route
 application through the existing substitution path, and clear the
 standing screen or land effort-gated below the regression threshold.
 
 ## What was ported
 
-- **`kitten.rs`** — the embedded CDCL solver, full `kitten.h` API:
+- **`kitten.rs`** – the embedded CDCL solver, full `kitten.h` API:
   import/export literal mapping, flat klauses arena
   (`[aux,size,flags,lits..,ants..]`), stamped-VMTF decision queue,
   assumption solving with failed-literal analysis, **tick budget**
   (deterministic counter; `solve` → Unknown when exhausted), antecedent
   tracking, clausal-core extraction, in-model literal flips, phase
   control (randomize/flip/shuffle). All walks iterative.
-- **`solver/sweep.rs`** — the sweeper: depth-≤2 cone environments over
+- **`solver/sweep.rs`** – the sweeper: depth-≤2 cone environments over
   live **original** clauses (BIG edges + watch lists, value-filtered
   copies), occurrence-ranked candidate ring (kissat's intrusive list,
   reschedule/incomplete/completed bookkeeping), backbone units (assume
@@ -27,7 +27,7 @@ standing screen or land effort-gated below the regression threshold.
   rounds, per-round tick budget = `sweepeffort`‰ (100) of the effort
   window with the `mineffort` floor.
 - **Application** rides the existing hardened substitution round
-  (`solver/equiv.rs`) — the added binaries expose the classes to the SCC
+  (`solver/equiv.rs`) – the added binaries expose the classes to the SCC
   fold; per the handover, `substitute.c`'s rewrite layer is NOT
   reimplemented. Deviations recorded in the module doc (deferred vs
   per-pair application; no `BUMP_DELAY`; larger core lemmas dropped,
@@ -35,7 +35,7 @@ standing screen or land effort-gated below the regression threshold.
 - **Integration:** pre-search slot (kissat `preprocesssweep=1` analog)
   + budgeted inprocessing-round component. Knobs: `NIXIE_SWEEP`,
   `NIXIE_SWEEP_NULL` (matched null: ranking scrambled by a
-  deterministic hash — same candidate set, same machinery),
+  deterministic hash – same candidate set, same machinery),
   `NIXIE_SWEEP_EFFORT`, `NIXIE_SWEEP_TRACE`.
 
 ## Calibration bugs found on the anchors (and their shape)
@@ -64,7 +64,7 @@ time 1.11 s.
 
 Also fixed during bring-up: the sweeper's scratch clause was restored
 un-emptied after encoding (every environment clause became a cumulative
-super-clause of the previous — silently destroying the equivalence
+super-clause of the previous – silently destroying the equivalence
 structure; 0 equivalences proved until found), and the budget-boundary
 deadlock (kitten aborts at `ticks >= limit` while the outer loops
 needed `>`; at exactly the limit every solve returns Unknown consuming
@@ -74,13 +74,13 @@ no ticks → infinite partition loop; outer checks now `>=`).
 
 | file | base | sweep | note |
 |---|---|---|---|
-| 6s167-opt | 62 241 conflicts / 1.60 s | **42 003** / 1.20 s | 0.67× — the ELS-arm level (42 681) *inside the default config*; cadical's 16 654 remains the span target |
-| FmlaEquivChain_4_6_6 | 49.3 s (solves) | **23.3 s** | 2.1× — the equivalence-chain class the gates could not isolate |
+| 6s167-opt | 62 241 conflicts / 1.60 s | **42 003** / 1.20 s | 0.67× – the ELS-arm level (42 681) *inside the default config*; cadical's 16 654 remains the span target |
+| FmlaEquivChain_4_6_6 | 49.3 s (solves) | **23.3 s** | 2.1× – the equivalence-chain class the gates could not isolate |
 | x9-09054 | TO at 70 s | **solves** (67 s) | base TO, sweep converts |
 | stable-300 | 2.87 s | 2.93 s | neutral |
 
 Sweep's own price on 6s167-opt: 10 rounds, 996 vars swept, 8 964 kitten
-solves, 948 k kitten ticks, 53 equivalences, 0 units — vs kissat's own
+solves, 948 k kitten ticks, 53 equivalences, 0 units – vs kissat's own
 3 rounds / 34.7 k solves / 3.5 M ticks / 162 equivalences on its 19 k
 conflict run. Price is inside the reference envelope.
 
@@ -95,7 +95,7 @@ conflict run. Price is inside the reference envelope.
 | **null** (scrambled ranking) | 45 858 | 8 656 | 1 063 k | 116 |
 
 The null **fires** (same-magnitude machinery: solves 8 964 vs 8 656,
-ticks within 12%) — this is the fired-null check the handover mandates
+ticks within 12%) – this is the fired-null check the handover mandates
 before trusting ratios. **Treatment/null = 0.92×**: the cone-ranking's
 semantic content is worth ~8 % over the same-cost scrambled order; the
 equivalence *content* itself (present in both arms) carries the bulk of
@@ -106,7 +106,7 @@ get proved first, not how many, sets the trajectory.)
 ## Standing corpus screen
 
 54 files × 5 seeds × 3 arms × 60 s cap, pinned cores 10–19 (the screen
-shared the box with the parity build for part of its run — absolute
+shared the box with the parity build for part of its run – absolute
 numbers carry that contention; **within-screen arm deltas are paired**
 and meaningful). Raw cells + runner:
 `precompile/47d090c/benchmark/sweep_screen/`.
@@ -117,7 +117,7 @@ and meaningful). Raw cells + runner:
 | sweep (treatment) | **159** (+3 files: summle ×3; −7: circuit_48in64out −2, j3037, frb65, qwh, worker_550, x9-08075, 64_25) |
 | null (scrambled ranking) | **170** (+6, −4) |
 
-**Zero verdict disagreements** across every both-decided cell — the
+**Zero verdict disagreements** across every both-decided cell – the
 soundness gate is clean at 810 cells.
 
 ### Anchor gate (conflicts-to-verdict geomean, 5 seeds, 60 s cap)
@@ -134,20 +134,20 @@ Raw: `precompile/47d090c/benchmark/anchor_gate.json`.
 ## Verdict (pre-registered kill criteria, evaluated)
 
 The treatment at kissat's budget (100 ‰) measures **corpus-negative
-(−2 standing) while tail-bimodal** — the exact pre-registered kill
+(−2 standing) while tail-bimodal** – the exact pre-registered kill
 shape. Per the handover: **record and stop; the default stays OFF**
 (the arm was landed default-off, so nothing to retract).
 
 The screen adds one finding the kill criteria did not anticipate: the
 **null is corpus-positive (+9 cells)** with the same machinery, budget
-and candidate set — so the corpus-negative part is not *substitution
+and candidate set – so the corpus-negative part is not *substitution
 content* per se, it is the faithful **cone-occurrence ranking**. Both
 orderings have anchor wins (faithful: FmlaEquivChain 0.88×; scrambled:
 6s167 1.22×), which sharpens the bimodality conclusion: *any* fixed
 sweep ordering wins one class and loses another; corpus standing is
 decided by which class dominates the corpus mix. The follow-up this
-teases — a pre-registered ranking-variant study (its own nulls: a
-different-seed scramble vs identity-at-same-budget) — is out of scope
+teases – a pre-registered ranking-variant study (its own nulls: a
+different-seed scramble vs identity-at-same-budget) – is out of scope
 here and left on record.
 
 **Landed:** the port (default-off, env-gated), its tests, the fixed
@@ -164,7 +164,7 @@ handover anticipated.
 - Full `nixie-sat` suite (959 tests) green; clippy `-D warnings`; fmt.
 - Z3 differential parity: **169/170 decisive, 0 disagreements** (the
   one non-match is Z3-side Unknown → inconclusive, not a disagreement;
-  z3 on PATH is 4.16.0 vs the 4.15.4 baseline snapshot — recorded in
+  z3 on PATH is 4.16.0 vs the 4.15.4 baseline snapshot – recorded in
   the run metadata, per the suite's caveat).
 
 ---
@@ -172,7 +172,7 @@ handover anticipated.
 # Part 2: Main-loop wiring + performance characterization (2026-09-08)
 
 **Wiring completed** (`19692a2`): the armed sweep now runs as a first-class
-conflict-scheduled component on every preset — when the inprocessing
+conflict-scheduled component on every preset – when the inprocessing
 bundle is off, the conflict handler runs `sweep_round` on the shared
 interval + effort-window bookkeeping (19 rounds on 6s167-opt under
 `PRESET=default`; SMT path fires it too: QF_AUFBV 12 rounds, verdicts
@@ -184,7 +184,7 @@ unchanged). Default trajectory untouched (inert unless armed).
   kitten ticks per run, and the end-to-end instruction delta
   (`perf stat`, pinned, 3 anchor files, treatment vs base).
 - **P2 (content)**: paired conflicts-to-verdict, treatment vs matched
-  null (scrambled ranking — same machinery, budget, candidate set),
+  null (scrambled ranking – same machinery, budget, candidate set),
   CRN pairing, 10 seeds, per family and SAT/UNSAT split.
 - **Go bar**: treatment/null geomean ≤ **0.95** AND sweep solved-at-cap ≥
   null solved-at-cap. [0.95, 1.05] = neutral (no corpus-level ranking
@@ -209,11 +209,11 @@ activity in every cell.
 
 | arm | solved | vs base |
 |---|---|---|
-| base | 316 | — |
+| base | 316 | – |
 | sweep (treatment) | **351** | **+35** |
 | null (scrambled ranking) | **355** | +39 |
 
-Per-seed: sweep ≥ base on 8/10 seeds (null 9/10) — not a seed-mix
+Per-seed: sweep ≥ base on 8/10 seeds (null 9/10) – not a seed-mix
 artifact. Gains concentrate exactly where the mechanism predicts
 (equivalence-structured families: summle ×3 files, circuit ×3, FmlaEquivChain
 2→7, constraints 6→9, qwh 4→7, mrpp 9→10); losses are few (mdp-28 2→0,
@@ -223,9 +223,9 @@ worker_550 4→3). **Zero verdict disagreements** in 1620 cells.
 
 | ratio | geomean | n | verdict |
 |---|---|---|---|
-| sweep/null | **1.017** | 201 | **neutral** — inside the ±5 % band; the pre-registered go bar (≤ 0.95) FAILED: the cone-ranking carries no corpus-level signal |
+| sweep/null | **1.017** | 201 | **neutral** – inside the ±5 % band; the pre-registered go bar (≤ 0.95) FAILED: the cone-ranking carries no corpus-level signal |
 | sweep/base | 0.949 | 172 | content (present in both armed arms) is worth ~5 % |
-| null/base | 0.937 | 179 | — |
+| null/base | 0.937 | 179 | – |
 
 Per-family sweep/null is bimodal exactly as at 5 seeds: null better on
 6s167 1.137 / summle 1.281 / mrpp 1.123; treatment better on constraints
@@ -236,13 +236,13 @@ Per-family sweep/null is bimodal exactly as at 5 seeds: null better on
 
 - Instructions (full solves, `perf stat`, P-cores): 6s167 13.64 G →
   9.79 G (**0.72×**), FmlaEquivChain 390.0 G → 195.9 G (**0.50×**),
-  inert stable-300 31.26 G → 31.97 G (**+2.3 %** — the pure cost of the
+  inert stable-300 31.26 G → 31.97 G (**+2.3 %** – the pure cost of the
   pass finding nothing).
 - kitten ticks (sampled re-measure, 18 cells): 0.1–2.6 M ticks on files
   where it proves nothing (bounded by the 100 k/round budget); on 6s167
   22 kitten-ticks per search conflict vs kissat's own 184 on the same
-  file — well inside the reference envelope.
-- Wall-clock sanity (both-solved cells): sweep/base geomean **0.728** —
+  file – well inside the reference envelope.
+- Wall-clock sanity (both-solved cells): sweep/base geomean **0.728** –
   consistent with (larger than) the conflicts proxy; folding also
   cheapens propagation.
 
@@ -265,7 +265,7 @@ the paired 10-seed differential shows **solved count not worse
 (+35)** with **0 verdict disagreements**. Default flip: **ON**
 (`NIXIE_SWEEP=0` restores the old default; the null arm remains
 `NIXIE_SWEEP_NULL=1`). Ships with a fresh full Z3 parity at the new
-default — a SAT-core change is an SMT-path change wherever the embedded
+default – a SAT-core change is an SMT-path change wherever the embedded
 CDCL(T) core executes the schedule (most SMT logics gate the sweep off
 via the real-theory freeze; the differential covers the rest).
 
@@ -287,7 +287,7 @@ for real: `pr30::test_bv_index_quantified_array_certifies_sat` flipped
    the verdict was correct. The folded equivalence itself was verified
    real (kissat-checked against a dump of the solver's own problem).
 2. The sweeping instance was **not** the CDCL(T) Context's solver but
-   `BvSolver`'s **embedded bit-blaster SAT solver** — created with
+   `BvSolver`'s **embedded bit-blaster SAT solver** – created with
    `enable_inprocessing: false` and driven incrementally by hundreds of
    `solve()` calls per check. Two wiring defects made the sweep fire
    there: (a) the sweep-only conflict cadence keyed on exactly
@@ -298,7 +298,7 @@ for real: `pr30::test_bv_index_quantified_array_certifies_sat` flipped
 
 Structural fixes (all landed with the flip):
 
-- **Sweep-only cadence removed** — `!enable_inprocessing` is not a
+- **Sweep-only cadence removed** – `!enable_inprocessing` is not a
   top-level-SAT discriminator. The sweep's homes are the inprocessing
   rounds (every inprocessing preset) plus one latched pre-search pass;
   `PRESET=default` (inprocessing off) keeps the pre-search pass only.
@@ -306,7 +306,7 @@ Structural fixes (all landed with the flip):
   `probe_initially` is a once-per-formula concept).
 - **`BvSolver`'s embedded solver opts out** via `set_sweep_enabled(false)`
   (embedded incremental protocols do not admit destructive Boolean
-  folding between solves — the same policy that keeps
+  folding between solves – the same policy that keeps
   `enable_equiv_substitution` off in every SMT preset, now stated for
   the sweep), and the CDCL(T) Context's own solver opts out the same way.
 - Defense in depth: a **sticky `theory_ever_attached`** flag keeps the
@@ -316,10 +316,10 @@ Structural fixes (all landed with the flip):
 Post-fix verification: pr30 sat/sat both arms; 10 712 workspace tests
 green; the default-on trajectory on the standing corpus is **bit-identical
 to the characterized treatment arm** (6s167-opt: 42 003 conflicts, 10
-rounds, 8 964 kitten solves — the stored cells), and `NIXIE_SWEEP=0`
+rounds, 8 964 kitten solves – the stored cells), and `NIXIE_SWEEP=0`
 restores the base trajectory exactly (62 241). The Part-2 numbers stand.
 
-## Reference arms (§12 obligation) — nixie / kissat / cadical on the
+## Reference arms (§12 obligation) – nixie / kissat / cadical on the
 sweep-class files (deterministic, single run each, recorded in the
 benchstore under `bd1d759`)
 
@@ -329,15 +329,15 @@ benchstore under `bd1d759`)
 | FmlaEquivChain (unsat) | 525 810 gm | **415 665 gm** | 377 701 | 373 747 |
 | x9-09054 (sat) | ~709 k, 1/5 cap | ~709 k, 1/5 cap | 579 744 | **292 566** |
 | stable-300 (sat) | 239 350 | 239 350 (inert) | 761 400 | **210 042** |
-| constraints_17 (sat) | — | 8.9 k (seed 8) | 38 725 | **7 075** |
-| qwh (sat) | — | 46 k-class | 62 866 | **24 182** |
-| mrpp (unsat) | — | ~191 k | 179 485 | **138 035** |
+| constraints_17 (sat) | – | 8.9 k (seed 8) | 38 725 | **7 075** |
+| qwh (sat) | – | 46 k-class | 62 866 | **24 182** |
+| mrpp (unsat) | – | ~191 k | 179 485 | **138 035** |
 
 Reading: the sweep takes nixie to **reference parity on the
 equivalence-chain class** (FmlaEquivChain 416 k vs 374–378 k; the base
 was 526 k and 2× the wall) and keeps it mid-pack on the other sweep-class
 files; on 6s167 the port closed base 62 k → 42 k of the 42 k→16.7 k span
-(kissat's own sweep substitutes 14 % of the variables there — the
+(kissat's own sweep substitutes 14 % of the variables there – the
 remaining gap is substitution *depth*, not presence). cadical leads the
 remaining files; kissat trails cadical on this class. No verdict
 disagreements against either reference.
@@ -349,17 +349,17 @@ disagreements against either reference.
 **Observation.** At kissat's nominal `sweepeffort=100 ‰` our sweep was
 budget-starved relative to the reference: on 6s167 it proved 53
 equivalences for 948 k kitten ticks where kissat's own sweep proves 162
-for 3.5 M — our window currency is propagations, not ticks, so the
+for 3.5 M – our window currency is propagations, not ticks, so the
 per-mille nominal under-prices us ~4×.
 
 **Effort sweep (anchors, deterministic).** Raising the effort buys
 content monotonically on 6s167 (42 003 → 40 375 → **32 602** → 38 998 at
-100/200/400/800 ‰) — but at the nominal cadence the inert files pay the
+100/200/400/800 ‰) – but at the nominal cadence the inert files pay the
 raised budget every round (qwh, eq=0 at every effort: 26 rounds, 7.9 M
 ticks at 100 ‰ → 30.7 M at 400 ‰, +30 % wall on a 21 s solve).
 
 **5-seed check** reversed the single-run bimodality read on
-constraints_17 (0.81× *better* at 400 ‰, 4/5 seeds) — the effort axis is
+constraints_17 (0.81× *better* at 400 ‰, 4/5 seeds) – the effort axis is
 robustly good where the sweep has content; the only real blocker is the
 inert-file tax.
 
@@ -367,7 +367,7 @@ inert-file tax.
 `kimits.c`): a round with yield < 0.001 eliminations per swept variable
 bumps the interval (current += 1) and skips that many firings; a
 productive round halves it. With the delay, qwh fires 6 rounds instead
-of 26: **6.5 M ticks at 400 ‰ — below the old default's 7.9 M at
+of 26: **6.5 M ticks at 400 ‰ – below the old default's 7.9 M at
 100 ‰**. 6s167 at 400+delay: **32 168** conflicts (best measured; the
 handover's half-span target was ~29.7 k).
 
@@ -376,8 +376,8 @@ config `sweep400`, compared paired against the stored 100 ‰ cells):**
 
 | arm | solved-at-cap | conflicts vs base | wall vs sweep100 |
 |---|---|---|---|
-| base (`NIXIE_SWEEP=0`) | 316 | — | — |
-| sweep @100 ‰ (previous default) | 351 | 0.949× | — |
+| base (`NIXIE_SWEEP=0`) | 316 | – | – |
+| sweep @100 ‰ (previous default) | 351 | 0.949× | – |
 | **sweep @400 ‰ + delay (new default)** | **363** | **0.934×** | **0.908×** |
 
 Per-file flips 100→400: +13 / −3 (gains: summle_X11112 3→7,
@@ -385,7 +385,7 @@ worker_550 3→5, FmlaEquivChain 7→8, frb65 9→10; losses:
 circuit_seed4 7→5, pb_300 3→1, 64_25 2→1). **Zero verdict
 disagreements** against both arms (540 paired cells). Conflicts geomean
 sweep400/sweep100 = **1.000** (n=204): the raised effort buys *cells*,
-not cost — it converts cap-boundary files while the delay more than pays
+not cost – it converts cap-boundary files while the delay more than pays
 for the bigger budgets (wall 0.908× on both-solved cells).
 
 **Landed:** default effort 100 → 400 ‰ (enablement rule: solved count
@@ -404,7 +404,7 @@ restores any other value).
 
 (The stable-300 / constraints_17 cost upticks with more solved cells are
 the §11 shape: the newly-solved seeds are the expensive tail cells that
-previously capped out — solved-at-cap and cost-geomean over both-solved
+previously capped out – solved-at-cap and cost-geomean over both-solved
 cells answer different questions.)
 
 Landed-binary identity: 6/6 sampled `sweep400` cells bit-identical
@@ -414,7 +414,7 @@ default (c9cfe71).
 ## Part 3 addendum: the effort axis closes bimodal (no flip to 1600 ‰)
 
 Diagnostic (round traces on 6s167 at the landed default): discovery is
-**budget-limited, not application-limited** — round 1 exhausts 400 k
+**budget-limited, not application-limited** – round 1 exhausts 400 k
 kitten ticks after sweeping 131 of 4 548 candidates (~3 k
 ticks/variable, ~7 kitten solves each); 94 equivalences from 2 013
 swept variables, ~2 600 never swept. The references fold ~580 variables
@@ -430,17 +430,17 @@ Effort extension with the delay in place (deterministic counters,
 | FmlaEquivChain | gm 334 k | gm 563 k | **1.69×** |
 
 1600 ‰ reaches kissat-parity *equivalence counts* (225 ≈ kissat's 162)
-and wins two anchors — but loses FmlaEquivChain 1.7×, the exact
+and wins two anchors – but loses FmlaEquivChain 1.7×, the exact
 per-family bimodality every other axis of this mechanism showed
 (placement, gating, ranking, now budget). 800 ‰ measures
-chaotic-in-between (38.2 k on 6s167 — worse than both neighbors).
+chaotic-in-between (38.2 k on 6s167 – worse than both neighbors).
 Per the pre-registered discipline this does not justify the flip
 screen: the anchor gate is not met, and the box's current load
-(12–34 from a concurrent run) would contaminate a 60 s-cap screen —
+(12–34 from a concurrent run) would contaminate a 60 s-cap screen –
 the Part-1 lesson. **A 1600 ‰ standing screen is queued for a quiet
 window**; until then 400 ‰+delay stands.
 
 The mechanism-class conclusion is now four-for-four: *every* knob of
 equivalence substitution on this corpus is per-file bimodal with no
-corpus-dominant setting — the conversion path for the remaining spread
+corpus-dominant setting – the conversion path for the remaining spread
 is per-class configuration, as the 2026-09-07 campaign concluded.

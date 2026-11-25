@@ -23,9 +23,9 @@
 //! ITE congruence (kissat `congruence.c`, landed 2026-09-18): two ITE gates
 //! over congruent `(cond, then, else)` triples have equivalent outputs; a
 //! gate whose triple is the *complement* (`(c, ¬t, ¬e)`) of another's has
-//! the negated output.  `(c ? t : e) ≡ (¬c ? e : t)` — the then/else SWAP
+//! the negated output.  `(c ? t : e) ≡ (¬c ? e : t)` – the then/else SWAP
 //! with the cond flip, **not** an all-three negation (that is the
-//! complement's swap form) — so each function has two presentations and the
+//! complement's swap form) – so each function has two presentations and the
 //! canonical key takes the lexicographic minimum of the two.  The trivial
 //! gate `c ? t : t` proves `o ≡ t` outright (direct union).
 
@@ -174,7 +174,7 @@ impl Solver {
                         // Duplicate polarity readings of one definition
                         // (output o vs ¬o with correspondingly flipped
                         // inputs) then land pos-of-one on neg-of-the-other
-                        // and self-cancel — the 2026-09-18 false-unsat was
+                        // and self-cancel – the 2026-09-18 false-unsat was
                         // parity-folding the input signs into one key,
                         // merging o with ¬o (minimized: 37≡41≡122≡123).
                         let a = uf.find(g.in1.code());
@@ -191,7 +191,7 @@ impl Solver {
                     }
                     GateType::Ite => {
                         // Same function, two presentations:
-                        //   (c, t, e) and (¬c, e, t) — then/else SWAP with the
+                        //   (c, t, e) and (¬c, e, t) – then/else SWAP with the
                         //   cond flip (NOT an all-three negation).
                         let c = uf.find(g.in1.code());
                         let t = uf.find(g.in2.code());
@@ -204,7 +204,7 @@ impl Solver {
                         } else {
                             (cn, e, t)
                         };
-                        // Complement function: (c, ¬t, ¬e) / (¬c, ¬e, ¬t) —
+                        // Complement function: (c, ¬t, ¬e) / (¬c, ¬e, ¬t) –
                         // here flipping all three IS correct (the complement's
                         // swap form negates every input).
                         let neg = if (c, tn, en) <= (cn, en, tn) {
@@ -264,7 +264,7 @@ impl Solver {
         // Materialize the equivalence classes and add binary implication edges
         // between class members so SCC merges them. Each named literal is
         // keyed by its OWN union-find root: a complementary merge (o2 ≡ ¬o1)
-        // puts {o2, ¬o1} in one UF class and {¬o2, o1} in the mirror class —
+        // puts {o2, ¬o1} in one UF class and {¬o2, o1} in the mirror class –
         // keying by `find(out)` would mix the two and consecutive chaining
         // would then assert false equivalences (the 2026-09-18 Iter22
         // false-unsat, round two). Both polarities of every output are named
@@ -348,7 +348,7 @@ impl Solver {
 
         // Ternary clauses indexed by the variables they contain (for XOR
         // lookup) and scanned directly for AND.  Single-pass `iter_views`
-        // (one view construction per id — the `iter_ids`+`get` form built
+        // (one view construction per id – the `iter_ids`+`get` form built
         // two over headers scattered across cache lines; this scan was
         // 17 % of a search-heavy cell inside `ClauseDatabase::view`).
         let mut ternary: Vec<SmallVec<[Lit; 3]>> = Vec::new();
@@ -398,7 +398,7 @@ impl Solver {
         };
         for lits in &ternary {
             // Try each literal as the output o; the other two (p, q) are the
-            // input candidates in ALL FOUR sign presentations — a complete
+            // input candidates in ALL FOUR sign presentations – a complete
             // XOR definition fixes only o⊕a⊕b, so the clause set carries any
             // mix of input signs (XNOR shapes included); checking the signs
             // as they appear in one clause misses every definition whose
@@ -447,7 +447,7 @@ impl Solver {
         // (kissat `extract_ite_gates_with_base_clause`).  With the base clause
         // C = (o ∨ ¬c ∨ ¬t), the others are
         //   A = (¬o ∨ ¬c ∨ t)
-        //   B = (¬o ∨  c ∨ e)      (e unknown — discovered by the scan)
+        //   B = (¬o ∨  c ∨ e)      (e unknown – discovered by the scan)
         //   D = ( o ∨  c ∨ ¬e)
         // Scan every clause containing the pair (o, c) as a candidate D: its
         // third literal is ¬e; B then verifies e.  Pair lookup uses a CSR
@@ -483,7 +483,7 @@ impl Solver {
             };
 
             for lits in &ternary {
-                // Output candidates: positive literals only — every ITE
+                // Output candidates: positive literals only – every ITE
                 // definition has a presentation with a positive output (the
                 // four clauses of `o ↔ f` are those of `¬o ↔ ¬f` with roles
                 // swapped), so this loses no equivalence: the complement
@@ -561,7 +561,7 @@ impl Solver {
 /// Whether the ternary×binary self-subsuming-resolution cascade runs inside
 /// ELS rounds (kissat `congruencebinaries`; study 2026-09-18-ssr-binaries).
 /// DEFAULT ON since the 2026-09-21 par-2 flip (the composed stack:
-/// par-2 0.642 on the standing corpus — WS 0.20x, frb 0.55x wall vs
+/// par-2 0.642 on the standing corpus – WS 0.20x, frb 0.55x wall vs
 /// Carry's +1.4 s absolute; see
 /// `docs/studies/2026-09-21-gate-subsumption-class-units.md`); the
 /// `NIXIE_SSR_BIN=0` opt-out preserves the old default.
@@ -595,7 +595,7 @@ impl Solver {
     /// binary set, adding each resolvent as a learned binary clause:
     /// `(a ∨ b ∨ c) ∧ (¬a ∨ b) ⊢ (b ∨ c)`.  The new binaries strengthen the
     /// implication view (and are what completes partial AND-gate patterns
-    /// `o ↔ a ∧ b`, whose detection needs `o→a` and `o→b`) — on
+    /// `o ↔ a ∧ b`, whose detection needs `o→a` and `o→b`) – on
     /// `bv_ILA_Piccolo` kissat extracts only ~312 of them in round 1, yet
     /// they unlock the whole congruence cascade (knockout: 790 k vs 9.5 k
     /// conflicts).  Resolvents carry the `clause_hyper` provenance flag so
@@ -659,7 +659,7 @@ impl Solver {
 /// Study arm: run one pre-search ELS round (SSR cascade + gate congruence +
 /// fold) before the conflict-scheduled elimination (kissat preprocess
 /// order).  DEFAULT ON since the 2026-09-21 par-2 flip (with the SSR
-/// cascade and gate subsumption — the composed stack; see
+/// cascade and gate subsumption – the composed stack; see
 /// `ssr_binaries_enabled`'s note); `NIXIE_ELS_PRESEARCH=0` opts out.
 #[cfg(test)]
 pub(super) fn els_presearch_arm_enabled() -> bool {

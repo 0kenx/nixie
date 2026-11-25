@@ -68,7 +68,7 @@ impl Parser<'_> {
         // FloatingPoint/FixedPoint theories and most benchmarks spell wide
         // constants this way; `#x`/`#b` only reach 64-bit-friendly widths
         // comfortably).  Out-of-range `N` is read modulo `2^W`
-        // (`mk_bitvec` normalizes; z3 parity — see its comment), so the
+        // (`mk_bitvec` normalizes; z3 parity – see its comment), so the
         // literal is always accepted.
         if let Some(digits) = name.strip_prefix("bv")
             && !digits.is_empty()
@@ -268,7 +268,7 @@ impl Parser<'_> {
             }
             // ((_ tuple.update i) v t): the tuple with component i replaced
             // by `v`. Argument order follows CVC5 (value first, tuple
-            // second? — CVC5's `mkTerm(APPLY_SELECTOR, ...)` rebuild path
+            // second? – CVC5's `mkTerm(APPLY_SELECTOR, ...)` rebuild path
             // takes (tuple, value); both spellings appear in the wild, and
             // the SMT-LIB draft's `tuple.update` example is
             // `((_ tuple.update 1) t 5)`: tuple first, value second).
@@ -528,7 +528,7 @@ impl Parser<'_> {
             return true;
         }
         // A *symbolic* mode occupies the same position as a literal one, and
-        // so does the bit-pattern form's single bit-vector operand — both are
+        // so does the bit-pattern form's single bit-vector operand – both are
         // bare symbols, so the spelling alone cannot separate them. Resolve
         // the sort instead: only a `RoundingMode`-sorted symbol is a mode.
         let rm_sort = self.manager.sorts.rounding_mode_sort;

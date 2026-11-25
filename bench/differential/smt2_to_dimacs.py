@@ -64,7 +64,7 @@ def clause_of(sexp, varmap):
     Returns None for `true` (no constraint); returns [] for `false`/empty or
     (or false ...)-style contradictions (empty clause = unsat).
     Free Boolean atoms keep their names (z3 renames tseitin auxiliaries to
-    k!N but leaves declared Booleans as-is) — both are keyed by symbol.
+    k!N but leaves declared Booleans as-is) – both are keyed by symbol.
     """
     def lit(node):
         if isinstance(node, str):

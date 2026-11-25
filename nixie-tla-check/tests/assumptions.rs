@@ -1,6 +1,6 @@
 //! The honesty gates around a violation (issue #12).
 //!
-//! Exit 12 — "counterexample found" — is what users and downstream tools act
+//! Exit 12 – "counterexample found" – is what users and downstream tools act
 //! on, so a violation must never be reported under conditions that make the
 //! counterexample provisional. Three such conditions are pinned here:
 //!
@@ -11,7 +11,7 @@
 //!    be read back as TLA+ values, so there is nothing to show and nothing to
 //!    check the verdict against.
 //! 3. **Non-replaying traces.** The states were read back and the independent
-//!    evaluator — the one `bench/tla_eval` checks against TLC — rejects them.
+//!    evaluator – the one `bench/tla_eval` checks against TLC – rejects them.
 //!    That is a disagreement between the encoding and the evaluator, and it is
 //!    reported as such rather than resolved by trusting one side.
 //!
@@ -50,7 +50,7 @@ fn outcome(src: &str, inv: &str) -> Outcome {
     bmc.check(0, &mut tm).expect("checks")
 }
 
-// ---- 1. dropped assumptions ----
+// ======== 1. dropped assumptions ========
 
 /// An assumption whose constant has an open-record type has no sort, so it is
 /// dropped; a violation found in that weakened search must be `Unknown`, with
@@ -117,10 +117,10 @@ Inv  == x < 1
     assert_eq!(bmc.dropped_assumptions(), 1);
 }
 
-// ---- 2. ground assumptions are evaluated, not asserted ----
+// ======== 2. ground assumptions are evaluated, not asserted ========
 
 /// A false ground assumption means the specification has no behaviours at
-/// all. TLC and Apalache report it and stop; so does this, by name — never a
+/// all. TLC and Apalache report it and stop; so does this, by name – never a
 /// counterexample for a specification that does not exist.
 #[test]
 fn a_false_ground_assumption_is_reported() {
@@ -163,7 +163,7 @@ Inv  == x < N
 }
 
 /// The evaluation runs on the **substituted** constants: with `N = 4` pinned,
-/// `N > 3` is checked as `4 > 3`, which is TRUE — and a true assumption needs
+/// `N > 3` is checked as `4 > 3`, which is TRUE – and a true assumption needs
 /// no constraint at all, so the check proceeds and the violation is real.
 #[test]
 fn a_true_ground_assumption_asserts_nothing_and_the_violation_is_real() {
@@ -191,8 +191,8 @@ Inv  == x < N - 3
 }
 
 /// `N \in Nat \ {0}` is the `EWD840` shape: a membership over a standard
-/// infinite set differenced with a finite one. It used to be unencodable —
-/// dropped — leaving `N` arbitrary; the structural encoding makes it a
+/// infinite set differenced with a finite one. It used to be unencodable –
+/// dropped – leaving `N` arbitrary; the structural encoding makes it a
 /// constraint, so a violation found under it is real and reported as such.
 #[test]
 fn a_standard_set_difference_membership_encodes() {
@@ -263,7 +263,7 @@ Inv  == x > 9999
     };
     // The evaluator cannot fold set membership over an infinite set, so the
     // contradiction surfaces from the assumption satisfiability probe rather
-    // than prepare-time evaluation — same conclusion, one query later.
+    // than prepare-time evaluation – same conclusion, one query later.
     assert_eq!(
         bmc.check(0, &mut tm).expect("checks"),
         Outcome::AssumptionsUnsatisfiable,
@@ -271,11 +271,11 @@ Inv  == x > 9999
     );
 }
 
-// ---- 3. the replay gate ----
+// ======== 3. the replay gate ========
 
 /// A trace that decodes but does not replay is a disagreement between the
 /// encoding and the independent evaluator, and the honest verdict is
-/// `Unknown` with the disagreement named — never a violation.
+/// `Unknown` with the disagreement named – never a violation.
 ///
 /// The shape: `f[2]` where `f`'s domain is `{1}`. TLA+ leaves it undefined;
 /// the array encoding answers with whatever the base array holds, finds a

@@ -55,7 +55,7 @@ impl CaseDef {
         }
     }
 
-    /// The single, unguarded case of a definition written as one plain body —
+    /// The single, unguarded case of a definition written as one plain body –
     /// the shape `(define-fun-rec f ((x S)) R body)` produces.
     ///
     /// `guards` stays empty: the case applies to every argument tuple, which is
@@ -298,7 +298,7 @@ impl RecFunSolver {
     /// This used to read `seen_apps.iter().skip(size)`, which is wrong twice
     /// over: a `HashSet` iterates in an unspecified, hash-dependent order, so
     /// `skip(size)` names an **arbitrary** subset of the applications rather
-    /// than the ones the scope introduced — retracting applications from an
+    /// than the ones the scope introduced – retracting applications from an
     /// enclosing scope (they then look unseen, and get re-registered and
     /// re-counted) while keeping ones the scope owned (they survive their own
     /// retraction, and a later re-entry into the scope silently skips them).
@@ -410,7 +410,7 @@ mod tests {
     }
 
     /// `pop` must retract exactly the applications recorded since the matching
-    /// `push` — no more (an enclosing scope's application would look unseen and
+    /// `push` – no more (an enclosing scope's application would look unseen and
     /// be re-counted) and no fewer (a retracted scope's application would
     /// survive, so re-entering the scope would silently skip it).
     ///

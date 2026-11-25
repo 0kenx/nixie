@@ -1,8 +1,8 @@
-# SAT performance program — round-11 handoff (2026-09-13 close)
+# SAT performance program – round-11 handoff (2026-09-13 close)
 
 > Entry point for the next agent.  Full detail in
 > `docs/studies/2026-09-13-*.md` (start with
-> `2026-09-13-elim-bound-growth.md` — nine measured follow-ups — then
+> `2026-09-13-elim-bound-growth.md` – nine measured follow-ups – then
 > `2026-09-13-csr-watches-kickoff.md`, `2026-09-13-extstack-reconstruction.md`,
 > `2026-09-13-widecap-portfolio.md`).  Everything below assumes the
 > discipline of `AGENTS.md` + `docs/BENCHMARKING.md`.
@@ -21,7 +21,7 @@ every rebuild), `CsrWatchLists` (the four mutation ops, unit-tested),
 and the **slice-plan correction** discovered the hard way: survivors'
 blockers are rewritten in place during the scan
 (`entry.keep(Some(blocker))`), so a moves-only shadow sink is
-insufficient — maintaining the shadow through the scan *is* slice 3
+insufficient – maintaining the shadow through the scan *is* slice 3
 implemented as a **dual write** (a parallel write cursor over the CSR
 span mirroring keep/remove/moves; `list_kernel.rs` 277 lines +
 `watch_cursor.rs` 230).  Order: dual-write scan → cold-path mutations →
@@ -32,14 +32,14 @@ bar per slice.
 ## 2. The amplitude→trajectory translation (the research question)
 
 The elimination-amplitude program closed at its root: **the phase-1
-yield gap was one-sided variables** — cadical eliminates them inside
+yield gap was one-sided variables** – cadical eliminates them inside
 BVE (`elim_resolvents_are_bounded` returns `lim.elimbound >= 0`), our
 port skipped them.  Armed as `NIXIE_ELIM_ONESIDED` (default-off):
 Timetable round 1 goes 74 757 → 91 788 (cadical parity restored) and
-the corpus conflicts geomean hits **0.974 — the best aggregate of any
+the corpus conflicts geomean hits **0.974 – the best aggregate of any
 elimination variant tried**.  But: the 60 s screen loses 8 cap cells,
 the 300 s re-run shows those were artifacts yet the arm is only
-cell-equal there — **and Timetable itself times out under the arm**.
+cell-equal there – **and Timetable itself times out under the arm**.
 The open question: why does a 17 k-variable-richer elimination slow
 the search?  Candidate angles: the formula-shape interaction with
 restarts/phase-saving (all tuned on the old elimination), the
@@ -54,8 +54,8 @@ combo −15, live occ-gate: mp1 destroyed, one-sided −8) while the
 aggregate-conflicts direction favors every amplitude arm (0.968-0.974).
 The wide-cap study showed default@300 s converts 12/13 of the "hard"
 class by itself.  Whether the standing screen's 60 s cap is the right
-acceptance metric for elimination work — or a 120/300 s standard
-should gate defaults — is a methodology decision worth settling before
+acceptance metric for elimination work – or a 120/300 s standard
+should gate defaults – is a methodology decision worth settling before
 more amplitude work.
 
 ## Standing items
@@ -69,7 +69,7 @@ more amplitude work.
   another agent's cleanup and hit concurrent-build collisions twice:
   use private paths (`outputs/`, `CARGO_TARGET_DIR=...`) and clean
   worktrees for verification.  `git revert HEAD` once reverted the
-  wrong commit (another agent landed between) — **revert by explicit
+  wrong commit (another agent landed between) – **revert by explicit
   sha**.
 - The shared-tree clippy is intermittently blocked by other agents'
   in-flight files (mbqi/model_checker.rs this round); verify from a
@@ -80,7 +80,7 @@ more amplitude work.
 - **Arms** (all default-off = bit-identical, all soundness-netted):
   `NIXIE_OTFS`, `NIXIE_EAGER_SUB`, `NIXIE_AND_GATES`, `NIXIE_TIERED`,
   `NIXIE_ELIM_SUBFIX` (now both pre-phase and inter-round fixpoint
-  slots), `NIXIE_ELIM_ONESIDED` — plus the earlier restart-family arms.
+  slots), `NIXIE_ELIM_ONESIDED` – plus the earlier restart-family arms.
 - **Elimination diagnostics** (`NIXIE_LOG_ELIM`): the phase line carries
   `marks= bound=`; the round line `added= bw_retired= otf_shrunk=
   tried= remain=`; the inter-round line `residue_old= residue_fresh=`.
@@ -91,7 +91,7 @@ more amplitude work.
 - **Logging cadical** (per-var LOG traces; LOG gates on `--log=true`,
   *not* verbose): `cp -r ../temp/cadical/{src,scripts,contrib,
   configure,test,LICENSE,README*,makefile*,VERSION} <private-dir>/ &&
-  ./configure -l && make` — the reference tree stays untouched.
+  ./configure -l && make` – the reference tree stays untouched.
 - **CSR shadow** (`NIXIE_CSR_SHADOW`): per-rebuild validation,
   mismatched=0 across the corpus.
 - **Screen runners** under `docs/studies/assets/inproc-amplitude-2026-09-12/`
@@ -101,18 +101,18 @@ more amplitude work.
 
 1. **cadical verbose=3 logging writes ~110 GB on Timetable and filled
    the root disk.**  Always pipe through `grep --line-buffered … |
-   head -n N` — never to a raw file.
-2. **benchstore rejects non-hex `git.sha_short`** — cells run under a
+   head -n N` – never to a raw file.
+2. **benchstore rejects non-hex `git.sha_short`** – cells run under a
    bogus tag are silently unrecorded (the run log's printed verdicts
    are the fallback; parse them).
 3. **Model-check failures are loud events, never silent downgrades.**
    The 2026-09-12 baseline hid 138 false-witness cells (and a 6.5 s
-   solve of summle_X4053 s2!) behind downgraded unknowns — class
+   solve of summle_X4053 s2!) behind downgraded unknowns – class
    definitions built on downgraded cells inherit the corruption.  The
    fixed binary verifies all of them (10/10 re-checked).
 4. **`subsume_round`'s RandomSlice mode re-rolls the dirty set at every
-   round's end** — any extra `subsume_round()` call (even zero-yield)
+   round's end** – any extra `subsume_round()` call (even zero-yield)
    diverges trajectories; nulls for schedule changes must control for
    it.
-5. **/tmp is shared** — private scratch only, and expect concurrent
+5. **/tmp is shared** – private scratch only, and expect concurrent
    agents' builds in the cargo target dir.

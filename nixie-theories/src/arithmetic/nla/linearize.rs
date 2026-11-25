@@ -16,8 +16,8 @@
 //! `Add` / `Sub` / `Neg` / `Mul` / `IntConst` / integral `RealConst` / `Var`,
 //! with every leaf of `Int` or `Real` sort.
 //!
-//! Everything else — `Or`, `Ite`, `Distinct`, `Apply`, `Div`, `Mod`,
-//! non-integral `RealConst`, quantifiers, Boolean structure under a negation —
+//! Everything else – `Or`, `Ite`, `Distinct`, `Apply`, `Div`, `Mod`,
+//! non-integral `RealConst`, quantifiers, Boolean structure under a negation –
 //! causes the *whole containing conjunct* to be dropped and
 //! [`Linearization::incomplete`] to be set. Dropping a conjunct of a
 //! conjunction only weakens the problem, so `unsat` on the result still
@@ -39,7 +39,7 @@ use smallvec::SmallVec;
 
 /// A monomial named by a variable: `product = prod_i factors[i].0 ^ factors[i].1`.
 ///
-/// `factors` is sorted by [`VarId`] and its exponents sum to at least two — a
+/// `factors` is sorted by [`VarId`] and its exponents sum to at least two – a
 /// degree-one "monomial" would be a plain variable and is never recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Monic {
@@ -137,7 +137,7 @@ pub(crate) fn linearize(assertions: &[TermId], manager: &TermManager) -> Option<
     })
 }
 
-// --- checked LinExpr algebra ------------------------------------------------
+// ======== checked LinExpr algebra ========
 
 /// Merge `coef * var` into `e`, or `None` on overflow. Never leaves `e`
 /// half-updated: the checked add happens before the write.
@@ -200,7 +200,7 @@ fn as_bare_var(e: &LinExpr) -> Option<VarId> {
     }
 }
 
-// --- the walker -------------------------------------------------------------
+// ======== the walker ========
 
 /// One step of the explicit work stack that replaces native recursion.
 enum Task {

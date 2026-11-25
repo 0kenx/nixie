@@ -166,7 +166,7 @@ fn a_negated_forall_earns_a_skolem_witness() {
 }
 
 /// A Boolean `=` is a polarity boundary, so the occurrence is `Both` and the
-/// guard constant is given the *full* definition — the shape that is sound in
+/// guard constant is given the *full* definition – the shape that is sound in
 /// any position whatsoever.
 #[test]
 fn a_boolean_equality_earns_both_halves() {

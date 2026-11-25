@@ -122,8 +122,8 @@ pub enum AbstractionKind {
 /// One abstracted wide operator (CEGAR).
 ///
 /// `result` carries fresh, unconstrained wires (plus the tier-1 identity
-/// lemmas).  Every clause emitted for the abstraction — the lemmas, any
-/// value refinement, and the terminal exact circuit — is a logical
+/// lemmas).  Every clause emitted for the abstraction – the lemmas, any
+/// value refinement, and the terminal exact circuit – is a logical
 /// *consequence* of the exact operator semantics, so the abstract
 /// SAT instance is a relaxation of the exact one at every stage:
 /// `Unsat` is sound at any round, and `Sat` is provisional until the model
@@ -178,7 +178,7 @@ pub struct BvSolver {
     budget_deadline: Option<nixie_time::Instant>,
     /// Total across embedded resets and repair rounds; re-armed explicitly.
     conflicts_spent: u64,
-    /// Term to BV variable mapping — a dense slab indexed by the term id
+    /// Term to BV variable mapping – a dense slab indexed by the term id
     /// (`term_to_bv[term.raw()]`), not a hash map: the blast encoder
     /// probes this memo for every node of every assertion DAG, and the
     /// meganode profile showed ~6 % of the whole run inside
@@ -209,7 +209,7 @@ pub struct BvSolver {
     /// sound identity lemmas; see [`Self::abstract_mul`].
     mul_abstractions: Vec<BvAbstraction>,
     /// Bit-width at (and above) which `bvmul` terms are abstracted instead
-    /// of bit-blasted (CEGAR; 0 = always exact — the default, keeping the
+    /// of bit-blasted (CEGAR; 0 = always exact – the default, keeping the
     /// general CDCL(T) path byte-identical).  Set only by the eager pure-BV
     /// dispatch around its blast.
     abstract_mul_width: u32,
@@ -217,7 +217,7 @@ pub struct BvSolver {
     /// mul threshold because the measured trade-offs differ: wide `bvmul`
     /// abstraction wins on value-lemma convergence, while 32-bit division
     /// abstraction measured neutral-to-negative on the `spear` corpus
-    /// (rounds without circuit savings) — only the true monsters (width
+    /// (rounds without circuit savings) – only the true monsters (width
     /// ≥ 64) pay off there.
     abstract_div_width: u32,
     /// Context stack: one [`ContextMark`] per open push, restored by `pop`.
@@ -345,7 +345,7 @@ pub struct BvSolver {
     xor_sh: FxHashMap<(u64, u64), Sig>,
     or_sh: FxHashMap<(u64, u64), Sig>,
     /// Result-bit definitions in IR mode: bit var → IR literal.  These
-    /// are the *deferred* wires — consumers reading the bit through
+    /// are the *deferred* wires – consumers reading the bit through
     /// [`Self::sig`] inline the definition's node, so intermediate bits
     /// enter the CNF only at materialization.
     ir_defs: FxHashMap<Var, u32>,
@@ -356,14 +356,14 @@ pub struct BvSolver {
     /// (see [`Self::wire`]), keyed by the bit's variable.  Drained by
     /// [`Self::finish_result`], which installs the reserved constant
     /// variables in place of freshly-pinned bits so the constant keeps
-    /// propagating through every consumer — when the layer is enabled.
+    /// propagating through every consumer – when the layer is enabled.
     const_pinned: FxHashMap<Var, bool>,
     /// Whether constant-flow result canonicalization is active
     /// (`NIXIE_BV_CONST_FLOW=1` enables; default **off**).
     ///
     /// The layer is sound (zero verdict flips over the 509-file QF_BV sample,
     /// same binary, on/off A/B) and wins deterministically on constant-heavy
-    /// families — the `bitrev` chain: 1.3–2× faster at every width 256–4096 —
+    /// families – the `bitrev` chain: 1.3–2× faster at every width 256–4096 –
     /// but the campaign aggregate measured −1 cell at the 25 s cap
     /// (`uclid/std_bv_formula` 20 s → 33 s), so it ships off by default.
     /// See `docs/studies/2026-09-11-bv-constflow-results.md`.
@@ -682,7 +682,7 @@ impl BvSolver {
         // Mirror check_body's entry: deferred IR circuits must become
         // clauses before the solve (this entry bypasses check(), so the
         // blast-only tests under NIXIE_BV_IR=1 were solving an instance
-        // whose definitions had never been emitted — result bits free,
+        // whose definitions had never been emitted – result bits free,
         // pins on operands vacuous).
         self.materialize_ir();
         self.solve_scope().0
@@ -851,9 +851,9 @@ impl BvSolver {
         terms
     }
 
-    /// Create the free bit-vector standing in for an *opaque leaf* — a
+    /// Create the free bit-vector standing in for an *opaque leaf* – a
     /// bit-vector-sorted term that is not a bit-vector operation (an
-    /// uninterpreted application, an array `select`, …) — and record it on
+    /// uninterpreted application, an array `select`, …) – and record it on
     /// [`Self::opaque_leaves()`] so the owning theory manager can share the
     /// equalities congruence closure derives for it (`#P2b-29`).
     ///
@@ -866,7 +866,7 @@ impl BvSolver {
     }
 
     /// Variables the embedded SAT solver has allocated since the last
-    /// `reset` — circuits, gates and selectors together.
+    /// `reset` – circuits, gates and selectors together.
     ///
     /// The measure `#P2b-46` (f) was about: before definitions were installed
     /// at the root it grew with every outer backtrack (each re-assertion of a
@@ -1374,7 +1374,7 @@ impl BvSolver {
             match (l, r) {
                 (Sig::Ir(x), Sig::Ir(y)) => {
                     // Node-identity folding: the two bits are the same
-                    // signal (or complements) — the check the clause
+                    // signal (or complements) – the check the clause
                     // layer cannot do, and the reason blast-to-IR exists.
                     if let Some(ir) = self.ir.as_ref()
                         && let Some(equal) = ir.same_signal(x, y)
@@ -1387,7 +1387,7 @@ impl BvSolver {
                     }
                     // Unrelated nodes: anchor both and LINK the equality's
                     // truth through a diff variable (never a raw
-                    // bit-equality — that would *force* the bits equal).
+                    // bit-equality – that would *force* the bits equal).
                     let (lx, ly) = (self.sig_var(Sig::Ir(x)), self.sig_var(Sig::Ir(y)));
                     let d = self.sat.new_var();
                     self.emit_xor(d, lx, ly);
@@ -1396,7 +1396,7 @@ impl BvSolver {
                 }
                 (l, r) if matches!(l, Sig::Ir(_)) || matches!(r, Sig::Ir(_)) => {
                     // Mixed IR/other: anchor the node(s) to variables and
-                    // recurse into the classic arms — the equality's truth
+                    // recurse into the classic arms – the equality's truth
                     // must LINK to the bits (out → diff), never force them
                     // equal unconditionally (that was the false-unsat bug
                     // the RWS minimization caught: a raw lx ⇔ ly here
@@ -1636,7 +1636,7 @@ impl BvSolver {
     /// The miter shape helper (Z3 `isolate_term`'s strength reduction,
     /// applied at the layer that actually blasts): when `{a, b}` is
     /// `{(x − y), 0}` in either orientation, the atom's truth is the plain
-    /// equality `x = y` — encodable as an XNOR+reduction without ever
+    /// equality `x = y` – encodable as an XNOR+reduction without ever
     /// building the subtractor circuit (a 32-bit subtractor costs ~210
     /// SAT vars where the equality costs ~63).
     #[must_use]
@@ -1676,14 +1676,14 @@ impl BvSolver {
         // Miter specialization (unsigned only, Z3 `isolate_term`'s strength
         // reduction at the blast layer): with one side the constant 0 and
         // the other a subtraction, the comparison never needs the
-        // subtractor — `0 <u (x − y) ⟺ x ≠ y` and `(x − y) <u 0 ⟺ false`
+        // subtractor – `0 <u (x − y) ⟺ x ≠ y` and `(x − y) <u 0 ⟺ false`
         // (ring identities: `x − y ≡ 0 ⟺ x = y`).
         if !signed {
             let kind_of = |t: TermId| manager.get(t).map(|d| d.kind.clone());
             let is_zero = |t: TermId| matches!(kind_of(t), Some(TermKind::BitVecConst { ref value, .. }) if *value == num_bigint::BigInt::default());
             if is_zero(rhs) {
                 if matches!(kind_of(lhs), Some(TermKind::BvSub(_, _))) {
-                    // (x − y) <u 0 is false — no circuit at all.
+                    // (x − y) <u 0 is false – no circuit at all.
                     let v = self.sat.new_var();
                     self.wire(v, Sig::False);
                     return Some(v);
@@ -1818,7 +1818,7 @@ impl BvSolver {
     /// Composed over *signals* (the folding gate layer's representation):
     /// `~a` per-bit through the folding NOT gate, then an adder with
     /// constant carry-in 1, so a constant operand collapses the whole
-    /// computation without a single intermediate variable — the
+    /// computation without a single intermediate variable – the
     /// temp-variable construction re-opacified each folded bit into a
     /// pinned variable the next gate could not see through.
     pub fn bv_neg(&mut self, result: TermId, a: TermId) -> bool {
@@ -1865,8 +1865,8 @@ impl BvSolver {
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
     ///
-    /// One ripple-carry pass over *signals* with `~b` bits and carry-in 1 —
-    /// exactly `a + ~b + 1` — so constant operand bits fold through the full
+    /// One ripple-carry pass over *signals* with `~b` bits and carry-in 1 –
+    /// exactly `a + ~b + 1` – so constant operand bits fold through the full
     /// adders instead of dying at temp variables (see [`Self::bv_neg`]).
     pub fn bv_sub(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
@@ -1888,7 +1888,7 @@ impl BvSolver {
 
     /// Env-gated diagnostic (`NIXIE_DUMP_CNF`): write the embedded SAT
     /// instance as DIMACS so an external solver can be run on EXACTLY the
-    /// clauses this solver's search sees — the blast-vs-search split.
+    /// clauses this solver's search sees – the blast-vs-search split.
     #[cfg(feature = "std")]
     pub fn debug_dump_cnf(&self, path: &str) {
         self.sat.debug_dump_cnf(path);
@@ -1917,7 +1917,7 @@ impl BvSolver {
     /// abstracted ([`Self::abstract_mul`]) instead of bit-blasted; every
     /// other case (abstraction off, too narrow, or a constant operand whose
     /// exact circuit constant-folds cheaply) takes the exact circuit.  With
-    /// abstraction off this is `bv_mul` exactly — the general CDCL(T) path's
+    /// abstraction off this is `bv_mul` exactly – the general CDCL(T) path's
     /// clause stream is unchanged.
     pub fn bv_mul_or_abstract(
         &mut self,
@@ -1960,7 +1960,7 @@ impl BvSolver {
         core::mem::take(&mut self.mul_abstractions)
     }
 
-    /// CEGAR tier 1 — abstract one `bvmul` (Niemetz/Preiner/Zohar,
+    /// CEGAR tier 1 – abstract one `bvmul` (Niemetz/Preiner/Zohar,
     /// *Scalable Bit-Blasting with Abstractions*).
     ///
     /// The exact multiplier circuit is replaced by fresh, unconstrained
@@ -1985,7 +1985,7 @@ impl BvSolver {
             return false;
         };
 
-        // zero-detect(a): AND of NOT a_i (folds through constants — a
+        // zero-detect(a): AND of NOT a_i (folds through constants – a
         // provably-nonzero operand makes the implication vacuous, `Sig::False`).
         let mut zero_a = Sig::True;
         for &bit in &va.bits {
@@ -2093,12 +2093,12 @@ impl BvSolver {
         true
     }
 
-    /// CEGAR tier 1 — abstract one `bvudiv`/`bvurem` (see
+    /// CEGAR tier 1 – abstract one `bvudiv`/`bvurem` (see
     /// [`Self::abstract_mul`]; same relaxation argument, exact semantics
     /// = SMT-LIB division: divisor 0 ⇒ all-ones (`udiv`) / dividend
     /// (`urem`)).  Tier-1 lemmas:
     ///
-    /// * `b = 0 → udiv = 1…1` and `b = 0 → urem = a` — these are the
+    /// * `b = 0 → udiv = 1…1` and `b = 0 → urem = a` – these are the
     ///   *exact* SMT-LIB zero-divisor semantics, so the abstraction is
     ///   already complete on that case;
     /// * `b = 1 → udiv = a`, `b = 1 → urem = 0`;
@@ -2295,7 +2295,7 @@ impl BvSolver {
         self.bv_urem(result, a, b)
     }
 
-    /// CEGAR tier 2 — value refinement for one abstraction under a spurious
+    /// CEGAR tier 2 – value refinement for one abstraction under a spurious
     /// model: the clause family `(a ≠ va ∨ b ≠ vb ∨ result = exact(va, vb))`,
     /// one clause per result bit with the exact SMT-LIB semantics of the
     /// abstracted operator ([`BvAbstraction::exact_value`]).  Blocks exactly
@@ -2433,9 +2433,9 @@ impl BvSolver {
     // ordinary signal variables and never emit a clause that unit propagation
     // would immediately subsume.
 
-    /// Whether IR mode is on (`NIXIE_BV_IR=1`; default off — experiment).
+    /// Whether IR mode is on (`NIXIE_BV_IR=1`; default off – experiment).
     /// Whether `bvmul` encodes as z3's row-array multiplier
-    /// (`NIXIE_BV_MUL_ARRAY=1`; default off — the carry-save tree is the
+    /// (`NIXIE_BV_MUL_ARRAY=1`; default off – the carry-save tree is the
     /// landed default pending the corpus A/B).
     fn mul_array_default() -> bool {
         #[cfg(feature = "std")]
@@ -2453,7 +2453,7 @@ impl BvSolver {
     ///
     /// Identical gate nodes (`and`/`or`/`xor` over the same operand vars,
     /// order-insensitive) share one SAT variable instead of allocating a
-    /// fresh one and re-emitting the Tseitin clauses — the eager analog of
+    /// fresh one and re-emitting the Tseitin clauses – the eager analog of
     /// Z3 building its blast circuits over the hash-consed expression DAG.
     /// Measured default-flip evidence (2026-11-15, see
     /// `docs/studies/2026-11-15-bv-andfold-soundness-and-termrules.md`):
@@ -2496,7 +2496,7 @@ impl BvSolver {
     }
 
     /// The IR literal of a bit variable: its recorded definition's node
-    /// (inlined — the var itself disappears from the circuit) or a fresh
+    /// (inlined – the var itself disappears from the circuit) or a fresh
     /// leaf node.
     fn ir_of_var(&mut self, v: Var) -> u32 {
         if let Some(&code) = self.ir_defs.get(&v) {
@@ -2528,7 +2528,7 @@ impl BvSolver {
         // Seed the constant re-fold from the SAT core's permanent units:
         // at decision level 0 the trail holds exactly the level-0 facts
         // (asserted constants, top-level units), and a leaf var assigned
-        // there is a constant for the whole instance — every IR node over
+        // there is a constant for the whole instance – every IR node over
         // it can fold, and dead structure never reaches the Tseitin pass.
         // Mid-search materialization (pending-atom windows) skips the
         // seeding: assignments above level 0 are not permanent facts.
@@ -2703,7 +2703,7 @@ impl BvSolver {
     /// Active only while [`Self::is_unified`]: the rewritten entry claims
     /// the bit is *permanently* constant, which is exactly true for
     /// base-scope, never-popped clauses (unified generations), and false
-    /// under the embedded path's scoped pins — a popped pin would leave the
+    /// under the embedded path's scoped pins – a popped pin would leave the
     /// entry asserting a constant the retracted scope alone justified.  The
     /// lazy path keeps its historical byte-identical behaviour.
     ///
@@ -2734,7 +2734,7 @@ impl BvSolver {
     }
 
     /// Default for constant-flow canonicalization (`NIXIE_BV_CONST_FLOW=1`
-    /// enables; default off — see the field doc for the measurement).  Read
+    /// enables; default off – see the field doc for the measurement).  Read
     /// once per `BvSolver` construction so tests can construct either mode.
     fn const_flow_default() -> bool {
         #[cfg(feature = "std")]
@@ -2921,7 +2921,7 @@ impl BvSolver {
         self.define([Lit::pos(out), Lit::neg(b)]);
     }
 
-    /// OR with constant folding.  IR mode: `or = ¬and(¬x, ¬y)` — a
+    /// OR with constant folding.  IR mode: `or = ¬and(¬x, ¬y)` – a
     /// complement edge of the shared and node.
     fn gate_or(&mut self, a: Sig, b: Sig) -> Sig {
         match (a, b) {
@@ -3077,7 +3077,7 @@ impl BvSolver {
 
     /// Multiplexer with constant folding.  IR mode: decomposed through
     /// the shared and/or nodes (`(s∧t) ∨ (¬s∧f)`) so every input
-    /// polarity is carried by construction — no dedicated mux node, no
+    /// polarity is carried by construction – no dedicated mux node, no
     /// polarity bookkeeping to get wrong.
     fn gate_mux(&mut self, sel: Sig, if_true: Sig, if_false: Sig) -> Sig {
         if self.ir.is_some() && !matches!(sel, Sig::True | Sig::False) {
@@ -3192,7 +3192,7 @@ impl BvSolver {
     /// the sum signals (the caller wires or installs them).
     ///
     /// Pure signal-level (no result variables are allocated), so a constant
-    /// operand collapses the whole chain to constants — the encoding-side
+    /// operand collapses the whole chain to constants – the encoding-side
     /// twin of [`Self::encode_add_const`], which delegates here.
     fn add_const_sigs(&mut self, a: &[Sig], constant: u64) -> SmallVec<[Sig; 32]> {
         let mut sums: SmallVec<[Sig; 32]> = SmallVec::with_capacity(a.len());
@@ -3201,7 +3201,7 @@ impl BvSolver {
             // `constant` is u64: bit positions >= 64 are structurally zero.
             // Reading `(constant >> i)` there overflows in debug and WRAPS
             // in release (`>> i` masks the shift amount modulo 64), which
-            // re-read bit `i % 64` of the constant — a silent wrong-bit
+            // re-read bit `i % 64` of the constant – a silent wrong-bit
             // encode.  This was the nlzbs128 false-sat: `bvsub` at width 128
             // encoded `-b = ~b + 2^64 + 1` instead of `~b + 1`
             // (docs/handovers/2026-09-09-bv-false-sat.md).
@@ -3337,14 +3337,14 @@ impl BvSolver {
         // diagonal accumulation where row `i` sums the partial products
         // `a[j]&b[i-j]` with a half adder on the first two, full adders on
         // the rest, and the carry-outs feeding the *next* row's carry-ins
-        // (`cins.swap(couts)` — carries ripple diagonally, not column-wise
+        // (`cins.swap(couts)` – carries ripple diagonally, not column-wise
         // as in our carry-save tree).  On the `smulov` family the resulting
         // CNF is dramatically easier for resolution: cadical needs ~35 s on
         // the carry-save CNF of `smulov1bw12` (3118 vars / 9167 clauses)
-        // where z3 decides the whole file in 6.7 s — the row-array decides
+        // where z3 decides the whole file in 6.7 s – the row-array decides
         // it in ~3 s.  **Width-bounded at 64**: the diagonal carry chain is
         // O(w) deep, and on wide multipliers (`smulov3bw0512/0768`, muls at
-        // 1024 bits) the carry-save tree's O(log w) depth wins — the
+        // 1024 bits) the carry-save tree's O(log w) depth wins – the
         // ungated flag measured a real regression there (4 s → >25 s).
         // Default off behind `NIXIE_BV_MUL_ARRAY=1` pending a default-on
         // gate screen.
@@ -3422,7 +3422,7 @@ impl BvSolver {
                     out = sum;
                     couts.push(cout);
                 } else {
-                    // Last row: carry-outs would leave the word — consume
+                    // Last row: carry-outs would leave the word – consume
                     // the carry-ins in the sum and drop them (z3's mk_xor3).
                     let hi = self.gate_xor(i3, out);
                     out = self.gate_xor(hi, cins[j - 2]);

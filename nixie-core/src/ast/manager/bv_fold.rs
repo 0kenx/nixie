@@ -66,7 +66,7 @@ pub fn bv_wrap_unsigned(value: &BigInt, width: u32) -> BigInt {
     }
     // In-range fast paths (the overwhelmingly common case for fold
     // results): |value| < 2^width needs no `modulus` allocation and no
-    // BigInt division — the substitution fixpoints re-wrap thousands of
+    // BigInt division – the substitution fixpoints re-wrap thousands of
     // small constants per round (bzip2recover-class cells spent 15 % of
     // the run in exactly the modulus alloc + `%` this skips).
     let bits = value.bits();
@@ -89,7 +89,7 @@ pub fn bv_wrap_unsigned(value: &BigInt, width: u32) -> BigInt {
 /// The owned form of [`bv_wrap_unsigned`] for callers that just built the
 /// value in a temporary (`bv_wrap_unsigned_owned(lhs + rhs, width)` instead
 /// of `bv_wrap_unsigned(&(lhs + rhs), width)`): the in-range fast path
-/// returns the value unchanged — no allocation at all, where the borrowed
+/// returns the value unchanged – no allocation at all, where the borrowed
 /// form must clone it.  Identical results by construction.
 #[must_use]
 pub fn bv_wrap_unsigned_owned(value: BigInt, width: u32) -> BigInt {
@@ -129,7 +129,7 @@ pub fn to_signed(value: &BigInt, width: u32) -> BigInt {
     if width == 0 {
         return BigInt::ZERO;
     }
-    // Fast path: `value < 2^(width-1)` (and non-negative — callers pass
+    // Fast path: `value < 2^(width-1)` (and non-negative – callers pass
     // wrapped unsigned values) is already its own signed value; `bits()`
     // is the magnitude's bit length, so `bits() < width` skips both the
     // `1 << (width-1)` allocation and the comparison's bignum path.
@@ -405,7 +405,7 @@ mod tests {
 
     /// Regression (9953e791): the in-range fast paths (keyed on the
     /// magnitude's `bits() <= width`) must agree with the modulus slow
-    /// path on every boundary — the identity that made the fast paths
+    /// path on every boundary – the identity that made the fast paths
     /// landable as pure-perf.  Straddles `bits() == width-1 / width /
     /// width+1` (via 2^(w-1) and 2^w offsets), zero, and the negative
     /// mirrors (whose fast path is the one-add form).

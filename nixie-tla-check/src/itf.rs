@@ -3,7 +3,7 @@
 //! ITF is Apalache's JSON counterexample format, specified in its ADR-015. It
 //! is the interface every downstream consumer already speaks: `itf-rs` and
 //! `itf-py` parse it, the VSCode trace viewer renders it, Quint emits it, and
-//! `tla-connect` — model-based testing for Rust — collects `*.itf.json` from a
+//! `tla-connect` – model-based testing for Rust – collects `*.itf.json` from a
 //! model checker and replays each trace against a `Driver`.
 //!
 //! So this is what makes a Nixie counterexample *usable* rather than merely
@@ -30,7 +30,7 @@
 //!
 //! ITF has both a list (`[…]`, "TLA+ sequences are written as lists") and a
 //! tuple (`{"#tup": […]}`), and says there is no strict rule about which to
-//! use — Apalache picks by the *type* it inferred. TLA+ itself does not
+//! use – Apalache picks by the *type* it inferred. TLA+ itself does not
 //! distinguish: a sequence **is** a function on `1..n`, which is what
 //! `nixie_tla::Value::fun` normalises to a tuple, so there is nothing here to
 //! pick by. Everything sequence-shaped is written as `#tup`, which `itf-rs`
@@ -39,8 +39,8 @@
 //!
 //! # Integers
 //!
-//! Always `{"#bigint": "…"}`, never a JSON number. ADR-015 requires it — "big
-//! and small integers *must be* written in this format" — because JSON parsers
+//! Always `{"#bigint": "…"}`, never a JSON number. ADR-015 requires it – "big
+//! and small integers *must be* written in this format" – because JSON parsers
 //! impose their own limits, and a TLA+ integer is unbounded.
 
 use crate::trace::Trace;

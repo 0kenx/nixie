@@ -1,7 +1,7 @@
 //! TLC configuration files (`.cfg`).
 //!
 //! A TLA+ specification does not name its own entry points or fix its own
-//! constants — the `.cfg` beside it does. `MCChangRoberts.cfg` says
+//! constants – the `.cfg` beside it does. `MCChangRoberts.cfg` says
 //! `CONSTANT N = 3`, and without it `N` is an arbitrary integer and `1..N` has
 //! no enumerable member list. The checker that ignores the file is answering a
 //! strictly harder question than the one the author asked, which manufactures
@@ -36,7 +36,7 @@
 //! On the right of `=`, an identifier is a **model value**: an uninterpreted
 //! constant, distinct from every other model value and from every integer,
 //! string and set (*Specifying Systems* §14.5.3). `CONSTANT NoVal = NoVal` is
-//! not circular — it pins `NoVal` to a value nothing else can equal. That is
+//! not circular – it pins `NoVal` to a value nothing else can equal. That is
 //! the one piece of `.cfg` semantics that is not syntax, and getting it wrong
 //! in the permissive direction (two model values allowed to be equal) loses
 //! counterexamples.
@@ -128,9 +128,9 @@ pub enum ConfigValue {
     ///
     /// Recorded **uninterpreted**. It is not in TLC's published EBNF and
     /// Apalache's parser rejects it, so there is no specification to follow
-    /// here; the two readings available from the text — "replace `Nano`'s
+    /// here; the two readings available from the text – "replace `Nano`'s
     /// definition with `NoHashVal`" and "the value `NoHashVal` has inside
-    /// `Nano`" — happen to agree on this file and need not agree in general.
+    /// `Nano`" – happen to agree on this file and need not agree in general.
     /// Rather than pick one, the syntax is kept as written so a consumer has
     /// to decide explicitly, and the closed enum makes that a compile error
     /// rather than an omission.
@@ -151,7 +151,7 @@ pub struct Replacement {
     /// *inside*.
     ///
     /// TLC's published EBNF does not have this form and Apalache's parser
-    /// rejects it, but real configurations use it — `MCPaxos.cfg` writes
+    /// rejects it, but real configurations use it – `MCPaxos.cfg` writes
     /// `Ballot <-[Voting] MCBallot` to replace `Ballot` within the `Voting`
     /// instance rather than at the top level. Parsed and kept distinct rather
     /// than flattened onto an unqualified replacement, because the two mean
@@ -191,19 +191,19 @@ pub struct TlcConfig {
     pub behavior: BehaviorSpec,
     /// `INVARIANT` / `INVARIANTS`.
     pub invariants: Vec<String>,
-    /// `PROPERTY` / `PROPERTIES` — temporal, not checked by a BMC pass.
+    /// `PROPERTY` / `PROPERTIES` – temporal, not checked by a BMC pass.
     pub properties: Vec<String>,
     /// `CONSTRAINT` / `CONSTRAINTS`: a state predicate bounding the search.
     pub state_constraints: Vec<String>,
     /// `ACTION_CONSTRAINT` / `ACTION_CONSTRAINTS`: the same over a step.
     pub action_constraints: Vec<String>,
-    /// `SYMMETRY` — recorded, not acted on.
+    /// `SYMMETRY` – recorded, not acted on.
     pub symmetry: Option<String>,
-    /// `VIEW` — recorded, not acted on.
+    /// `VIEW` – recorded, not acted on.
     pub view: Option<String>,
-    /// `ALIAS` — recorded, not acted on.
+    /// `ALIAS` – recorded, not acted on.
     pub alias: Option<String>,
-    /// `POSTCONDITION` — recorded, not acted on.
+    /// `POSTCONDITION` – recorded, not acted on.
     pub postcondition: Option<String>,
     /// `CHECK_DEADLOCK`, absent when the file does not say.
     pub check_deadlock: Option<bool>,
@@ -258,7 +258,7 @@ impl TlcConfig {
     /// Reported separately because applying one needs `INSTANCE` substitution,
     /// which the lowering pass does not do yet. A caller that ignores these is
     /// checking the specification *without* the author's replacement, which
-    /// can change the answer in either direction — so it has to be visible
+    /// can change the answer in either direction – so it has to be visible
     /// rather than absorbed.
     #[must_use]
     pub fn module_qualified_replacements(&self) -> Vec<(&str, &str, &str)> {
@@ -381,7 +381,7 @@ type Result<T> = core::result::Result<T, ConfigError>;
 
 /// Split a `.cfg` into tokens, dropping comments.
 ///
-/// Explicit index walk: a `.cfg` is small, but the same discipline applies —
+/// Explicit index walk: a `.cfg` is small, but the same discipline applies –
 /// nothing here recurses on input. Line and column are tracked as the walk
 /// advances, so every token carries a position an editor can jump to, which is
 /// the whole crate's standard for diagnostics.
@@ -598,8 +598,8 @@ fn is_op_char(c: char) -> bool {
 
 /// Whether a spelling is a TLA+ operator this crate knows.
 ///
-/// Uses the crate's own operator table — the same one the expression parser
-/// reads — rather than a second list that could drift from it.
+/// Uses the crate's own operator table – the same one the expression parser
+/// reads – rather than a second list that could drift from it.
 fn is_operator(word: &str) -> bool {
     crate::op::infix_info(word).is_some()
         || crate::op::prefix_info(word).is_some()

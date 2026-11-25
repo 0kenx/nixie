@@ -1,4 +1,4 @@
-# Handoff: the bags arc, part three — `bag.map` and `bag.filter` land over unary functions
+# Handoff: the bags arc, part three – `bag.map` and `bag.filter` land over unary functions
 
 **Date:** 2026-09-17 (evening)
 **Landed by:** the bags arc continuation (commit `98e8e773`; binary cached
@@ -11,9 +11,9 @@ list (`bag.map`/`bag.filter`; `bag.fold` stays rejected).
 ## What landed
 
 `bag.map` and `bag.filter` end to end, for the fragment nixie's surface
-can carry: a bare **unary function symbol** —
+can carry: a bare **unary function symbol** –
 
-- a `define-fun` (the body is **inlined per element** by the reduction —
+- a `define-fun` (the body is **inlined per element** by the reduction –
   exactly the parser's call-site substitution, so the reduction's images
   and the user's `(f x)` spellings are one hash-consed term), or
 - a `declare-fun` (the image is an ordinary `Apply` the EUF layer owns;
@@ -28,16 +28,16 @@ a term here.
 The reduction:
 
 - the **map images join the codomain element list** (inlined+folded, or
-  EUF applies) — without them the codomain's list can be empty and the
+  EUF applies) – without them the codomain's list can be empty and the
   identities state nothing (the vacuity the support walk exists to
   prevent);
 - `count(y, map f b) = Σ_x ite(f(x) = y, count(x, b), 0)` over
   **distinct-valued** domain elements (the cardinality sum's dedup
   guards); exact over a closed domain, and over an opaque one it carries
-  a **nonnegative slack** — without the slack the encoding claimed the
+  a **nonnegative slack** – without the slack the encoding claimed the
   unknown support contributes nothing and `count(5, map f b) = 1` with no
   known preimage *refuted* (a false unsat, the worst class);
-- `count(x, filter p b) = ite(p(x), count(x, b), 0)` — exact per element
+- `count(x, filter p b) = ite(p(x), count(x, b), 0)` – exact per element
   (filter only removes);
 - `|map f b| = |b|` **exactly** (f is total: every copy maps to one copy)
   and `|filter p b| ≤ |b|`; map/filter of closed bags are closed.
@@ -50,12 +50,12 @@ function that leaks an uninterpreted app the definition never constrains
 (`Solver::bag_fun_defs`, recorded by the Context on unary `define-fun`).
 
 Models: map/filter values assemble from their counts; a **query-only**
-map/filter (never asserted) completes from the domain's installed cells —
-images folded per cell, merged by value, multiplicities summed — in the
+map/filter (never asserted) completes from the domain's installed cells –
+images folded per cell, merged by value, multiplicities summed – in the
 same pre-fold sweep as query-only choose.
 
 `set-logic` now resolves a `HO_`-prefixed name as its base logic (nixie
-has no function sorts, so the prefix carries nothing extra to honor) —
+has no function sorts, so the prefix carries nothing extra to honor) –
 this is what makes differential scripts both tools accept, since CVC5
 gates function symbols-as-operator-arguments behind `HO_`.
 
@@ -64,7 +64,7 @@ gates function symbols-as-operator-arguments behind `HO_`.
 450 fuzz seeds vs CVC5 1.3.4 over the extended fragment (defined and
 declared functions, map/filter nested in compounds, function-value
 pins): **0 wrong verdicts**; 38 nixie timeouts (≈8%, the known
-eager-reduction cost class — map/filter roughly double the identity
+eager-reduction cost class – map/filter roughly double the identity
 products) and 20 cvc5 timeouts (excluded by protocol). Two false-verdict
 regressions found by hand probes during development are pinned in
 `finite_bags_core.rs` (the builder's leaked apply; the missing
@@ -74,21 +74,21 @@ counters).
 
 ## Open chores (in value order)
 
-1. **`bag.fold`** — still rejected. CVC5's reduction is a bounded
+1. **`bag.fold`** – still rejected. CVC5's reduction is a bounded
    quantifier over skolem families (`BAGS_FOLD_CARD`/`ELEMENTS`/
-   `UNION_DISJOINT`/`COMBINE`, `bag_reduction.cpp`) — not compilable to
+   `UNION_DISJOINT`/`COMBINE`, `bag_reduction.cpp`) – not compilable to
    the eager ground reduction; needs either a quantified axiom path or a
    CVC5-style lazy lemma scheme. `bag.all`/`bag.some` are filter
    equalities CVC5-side (`all p b ⇔ filter p b = b`,
    `some p b ⇔ filter p b ≠ ∅`) and could lower through the landed
-   filter — a small slice if ever needed.
+   filter – a small slice if ever needed.
 2. **Perf**: the ~8% timeout share on depth-2 random shapes (part two's
    chore 2, now bigger). Ideas stand: skip identities for elements a
    closed compound's support cannot contain; equality-connected-only
    element congruence; lazy map axioms.
-3. **`(assert x)` with non-Bool `x`** answers `sat` — unchanged from
+3. **`(assert x)` with non-Bool `x`** answers `sat` – unchanged from
    part two's chore 3 (the parser owner's fix).
-4. **Cap re-measurement** (`MAX_BAG_ELEMENTS`/`MAX_BAG_PAIRS`) —
+4. **Cap re-measurement** (`MAX_BAG_ELEMENTS`/`MAX_BAG_PAIRS`) –
    unchanged.
 
 ## Environment notes
@@ -97,14 +97,14 @@ counters).
   (a vanished release binary; a corrupted debug deps dir). The reliable
   pattern: keep a **private** `CARGO_TARGET_DIR` for verification runs
   and delete it after caching the binary. Disk is the recurring
-  constraint: /media/data hit 99% and /tmp (the root disk) hit 100% —
+  constraint: /media/data hit 99% and /tmp (the root disk) hit 100% –
   point `TMPDIR` at /media/data for fuzz campaigns, and delete
   worktree/target leftovers immediately.
 - Two slow tests (`arith_incremental_matches_replay_fuzz`,
   `re_running_the_search_on_an_unchanged_goal_converges`) time out under
-  3-agent parallel load while passing at `-j 8` — cap nextest concurrency
+  3-agent parallel load while passing at `-j 8` – cap nextest concurrency
   when the machine is contended, and re-run suspects standalone before
   believing a failure.
 - CVC5 1.3.4 rejects `(bag.map f b)` under every non-HO logic and errors
-  (not warns) under `-q` when no `set-logic` was given — differential
+  (not warns) under `-q` when no `set-logic` was given – differential
   scripts want `(set-logic HO_ALL)` and stderr-free verdict reads.

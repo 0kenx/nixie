@@ -211,9 +211,9 @@ pub fn build(seed: u64, p: &Params) -> Result<Data, String> {
     Ok(d)
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Emission
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn shannon(vars: &[String], table: &[bool], bit: usize, base: usize) -> String {
     if bit == vars.len() {

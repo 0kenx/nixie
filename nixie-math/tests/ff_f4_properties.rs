@@ -2,7 +2,7 @@
 //! F4 must compute a Gröbner basis of the SAME ideal as the Buchberger
 //! engine on identical inputs. The strongest check is mutual ideal
 //! membership (every F4 element reduces to 0 modulo the Buchberger basis
-//! and vice versa — the property every downstream consumer relies on),
+//! and vice versa – the property every downstream consumer relies on),
 //! plus leading-monomial agreement on the reduced bases, determinism
 //! across re-runs, constant detection on inconsistent systems, and
 //! budget refusal.
@@ -14,7 +14,7 @@ use nixie_math::polynomial::Monomial;
 use num_bigint::BigUint;
 
 /// Random product-of-affine-forms system (the family whose validation
-/// surfaced the engine's missed-refutation bug — see
+/// surfaced the engine's missed-refutation bug – see
 /// ff_gb_seed_dedup_regression.rs; some of these systems are whole-ring).
 fn system(f: &FieldCtx, seed: u64, nvars: usize, ncons: usize) -> Vec<MPoly> {
     let c = |v: i64| f.from_bigint(&num_bigint::BigInt::from(v));
@@ -67,7 +67,7 @@ fn f4_and_buchberger_bases_agree() {
         (0xC0FF_EE00, 8, 8),
         (0x5EED_0042, 12, 12),
         // Hardened 2026-09-18: the original four seeds passed WITH the
-        // unsound kills (trajectory luck — the kill circles never fired
+        // unsound kills (trajectory luck – the kill circles never fired
         // on them). These shapes exercise more admission orders.
         (0x1111_0001, 4, 5),
         (0x2222_0002, 5, 7),
@@ -76,7 +76,7 @@ fn f4_and_buchberger_bases_agree() {
     ] {
         let inputs = system(&f, seed, nvars, ncons);
         // F4's budget: with VERIFIED supersession (the unsound bare
-        // kill removed 2026-09-18 — it cost less but lost whole-ring
+        // kill removed 2026-09-18 – it cost less but lost whole-ring
         // refutations), 2^30 covers the completing shapes so the
         // agreement is CHECKED rather than silently accepted by the
         // (Err, Err) arm.
@@ -107,7 +107,7 @@ fn f4_and_buchberger_bases_agree() {
                         .unwrap_or(MPoly::zero());
                     assert!(
                         nf.is_zero(),
-                        "Buchberger element not in the F4 ideal ({nvars}x{ncons}) — F4 dropped an element"
+                        "Buchberger element not in the F4 ideal ({nvars}x{ncons}) – F4 dropped an element"
                     );
                 }
                 let mut bb_lms: Vec<String> = bb
@@ -137,7 +137,7 @@ fn f4_and_buchberger_bases_agree() {
 fn f4_is_deterministic() {
     let f = FieldCtx::new(BigUint::from(2u64.pow(31) - 1)).unwrap();
     // 5x6 under verified supersession (2026-09-18): the old 9x10 shape
-    // needs >2^30 now — the supersession-verification reductions are
+    // needs >2^30 now – the supersession-verification reductions are
     // real work the unsound bare kill skipped. Determinism is a
     // structural property; any completing shape pins it, and the
     // agreement test covers 8x8 at full budget.

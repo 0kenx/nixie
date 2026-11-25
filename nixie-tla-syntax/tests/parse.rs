@@ -22,7 +22,7 @@ fn expr_err(src: &str) -> ErrorKind {
     }
 }
 
-// ---- lexing ----------------------------------------------------------------
+// ======== lexing ========
 
 #[test]
 fn based_numerals_are_not_confused_with_operators() {
@@ -119,7 +119,7 @@ fn unterminated_block_comment_is_an_error() {
     ));
 }
 
-// ---- precedence ------------------------------------------------------------
+// ======== precedence ========
 
 #[test]
 fn precedence_ranges_bind_as_expected() {
@@ -138,7 +138,7 @@ fn precedence_ranges_bind_as_expected() {
 
 #[test]
 fn overlapping_precedence_is_a_named_conflict() {
-    // `=` and `<` both sit at 5-5, so `a = b < c` is an error in TLA+ — and
+    // `=` and `<` both sit at 5-5, so `a = b < c` is an error in TLA+ – and
     // the diagnostic must name both operators, which is the whole reason this
     // crate uses Pratt rather than a generated table.
     let err = expr_err("a = b < c");
@@ -182,7 +182,7 @@ fn unary_minus_is_distinct_from_subtraction() {
     ));
 }
 
-// ---- layout ----------------------------------------------------------------
+// ======== layout ========
 
 #[test]
 fn junction_list_versus_infix_junction() {
@@ -239,7 +239,7 @@ fn junction_list_terminates_at_a_closing_bracket() {
     assert!(matches!(args[0].kind, ExprKind::Junction { .. }));
 }
 
-// ---- the six-way `[` ------------------------------------------------------
+// ======== the six-way `[` ========
 
 #[test]
 fn bracket_forms_are_distinguished() {
@@ -333,7 +333,7 @@ fn except_paths_and_at() {
     assert_eq!(lhs.kind, ExprKind::At);
 }
 
-// ---- braces ----------------------------------------------------------------
+// ======== braces ========
 
 #[test]
 fn brace_forms_are_distinguished() {
@@ -358,7 +358,7 @@ fn brace_forms_are_distinguished() {
     ));
 }
 
-// ---- binders ---------------------------------------------------------------
+// ======== binders ========
 
 #[test]
 fn quantifiers_bounded_and_unbounded() {
@@ -455,7 +455,7 @@ fn qualified_names_and_application() {
     assert!(matches!(expr("r.a.b").kind, ExprKind::Field { .. }));
 }
 
-// ---- modules and units -----------------------------------------------------
+// ======== modules and units ========
 
 #[test]
 fn a_realistic_module() {
@@ -598,7 +598,7 @@ A == 3
     );
 }
 
-// ---- rejections ------------------------------------------------------------
+// ======== rejections ========
 
 #[test]
 fn recursive_is_parsed_not_rejected() {
@@ -700,7 +700,7 @@ fn spans_point_at_the_offending_token() {
     assert_eq!(err.span.start.col, 7, "the `<` is at column 7");
 }
 
-// ---- regressions found by running the TLA+ examples / Apalache corpora -----
+// ======== regressions found by running the TLA+ examples / Apalache corpora ========
 
 #[test]
 fn prose_before_the_module_header_is_skipped() {
@@ -869,7 +869,7 @@ fn bracket_classification_is_not_fooled_by_binders() {
 
 #[test]
 fn brace_classification_is_not_fooled_by_binders() {
-    // `{CHOOSE x : x \in T}` — the colon belongs to the CHOOSE. Getting this
+    // `{CHOOSE x : x \in T}` – the colon belongs to the CHOOSE. Getting this
     // wrong broke the standard `FiniteSets` module.
     assert!(matches!(
         expr("{CHOOSE x : x \\in T}").kind,

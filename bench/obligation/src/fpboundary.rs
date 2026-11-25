@@ -1,13 +1,13 @@
 //! FP semantic boundary obligations (family `fpboundary`).
 //!
-//! Productions at the exact-arithmetic seams of the FloatingPoint theory —
+//! Productions at the exact-arithmetic seams of the FloatingPoint theory –
 //! the shapes where a sloppy rounding, a lost sign-of-zero, a truncating
 //! underflow or a datum-identity slip produces a WRONG answer (not just an
 //! unknown).  Every expected verdict is derived from an **exact oracle**
 //! inside the generator: std-only `u128`/`i128` integer arithmetic over the
 //! operands' planted bit patterns, rounded to the IEEE-754 double grid under
 //! the production's rounding mode.  No `f64` arithmetic participates in any
-//! expected answer — native f64 is correctly rounded RNE, but the directed
+//! expected answer – native f64 is correctly rounded RNE, but the directed
 //! modes, halfway ties, and subnormal corners are exactly where that is not
 //! enough.
 //!
@@ -35,9 +35,7 @@ pub struct Params {
     pub incremental: bool,
 }
 
-// ===========================================================================
-// Exact f64 model (std-only)
-// ===========================================================================
+// ======== Exact f64 model (std-only) ========
 
 const P: u32 = 53;
 const E_MIN: i32 = -1074; // subnormal unit scale (binary exponent of the LSB)
@@ -162,7 +160,7 @@ pub fn round_exact(neg: bool, num: u128, exp2: i32, rm: Rm) -> u64 {
     let normal_grid = bin_exp - (P as i32 - 1) >= E_MIN;
     if normal_grid && bin_exp - (P as i32 - 1) > E_MAX_BIN + 1 {
         // The exact value is beyond the normal range even before rounding:
-        // saturate per mode — the directed modes that point back inside
+        // saturate per mode – the directed modes that point back inside
         // (RTZ always; RTP for negatives; RTN for positives) clamp to the
         // maximum finite datum, everything else overflows to ±inf.
         return overflow_result(neg, rm);
@@ -174,7 +172,7 @@ pub fn round_exact(neg: bool, num: u128, exp2: i32, rm: Rm) -> u64 {
     } else {
         // The subnormal grid is ABSOLUTE (unit 2^E_MIN): the exact value
         // num·2^exp2 is `num·2^(exp2-E_MIN)` cells.  exp2 > E_MIN scales UP
-        // (exact — the value is a grid multiple); exp2 < E_MIN shifts down
+        // (exact – the value is a grid multiple); exp2 < E_MIN shifts down
         // with the dropped bits as the rounding remainder.
         (E_MIN - exp2, 1u128 << 52, E_MIN)
     };
@@ -243,12 +241,10 @@ pub fn round_exact(neg: bool, num: u128, exp2: i32, rm: Rm) -> u64 {
     }
 }
 
-// ===========================================================================
-// Exact operations (operand pairs planted within the bounds above)
-// ===========================================================================
+// ======== Exact operations (operand pairs planted within the bounds above) ========
 
 /// Exact `a ± b` as `(neg, num, exp2)`; `num` may be zero on exact
-/// cancellation (callers replant those — the sign of an exact zero is
+/// cancellation (callers replant those – the sign of an exact zero is
 /// mode-dependent and belongs to the analytic corners).
 fn exact_add(a: DecF64, b: DecF64, subtract: bool) -> (bool, u128, i32) {
     let sb = if subtract { !b.neg } else { b.neg };
@@ -275,7 +271,7 @@ fn exact_mul(a: DecF64, b: DecF64) -> (bool, u128, i32) {
 
 /// `a / b` where `b`'s significand is a power of two (the planted divisor
 /// pool guarantees it): the quotient is the EXACT value
-/// `± a.mant · 2^(a.exp2 - b.exp2 - k)` with `b.mant = 2^k` — no mantissa
+/// `± a.mant · 2^(a.exp2 - b.exp2 - k)` with `b.mant = 2^k` – no mantissa
 /// division exists, so the only rounding that can happen is the grid
 /// rounding of `round_exact` at the quotient's own scale (underflow and
 /// overflow corners included).  Inexact mantissa division is deliberately
@@ -296,9 +292,7 @@ fn round_div_pow2(a: DecF64, b: DecF64, rm: Rm) -> Option<u64> {
     ))
 }
 
-// ===========================================================================
-// Literals
-// ===========================================================================
+// ======== Literals ========
 
 #[doc(hidden)]
 pub fn lit(bits: u64) -> String {
@@ -315,9 +309,7 @@ fn is_nan_bits(bits: u64) -> bool {
     ((bits >> 52) & 0x7ff) == 0x7ff && (bits & ((1u64 << 52) - 1)) != 0
 }
 
-// ===========================================================================
-// Instances
-// ===========================================================================
+// ======== Instances ========
 
 struct Ctx {
     out: Vec<Instance>,
@@ -408,7 +400,7 @@ fn fold_instances(ctx: &mut Ctx, rng: &mut Rng, count: usize) {
                     }
                     // Exact cancellation (sub of equals, add of opposites):
                     // the sign of an exact zero is mode-dependent, which
-                    // belongs to the analytic corners — replant.
+                    // belongs to the analytic corners – replant.
                     let aligned_equal = |x: &DecF64, y: &DecF64| -> bool {
                         if x.exp2 >= y.exp2 {
                             (x.mant as u128) << (x.exp2 - y.exp2) == y.mant as u128
@@ -446,8 +438,8 @@ fn fold_instances(ctx: &mut Ctx, rng: &mut Rng, count: usize) {
             },
         };
         if is_nan_bits(correct) {
-            // NaN results (0/0-shaped divisions cannot occur — both operands
-            // are nonzero — but underflow-to-NaN edges are out of scope).
+            // NaN results (0/0-shaped divisions cannot occur – both operands
+            // are nonzero – but underflow-to-NaN edges are out of scope).
             continue;
         }
         // The wrong datum: the neighbouring finite bit pattern (inf results
@@ -794,7 +786,7 @@ pub fn generate(seed: u64, p: &Params, suffix: &str) -> Result<Vec<Instance>, St
             Some("scope 2 after pop: any model".into()),
             "Scope 1 pins x, folds x+x = 2.0000001… and asserts the wrong \
              datum (unsat by the fold + value marks); pop retracts the fold \
-             lemmas and marks with the scope, so scope 2 is trivially sat — \
+             lemmas and marks with the scope, so scope 2 is trivially sat – \
              pinning the pop journal of the FP fold layer."
                 .into(),
         );

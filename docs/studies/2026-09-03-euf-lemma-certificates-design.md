@@ -1,4 +1,4 @@
-# EUF theory-lemma certificates for certified `unsat` — grounded design (2026-09-03)
+# EUF theory-lemma certificates for certified `unsat` – grounded design (2026-09-03)
 
 Status: **designed, not implemented**. Every code surface below was verified
 against the tree at `be0587e`; file:line references are live. This document
@@ -9,7 +9,7 @@ found so they are not rediscovered.
 
 The certified-path re-measure (`2026-09-02-lrat-default-path.md`, addenda
 6–7) bounds the remaining gap: certified `unsat` still fails closed to
-`unknown` whenever the refutation needs theory semantics — **39/46 unsat
+`unknown` whenever the refutation needs theory semantics – **39/46 unsat
 QF_UF cells and 23/29 unsat QF_LIA cells** in the stratified sample. The
 UF `sat` side is closed (addendum 7); this is the certified-`unsat`
 frontier named there.
@@ -24,13 +24,13 @@ skeleton ∪ verified-lemmas:
 
 1. **Lemma recording** (main run). Theory facts surface at exactly two
    shapes in the CDCL(T) loop:
-   * conflicts: `TheoryCheckResult::Conflict(lits)` — the conflict clause
+   * conflicts: `TheoryCheckResult::Conflict(lits)` – the conflict clause
      is a valid EUF lemma (nixie-sat `solver/mod.rs:168-175`, consumed at
      `search_ext.rs:201` and `:413`);
-   * propagations: `TheoryCheckResult::Propagated((lit, reason_lits))` —
+   * propagations: `TheoryCheckResult::Propagated((lit, reason_lits))` –
      the explanation clause `lit ∨ ¬r₁ ∨ … ∨ ¬rₖ` is materialized by
      `add_theory_reason_clause` (`learn.rs:489`); the lazy-reason path
-     (`assign_theory_propagation`) keeps the same clause immaterialized —
+     (`assign_theory_propagation`) keeps the same clause immaterialized –
      record it anyway (it participates in conflict analysis and hence in
      the final refutation).
    Add `fn record_lemma(&mut self, _clause: &[Lit]) {}` (default no-op) to
@@ -41,35 +41,35 @@ skeleton ∪ verified-lemmas:
    (`check_core`, `solver/mod.rs:1646`, recreated at rebase sites
    1836/1880/1966), so the log cannot live on it. It already holds
    `&mut DerivedReasons` (Solver-owned, `theory_manager.rs:583`
-   constructor) — extend `DerivedReasons` (`theory_manager/derived_reasons.rs:68`)
+   constructor) – extend `DerivedReasons` (`theory_manager/derived_reasons.rs:68`)
    with `theory_lemmas: Vec<Vec<(TermId, bool)>>` + a poisoned flag.
    `record_lemma` maps each SAT lit through `var_to_term`
    (`Vec<TermId>` indexed by var) to its atom term; a literal whose term is
    not `TermKind::Eq` over non-Bool operands sets **poisoned** (the gate
-   then declines — QF_UF scope only). Dedup by sorted (term, polarity) key.
+   then declines – QF_UF scope only). Dedup by sorted (term, polarity) key.
    The log is *never* cleared on theory reset (lemmas stay valid clauses);
    clear it at `check_core` entry (per-goal hygiene).
 
 3. **Independent CC verification** (gate). `certify_unsat`
    (`certification.rs`) extends `BooleanLratChecker::assert_all` with the
    lemma pass: for each recorded lemma, run a small congruence closure over
-   the lemma's own literals — union the positive `Eq`s, collect the
+   the lemma's own literals – union the positive `Eq`s, collect the
    negative `Eq`s as pending disequalities, close under congruence
    (signature table over `Apply` terms, fixpoint), then check a pending
    pair merged. Merged ⇒ the lemma's conjunction is EUF-unsatisfiable ⇒ the
    clause is valid ⇒ encode it (`encode` already abstracts non-Bool `Eq`
    as atoms, `certification.rs` encode arm
    `True | False | Var | Eq => {}`) and buffer it. Any lemma that FAILS CC
-   rejects the whole certification (a wrong lemma means the theory lied —
+   rejects the whole certification (a wrong lemma means the theory lied –
    fail closed, never skip-and-continue). Poisoned log ⇒ skeleton-only
    behavior (today's).
 
 4. **Distinct.** The gate's skeleton encode abstracts `Distinct(args)` as
    one opaque atom, but the theory's disequality facts surface as `¬Eq`
-   literals — the link `distinct ⇒ pairwise ¬Eq` is missing and the
+   literals – the link `distinct ⇒ pairwise ¬Eq` is missing and the
    refutation will not close. Encode `Distinct` structurally in the gate:
    fresh var `D` plus `(¬D ∨ ¬Eq(aᵢ,aⱼ))` for each pair (forward direction
-   only — sound, and sufficient for UNSAT). The `Eq(aᵢ,aⱼ)` atoms are
+   only – sound, and sufficient for UNSAT). The `Eq(aᵢ,aⱼ)` atoms are
    hash-consed, so they are the *same* TermIds the lemma literals use.
 
 ## Soundness argument
@@ -92,17 +92,17 @@ skeleton ∪ verified-lemmas:
   `get_children` generically (no assumption that operands are leaves).
 * **Lazy theory reasons** (`assign_theory_propagation`,
   `theory_lazy_reasons_enabled`): no clause is materialized in the SAT DB,
-  but the reason clause still feeds conflict analysis — it must be
+  but the reason clause still feeds conflict analysis – it must be
   recorded at the consumption point, before the branch.
 * **Rebase recreations** of `TheoryManager` mid-`check_core` drop nothing
   that matters only if the log is Solver-owned (hence `DerivedReasons`).
 * **Boolean `Eq` (iff)**: a lemma literal whose atom is `Eq` over Bool
-  operands is *skeleton* structure, not a theory atom — treat as poison
+  operands is *skeleton* structure, not a theory atom – treat as poison
   (conservative; the skeleton-only path already handles pure-Boolean
   contradictions).
 * The `Conflict(lits)` clause is valid as given (theory lemma); the
   1-UIP clause `analyze_theory_conflict` derives from it is Boolean
-  resolution over it + reason clauses — RUP covers it, no need to record.
+  resolution over it + reason clauses – RUP covers it, no need to record.
 
 ## Gates
 
@@ -110,7 +110,7 @@ skeleton ∪ verified-lemmas:
   chains; REJECTS a non-valid lemma (e.g. `a≠b ∨ f(a)=f(b)` with no `a=b`);
   handles distinct-derived disequality and nested applications.
 * E2E (`certified_uf_sat.rs`): congruence-dependent unsat (the
-  `congruence_unsat_stays_unknown` test flips to `unsat` — update it), a
+  `congruence_unsat_stays_unknown` test flips to `unsat` – update it), a
   quasigroup-shaped file, sat-side unchanged, poisoned log (add an arith
   atom to force it) ⇒ `unknown`.
 * Full battery, clippy/fmt/doc, Z3 parity; then the QF_UF sample
@@ -141,20 +141,20 @@ Residual declines (all fail-closed, never a wrong verdict):
    SAT solve* ("hint N is not unit") on lemma-bearing clause sets. Pure-
    Boolean skeletons of comparable difficulty (PHP 6/5) verify fine, so
    the trigger is the clause mix. Same class as the study's Finding 1 but
-   in the in-memory transcript path — the next hunt.
+   in the in-memory transcript path – the next hunt.
 2. **7 files**: "independent propositional checker found the asserted
-   formula satisfiable" — the recorded lemma set is incomplete for these
+   formula satisfiable" – the recorded lemma set is incomplete for these
    refutations (some theory fact flowed through a path the recorder does
    not observe). Recording coverage gap, not soundness.
 
 Both residuals are honest `unknown`s; closing them is follow-up work on
 this same study.
 
-## Addendum 2 (2026-09-03): both residual hunts closed — 79% → 92%
+## Addendum 2 (2026-09-03): both residual hunts closed – 79% → 92%
 
 **Hunt A (13 files, LRAT hint-chain rejection).** Reproduced standalone
 via `NIXIE_CERT_DUMP` (the gate now dumps its CNF + proof for offline
-replay): the failure was not in the search's chain at all — the gate's
+replay): the failure was not in the search's chain at all – the gate's
 canonical CNF contained **duplicate-literal clauses** (30/4154 on the
 reproducer). The Tseitin walk emits one entry per *occurrence*, and
 `or`-terms with repeated argument terms (QG-class inputs are full of
@@ -168,7 +168,7 @@ certify.
 **Hunt B (7 files, skeleton+lemmas SAT for the gate).** Three more
 recording surfaces: the final-check propagation loop (parallel to the
 assignment-sweep site), `install_theory_units`' unconditional
-tautologies, and — the load-bearing one — **Bool-sorted applications as
+tautologies, and – the load-bearing one – **Bool-sorted applications as
 lemma atoms**: an `(S…)->Bool` function atom *is* the equality
 `f(x…) = true/false`, so `record_lemma` accepts `Apply` atoms and the CC
 verifier merges positive literals against the false constant (negatives
@@ -177,7 +177,7 @@ condition. The eq_diamond/NEQ family is built on exactly this shape; 4
 more files certify.
 
 **Measured**: 42/46 plain-unsat QF_UF cells certify (from 25 at landing);
-certified QF_UF coverage **70/76 (92%)** — 28 sat + 42 unsat, zero wrong
+certified QF_UF coverage **70/76 (92%)** – 28 sat + 42 unsat, zero wrong
 verdicts. Residual: 3 eq_diamond files whose logs are clean but whose
 refutations need a fact that never surfaces as a recordable
 Conflict/Propagated (the next recording-coverage dig), 1 no-reason cell.

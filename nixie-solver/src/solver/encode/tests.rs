@@ -466,7 +466,7 @@ fn build_add_chain(manager: &mut TermManager, depth: usize, base: TermId) -> Ter
 }
 
 /// Foldable-deep rescue (end-to-end, small stack): a 12 500-deep
-/// right-nested *constant* `+` chain is a constant in disguise — the
+/// right-nested *constant* `+` chain is a constant in disguise – the
 /// iterative ground-constant fold (`nixie_core::rewrite::ground_fold`)
 /// must collapse it before the encode-depth pre-check measures it, so the
 /// assertion encodes and the query is *decided*.  Found by the
@@ -476,7 +476,7 @@ fn build_add_chain(manager: &mut TermManager, depth: usize, base: TermId) -> Ter
 /// size were decided.
 #[test]
 fn deep_foldable_constant_assertion_is_decided_not_unknown() {
-    const STACK_SIZE: usize = 1 << 17; // 128 KiB — same budget as the unknown pin
+    const STACK_SIZE: usize = 1 << 17; // 128 KiB – same budget as the unknown pin
     const DEPTH: usize = 12_500;
 
     let handle = std::thread::Builder::new()
@@ -557,7 +557,7 @@ fn deep_bvxor_constant_assertion_is_decided_not_unknown() {
     handle.join().expect("bvxor-chain assert+check must return");
 }
 
-/// A deep chain over a *variable* is now decidable too — associative
+/// A deep chain over a *variable* is now decidable too – associative
 /// normalization collapses `(+ 1 (+ 1 … x))` to `(+ 12_500 x)`, and
 /// `x = x + 12_500` is correctly `unsat`.
 #[test]
@@ -592,7 +592,7 @@ fn deep_variable_add_chain_is_decided_unsat() {
 /// a 12 500-deep chain of FRESH function applications (the bottom-up
 /// simplifier never descends into applications, so no fold rung can
 /// collapse it) still trips the guard and still answers `unknown` (never
-/// a guess) — the rescue ladder must not weaken the stack-safety
+/// a guess) – the rescue ladder must not weaken the stack-safety
 /// contract.
 #[test]
 fn deep_unnormalizable_assertion_still_answers_unknown() {
@@ -631,7 +631,7 @@ fn deep_unnormalizable_assertion_still_answers_unknown() {
 /// The rescue ladder's second rung (the iterative bottom-up simplify,
 /// which carries the guard-equality elimination): a deep structure that
 /// the ground fold cannot touch but the bottom-up rewrite CAN collapses
-/// and answers HONESTLY instead of `unknown` — the measured class is the
+/// and answers HONESTLY instead of `unknown` – the measured class is the
 /// nec-smt neg/ite spine.  A 12 500-deep even `neg` chain equal to `x`
 /// is valid, so the honest verdict is `sat`; the 128 KiB stack pins that
 /// the rung itself is heap-iterative (no native recursion on the deep
@@ -1273,7 +1273,7 @@ fn deep_bv_operation_chains_do_not_trip_the_depth_guard() {
 
 /// The multiplexer shape specifically: a deep *bit-vector-sorted* `ite`
 /// chain (the LLBMC/bmc encodings nest a thousand of them).  A Bool-sorted
-/// `ite` chain must still be measured — that half is pinned by the
+/// `ite` chain must still be measured – that half is pinned by the
 /// small-stack tests above.
 #[test]
 fn deep_bv_ite_chains_do_not_trip_the_depth_guard() {
@@ -1374,7 +1374,7 @@ fn check_sat_only_respects_false_and_truncation_flags() {
 /// The fold pass's default-on end-to-end contract: a self-referential
 /// select refutes by pure value reasoning, so the ASSERTED goal reaches
 /// the constant gate (`has_false_assertion`) and `check` answers `Unsat`
-/// without a search — the nec-smt class's shape at solver level, no env
+/// without a search – the nec-smt class's shape at solver level, no env
 /// flag needed (the campaign-flipped default; kill-switch documented in
 /// `assert_fold::enabled`).
 #[test]

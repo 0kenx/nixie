@@ -34,7 +34,7 @@
 //!
 //! * The **sign split** on `x` is `x <= -1 ∨ x = 0 ∨ x >= 1`. Over `Z` there is
 //!   nothing between `-1` and `0`, or between `0` and `1`, so this is a
-//!   tautology — and it is the split that matters, because almost every lemma
+//!   tautology – and it is the split that matters, because almost every lemma
 //!   about a product is conditioned on the signs of its factors.
 //! * The **value split** on `v` at the model value `k` is `v <= k ∨ v >= k+1`,
 //!   which is a tautology over `Z` for integral `k` (and `k` is integral, since
@@ -42,8 +42,8 @@
 //!
 //! A child answering `Sat` wins immediately. `Refuted` requires *every* child
 //! to be refuted; if any child answered `Unknown` the parent must too, which is
-//! what `saw_unknown` tracks. Getting this backwards — treating an unexplored
-//! case as refuted — is the single most dangerous mistake available here, so it
+//! what `saw_unknown` tracks. Getting this backwards – treating an unexplored
+//! case as refuted – is the single most dangerous mistake available here, so it
 //! is a `bool` threaded through one loop rather than an early return.
 //!
 //! # Exact products
@@ -51,7 +51,7 @@
 //! Consistency is checked in [`BigInt`], not in the `Rational64` the LP works
 //! in. A degree-three monic over values near `2^31` overflows an `i64` product
 //! while remaining a perfectly ordinary model, and a wrapped comparison would
-//! answer "consistent" for a model that is nothing of the sort — the one place
+//! answer "consistent" for a model that is nothing of the sort – the one place
 //! where an overflow could manufacture a wrong `Sat` rather than merely lose
 //! precision.
 
@@ -120,7 +120,7 @@ pub(crate) struct NlaEngine<'a> {
 impl<'a> NlaEngine<'a> {
     /// Build an engine for `lin`, asserting its atoms into a fresh solver.
     ///
-    /// Returns `None` when an atom cannot be represented — which, being a
+    /// Returns `None` when an atom cannot be represented – which, being a
     /// *dropped constraint*, would weaken the problem, and a weakened problem
     /// may not be reported `sat`. Rather than track a second incompleteness
     /// flag alongside [`Linearization::incomplete`], construction simply fails
@@ -175,7 +175,7 @@ impl<'a> NlaEngine<'a> {
         outcome
     }
 
-    // --- assertion ----------------------------------------------------------
+    // ======== assertion ========
 
     /// Translate a linearisation variable to its solver variable.
     pub(crate) fn solver_var(&self, v: VarId) -> Option<VarId> {
@@ -286,7 +286,7 @@ impl<'a> NlaEngine<'a> {
     }
 
     /// Assert a lemma's atoms. A lemma that cannot be represented is skipped
-    /// entirely — including any atoms already asserted from it, which is
+    /// entirely – including any atoms already asserted from it, which is
     /// harmless because every atom of a lemma is individually valid in the
     /// scope it is asserted in; a partially asserted lemma is simply a weaker
     /// lemma.
@@ -302,7 +302,7 @@ impl<'a> NlaEngine<'a> {
         asserted
     }
 
-    // --- the node loop ------------------------------------------------------
+    // ======== the node loop ========
 
     /// Explore the constraint set currently in scope.
     ///
@@ -358,7 +358,7 @@ impl<'a> NlaEngine<'a> {
         NodeOutcome::Unknown
     }
 
-    // --- monic consistency --------------------------------------------------
+    // ======== monic consistency ========
 
     /// The monics the model violates, as indices into `lin.monics`.
     ///
@@ -400,7 +400,7 @@ impl<'a> NlaEngine<'a> {
         Some(BigInt::from(value.to_integer()))
     }
 
-    // --- (d1) interval propagation ------------------------------------------
+    // ======== (d1) interval propagation ========
 
     /// Run monic interval propagation until nothing more moves, and assert
     /// every derived bound that improves on what the solver already holds.
@@ -416,7 +416,7 @@ impl<'a> NlaEngine<'a> {
     fn propagate_bounds_to_fixpoint(&mut self) -> PropOutcome {
         // Make row-implied bounds visible first. A constraint such as
         // `x + y <= 10` bounds `x` above without ever writing a bound on `x`,
-        // and the interval layer reads bounds, not rows — so without this the
+        // and the interval layer reads bounds, not rows – so without this the
         // box is far weaker than what the LP already knows, and a McCormick
         // envelope over it could not be built at all.
         self.lia.propagate_lp_bounds();
@@ -459,7 +459,7 @@ impl<'a> NlaEngine<'a> {
                 }
 
                 // `propagate_monic` documents that `Overflow` means "partially
-                // applied, then gave up" — the arguments may already hold
+                // applied, then gave up" – the arguments may already hold
                 // bounds derived before the failure. Those bounds came from
                 // exact computations and are sound, so they are kept.
                 intervals.insert(monic.product, product);
@@ -559,7 +559,7 @@ impl<'a> NlaEngine<'a> {
         asserted
     }
 
-    // --- (d2) cuts ----------------------------------------------------------
+    // ======== (d2) cuts ========
 
     /// Emit linear relaxations of the violated degree-two monics.
     ///
@@ -567,13 +567,13 @@ impl<'a> NlaEngine<'a> {
     /// constructor supplies which differs by shape:
     ///
     /// * For a *square* `v = x²`, the tangent `v >= 2a·x - a²` at the model's
-    ///   `x` is the lower envelope. It is [`LemmaScope::Global`] — it is
-    ///   `(x - a)² >= 0` — so it is valid at every scope and asserted
+    ///   `x` is the lower envelope. It is [`LemmaScope::Global`] – it is
+    ///   `(x - a)² >= 0` – so it is valid at every scope and asserted
     ///   unconditionally. On its own it is not enough: it only ever pushes `v`
     ///   *up*, so a model that sets `v` too high is never cut off. The matching
     ///   upper envelope is the secant `(xu - x)(x - xl) >= 0` over the current
     ///   box, which [`lemmas::mccormick`] produces when handed `x` for both
-    ///   factors — its repeated-variable merging turns the bilinear envelopes
+    ///   factors – its repeated-variable merging turns the bilinear envelopes
     ///   into the square's tangent-and-secant pair.
     /// * For a *bilinear* `v = x·y` whose factors are both boxed, the four
     ///   McCormick envelopes of that box.

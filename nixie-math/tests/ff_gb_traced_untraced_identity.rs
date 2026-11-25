@@ -4,7 +4,7 @@
 //! element, order for order) on the same inputs. The fast path's callers
 //! (wide components in `ff_theory.rs`) rely on exactly this: a traced
 //! re-run after an untraced completion reproduces the same basis, and
-//! any divergence would mean the rows are influencing reductions — a
+//! any divergence would mean the rows are influencing reductions – a
 //! soundness-relevant coupling of certificate bookkeeping to the search.
 use nixie_math::ff::FieldCtx;
 use nixie_math::ff::grobner::*;
@@ -27,7 +27,7 @@ fn untraced_and_traced_bases_are_identical() {
     // planted-satisfiable (bases complete without a constant).
     // 17x20 trimmed 2026-09-18: with the unsound second criterion
     // disabled (see ff_gb_seed_dedup_regression.rs), that shape's debug
-    // cascade takes ~245 s — the identity invariant is trajectory
+    // cascade takes ~245 s – the identity invariant is trajectory
     // equality, not capacity, and the smaller shapes cover it.
     for (nvars, ncons) in [(3usize, 4usize), (5, 6), (8, 8), (12, 12)] {
         let mut inputs: Vec<MPoly> = Vec::new();

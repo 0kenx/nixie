@@ -22,7 +22,7 @@ use super::types::{
 /// The `i64::MIN` numerator is deliberately NOT representable: the value
 /// itself fits `i64`, but downstream content-addressing and bound moves
 /// (`row_key`, strict-inequality direction flips) NEGATE constants, and
-/// `-i64::MIN` overflows — a value whose negation does not fit must not
+/// `-i64::MIN` overflows – a value whose negation does not fit must not
 /// enter the fixed-width pipeline through this door (it synthesizes as a
 /// wide column instead, whose `to_i64()` is `None` and which the big-const
 /// machinery already owns).
@@ -52,7 +52,7 @@ mod track_theory_vars;
 /// sort, return `(max, min)` as terms for the implied domain lemma
 /// (`min <= v <= max` when `v` equals one of the branches).  Mixed
 /// Int/Real constants are compared through their rational view when
-/// i64-representable, else skipped — the lemma is an optimization, never
+/// i64-representable, else skipped – the lemma is an optimization, never
 /// a requirement.
 fn const_branch_bounds(t: TermId, e: TermId, manager: &TermManager) -> Option<(TermId, TermId)> {
     use num_rational::Rational64;
@@ -90,18 +90,18 @@ mod tests;
 /// `String` joins them, and this is a lesson paid for twice:
 ///
 /// * The ground string path (`solve_ground_string_model`) *does* recurse
-///   through `ite` — but only for problems it can certify, and it declines
+///   through `ite` – but only for problems it can certify, and it declines
 ///   any problem that also mentions a free Boolean / arithmetic variable.
 ///   In exactly those mixed problems the `ite` then belonged to nobody:
 ///   the CDCL(T) honesty gate fires only on `Str*` atoms, so a
 ///   `String`-sorted `ite` reached the search as an EUF-opaque leaf. A
 ///   `Sat` verdict stayed *sound* (the formula usually is satisfiable) but
 ///   the model published an unconstrained value for what the `ite`
-///   defined — the TLA+ front end's `tcolor' = IF … THEN "black" ELSE
+///   defined – the TLA+ front end's `tcolor' = IF … THEN "black" ELSE
 ///   tcolor` (`EWD840.tla`) produced a token colour no transition ever
 ///   assigns, caught only by the front end's independent trace replay.
 /// * Eliminating the `ite` leaves plain `=` atoms between strings, which EUF
-///   owns and the ground path still evaluates — so pure-string problems
+///   owns and the ground path still evaluates – so pure-string problems
 ///   lose nothing.
 ///
 /// `BitVec`, `Array` and `FloatingPoint` sorts each have their own
@@ -180,16 +180,16 @@ pub(super) fn collect_ground_subterms(term: TermId, manager: &TermManager) -> Ve
 ///
 /// The numeric-argument purifier proxies constants globally, and a proxy
 /// minted in a *later* assert split the count spellings: earlier asserts
-/// kept `count(2, b)`, later ones got `count(proxy, b)` — two arithmetic
+/// kept `count(2, b)`, later ones got `count(proxy, b)` – two arithmetic
 /// columns with no tie, because the reduction's element-congruence axiom
-/// (the only tie; counts are columns, not EUF applications — set member
+/// (the only tie; counts are columns, not EUF applications – set member
 /// atoms get congruence from the closure, counts do not) was itself
 /// rewritten by the same substitution into the tautology
 /// `proxy = proxy => count(proxy,b) = count(proxy,b)` and folded away.
 /// With element positions never rewritten, every assert spells a bag's
 /// counts the same way and no tie is needed. The keep set is exactly the
 /// (binder-free, ground) element terms of the bag constructors and
-/// probes in `term` — the shield's soundness contract.
+/// probes in `term` – the shield's soundness contract.
 fn substitute_keeping_bag_elements(
     root: TermId,
     map: &FxHashMap<TermId, TermId>,
@@ -314,7 +314,7 @@ impl Solver {
         {
             self.trail.push(TrailOp::ConstraintAdded { var });
             // Journal for the unified sweep cursor (see
-            // `collect_unified_constraint_atoms`): first registration only —
+            // `collect_unified_constraint_atoms`): first registration only –
             // a repeat write keeps the original entry and needs no re-sweep.
             self.constraint_sweep_pending.push((var, constraint));
         }
@@ -392,7 +392,7 @@ impl Solver {
             if overflow {
                 // Coefficient width: retry the WHOLE comparison with exact
                 // coefficients and a positive rescale into width before
-                // gating — the wide-coefficient classes (`2^63·v` and
+                // gating – the wide-coefficient classes (`2^63·v` and
                 // friends) become decidable rows instead of free Booleans
                 // gated to `Unknown`.
                 if let Some(parsed) =
@@ -456,19 +456,19 @@ impl Solver {
         // big-constant COLUMN abstraction, try λ ∈ {1, 1/2, 1/4, ...} ∪
         // {-1, -1/2, ...}: a row whose constant leaves `i64` width in one
         // orientation is often exactly representable in another
-        // (`-x > i64::MAX` — satisfiable at `x = -2^63` — becomes
+        // (`-x > i64::MAX` – satisfiable at `x = -2^63` – becomes
         // `(-1/2)·x > 2^62`, all parts in range, DECIDED instead of
         // `unknown`).  λ < 0 flips an ordered comparison's direction.
         // Outcomes:
-        //  (a) λ = 1 fits — the ordinary path, as before;
-        //  (b) some λ fits — the scaled row (same solutions, exact);
-        //  (c) no λ fits: integral constant — SYNTHESIZE it as a wide
+        //  (a) λ = 1 fits – the ordinary path, as before;
+        //  (b) some λ fits – the scaled row (same solutions, exact);
+        //  (c) no λ fits: integral constant – SYNTHESIZE it as a wide
         //      `IntConst` column (the big-constant abstraction: exact for
         //      refutation, certified on `sat`), registered with the honesty
         //      gate and the distinctness pass like a wide literal.  Exactly
         //      `-2^63` (fits `i64` as `MIN`, but its negation does not)
         //      synthesizes sign-flipped as `+2^63` at coefficient `-1`.
-        //  (d) fractional, no λ, no column — unrepresentable anywhere;
+        //  (d) fractional, no λ, no column – unrepresentable anywhere;
         //      gate the atom honestly.
         let moved = -constant;
         // (scaled terms, scaled constant, sign of λ): sign < 0 means the
@@ -518,13 +518,13 @@ impl Solver {
                 // The column abstraction (see the comment above).  The
                 // column REPLACES the moved-to-RHS constant: the assert
                 // builds the row `Σ terms − constant ≤ 0`, so the column
-                // term must carry `−moved` (NOT `+moved` — the row then
+                // term must carry `−moved` (NOT `+moved` – the row then
                 // reads `Σ + coef·col ≤ 0` ≡ `Σ ≤ −coef·col = moved`,
                 // the original constraint; the pre-fix `+moved`
                 // coefficient asserted the NEGATED constant, and the λ
                 // fast path almost always winning is the only reason that
                 // inversion stayed latent).  `mk_int` takes a `BigInt` at
-                // any width — no `i64::MIN` sign-flip special case is
+                // any width – no `i64::MIN` sign-flip special case is
                 // needed, and the exact pin (`pin_int_const`) carries the
                 // value the term itself carries.
                 let col = manager.mk_int(moved.to_integer());
@@ -537,19 +537,19 @@ impl Solver {
                 // `moved = n/d` with `n` out of range.  No λ ever fixes a
                 // numerator (λ = 1/2^k only cancels factors of two, and a
                 // reduced `n` that leaves width after the integer-column
-                // arm is not of that shape — the observed numerators are
+                // arm is not of that shape – the observed numerators are
                 // `odd × 2^62`-scale sums such as `5·S + 73`), so this
                 // used to gate the atom to `Unknown` outright.  The
                 // numerator-column abstraction represents it exactly: an
                 // integer column `col ↦ n` (any width, hash-consed per
-                // value) at coefficient `−1/d` — `(−1/d)·col = −moved`
+                // value) at coefficient `−1/d` – `(−1/d)·col = −moved`
                 // identically (the column replaces the moved-to-RHS
                 // constant; see the integer arm's sign note), and the
                 // column is PINNED to `n` by the assert path
                 // (`pin_int_const`, exact singleton bounds), so the row
                 // carries the true constant at every scope.
                 // A denominator that does not narrow cannot back a
-                // `Rational64` coefficient anywhere in this channel —
+                // `Rational64` coefficient anywhere in this channel –
                 // that residual class still gates honestly.
                 let denom_big = moved.denom();
                 let numer_big = moved.numer();
@@ -688,7 +688,7 @@ impl Solver {
             /// big-const abstraction): the level is "non-constant" only by
             /// abstraction, not by shape. When such a level makes a product
             /// nonlinear, the failure is a WIDTH failure of an originally
-            /// linear term — it must gate the atom to `Unknown`
+            /// linear term – it must gate the atom to `Unknown`
             /// (`arith_parse_overflow`), because the structural
             /// nonlinear-shape check cannot see it (the original term looks
             /// like const·var) and an ungated atom is a free Boolean the
@@ -760,7 +760,7 @@ impl Solver {
                     match &term.kind {
                         // Integer constant.  The constant pipeline is exact
                         // (`BigRational`), so a sum of individually-fitting
-                        // literals can no longer overflow here — the class
+                        // literals can no longer overflow here – the class
                         // that used to panic in debug and silently wrap in
                         // release, and (after checked arithmetic landed) gate
                         // to `Unknown`, now folds exactly and is handed to
@@ -791,7 +791,7 @@ impl Solver {
                             }
                         },
 
-                        // Rational constant (exact — see the `IntConst` arm).
+                        // Rational constant (exact – see the `IntConst` arm).
                         TermKind::RealConst(r) => {
                             cur.constant += &exact(&sc) * exact(r);
                         }
@@ -966,7 +966,7 @@ impl Solver {
                                 // makes `const·var` parse as `var·var`, and
                                 // the shape check downstream cannot see the
                                 // difference. That is a width failure of a
-                                // linear term — record it so the honesty gate
+                                // linear term – record it so the honesty gate
                                 // answers `Unknown` instead of letting the
                                 // atom float free.
                                 let abstraction_caused = cur.wide_const
@@ -1039,11 +1039,11 @@ impl Solver {
     /// [`Self::extract_linear_terms`], used only as the cold-path retry when
     /// the narrow walk failed on coefficient width. Differences from the
     /// narrow walk, all consequences of unlimited coefficients:
-    ///  * a wide integer constant is a plain CONSTANT here — no
+    ///  * a wide integer constant is a plain CONSTANT here – no
     ///    big-const column abstraction, so `const·var` stays linear and
     ///    exact (in the narrow walk the abstraction turns it into
     ///    `var·var`, which is exactly the failure being retried);
-    ///  * the `Mul` finalize applies the exact product directly — nothing
+    ///  * the `Mul` finalize applies the exact product directly – nothing
     ///    narrows, nothing can overflow;
     ///  * the caller rescales the whole result into width
     ///    (`scale_exact_row`), which is sound because a POSITIVE multiple
@@ -1161,7 +1161,7 @@ impl Solver {
                         } else {
                             if frame.non_const_factor.is_some() {
                                 // Genuinely nonlinear (two non-constant
-                                // factors by shape — the exact walk has no
+                                // factors by shape – the exact walk has no
                                 // abstraction that could fake this).
                                 return None;
                             }
@@ -1204,7 +1204,7 @@ impl Solver {
     /// sides walked with `BigRational` coefficients (wide constants exact,
     /// no abstraction), like terms combined exactly, and the whole row
     /// rescaled into `Rational64` width by a POSITIVE factor
-    /// (`scale_exact_row`) — sound because the atom's bound is zero, which
+    /// (`scale_exact_row`) – sound because the atom's bound is zero, which
     /// a positive multiple preserves. `None` when the row is genuinely
     /// nonlinear or no representable scale exists (the caller gates).
     fn parse_arith_comparison_exact(
@@ -1302,24 +1302,24 @@ impl Solver {
         // an unsatisfiable formula reads as satisfiable.  See `expand_lets`.
         let mut term = self.expand_lets(term, manager);
         // The assertion fold pass (flag-gated): value-level rewriting of
-        // the let-expanded assertion — the nec-smt deep ite/`=` spines
+        // the let-expanded assertion – the nec-smt deep ite/`=` spines
         // fold to a constant here, before the depth guard below measures
         // them.  Equivalence-only rules; the exact user term is already
         // captured as `certificate_term` above.
         if super::assert_fold::enabled()
             && self.subtree_has_ite(term, manager)
             // Deep spines are the depth-guard ladder's territory below
-            // (`ctx_walk` recurses natively — see `assert_fold::fold`'s
+            // (`ctx_walk` recurses natively – see `assert_fold::fold`'s
             // depth contract; the ladder's rungs are explicit-stack and
             // adopt shallow results where the alternative is refusal).
             && !self.term_exceeds_encode_depth(term, manager)
         {
-            // REFUTE-ONLY adoption — the campaign's measured verdict: the
+            // REFUTE-ONLY adoption – the campaign's measured verdict: the
             // always-rewrite variant regressed the mid-band of the standing
             // table's LIA slice (median wall 37->305 ms: the fold's residual
             // encodes worse than the original ite structure), while adopting
             // ONLY the decided constants keeps every win (the nec-smt flips,
-            // prp-3-18's 47x cell) at zero cost to non-refuting cells — the
+            // prp-3-18's 47x cell) at zero cost to non-refuting cells – the
             // original encoding is kept verbatim, so the search trajectory
             // is bit-identical up to unused interning.
             let folded = super::assert_fold::fold(term, manager);
@@ -1331,8 +1331,8 @@ impl Solver {
             }
         }
         // Finite sets: give every membership atom its defining axioms before
-        // anything else looks at the assertion. The axioms are *valid* — each
-        // is a consequence of the theory of finite sets — so conjoining them
+        // anything else looks at the assertion. The axioms are *valid* – each
+        // is a consequence of the theory of finite sets – so conjoining them
         // changes neither satisfiability nor unsatisfiability, and it is done
         // by conjunction rather than by a recursive `assert` so the reduction
         // cannot re-enter itself on the atoms it just created.
@@ -1340,7 +1340,7 @@ impl Solver {
         // Set/bag eager survey: only when such a term exists anywhere.
         // With no set- or bag-sorted subterm in any root, both reductions
         // return empty results (and no honesty gates can trigger), so the
-        // block is a provable no-op — while costing a full walk of the
+        // block is a provable no-op – while costing a full walk of the
         // assertion stack per `assert` (quadratic in assertions; pure
         // Boolean workloads like graph models paid it on every clause).
         // The current assertion is scanned first because its terms are
@@ -1375,7 +1375,7 @@ impl Solver {
             // assertion): those keep their extensionality witnesses. The
             // equality atoms the reduction itself mints (pair congruence,
             // choose emptiness) must NOT spawn witnesses on the next
-            // assert's re-survey — the conjoined axioms are re-walked, and
+            // assert's re-survey – the conjoined axioms are re-walked, and
             // a witness per minted atom ballooned the element list until
             // three-assert fuzz shapes went from instant to unfinishable.
             let bag_user_eq_atoms = self.bag_user_eq_atoms(term, manager);
@@ -1412,9 +1412,9 @@ impl Solver {
         // Foldable-deep rescue: before refusing, run the iterative,
         // memoized ground-constant fold (`fold_ground`: explicit stack,
         // linear in unique DAG nodes, one capture-avoiding `substitute`
-        // rebuild) and re-measure.  A trivially-foldable term — e.g. a
+        // rebuild) and re-measure.  A trivially-foldable term – e.g. a
         // 600-deep right-nested constant `+` chain, or deep exact
-        // div/mod compositions — collapses to a constant and proceeds
+        // div/mod compositions – collapses to a constant and proceeds
         // through the normal pipeline instead of being measured (and
         // refused) at its unfolded structural depth.  Only genuinely deep
         // *after* folding still routes to `Unknown`.
@@ -1442,12 +1442,12 @@ impl Solver {
         // variables of quantifiers elsewhere in the problem (the z3-style
         // relevant-ground-term pool).  Collecting only from quantifier
         // *patterns* left sort pools empty whenever the pattern has no
-        // ground sub-term of that sort — measured: an `ABV` problem whose
+        // ground sub-term of that sort – measured: an `ABV` problem whose
         // ground part mentions `#xb` but whose auto-trigger `(select a i)`
         // contains no BV constant gave the BV4 sort an empty pool, MBQI
         // found no counterexample in any round, and a refutable goal
         // answered `unknown` (z3: `unsat`).  Cost: one linear sub-term walk
-        // per assertion.  Quantified assertions are skipped here — their
+        // per assertion.  Quantified assertions are skipped here – their
         // registration path collects from patterns, and a naive walk of the
         // whole term would also reach under the binders.
         if !crate::solver::encode::finite_expand::contains_quantifier(term, manager) {
@@ -1649,7 +1649,7 @@ impl Solver {
         // fragment assertions on the unified route postpone BOTH the clause
         // emission and the circuit linking to the next `check`, where the
         // preprocessor has already collapsed define-equations / ring
-        // identities — the search then sees one (rewritten, folded,
+        // identities – the search then sees one (rewritten, folded,
         // shareable) circuit set instead of raw parse-inlined meganodes
         // *plus* the rewrites alongside.  Any window breaker (non-fragment
         // assert, push, generation end) flushes the deferral with the raw
@@ -1687,7 +1687,7 @@ impl Solver {
         if !self.deferred_bv_asserts.is_empty() {
             // The window just broke (this assert is outside the fragment or
             // the routing changed): emit every deferred assertion raw, in
-            // order, before this one — the assert-time semantics they would
+            // order, before this one – the assert-time semantics they would
             // have had.
             let deferred = std::mem::take(&mut self.deferred_bv_asserts);
             for d in deferred {
@@ -1815,7 +1815,7 @@ impl Solver {
                     // Already axiomatized this (term, const) pair in a prior
                     // `check` whose clauses are still live.  Clauses emitted
                     // inside a `push` scope are NOT still live after the
-                    // matching `pop` — the insert below journals the key so
+                    // matching `pop` – the insert below journals the key so
                     // the pop retracts it and a later `check` re-emits the
                     // axioms (the same scope contract as
                     // `numeric_eq_split_pairs`).
@@ -2268,17 +2268,17 @@ impl Solver {
         if super::assert_fold::enabled()
             && self.subtree_has_ite(term, manager)
             // Deep spines are the depth-guard ladder's territory below
-            // (`ctx_walk` recurses natively — see `assert_fold::fold`'s
+            // (`ctx_walk` recurses natively – see `assert_fold::fold`'s
             // depth contract; the ladder's rungs are explicit-stack and
             // adopt shallow results where the alternative is refusal).
             && !self.term_exceeds_encode_depth(term, manager)
         {
-            // REFUTE-ONLY adoption — the campaign's measured verdict: the
+            // REFUTE-ONLY adoption – the campaign's measured verdict: the
             // always-rewrite variant regressed the mid-band of the standing
             // table's LIA slice (median wall 37->305 ms: the fold's residual
             // encodes worse than the original ite structure), while adopting
             // ONLY the decided constants keeps every win (the nec-smt flips,
-            // prp-3-18's 47x cell) at zero cost to non-refuting cells — the
+            // prp-3-18's 47x cell) at zero cost to non-refuting cells – the
             // original encoding is kept verbatim, so the search trajectory
             // is bit-identical up to unused interning.
             let folded = super::assert_fold::fold(term, manager);
@@ -2487,13 +2487,13 @@ impl Solver {
         // rewrite, not just the nested shape.
         //
         // Quantifier-free assertion: the walk below can only register or
-        // notice quantifiers, of which there are none — at most the
+        // notice quantifiers, of which there are none – at most the
         // Skolem-candidate collection above still matters (candidates can
         // sit in a quantifier-free term that references an earlier
         // rewrite's witnesses).  Both halves are skipped when they are
         // provably empty: no quantifier in the term (the memoized
-        // `contains_quantifier` — completed negative traversals cache
-        // every visited subterm, with per-node subtree skips — makes this
+        // `contains_quantifier` – completed negative traversals cache
+        // every visited subterm, with per-node subtree skips – makes this
         // a lookup after the first assertion over a shared meganode
         // prefix), and no Skolem symbol has ever been minted (every
         // minting path seeds from `next_skolem_id`; 0 ⇒ no sk!-named term
@@ -3207,7 +3207,7 @@ impl Solver {
             side.push(manager.mk_implies(c_sub, eq_v_t));
             side.push(manager.mk_implies(not_c, eq_v_e));
             // Domain lemma for constant branches: `v` equals one of two
-            // numeric constants, so `min <= v <= max` is implied — sound
+            // numeric constants, so `min <= v <= max` is implied – sound
             // by construction, and it hands the arithmetic solver the
             // finite interval *now* instead of only after the condition is
             // decided.  Without it, a `(= i_e (ite b_e 1 0))` link leaves
@@ -3322,7 +3322,7 @@ impl Solver {
     /// Kinds already interned as shared arith terms by `track_theory_vars`
     /// (Var, Apply, Select, Ite, Div, Mod, DtSelector) are left in place; only
     /// constants and arithmetic compounds are abstracted. The substitution
-    /// itself is shielded for bag element positions — see
+    /// itself is shielded for bag element positions – see
     /// [`substitute_keeping_bag_elements`].
     pub(super) fn purify_numeric_uf_args(
         &mut self,
@@ -3485,7 +3485,7 @@ impl Solver {
     /// equal-valued shared term.
     ///
     /// Called from [`Self::purify_numeric_uf_args`] for the two kinds of
-    /// constant that need it — arguments of an un-purified (quantified)
+    /// constant that need it – arguments of an un-purified (quantified)
     /// function, and `select`/`store` indices. See
     /// [`Solver::interface_const_pins`] for why each one would otherwise be
     /// invisible, and the comments at those call sites for the false-`sat`
@@ -3519,21 +3519,21 @@ impl Solver {
     ) -> Option<Rational64> {
         // CLOSED-FORM evaluation, three layers:
         //
-        // 1. Int `div`/`mod` of closed constants — Euclidean per SMT-LIB
+        // 1. Int `div`/`mod` of closed constants – Euclidean per SMT-LIB
         //    (the same semantics `arith_axioms` axiomatises as
         //    `m = q·n + r ∧ 0 ≤ r < |n|`; Rust's `div_euclid`/`rem_euclid`
         //    match it exactly, checked for overflow).  A ZERO divisor is
-        //    uninterpreted per SMT-LIB — any value is admissible — so the
+        //    uninterpreted per SMT-LIB – any value is admissible – so the
         //    pin must skip it: pinning a value would fabricate a semantics
         //    the logic does not define.
         // 2. the atom parser's linear extractor, for any numeric argument
-        //    that folds to a variable-free linear form — literals (`3`,
+        //    that folds to a variable-free linear form – literals (`3`,
         //    `4.0`), negated literals (`(- 4)`, not constant-folded by the
         //    parser), and compound constants (`(- 8 2)`, `(+ 1 (* 2 3))`).
         //    Variable-bearing compounds are skipped by the empty-`terms`
         //    test.  (In the extractor `div`/`mod`/`ite` are opaque terms,
         //    hence layer 1 running first.)
-        // 3. Real `div` of closed rational constants — exact rational
+        // 3. Real `div` of closed rational constants – exact rational
         //    division; zero divisor skipped as uninterpreted, same as 1.
         //
         // Anything else (symbolic operands, `ite`, out-of-`i64` magnitudes,
@@ -3648,7 +3648,7 @@ impl Solver {
         depth: u32,
     ) -> Lit {
         let lit = self.encode_depth_memoized(term, manager, depth);
-        // Depth 0 is every *top-level* entry into the encoder — `encode`, and
+        // Depth 0 is every *top-level* entry into the encoder – `encode`, and
         // the lemma emitters that call `encode_depth(.., 0)` directly.  The
         // trichotomy clauses owed by the atoms this encode just minted are
         // emitted here, before the caller adds the clause that will use them,
@@ -3706,7 +3706,7 @@ impl Solver {
     fn subtree_has_ite(&self, term: TermId, manager: &TermManager) -> bool {
         // Delegates to the manager's memoized `contains_ite` (completed
         // negative traversals cache every visited subterm, so sibling
-        // assertions sharing a meganode prefix stop re-walking it — the
+        // assertions sharing a meganode prefix stop re-walking it – the
         // local walk below was the per-assert cost on QF_BV-class input).
         manager.contains_ite(term)
     }
@@ -3717,7 +3717,7 @@ impl Solver {
     fn subtree_has_set_or_bag_sort(&self, term: TermId, manager: &TermManager) -> bool {
         // Delegates to the manager's memoized `contains_set_or_bag_sort`
         // (same shape as `contains_quantifier`: negative traversals cache
-        // every visited subterm — the per-assert survey gate becomes a
+        // every visited subterm – the per-assert survey gate becomes a
         // set lookup after the first assertion over a shared prefix).
         manager.contains_set_or_bag_sort(term)
     }
@@ -3782,7 +3782,7 @@ impl Solver {
             // layer*, but it is not unconstrained: `set_theory::reduce` has
             // already conjoined its defining axioms onto the assertion, so the
             // propositional structure and EUF decide it. No honesty gate is
-            // needed here — only `set.card`, which the reduction does not
+            // needed here – only `set.card`, which the reduction does not
             // cover, still raises one.
             TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => {
                 let var = self.get_or_create_var(term);
@@ -3790,7 +3790,7 @@ impl Solver {
             }
             // `bag.member` and `bag.subbag` are opaque Booleans to the SAT
             // layer, with their defining axioms conjoined by
-            // `bag_theory::reduce` — the same contract as the set atoms.
+            // `bag_theory::reduce` – the same contract as the set atoms.
             TermKind::BagMember(_, _) | TermKind::BagSubbag(_, _) => {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
@@ -3798,7 +3798,7 @@ impl Solver {
             // A relation compound in atom position: the reduction defines
             // its memberships, but if it reached here *before* that (or a
             // construct the reduction declines), the honesty gate keeps the
-            // verdict honest — the same rule as the set constructor arm in
+            // verdict honest – the same rule as the set constructor arm in
             // the main encoder.
             TermKind::SetRelJoin(_, _)
             | TermKind::SetRelProduct(_, _)
@@ -3811,7 +3811,7 @@ impl Solver {
             // A bag compound in atom position: `bag_theory::reduce` conjoins
             // its defining axioms onto the assertion; one that reached here
             // anyway (or a construct the reduction declines) keeps the
-            // honesty gate up — the same rule as the relation compounds.
+            // honesty gate up – the same rule as the relation compounds.
             TermKind::BagEmpty(_)
             | TermKind::BagMake(_, _)
             | TermKind::BagUnionMax(_, _)
@@ -3837,8 +3837,8 @@ impl Solver {
                 Lit::pos(var)
             }
             // `bag.fold` in atom position (a `Bool` accumulator): an opaque
-            // Boolean to the SAT layer whose defining equation — the
-            // unrolled chain, or nothing when declined — the reduction
+            // Boolean to the SAT layer whose defining equation – the
+            // unrolled chain, or nothing when declined – the reduction
             // conjoined onto the assertion, exactly the `bag.member`
             // contract. The gate is NOT raised here: a declined fold
             // already raised it at the reduction, and a defined fold is
@@ -4528,7 +4528,7 @@ impl Solver {
             // A set-sorted or Int-sorted set term reaching the Tseitin encoder
             // is being used where a literal is expected. There is no set
             // theory to give it meaning, so it becomes an opaque atom and the
-            // honesty gate degrades any resulting `Sat` to `Unknown` — see
+            // honesty gate degrades any resulting `Sat` to `Unknown` – see
             // `Solver::set_terms_unconstrained`.
             TermKind::SetEmpty(_)
             | TermKind::SetUniv(_)
@@ -4546,8 +4546,8 @@ impl Solver {
             // A finite-field term reaching the Tseitin encoder means the
             // eager FF dispatch declined the goal (mixed logic, Boolean
             // structure beyond its scope, or the dispatch's budget). No
-            // engine here owns field semantics — an FF atom is not a free
-            // Boolean — so the honesty gate degrades any resulting `Sat` to
+            // engine here owns field semantics – an FF atom is not a free
+            // Boolean – so the honesty gate degrades any resulting `Sat` to
             // `Unknown`; see `Solver::ff_terms_unconstrained`.
             TermKind::FfConst { .. }
             | TermKind::FfAdd(_)
@@ -5371,7 +5371,7 @@ impl Solver {
                 TermKind::Implies(lhs, rhs) => {
                     // Descend into both sides: an arithmetic disequality sits
                     // in the antecedent of an implication just as often as in
-                    // the consequent (`(=> (distinct x y) p)` — the parity
+                    // the consequent (`(=> (distinct x y) p)` – the parity
                     // graph family), and the trichotomy clause is a tautology
                     // either way.
                     stack.push(*lhs);
@@ -5440,8 +5440,8 @@ impl Solver {
                     // while solving (`pending_numeric_eq_splits`), the atoms
                     // this arm declines are covered anyway.  It is kept as
                     // written so MBQI's clause order does not move.  (The
-                    // former reading of the `Select` exclusion — "the array
-                    // theory handles those" — was false and is what the
+                    // former reading of the `Select` exclusion – "the array
+                    // theory handles those" – was false and is what the
                     // read-over-write index equality's wrong `sat` rested on:
                     // the array theory mints the index equality, it does not
                     // give it arithmetic meaning.)

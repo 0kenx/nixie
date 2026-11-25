@@ -8,7 +8,7 @@
 //! `Real`-indexed chain read at a fresh constant is `unknown` on every build
 //! (recheck 13, `t07_real_replay`), so a model that satisfies `∀x. a[x] > 0`
 //! could not be certified at all.  But the chain's reading is known in
-//! closed form — `vᵢ` at `pᵢ`, `d` everywhere else — so the universal can be
+//! closed form – `vᵢ` at `pᵢ`, `d` everywhere else – so the universal can be
 //! decided pointwise instead:
 //!
 //! * at every tuple of **named** points (each bound variable at one of the

@@ -2,8 +2,8 @@
 //!
 //! The theory modules in [`crate::theories`] each need the same small piece of
 //! machinery: merge terms that have been asserted (or deduced) equal, ask
-//! whether two terms are currently in the same class, and — when a class turns
-//! out to be contradictory — hand back the chain of terms that links the two
+//! whether two terms are currently in the same class, and – when a class turns
+//! out to be contradictory – hand back the chain of terms that links the two
 //! offenders so the caller can report *why*.
 //!
 //! This is deliberately a plain union-find with an explanation graph, not a

@@ -203,7 +203,7 @@ fn mixed_int_real_problem_tracks_each_variables_sort() {
 /// big-constant abstraction), so the atom parses, never wraps (release) or
 /// panics (debug), and `sat` answers only through model certification.
 ///
-/// What stays OUT OF REACH — deliberately, and recorded in the study — is
+/// What stays OUT OF REACH – deliberately, and recorded in the study – is
 /// the *value-dependent refutation*: proving `(= (+ x MAX 1) (+ x 2^63))`
 /// requires the tableau to reason at the value `2^63`, whose row
 /// combinations and column values leave `Rational64` width.  Z3 decides
@@ -259,7 +259,7 @@ fn nested_constant_overflow_never_answers_wrongly() {
 /// The `-2^63` corner: the value fits `i64` but its negation does not, so
 /// it must travel as a (sign-flipped) big column, never as a fixed-width
 /// constant that `row_key` or DL normalization would flip.  These ARE
-/// decided — the corner only needed the parse-side handling.
+/// decided – the corner only needed the parse-side handling.
 #[test]
 fn neg_two_pow_63_constant_is_decided() {
     let mut tm = TermManager::new();
@@ -286,8 +286,8 @@ fn neg_two_pow_63_constant_is_decided() {
 
 /// An equality whose coefficients all cancel leaves an EMPTY row; with a
 /// FRACTIONAL constant (`0 = 5/3`) the infeasibility used to be dropped
-/// silently — the contradictory bounds were planted only on
-/// `expr.terms.first()`, which an empty row does not have — leaving the atom
+/// silently – the contradictory bounds were planted only on
+/// `expr.terms.first()`, which an empty row does not have – leaving the atom
 /// a free Boolean and reporting `sat`.  Found by the mixed-mode fuzz right
 /// after `/`-linearization made constant-folded dividends under `(/ x 3)`
 /// reachable.
@@ -317,7 +317,7 @@ fn empty_row_with_fractional_constant_is_refuted() {
 /// A wide constant assembled only in the linear parse (11x = i64::MAX + 24)
 /// synthesizes a big column; the honesty gate must keep a spurious model from
 /// being reported `sat` (the abstraction has no integer solution, but the
-/// abstraction itself is satisfiable — only certification can tell).
+/// abstraction itself is satisfiable – only certification can tell).
 #[test]
 fn synthesized_wide_column_never_answers_wrongly() {
     use nixie_solver::Context;
@@ -338,22 +338,22 @@ fn synthesized_wide_column_never_answers_wrongly() {
 }
 
 /// The strict-inequality tightening `k ± 1` is checked at the boundary:
-/// `-x > i64::MAX` (satisfiable at `x = -2^63` — SMT `Int` is unbounded)
-/// used to compute `MAX + 1` unchecked — a debug panic and a SILENT WRAP to
+/// `-x > i64::MAX` (satisfiable at `x = -2^63` – SMT `Int` is unbounded)
+/// used to compute `MAX + 1` unchecked – a debug panic and a SILENT WRAP to
 /// `i64::MIN` in release, a different constraint than the one asserted.  The
 /// unshiftable bound now falls through to the exact delta-rational path.
 #[test]
 fn strict_tightening_at_the_i64_boundary_is_exact() {
     use nixie_solver::Context;
     for (script, want) in [
-        // -x > MAX  ⟺  x < -MAX  ⟺  x ≤ -2^63 — satisfiable.
+        // -x > MAX  ⟺  x < -MAX  ⟺  x ≤ -2^63 – satisfiable.
         (
             "(declare-const x Int)(assert (> (* -1 x) 9223372036854775807))(check-sat)",
             "sat",
         ),
         // x < i64::MIN is unsatisfiable only if Int were bounded; it is not,
         // so `x < i64::MIN` is satisfiable (any integer below MIN... there
-        // is none — MIN is the smallest representable but SMT Int is
+        // is none – MIN is the smallest representable but SMT Int is
         // unbounded BELOW it too: satisfiable).
         (
             "(declare-const x Int)(assert (< x (- 9223372036854775807 1)))(assert (> x (- 9223372036854775807 1)))(check-sat)",
@@ -372,7 +372,7 @@ fn strict_tightening_at_the_i64_boundary_is_exact() {
 /// after cancellation. The pivot's substitution, the entering-row build and
 /// `intern_row`'s basic-substitution all used to decline (or, before the
 /// checked era, wrap) on the intermediate; each now retries that derivation
-/// in exact `BigRational` and narrows the final — the item-14 pattern
+/// in exact `BigRational` and narrows the final – the item-14 pattern
 /// applied to the row/value layer. `v0 = 2^62·1 − 2^62·2 + 1 = 1 − 2^62`
 /// fits, so the goal is decidable.
 #[test]
@@ -392,7 +392,7 @@ fn wide_cancellation_value_is_decidable_sat() {
 }
 
 /// The refutation twin: the same wide-cancellation row against a wrong pin
-/// — `v0 = 0` contradicts `v0 = 1 − 2^62`. Both verdict directions of the
+/// – `v0 = 0` contradicts `v0 = 1 − 2^62`. Both verdict directions of the
 /// slice must work at width.
 #[test]
 fn wide_cancellation_refutation_is_decidable_unsat() {
@@ -412,7 +412,7 @@ fn wide_cancellation_refutation_is_decidable_unsat() {
 }
 
 /// A bound AT the cancelled width: `v0 > −2^62 − 1` holds for
-/// `v0 = 1 − 2^62` — the comparison itself must not decline.
+/// `v0 = 1 − 2^62` – the comparison itself must not decline.
 #[test]
 fn wide_cancellation_bound_comparison_decides() {
     use nixie_solver::Context;
@@ -432,8 +432,8 @@ fn wide_cancellation_bound_comparison_decides() {
 
 /// The wide-row scaling (2026-09-15, wide-LP slice 3): a row whose finals
 /// exceed `Rational64` is rescaled by a POSITIVE factor into width before
-/// any wide-store capture — every constraint bound in this encoding is
-/// ZERO, which a positive multiple preserves — so the 40-deep chain with
+/// any wide-store capture – every constraint bound in this encoding is
+/// ZERO, which a positive multiple preserves – so the 40-deep chain with
 /// `i64::MAX` increments (constants combining to `≈ 2^102`, the odd
 /// `3·i64::MAX` shapes needing odd-factor relief) now DECIDES both
 /// directions, matching z3. This test pins the satisfiable side: the
@@ -466,7 +466,7 @@ fn wide_chain_is_decidable_sat_after_scaling() {
 
 /// The honest wall that REMAINS: a row whose huge constant is a large
 /// PRIME (no small odd factor to strip into the denominator) is
-/// unrepresentable at every positive scale — the wide-store capture
+/// unrepresentable at every positive scale – the wide-store capture
 /// applies, the convergence check cannot certify it, and the answer is
 /// `unknown`, never a wrapped verdict. (2^100-scale primes exceed the
 /// small-odd-factor relief of the scaler by construction.)
@@ -491,13 +491,13 @@ fn large_prime_constant_rows_stay_honest() {
     // v1 = -1/1267650600228229401496703205653 < 0 contradicts v1 > 0:
     // truly unsat; the honest answer without exact refutation is unknown.
     // A `sat` here would be an unverified witness; a `sat` with a VALID
-    // model would be fine — but no rational model exists.
+    // model would be fine – but no rational model exists.
     assert_ne!(last, "sat", "the goal is unsatisfiable; sat would be wrong");
 }
 
 /// The wide-row side table (2026-09-15, wide-LP slice 2): a formula whose
 /// chain rows combine past any `Rational64` (`≈ 2^102`) no longer declines
-/// globally when a row goes wide — the row is captured exactly (pivoting
+/// globally when a row goes wide – the row is captured exactly (pivoting
 /// and propagation excluded from it, its value re-derived exactly), so the
 /// formula's *other*, narrow constraints stay decidable. Here the two pins
 /// on `v0` conflict through narrow rows alone: decided `unsat`, matching
@@ -532,7 +532,7 @@ fn wide_chain_pins_conflict_is_decidable_unsat() {
 /// comparison whose COEFFICIENTS leave `i64` width is re-parsed with exact
 /// `BigRational` coefficients (wide constants plain, no column
 /// abstraction) and the whole row rescaled into width by a positive
-/// factor — zero bounds are preserved, so the scaled row is the same
+/// factor – zero bounds are preserved, so the scaled row is the same
 /// constraint. Uniform-magnitude wide rows (`2^63`-scale coefficients)
 /// now decide BOTH directions where the parse used to gate them to
 /// `unknown` (or, before item 32, drop them as free Booleans).
@@ -563,7 +563,7 @@ fn uniform_wide_coefficients_decide_both_directions() {
 
 /// The MIXED-magnitude wide row (`1` and `2^63` coefficients in one row)
 /// parses and scales into the tableau, and the dual-width pivot (slice 5)
-/// carries its entering row exactly in the wide store — so the
+/// carries its entering row exactly in the wide store – so the
 /// satisfiable twin now DECIDES (`v0 = 1` forces `v1 = 0`, a
 /// representable value).
 #[test]
@@ -582,7 +582,7 @@ fn mixed_magnitude_wide_row_sat_twin_decides() {
 
 /// The unsat twin (`v0 = 0` forces `v1 = -2^-63`, contradicting
 /// `v1 > 0`): the refutation needs chained bound reasoning through the
-/// wide row (wide-row propagation — future work), so the honest
+/// wide row (wide-row propagation – future work), so the honest
 /// `unknown` applies. Pinned: never a `sat` (that is exactly the
 /// wrong-verdict class item 32 closed).
 #[test]
@@ -606,13 +606,13 @@ fn mixed_magnitude_wide_rows_stay_honest() {
 /// The stale-assignment false-`unsat` (2026-09-15, root-caused from the f1
 /// differential): `update_assignment` breaks early when a row's exact retry
 /// overflows, leaving later rows' assignments stale, and the guard sites
-/// forced `assignment_current = true` regardless — so after `check`'s
+/// forced `assignment_current = true` regardless – so after `check`'s
 /// entry-time `resource_limit = false` cleared the only other witness, a
 /// later pivot consumed the stale vector: the delta formula inherited the
 /// stale base and (in release) a phony violation drove an invalid conflict.
 /// A wrong `unsat` on a satisfiable mixed LIA goal with div/mod and wide
 /// constants. The fix: `crash_basis` alone owns the flag, setting it from
-/// `!resource_limit` — the flag may only say "current" through a FULL
+/// `!resource_limit` – the flag may only say "current" through a FULL
 /// successful derivation. This pins the honest verdict (never `unsat`;
 /// the true answer is `sat`, and the overflow class declines honestly).
 #[test]
@@ -627,7 +627,7 @@ fn stale_assignment_never_drives_false_unsat() {
     let last = out.last().map(String::as_str).unwrap_or("");
     // Strengthened 2026-09-16 (the value-overflow migration): a narrow row
     // whose exact VALUE leaves `Rational64` mid-search now migrates to the
-    // wide store instead of declining the whole derivation — f1's
+    // wide store instead of declining the whole derivation – f1's
     // trajectory passes such a point and now converges to the model.
     assert_eq!(
         last, "sat",
@@ -639,12 +639,12 @@ fn stale_assignment_never_drives_false_unsat() {
 /// wide differential's fresh seeds): an `Int` variable whose defining row
 /// lives in the wide store (the dual-width pivot) and whose exact value
 /// `−9 − 41/2⁶³` does not narrow was read through the raw `assignment`
-/// entry — a fabricated integral `0` — so branch-and-bound accepted the
+/// entry – a fabricated integral `0` – so branch-and-bound accepted the
 /// LP point as a model and printed `v1 = 0` against a row forcing
 /// `v1 = −9 − 41/2⁶³`: an invalid witness for an unsatisfiable goal.
 /// The fix is layered: wide-aware exact value reads at every decision
 /// site (`delta_value_exact`), branch bounds derived from the exact
-/// UN-NARROWED value (`wide_floor_ceil_big` — floor/ceil of a 2⁶³-scale
+/// UN-NARROWED value (`wide_floor_ceil_big` – floor/ceil of a 2⁶³-scale
 /// rational are small integers, so the search stays decidable), an
 /// underivable value declines to `Unknown`, and `Sat` is gated on every
 /// term-backed variable having a derivable value. The exact branching
@@ -692,11 +692,11 @@ fn wide_coefficient_eq_row_with_pins_is_decidably_unsat() {
 /// The wide-store narrow-back staleness false `unsat` (2026-09-15, the
 /// delta-propagation canary's live find): a row captured into the wide
 /// store (its exact value unrepresentable) keeps a FROZEN `assignment`
-/// entry — the wide pass only re-derives narrowing values. When a later
+/// entry – the wide pass only re-derives narrowing values. When a later
 /// pivot's substitution NARROWS the row back into the tableau, the commit
 /// used to insert the row without recomputing the entry, and the snap
 /// deltas then propagated from a stale base: a phony violation that (in
-/// release) drove an invalid conflict — `unsat` on a satisfiable goal.
+/// release) drove an invalid conflict – `unsat` on a satisfiable goal.
 /// The fix: wide-origin rows are excluded from the delta loop and their
 /// entry recomputed exactly at commit; a non-narrowing recomputation
 /// defers through the staleness flag. This goal is `sat` (z3 agrees) with
@@ -725,7 +725,7 @@ fn wide_row_narrow_back_recomputes_its_assignment_entry() {
 
 /// The `static_features` collector's unchecked `i64` accumulation: two
 /// same-variable `Mul` terms with huge constants (i64::MAX-scale against
-/// a 2⁵⁹-scale) overflowed the `vars` coefficient map — a debug PANIC and
+/// a 2⁵⁹-scale) overflowed the `vars` coefficient map – a debug PANIC and
 /// a release WRAP feeding garbage shape data to the routing layer. The
 /// fix saturates (matching the file's existing `const_term`/`const_prod`
 /// discipline): routing turns conservative, never wrong. This shape
@@ -752,11 +752,11 @@ fn static_features_wide_mul_accumulation_does_not_panic() {
 /// The strict-atom one-sided-endpoint false `unsat` (2026-09-16, round
 /// three of the wide-row propagation): deriving a bound's SUPREMUM through
 /// a variable with only a LOWER bound used the lone lower as the sup
-/// endpoint — fabricating the tightest possible "upper". On the strict
+/// endpoint – fabricating the tightest possible "upper". On the strict
 /// `>` shape the atom slack's lone `(0, +1)` lower became a phony `−3−ε`
 /// upper on the row's variable, crossed the real bounds, and refuted a
 /// satisfiable goal. A one-sided pair now serves its own direction only
-/// (a lone lower is an infimum; the supremum is +∞ — decline). Pinned
+/// (a lone lower is an infimum; the supremum is +∞ – decline). Pinned
 /// never-`unsat` (z3: `sat` at `v2 = 3`; the honest verdict without the
 /// full propagation closure is `unknown`).
 #[test]
@@ -797,10 +797,10 @@ fn strict_multi_term_wide_row_never_drives_false_unsat() {
 /// `3·yi < div(3·yi,1) + mod(3·yi,1)` (one trichotomy arm of the division
 /// axiom's equality) interns its row `3yi − div − mod + 1`; the pin makes
 /// the substituted constant `3·2^62 + 1` overflow `i64`, so `intern_row`
-/// rescaled the row by `1/52` into width — sound for the zero BOUND
+/// rescaled the row by `1/52` into width – sound for the zero BOUND
 /// (`slack ≤ 0`), but the slack was still integer-marked from the
 /// UNSCALED form.  A Gomory cut over that rescaled slack then fabricated
-/// `52 | (1 − s_axiom)` — a divisibility constraint implied by nothing —
+/// `52 | (1 − s_axiom)` – a divisibility constraint implied by nothing –
 /// and refuted the division axiom ALONE (a conflict whose single reason
 /// is the axiom, a theorem): `unsat` for a `sat` goal.  The fix
 /// (`RowInternMode::Rescaled`) refuses the integer mark unless the
@@ -828,7 +828,7 @@ fn rescaled_row_slack_never_drives_false_unsat() {
 
 /// The `i64::MIN`-bound corner (2026-09-17, found by the debug-panic sweep
 /// on `QF_ANIA/diskperf`): `x < i64::MIN + 1` tightens to `x <= i64::MIN`,
-/// whose row `x - rhs` needs the constant `+2^63` — the negation of
+/// whose row `x - rhs` needs the constant `+2^63` – the negation of
 /// `i64::MIN` does not fit `Rational64`.  The unchecked `-rhs` PANICKED in
 /// debug and silently WRAPPED in release, building a row for a DIFFERENT
 /// constraint (`x + i64::MIN <= 0`).  The fix declines the assertion
@@ -878,15 +878,15 @@ fn i64_min_bound_rows_decline_instead_of_wrapping() {
 }
 
 /// Wide-value publication (2026-09-17): a QF_LRA goal whose unique solution
-/// is the exact rational `xr = -27670116110564327424/13` — the numerator
+/// is the exact rational `xr = -27670116110564327424/13` – the numerator
 /// alone exceeds `i64`, so no `Rational64` assignment can hold it.  The LP
 /// converges (the wide store knows the value exactly all along); the OLD
 /// `wide_underivable_blocks_sat` gate declined the verdict because the
-/// value did not NARROW — honest `unknown` for a decidable `sat`.  The
+/// value did not NARROW – honest `unknown` for a decidable `sat`.  The
 /// publication channel (`value_exact` + the `(/ n d)` term synthesis on
 /// the model side) publishes the exact value, the certifier evaluates it
 /// exactly, and the goal decides `sat`.  (The synthesis must build REAL
-/// division: the first cut used `mk_div` — Euclidean — and get-value
+/// division: the first cut used `mk_div` – Euclidean – and get-value
 /// printed the FLOOR, a published witness violating its own assertion;
 /// caught by validating the model against z3.)
 #[test]
@@ -917,10 +917,10 @@ fn wide_model_value_publishes_exactly_and_decides_sat() {
 }
 
 /// The B&B dead-leaf class (2026-09-17, the unsat-side gap survey's dive
-/// site): `11·xi = 7` written through a `div`-by-1 feed — the search
+/// site): `11·xi = 7` written through a `div`-by-1 feed – the search
 /// branches to an all-integral candidate whose LP point is feasible, but
 /// the leaf probe (`state_feasible`) re-derives through the bound-snap
-/// `crash_basis` — a CRUDE point, not the search's vertex — lands outside
+/// `crash_basis` – a CRUDE point, not the search's vertex – lands outside
 /// the windows, and the old code unwound the WHOLE search to `unknown`.
 /// The leaf now re-solves (converging repairs the crude point; a
 /// refutation is a DEAD BRANCH whose backtrack tries the siblings, and an
@@ -952,7 +952,7 @@ fn bnb_dead_leaf_backtracks_instead_of_unwinding_unknown() {
 ///
 /// Found by the gap survey (seed 20261002, instance 567); the ±1-divisor
 /// identity folds recovered 3 of the 7 UNSAT-side members on the fixed
-/// survey seeds (plus 18 SAT-side — the feed was also deflecting searches).
+/// survey seeds (plus 18 SAT-side – the feed was also deflecting searches).
 #[test]
 fn div_by_one_folds_and_the_gcd_refutation_decides() {
     let mut tm = TermManager::new();
@@ -1006,7 +1006,7 @@ fn div_by_one_folds_and_the_gcd_refutation_decides() {
 /// that made this ~1180 s (see
 /// `docs/studies/2026-09-18-rehome-wide-rational-blowup.md`), and the
 /// checked branch-range subtraction closed the debug-profile overflow the
-/// new trajectory exposed — ~80 s in this profile now. Still slow enough
+/// new trajectory exposed – ~80 s in this profile now. Still slow enough
 /// to deserve its raised budget below.
 #[test]
 fn rehome_does_not_fabricate_a_crossing_on_a_referenced_slack() {
@@ -1088,17 +1088,17 @@ fn equal_pin_endpoint_reasons_cite_their_own_side() {
     );
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // The wide-LP build (2026-09-18, the exact-arithmetic handoff): the bound
 // store widened to exact values (`BoundValue`), the assert entries' exact
 // row intern retiring the sticky decline, the B&B branch channel widened
 // (`wide_floor_ceil_exact`), and the model-verification evaluator's exact
 // numeric channel (`EvalVal::NumBig`).  The width walls this file's earlier
 // entries documented as honest `unknown`s become decidable.
-// ---------------------------------------------------------------------------
+// ========  ========
 
 /// The handoff's example case, pinned with its MODEL: `xr < -2^63` over
-/// QF_LRA is satisfiable at any rational below `-2^63` — a value that does
+/// QF_LRA is satisfiable at any rational below `-2^63` – a value that does
 /// not fit `Rational64`, so the model publication must go through the
 /// EXACT delta-instantiation channel (`value_exact` +
 /// `delta_instantiation_exact`).  The pre-fix behavior was a debug PANIC in
@@ -1123,7 +1123,7 @@ fn i64_min_real_strict_bound_decides_with_exact_model() {
         Some("sat"),
         "any rational below -2^63 satisfies the bound (z3: sat)"
     );
-    // The published witness must be BELOW -2^63 — the exact instantiation
+    // The published witness must be BELOW -2^63 – the exact instantiation
     // of the strict bound `-2^63 - δ₀`.  (Validated against z3 by binding
     // the model as a define-fun and re-solving: z3 agrees `sat`.)
     let val = out.get(1).map(String::as_str).unwrap_or("");
@@ -1210,7 +1210,7 @@ fn exact_model_values_print_as_values() {
 }
 
 /// The certification wall slice: `2^62`-scale arithmetic under the gate.
-/// `(>= (+ x x) 0)` at `x = 2^62` evaluates `2^63 >= 0` — the exact fold
+/// `(>= (+ x x) 0)` at `x = 2^62` evaluates `2^63 >= 0` – the exact fold
 /// certifies the boundary model where the width-limited evaluator conceded
 /// (the `no_certifiable_candidate` class; z3: sat).
 #[test]
@@ -1233,7 +1233,7 @@ fn boundary_scale_sum_bound_certifies() {
     );
 }
 
-// ===========================================================================
+// ========  ========
 // The floating-constant campaign (2026-09-19): the big-const column
 // abstraction's column PINNED to its exact value, the fractional
 // numerator-column extension, and the wide-point honest-value reads.
@@ -1241,12 +1241,12 @@ fn boundary_scale_sum_bound_certifies() {
 // Root cause chain (the gap survey's float slice, 8 of 47 members, plus the
 // parse-gated fractional class, 9 more):
 //   * a folded constant that leaves `Rational64` width in every orientation
-//     became a FREE COLUMN (encode's abstraction) that floated — the model
+//     became a FREE COLUMN (encode's abstraction) that floated – the model
 //     published defaults, the evaluator refuted them, and the blocking loop
 //     degraded a decidable `sat` to `unknown`;
 //   * no λ = ±1/2^k can EVER shrink a numerator (it only cancels factors of
 //     two), so a fractional beyond-width constant (`-15.4` summed against a
-//     `2^62`-scale integer) had NO representable form at all — the parse
+//     `2^62`-scale integer) had NO representable form at all – the parse
 //     gated the atom to `Unknown`;
 //   * `value()`'s honesty guard covered wide ROWS but not wide POINTS, so a
 //     branch-and-bound bound at `2^63` scale published the stale `0`.
@@ -1259,7 +1259,7 @@ fn boundary_scale_sum_bound_certifies() {
 /// The motivating case: `3·xi + (i64::MAX + 2147483647 + 1) ≤ 7`, the
 /// constant `9223372039002259453` far beyond width.  The synthesized column
 // is pinned, the branch-and-bound drives xi to the true bound
-/// `xi = -3074457346334086482` (z3's model), and the verdict is `sat` —
+/// `xi = -3074457346334086482` (z3's model), and the verdict is `sat` –
 /// pre-fix this answered `unknown` through the refuted-model blocking loop.
 #[test]
 fn pinned_big_const_column_decides_sat() {
@@ -1285,7 +1285,7 @@ fn pinned_big_const_column_decides_sat() {
 /// to `-23058430092136939443/5`, whose numerator leaves `i64` and whose
 /// oddness defeats every λ.  The numerator-column abstraction carries it
 /// (`col ↦ 23058430092136939443` at coefficient `-1/5`, pinned), the verdict
-/// is `sat`, and the model is EXACT: `xr = 7686143364045646481/10` — the
+/// is `sat`, and the model is EXACT: `xr = 7686143364045646481/10` – the
 /// tight boundary value, z3-validated by negation.
 #[test]
 fn fractional_wide_constant_decides_with_exact_model() {
@@ -1310,7 +1310,7 @@ fn fractional_wide_constant_decides_with_exact_model() {
 /// The column SIGN convention: the column replaces the moved-to-RHS
 /// constant, so it must enter the row at `coef·col = −moved`.  The first
 /// version of the numerator column entered at `+moved` and this exact shape
-/// — satisfiable, z3 `sat` — answered `unsat` (a FALSE refutation: the row
+/// – satisfiable, z3 `sat` – answered `unsat` (a FALSE refutation: the row
 /// asserted the negated constant, which against `5·xr > 4` is genuinely
 /// infeasible).  Pins the convention for BOTH the fractional and the
 /// integer arms.
@@ -1338,7 +1338,7 @@ fn constant_column_sign_convention_is_not_inverted() {
 
 /// A branch-and-bound bound beyond width parks an integer at a WIDE POINT;
 /// its raw `assignment` entry is stale by design.  The model must publish
-/// the EXACT point (`xi = -9223372036854775832`, z3-validated by negation) —
+/// the EXACT point (`xi = -9223372036854775832`, z3-validated by negation) –
 /// the stale `0` was refuted by the evaluator and degraded the verdict.
 #[test]
 fn wide_point_model_publication_is_exact() {
@@ -1362,7 +1362,7 @@ fn wide_point_model_publication_is_exact() {
 }
 
 /// The pin is SCOPED: bounds pop with the asserting level, and the atom's
-/// re-assertion after a pop must re-pin (idempotent by bound inspection —
+/// re-assertion after a pop must re-pin (idempotent by bound inspection –
 /// a parse-time memo would skip the re-pin and float the column again).
 #[test]
 fn pinned_column_repins_after_pop() {
@@ -1389,17 +1389,17 @@ fn pinned_column_repins_after_pop() {
 
 /// The B&B leaf's re-solve-vs-scan vertex mismatch (2026-09-19, found by
 /// the boundary-literal SHAPES in the mixed differential, seed 20262113
-/// instance 41): `mod(−2y + 2^62, 4) > 2` is UNSATISFIABLE — the
-/// expression is always 0 or 2 — but the branch-and-bound leaf accepted a
+/// instance 41): `mod(−2y + 2^62, 4) > 2` is UNSATISFIABLE – the
+/// expression is always 0 or 2 – but the branch-and-bound leaf accepted a
 /// model.  Mechanism: `find_fractional_int_var` scanned the *crude*
 /// post-pop point and found every integer variable integral; the leaf's
 /// feasibility `check()` then re-optimized onto a DIFFERENT vertex where
-/// `q = (div (−2y + 2^62) 4)` sits at `(2^62−1)/4` — fractional — and the
+/// `q = (div (−2y + 2^62) 4)` sits at `(2^62−1)/4` – fractional – and the
 /// snapshot published that vertex as a model, which the gate's
 /// settled-atom arm had no chance against (the mod atom's committed
 /// polarity is exactly what the bad feed justified).  The fix re-scans
 /// integrality AT the re-solved vertex (`try_eq_incumbent`'s discipline);
-/// the verdict is the honest `unknown` (z3: `unsat` — the parity refutation
+/// the verdict is the honest `unknown` (z3: `unsat` – the parity refutation
 /// `2y + 4q = 2^62 − 3` is beyond this build's wide-constant Diophantine
 /// reach), never a `sat` with a fractional-vertex model.
 #[test]
@@ -1425,15 +1425,15 @@ fn bnb_leaf_rescan_rejects_post_resolve_fractional_vertex() {
 }
 
 /// The wide-row interval refutation's SIGN (2026-09-19, the S3 residual's
-/// dominant mechanism — 19 of the 110 survey members at `bf9f5b71`): for a
+/// dominant mechanism – 19 of the 110 survey members at `bf9f5b71`): for a
 /// negative coefficient the row's minimum contribution is `+ c·hi` (the
 /// endpoint choice folds the sign), but the accumulation SUBTRACTED it,
 /// computing a range wider than the truth.  Valid refutations were missed
-/// (conservative — the widened range can only fail to refute), the repair
+/// (conservative – the widened range can only fail to refute), the repair
 /// step then found every direction blocked at its bound (NOCOL), and the
 /// check declined LP-infeasible states to `unknown`.  This instance's
 /// violated wide row (a `div`/`mod`-fractional row over a variable resting
-/// at a `-4.6e18` upper) is genuinely refutable at its minimum — z3 and
+/// at a `-4.6e18` upper) is genuinely refutable at its minimum – z3 and
 /// the fixed build answer `sat` with `xi = 9` (model z3-validated); the
 /// pre-fix build answered `unknown`.
 #[test]
@@ -1457,13 +1457,13 @@ fn wide_row_interval_refutation_sign() {
 
 /// The `get-value` echo of an exact rational must be VALID SMT-LIB and
 /// semantically the model's value (handoff item 8, closed): the shared
-/// printers' `RealConst` arm used `Ratio`'s Display — the math spelling
+/// printers' `RealConst` arm used `Ratio`'s Display – the math spelling
 /// `1/4611686018427387904`, a token no SMT-LIB parser accepts (neither
 /// nixie nor z3 could re-read a `get-value` echo).  The evaluation path
 /// folds the exact-publication `(/ n d)` term into a `RealConst`, so the
 /// echo regressed exactly when the value came back through `model.eval`.
 /// Pinned three ways: the spelling itself, the integer-valued Real's
-/// `.0`, and the round-trip — binding the echoed value as a `define-fun`
+/// `.0`, and the round-trip – binding the echoed value as a `define-fun`
 /// and asserting `distinct` from the variable must be `unsat`.
 #[test]
 fn get_value_rational_echo_round_trips() {
@@ -1490,10 +1490,10 @@ fn get_value_rational_echo_round_trips() {
         "the bare-slash math spelling is not parseable SMT-LIB"
     );
     // The former residual, now CLOSED: a Real variable pinned by an
-    // integer literal echoed the integer spelling (`5`) — the
+    // integer literal echoed the integer spelling (`5`) – the
     // equality-extraction path copied the RHS's kind without consulting
     // the variable's sort (the arith-value path already had the rule).
-    // The entry is now `RealConst` — the sort's canonical spelling,
+    // The entry is now `RealConst` – the sort's canonical spelling,
     // consistent with every other Real entry.
     let mut ctx2 = Context::new();
     let out2 = ctx2
@@ -1533,21 +1533,21 @@ fn get_value_rational_echo_round_trips() {
 }
 
 /// The branch-and-bound snapshot must carry the leaf's integral value at ANY
-/// width (2026-09-19, the J5 class — 12 of the 91 residual survey members
+/// width (2026-09-19, the J5 class – 12 of the 91 residual survey members
 /// recovered, 61 tagged): the dive snapshots inside its scoped branch bounds,
 /// and the scopes POP right after, restoring the fractional pre-dive point.
 /// A beyond-width leaf value used to be left to `value_exact`'s live read on
-/// the assumption it would still be readable later — the popped state
+/// the assumption it would still be readable later – the popped state
 /// declined it, the model builder published the sort default `0` for the
 /// variable, the (exact, Euclidean) certifier refuted the candidate, and the
 /// big-const gate downgraded a decidable `sat` to `unknown`.  The snapshot
 /// is now exact (`BigRational`), and both publication channels prefer it.
 /// The pinned PROPERTY is trajectory-independent: the verdict is `sat` and
-/// `xi` publishes a genuine INTEGRAL leaf value — never the defaulted `0`
+/// `xi` publishes a genuine INTEGRAL leaf value – never the defaulted `0`
 /// and never a post-pop fraction.  (The 2026-09-21 unified-feasibility
 /// driver landing moved the dive's trajectory: this instance's leaf now
 /// rests at `xi = -3` instead of the previous `xi = -49806208999015789358`;
-/// BOTH models are z3-validated by binding + negation — the earlier pin
+/// BOTH models are z3-validated by binding + negation – the earlier pin
 /// froze the old trajectory's value and is recorded here.)
 #[test]
 fn bnb_snapshot_survives_scope_pop_at_any_width() {
@@ -1566,10 +1566,10 @@ fn bnb_snapshot_survives_scope_pop_at_any_width() {
         .expect("script executes");
     assert_eq!(out.first().map(String::as_str), Some("sat"), "z3: sat");
     let model = out.get(1).map(String::as_str).unwrap_or("");
-    // The pinned property: a genuine INTEGRAL leaf value is published —
+    // The pinned property: a genuine INTEGRAL leaf value is published –
     // never the defaulted `0`, never a post-pop fraction.  (Exact value
     // `49806208999015789358` was the pre-unification trajectory's leaf;
-    // `-3` is the current one — both z3-validated.)
+    // `-3` is the current one – both z3-validated.)
     let integral = model
         .split_whitespace()
         .nth(1)
@@ -1587,7 +1587,7 @@ fn bnb_snapshot_survives_scope_pop_at_any_width() {
 /// scopes pop after the snapshot, restoring a point that can RE-VIOLATE
 /// strict bounds the leaf satisfied (a basic resting at its strict bound's
 /// real part with no infinitesimal).  The δ-instantiation computed over the
-/// popped state then declines — and EVERY real variable published the sort
+/// popped state then declines – and EVERY real variable published the sort
 /// default `0`, so the exact evaluator refuted the candidate and the
 /// big-const gate downgraded a decidable `sat` to `unknown` (this instance's
 /// `xr` was published as `0` while the tableau held `2147483572/3`; its
@@ -1620,7 +1620,7 @@ fn leaf_snapshot_covers_real_variables() {
 
 /// The `(simplify …)` output is LET-SHARED (the nec-smt printer fix): a
 /// let-chain goal whose DAG sharing compounds (each binding doubling the
-/// next) unfolds to 2^n tree nodes — printing it unshared never finishes
+/// next) unfolds to 2^n tree nodes – printing it unshared never finishes
 /// (the 12.5 KB nec-smt member's `(simplify)` ran 90 s+ at 10 GB of
 /// string churn; its true tree size is ~10^16 nodes).  The command now
 /// lifts the shared compounds into `let` bindings and prints kilobytes.
@@ -1636,7 +1636,7 @@ fn simplify_output_shares_dag_repetition_with_lets() {
     );
     let mut ctx = Context::new();
     let out = ctx.execute_script(&script).expect("script executes");
-    // Every doubling is even, so `= 1` is genuinely unsat — the pin is
+    // Every doubling is even, so `= 1` is genuinely unsat – the pin is
     // the simplification echo, but the verdict must stay honest too.
     assert_eq!(out.first().map(String::as_str), Some("unsat"));
     let echo = out.get(1).map(String::as_str).unwrap_or("");
@@ -1649,12 +1649,12 @@ fn simplify_output_shares_dag_repetition_with_lets() {
 }
 
 /// A wide point must never shadow a wide row (2026-09-19, the item-95
-/// defect — the corruption at the bottom of the J5 cert-false class): a
+/// defect – the corruption at the bottom of the J5 cert-false class): a
 /// variable parked at a wide bound as a NONBASIC keeps its `wide_points`
 /// entry; when it later becomes wide-BASIC (a defining wide row), every
 /// exact read (`point_value_exact`, consulted first by the snapshot, the
 /// key-form evaluations, and model publication) returned the FROZEN point
-/// while the constraint machinery composed through the LIVE row — the two
+/// while the constraint machinery composed through the LIVE row – the two
 /// drift apart as the search moves the row's terms (observed: a parked
 /// point ...842 vs a row evaluating ...864+, off by the 22/44-delta
 /// family).  The published model then violated its own committed atoms
@@ -1681,7 +1681,7 @@ fn wide_point_never_shadows_a_wide_row() {
 /// An unrecognized top-level command is ANSWERED, not silently swallowed
 /// (SMT-LIB/z3's observable behavior).  The historical silent skip made an
 /// easy authoring mistake invisible: a script whose only `(check-sat)` sat
-/// inside a stray `(let …)` form — a command in term position — executed
+/// inside a stray `(let …)` form – a command in term position – executed
 /// NOTHING and exited 0 with no output at all, indistinguishable from
 /// success-with-no-queries (found while generating select-chain repros;
 /// the trap is recorded in the perf-gap study's generation notes).

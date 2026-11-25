@@ -738,7 +738,7 @@ fn run_check_geomean(config: &Config) -> Result<()> {
     // `cargo run -p bench-regression -- --history-dir bench/regression/history`,
     // and under `cargo run -p` the manifest dir is `bench/regression/`, so a
     // manifest-first resolution double-prefixes the path to
-    // `bench/regression/bench/regression/history`, which never exists — and the
+    // `bench/regression/bench/regression/history`, which never exists – and the
     // missing-dir branch below soft-passes, turning the whole gate into an
     // unconditional silent pass. CWD-first makes the documented invocation
     // work; the manifest fallback keeps `cargo run` from inside the crate dir

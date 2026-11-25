@@ -96,7 +96,7 @@ fn nonlinear_atom_is_not_spuriously_decided() {
     // this is a genuine, proof-backed Unsat: the relaxation replaces the
     // product with a monic variable `v` and `v > 5 ∧ v < 3` is LP-infeasible,
     // and an infeasible relaxation soundly refutes the original. What is
-    // still excluded — and what this test was written for — is a free-Boolean
+    // still excluded – and what this test was written for – is a free-Boolean
     // spurious Sat.
     let r = run_script(
         r#"(declare-const x Int)(declare-const y Int)

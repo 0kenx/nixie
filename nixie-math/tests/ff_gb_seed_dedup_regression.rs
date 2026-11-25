@@ -1,14 +1,14 @@
 //! The seed-deduplication regression: the Gebauer–Möller discard is
-//! UNSOUND when two basis elements share a leading monomial — the
+//! UNSOUND when two basis elements share a leading monomial – the
 //! duplicate trivially divides every lcm of its own multiples,
 //! discarding pairs whose S-polynomials do not reduce to zero. Found
 //! 2026-09-18 while validating the F4 engine against Buchberger on
 //! random 5×6 product systems: a whole-ring ideal (an UNSAT goal with a
 //! verified `1 = Σ cᵢ·fᵢ` witness) returned a 9-element non-basis with
-//! `is_gb = true` — the refutation was silently missed.
+//! `is_gb = true` – the refutation was silently missed.
 //!
 //! The fix reduces each INPUT's leading term against the other inputs
-//! at initialization (leading-term dedup, NOT full inter-reduction —
+//! at initialization (leading-term dedup, NOT full inter-reduction –
 //! the engine's "generators as given" rationale stands for everything
 //! except lm-distinctness). These tests pin the fix: the exact
 //! reproducer, and a randomized brute-force battery agreeing on
@@ -64,7 +64,7 @@ fn system(f: &FieldCtx, seed: u64, nvars: usize, ncons: usize) -> Vec<MPoly> {
     inputs
 }
 
-/// Brute-force Buchberger (every pair, no criteria) — the reference for
+/// Brute-force Buchberger (every pair, no criteria) – the reference for
 /// small systems. Returns whether the computed basis contains a nonzero
 /// constant (the whole-ring witness).
 fn brute_whole_ring(f: &FieldCtx, inputs: &[MPoly], steps: &mut usize) -> bool {
@@ -123,7 +123,7 @@ fn brute_whole_ring(f: &FieldCtx, inputs: &[MPoly], steps: &mut usize) -> bool {
     false
 }
 
-/// The exact reproducer: seed 0xBEEF_0001 at 5×6 — a whole-ring ideal
+/// The exact reproducer: seed 0xBEEF_0001 at 5×6 – a whole-ring ideal
 /// whose constant witness (verified by exact cofactor re-multiplication
 /// during the investigation) the engine returned a 9-element non-basis
 /// for. The fix must find the refutation.
@@ -146,7 +146,7 @@ fn whole_ring_witness_is_not_missed() {
 
 /// Randomized battery: whole-ring agreement and mutual membership
 /// between the engine and the brute reference, across many shapes
-/// (including deliberately duplicate-lm seeds — two constraints over
+/// (including deliberately duplicate-lm seeds – two constraints over
 /// the same variable pair).
 #[test]
 fn engine_agrees_with_brute_force() {

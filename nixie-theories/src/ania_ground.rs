@@ -990,7 +990,7 @@ fn parse_definition(manager: &TermManager, a: TermId, b: TermId) -> Option<(Term
         as_var(manager, v)?;
         // The defined variable must be INTEGER-sorted: this stage realizes
         // definitions through `eval_int`, so a Boolean-sorted "definition"
-        // (`(= b φ)`, the purification interface shape) could never bind —
+        // (`(= b φ)`, the purification interface shape) could never bind –
         // its realization returns `None` at every leaf and the search
         // rejected every candidate (a false `Unsat`).  Boolean interface
         // equalities are the nonlinear grounding's business

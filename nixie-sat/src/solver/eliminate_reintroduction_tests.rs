@@ -1,6 +1,6 @@
 //! Elimination-reintroduction regressions (2026-09-15): a BVE-eliminated
 //! variable re-mentioned by a later `add_clause` must have its retired
-//! clauses resurrected and stay enforced — the extension-stack walk's
+//! clauses resurrected and stay enforced – the extension-stack walk's
 //! witness toggle alone can fabricate a model that violates a live clause
 //! over the variable (the Rodin invalid-model class, layer 2).
 use super::*;
@@ -39,7 +39,7 @@ impl TheoryCallback for NullTheory {
     fn on_backtrack(&mut self, _level: u32) {}
 }
 
-/// Layer 2 — BVE/ext-stack reintroduction. A BVE-eliminated variable's
+/// Layer 2 – BVE/ext-stack reintroduction. A BVE-eliminated variable's
 /// retired clauses live only as extension-stack obligations; a later clause
 /// over the variable constrains it, and the walk's witness toggle can then
 /// falsify a live clause. The gatekeeper must resurrect the retired clauses
@@ -64,7 +64,7 @@ fn bve_eliminated_var_remention_resurrects_its_retired_clauses() {
     assert!(solver.var_eliminated(Var::new(0)));
 
     // Reintroduction (refinement-loop shape): a lemma mentions ¬v, and the
-    // units force v = a = s = false — falsifying the retired (v ∨ a ∨ s).
+    // units force v = a = s = false – falsifying the retired (v ∨ a ∨ s).
     assert!(solver.add_clause_dimacs(&[-1, 5])); // ¬v ∨ c
     assert!(
         solver.ext_rementioned.contains(&Var::new(0)),
@@ -88,7 +88,7 @@ fn bve_eliminated_var_remention_resurrects_its_retired_clauses() {
 
 /// The satisfiable twin: only the ¬v constraint is reintroduced, so the
 /// restored (v ∨ a ∨ s) is satisfied through a (or s), and the model must
-/// carry v = false — the extension-stack walk must not toggle v back
+/// carry v = false – the extension-stack walk must not toggle v back
 /// against the live (¬v ∨ c) with c = false.
 #[test]
 fn bve_remention_model_keeps_the_reintroduced_constraint() {

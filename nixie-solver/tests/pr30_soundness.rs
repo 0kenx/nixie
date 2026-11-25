@@ -378,7 +378,7 @@ fn test_pr30_quantifier_trigger_function_ground_diseq_is_not_sat() {
         output,
         vec!["unsat"],
         "the ground part is unsatisfiable (y = 3 forces f(y) = f(3)), so the \
-         answer is `unsat` — derived at the root by pinning `3` into arithmetic \
+         answer is `unsat` – derived at the root by pinning `3` into arithmetic \
          so congruence can fire (z3: unsat)"
     );
 }
@@ -432,7 +432,7 @@ fn test_pr30_quantified_uf_negative_const_pin_closes_false_sat() {
 }
 
 /// Root-fix control: same shape with the chain entailing a DIFFERENT value
-/// (`y = 4`, so `f(y)` and `f(3)` are congruence-independent) — must stay
+/// (`y = 4`, so `f(y)` and `f(3)` are congruence-independent) – must stay
 /// `sat`; a pin that over-merged (pairing unequal values or skipping the
 /// entailment re-verification) would flip this to `unsat`/`unknown`.
 #[test]
@@ -481,7 +481,7 @@ fn test_pr30_quantified_uf_compound_const_pin_closes_false_sat() {
 /// Root-fix regression: `div`/`mod` constants as quantified-UF arguments.
 /// The linear extractor keeps them opaque, so the literal/compound pin did
 /// not cover them and `(f (div 6 2))` was left unpaired with the equal-valued
-/// `y = 3` — a false `sat` (z3: unsat).  Closed-form Euclidean evaluation
+/// `y = 3` – a false `sat` (z3: unsat).  Closed-form Euclidean evaluation
 /// per SMT-LIB (`arith_axioms` semantics; Rust `div_euclid`/`rem_euclid`).
 #[test]
 fn test_pr30_quantified_uf_div_mod_const_pins_close_false_sat() {
@@ -546,7 +546,7 @@ fn test_pr30_quantified_uf_div_mod_const_pins_close_false_sat() {
     assert_eq!(real_case, vec!["unsat"], "y = 2.5 = (/ 5.0 2.0); z3: unsat");
 }
 
-/// Zero-divisor control: `(div 1 0)` is UNINTERPRETED per SMT-LIB — any value
+/// Zero-divisor control: `(div 1 0)` is UNINTERPRETED per SMT-LIB – any value
 /// is admissible, so pairing it with an equal-valued term would FABRICATE a
 /// semantics the logic does not define.  The pin must skip it and the verdict
 /// stay `sat` (z3: sat).
@@ -572,9 +572,9 @@ fn test_pr30_quantified_uf_zero_divisor_pin_withholds_unverified_model() {
 
 /// MBQI relevant-term pool regression (ABV residual of the registry study):
 /// a quantifier whose auto-trigger `(select a i)` contains no ground term of
-/// the bound variable's sort left that sort's candidate pool EMPTY — ground
+/// the bound variable's sort left that sort's candidate pool EMPTY – ground
 /// terms were collected only from patterns, defaults had no BitVec arm, and
-/// injected extras replaced the strategies instead of merging — so MBQI found
+/// injected extras replaced the strategies instead of merging – so MBQI found
 /// no counterexample in any round and a refutable goal answered `unknown`
 /// (z3: `unsat`).  The fix: ground sub-terms of every quantifier-free
 /// assertion enter the pool; BitVec gets default candidates (exhaustive for
@@ -607,7 +607,7 @@ fn test_abv_quantified_select_bv_index_finds_counterexample() {
 /// Control for the pool change: a SATISFIABLE BV-quantified problem whose
 /// richer candidate pool must not over-instantiate into a spurious conflict
 /// (tautological body → Satisfied fast path; ground part decides).
-/// (A const-array sat-control — `forall i. select a i = #x0` — answers
+/// (A const-array sat-control – `forall i. select a i = #x0` – answers
 /// `unknown` on BOTH sides of the change: satisfiable quantified-array
 /// goals are not yet certifiable, a separate recorded incompleteness.)
 #[test]
@@ -629,7 +629,7 @@ fn test_abv_quantified_select_bv_stays_sat_when_consistent() {
 /// Sat-certification residual of the MBQI pool study, closed: a satisfiable
 /// quantified-array goal over a FINITE BV index domain now certifies `sat`
 /// (was `unknown`; z3: `sat`).  The completed model carried no select keys,
-/// so the EU relevant-term set was empty — but a BV-sorted bound variable
+/// so the EU relevant-term set was empty – but a BV-sorted bound variable
 /// ranges over exactly `2^width` values, so `bounded_domains` enumerates the
 /// whole domain exhaustively: unconditionally sound, no model-extension
 /// argument needed (the same exhaustive-box argument as the Int path).
@@ -647,7 +647,7 @@ fn test_bv_index_quantified_array_certifies_sat() {
 
 /// Exhaustive BV enumeration is complete in BOTH directions: the whole
 /// domain is instantiated, so a falsified instance refutes (`unsat`) and a
-/// satisfied domain certifies (`sat`) — with no body-shape restriction
+/// satisfied domain certifies (`sat`) – with no body-shape restriction
 /// (these bodies are pure BV comparisons, not essentially-uninterpreted).
 #[test]
 fn test_bv_exhaustive_domain_certifies_both_directions() {

@@ -63,7 +63,7 @@ def main():
                           / len(both))
         else:
             gm = float("nan")
-        print(f"\n== {label} ({sha}) — {len(keys)} joined cells")
+        print(f"\n== {label} ({sha}) – {len(keys)} joined cells")
         print(f"   solved cells: default {d_solved} -> arm {a_solved} "
               f"(net {a_solved - d_solved:+d})")
         print(f"   cell classes: both-decided {len(both)}, arm-only {len(arm_only)}, "

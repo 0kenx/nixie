@@ -5,7 +5,7 @@
 //!
 //! Reports two things:
 //!
-//! * **Syntax parity.** The gate is one-sided — every file SANY parses must
+//! * **Syntax parity.** The gate is one-sided – every file SANY parses must
 //!   parse here. Accepting more is allowed, because the long-term target is a
 //!   superset; those files are listed for review rather than counted as
 //!   failures.
@@ -142,7 +142,7 @@ fn main() -> ExitCode {
                     continue;
                 }
                 level_mismatch.push(format!(
-                    "{path}: {name} — SANY {}, nixie {}",
+                    "{path}: {name} – SANY {}, nixie {}",
                     level_name(*want),
                     level_name(mine)
                 ));

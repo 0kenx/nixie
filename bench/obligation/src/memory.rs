@@ -3,13 +3,13 @@
 //!
 //! * UNSAT (`distinct-asserted`): with pairwise-distinct indices, any
 //!   permutation of non-overlapping writes yields the *same* array, so a
-//!   disequality on a read is refuted — but the solver must reason through
+//!   disequality on a read is refuted – but the solver must reason through
 //!   the write histories to see it.
 //! * UNSAT (`offset-implied`): distinctness is *implied* by
-//!   `idx_k = base + k*step, step > 0` — arithmetic has to discharge the
+//!   `idx_k = base + k*step, step > 0` – arithmetic has to discharge the
 //!   aliasing question before array reasoning can conclude.
 //! * SAT (`alias`): exactly one pair of writes shares an index and the two
-//!   histories order them differently with distinct values — the arrays
+//!   histories order them differently with distinct values – the arrays
 //!   differ at that index; the generator verifies this by simulation.
 //! * Incremental: all of the above under push/pop scopes.
 
@@ -165,9 +165,9 @@ pub fn build(seed: u64, p: &Params, variant: &Variant) -> Result<Data, String> {
     }
 }
 
-// ---------------------------------------------------------------------------
+// ========  ========
 // Emission
-// ---------------------------------------------------------------------------
+// ========  ========
 
 fn store_chain(n: usize, order: &[usize], idx: &dyn Fn(usize) -> String) -> String {
     let mut t = String::from("a0");

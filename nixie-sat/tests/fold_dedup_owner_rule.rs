@@ -1,7 +1,7 @@
 //! Tests for the fold's exact-duplicate retire (2026-09-18/19): the round
 //! may retire a clause only when the recorded owner of its mapped vector is
 //! an ORIGINAL clause.  Retiring an original in favor of a LEARNED twin was
-//! the b21/seed-1 false-`sat`'s exact mechanism — the learned owner was
+//! the b21/seed-1 false-`sat`'s exact mechanism – the learned owner was
 //! (correctly) purged by `mark_redundant_clauses_with_eliminated_variables_
 //! as_garbage` at the next elimination, the constraint left the folded
 //! formula with no extension obligation, and the search answered `sat` on a
@@ -44,7 +44,7 @@ fn fold_dedup_never_retires_original_for_learned_owner() {
     // The clause pair the fold makes identical: (0 ∨ 2) and (0 ∨ 3).
     s.add_clause([l(0, true), l(2, true)]);
     s.add_clause([l(0, true), l(3, true)]);
-    // Force 0 false: the pair becomes (2)/(3) — equivalent units.
+    // Force 0 false: the pair becomes (2)/(3) – equivalent units.
     s.add_clause([l(0, false)]);
     // Force 2 (hence 3) false: contradiction with the units above is
     // derived; without the pair the formula would be SAT.

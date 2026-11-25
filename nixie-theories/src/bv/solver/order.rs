@@ -321,7 +321,7 @@ impl BvSolver {
         // The guidance propagates the identity arrangement through the
         // *clauses* of the network; with deferred IR circuits those do not
         // exist yet, and the hint derives nothing (measured: the n=9
-        // descent thrashed).  Materialize first — the clauses land in the
+        // descent thrashed).  Materialize first – the clauses land in the
         // current build target, and defs created later re-materialize at
         // the window close.
         self.materialize_ir_pub();

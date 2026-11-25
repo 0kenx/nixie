@@ -1132,9 +1132,9 @@ fn eq_atom_watch_fires_on_fresh_disequality() {
     assert_eq!(forced[0].var, var);
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Distinguished values (`declare_value_const` / class-value summaries)
-// ---------------------------------------------------------------------
+// ========  ========
 // The large-`distinct` injective-map encoding leans on these: n fresh
 // constants are declared pairwise apart with ONE id each, and the merge
 // check reports a conflict instead of C(n,2) disequality edges.  The tests
@@ -1265,10 +1265,10 @@ fn value_conflict_explanation_is_complete() {
     );
 }
 
-// ---------------------------------------------------------------------
+// ========  ========
 // Ground-constant value marks (the `declare_value_const` distinctness
 // replacement for pairwise constant-disequality edges)
-// ---------------------------------------------------------------------
+// ========  ========
 
 #[test]
 fn value_marked_constants_conflict_on_merge() {

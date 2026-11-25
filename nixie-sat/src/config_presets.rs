@@ -9,7 +9,7 @@
 //! **Inprocessing defaults** (2026-09-07): the CaDiCaL preset runs
 //! `enable_inprocessing: true` with the **effort-scheduled** round bundle
 //! (cadical `SET_EFFORT_LIMIT` budgets, log-growing interval, budgeted
-//! vivify — the `sched-vivon` arm of
+//! vivify – the `sched-vivon` arm of
 //! `docs/studies/2026-09-07-inproc-effort-schedule.md`: 0.83× conflicts
 //! geomean corpus-wide at 5 seeds, P(solve) tied, 0 mismatches).
 //! Other presets keep it off.  The soundness history below stands: an
@@ -30,7 +30,7 @@
 //! re-measured on the 54-file standing corpus with deterministic
 //! counters (2026-09-04, `docs/studies/2026-09-04-inprocessing-standing-
 //! corpus.md`): solved-at-cap 50 → 42 under the full bundle, with a
-//! strongly bimodal per-file effect — the periodic mid-search inprocess
+//! strongly bimodal per-file effect – the periodic mid-search inprocess
 //! rounds win 2–6× conflicts-to-verdict on the clause-DB-heavy tail
 //! (FmlaEquivChain reaches kissat parity) and simultaneously destroy
 //! phase-guided model finding on 9 sat files.  The pre-search one-shot
@@ -105,7 +105,7 @@ impl ConfigPreset {
     }
 
     /// Parse a preset name (ASCII case-insensitive).
-    /// Returns `None` for unknown names — callers must surface that as an
+    /// Returns `None` for unknown names – callers must surface that as an
     /// error, never silently fall through to a default configuration.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
@@ -776,7 +776,7 @@ impl ConfigPreset {
             // eliminator single-pass queue / ELS rewrite / probe schedule
             // work.  (An SBVA-commit regex accidentally reset this to
             // false, silently reverting the default flip and regressing
-            // the elimination-dependent families — caught by the pete
+            // the elimination-dependent families – caught by the pete
             // cxs-bp differential canary flipping unsat->sat; see the
             // SBVA study erratum.)
             enable_sbva: false,
@@ -894,7 +894,7 @@ mod tests {
         assert_eq!(ConfigPreset::from_name(""), None);
         assert_eq!(ConfigPreset::from_name("cadical "), None);
         // Names from the *other* preset domain (the CLI's SMT presets) must
-        // not resolve here either — no silent cross-domain fallback.
+        // not resolve here either – no silent cross-domain fallback.
         for smt_name in ["fast", "balanced", "thorough", "minimal"] {
             assert_eq!(ConfigPreset::from_name(smt_name), None);
         }

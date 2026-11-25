@@ -22,8 +22,8 @@
 //! holding two constructor applications `u = C(a⃗)` and `v = D(b⃗)` is checked,
 //! and a violation becomes a guarded datatype theorem:
 //!
-//! * `C ≠ D` — `¬(u = v)` (constructors are distinct);
-//! * `C = D`, a field pair `aᵢ`, `bᵢ` not merged — `¬(u = v) ∨ aᵢ = bᵢ`
+//! * `C ≠ D` – `¬(u = v)` (constructors are distinct);
+//! * `C = D`, a field pair `aᵢ`, `bᵢ` not merged – `¬(u = v) ∨ aᵢ = bᵢ`
 //!   (constructors are injective), where `aᵢ = bᵢ` is built by `mk_eq`, so a
 //!   pair of literal applications that differ deeper folds it to `false`.
 //!

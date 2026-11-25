@@ -1,22 +1,22 @@
 //! Pure-Rust TLA+ lexer and parser.
 //!
 //! This crate is the SANY replacement described in
-//! `docs/TLA_FRONTEND_DESIGN.md` §1. Apalache does not parse TLA+ — it shells
-//! out to SANY, from the Java `tla2tools` distribution — so a pure-Rust
+//! `docs/TLA_FRONTEND_DESIGN.md` §1. Apalache does not parse TLA+ – it shells
+//! out to SANY, from the Java `tla2tools` distribution – so a pure-Rust
 //! pipeline has to write the one component Apalache never needed. There is no
 //! JVM here and no FFI, matching the constraint the solver core already works
 //! under.
 //!
 //! # Shape
 //!
-//! * [`lexer`] — tokens, retained comments, canonicalised operator spellings.
-//! * [`op`] — the operator table: fixity, precedence **ranges**, associativity.
-//! * [`parser`] — recursive descent for units, Pratt for expressions, with
+//! * [`lexer`] – tokens, retained comments, canonicalised operator spellings.
+//! * [`op`] – the operator table: fixity, precedence **ranges**, associativity.
+//! * [`parser`] – recursive descent for units, Pratt for expressions, with
 //!   junction-list layout decided in the parser rather than the lexer.
-//! * [`ast`] — the surface tree, with a span on every node.
-//! * [`level`] — TLA+ level checking (constant / state / action / temporal).
-//! * [`module`] — following `EXTENDS` to load a spec's transitive imports.
-//! * [`config`] — TLC `.cfg` files, which say what a specification's
+//! * [`ast`] – the surface tree, with a span on every node.
+//! * [`level`] – TLA+ level checking (constant / state / action / temporal).
+//! * [`module`] – following `EXTENDS` to load a spec's transitive imports.
+//! * [`config`] – TLC `.cfg` files, which say what a specification's
 //!   constants are and which definitions to check.
 //!
 //! # Why not LR(1)
@@ -53,7 +53,7 @@
 //! # Status
 //!
 //! Milestone 1 targets the fragment Apalache accepts. Constructs that are real
-//! TLA+ but outside that fragment — `RECURSIVE`, structured `<n>` proofs —
+//! TLA+ but outside that fragment – `RECURSIVE`, structured `<n>` proofs –
 //! are **rejected with a named diagnostic**, never silently accepted or
 //! given a default. That is the `AGENTS.md` no-silent-fallthrough rule applied
 //! to the front end.
