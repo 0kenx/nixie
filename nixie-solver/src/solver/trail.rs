@@ -494,8 +494,21 @@ impl super::Solver {
             fp_fold_pending: _, // PER-CHECK: reset in `check_core`
             fp_fold_verify: _,  // PER-CHECK: set in the FP honesty gate
             last_features: _,   // SNAPSHOT: recomputed in `check_core`; dropped
-                                // wholesale by `invalidate_results` on any stack move, so a value
-                                // left by a popped scope is stale and overwritten before reuse.
+            // wholesale by `invalidate_results` on any stack move, so a value
+            // left by a popped scope is stale and overwritten before reuse.
+
+            // (the 2026-11-24 BV landings)
+            constraint_sweep_pending: _, // NOT trailed: append-only journal of
+            // first constraint registrations, read only behind the sweep
+            // cursor; `push`/`pop` end the unified-BV generation (cursor
+            // reset), and the sweep re-derives each entry's linkage from the
+            // live `var_to_term` and sort tables.
+            constraint_sweep_cursor: _, // NOT trailed: a sweep position; reset
+            // to 0 when a unified-BV generation ends.
+            blastable_memo: _, // INVARIANT: memo of terms PROVEN blastable (a
+            // property of the term's structure, never of the active scope).
+            array_free_memo: _, // INVARIANT: ditto, terms proven free of
+                                // array operations.
         } = self;
 
         debug_assert_eq!(self.trail.len(), state.trail_position);
