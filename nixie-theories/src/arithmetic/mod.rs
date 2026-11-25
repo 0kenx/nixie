@@ -24,6 +24,7 @@ pub use simplex::{LinExpr, Simplex, VarId, scale_exact_row};
 pub use simplex_opt::SimplexOptStatus;
 pub use solver::ArithEqualityStatus;
 pub use solver::ArithSolver;
+pub use solver::ImpliedAtom;
 
 // Nonlinear integer arithmetic over the linear relaxation (NIA-over-LP). The
 // module documents itself; this declaration is gated on `std` because the

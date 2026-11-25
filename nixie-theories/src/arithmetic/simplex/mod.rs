@@ -1536,6 +1536,14 @@ pub struct Simplex {
     /// same derivations, and the last derivation at a version already
     /// stored everything it could tighten.
     bound_ver: Vec<u64>,
+    /// Touched-row set for the row-driven atom propagation (z3
+    /// `touched_rows`): basics whose rows reference a variable whose bound
+    /// changed since the propagation last drained the set. Tracked only
+    /// while `aprop_track` (the `NIXIE_APROP_ROW` study arm) is on — an
+    /// unarmed `note_bound_change` pays one `bool` test.
+    aprop_track: bool,
+    aprop_dirty_rows: Vec<VarId>,
+    aprop_row_marked: Vec<bool>,
     /// Monotone structural epoch: bumped by every row insert/remove
     /// (intern, pivot, wide capture/migration/rescale, reset).  Rows are
     /// content-replaced, never edited in place (only the `columns` index
@@ -1714,6 +1722,9 @@ impl Simplex {
             num_slack: 0,
             pending_crossing: None,
             bound_ver: Vec::new(),
+            aprop_track: false,
+            aprop_dirty_rows: Vec::new(),
+            aprop_row_marked: Vec::new(),
             rows_ver: 0,
             cross_ver: 0,
             derive_stamp: FxHashMap::default(),
@@ -6927,6 +6938,8 @@ impl Simplex {
         self.resource_limit = false;
         self.assignment_current = true;
         self.bound_ver.clear();
+        self.aprop_dirty_rows.clear();
+        self.aprop_row_marked.clear();
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.cross_ver = self.cross_ver.wrapping_add(1);
         self.derive_stamp.clear();
@@ -7589,6 +7602,22 @@ impl Simplex {
         self.tableau.contains_key(&var)
     }
 
+    /// Census-only: `var`'s value when it is FIXED (a δ-free singleton bound
+    /// pair), else `None`.
+    #[cfg(feature = "std")]
+    pub fn debug_fixed_value(&self, var: VarId) -> Option<num_rational::BigRational> {
+        let idx = var as usize;
+        let lo = self.lower.get(idx).and_then(Option::as_ref)?;
+        let hi = self.upper.get(idx).and_then(Option::as_ref)?;
+        if !lo.value.delta_big().is_zero() || !hi.value.delta_big().is_zero() {
+            return None;
+        }
+        if lo.value.cmp_value(&hi.value) != core::cmp::Ordering::Equal {
+            return None;
+        }
+        Some(lo.value.real_big())
+    }
+
     /// The tableau row defining `var` (its right-hand side), for callers
     /// that must reason about the slack's actual defining form — e.g. the
     /// integrality re-check after a *rescaled* intern (see the private
@@ -7648,7 +7677,51 @@ impl Simplex {
             self.bound_ver.resize(idx + 1, 0);
         }
         self.bound_ver[idx] = self.bound_ver[idx].wrapping_add(1);
+        if self.aprop_track {
+            self.aprop_mark_rows_of(idx as VarId);
+        }
         self.on_nonbasic_bound_change(idx);
+    }
+
+    /// Start maintaining the touched-row set (idempotent). Rows go stale
+    /// only through bound writes from this point on, so enable before the
+    /// first assertion of a search.
+    pub fn set_aprop_tracking(&mut self, on: bool) {
+        self.aprop_track = on;
+    }
+
+    /// Mark every row a bound change on `var` can change: `var`'s own row
+    /// when it is basic, and the rows of the basics whose rows reference it.
+    fn aprop_mark_rows_of(&mut self, var: VarId) {
+        let mark = |basic: VarId, marked: &mut Vec<bool>, dirty: &mut Vec<VarId>| {
+            let bi = basic as usize;
+            if bi >= marked.len() {
+                marked.resize(bi + 1, false);
+            }
+            if !marked[bi] {
+                marked[bi] = true;
+                dirty.push(basic);
+            }
+        };
+        if self.is_basic(var as usize) {
+            mark(var, &mut self.aprop_row_marked, &mut self.aprop_dirty_rows);
+        }
+        if let Some(rows) = self.columns.get(&var).cloned() {
+            for &basic in rows.iter() {
+                mark(
+                    basic,
+                    &mut self.aprop_row_marked,
+                    &mut self.aprop_dirty_rows,
+                );
+            }
+        }
+    }
+
+    /// Pop the next stale row's basic (empty once the set is drained).
+    pub fn take_dirty_row(&mut self) -> Option<VarId> {
+        let basic = self.aprop_dirty_rows.pop()?;
+        self.aprop_row_marked[basic as usize] = false;
+        Some(basic)
     }
     /// Iterate over `(basic_var, row)` pairs in the tableau.
     /// Iterate `(basic_var, canonical row)` pairs.  Integer-form rows are

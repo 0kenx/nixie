@@ -473,6 +473,66 @@ enum AssertKind {
     StrictLower,
 }
 
+/// δ-ordering of two delta-rationals (`real + delta·δ`): by real part, then
+/// by δ coefficient — the order the bound store's comparisons use.
+fn dr_cmp(a: &DeltaRational, b: &DeltaRational) -> core::cmp::Ordering {
+    a.real.cmp(&b.real).then(a.delta.cmp(&b.delta))
+}
+
+/// One antecedent of a derived bound: a simplex bound's reason id (`reasons`
+/// index) or a tracker bound's asserting atom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Antecedent {
+    Reason(u32),
+    Term(TermId),
+}
+
+/// One atom polarity the current bound store forces
+/// (see [`ArithSolver::implied_atom_polarities`]).
+#[derive(Debug, Clone)]
+pub struct ImpliedAtom {
+    /// The atom's reason term.
+    pub reason: TermId,
+    /// The row slack the interval was derived on (the oracle's handle).
+    pub slack: VarId,
+    /// The polarity forced for the recorded FORM's own comparison
+    /// (`lhs ∘ rhs'`), and whether that form is a `<=`-side form. The caller
+    /// translates through the atom's constraint type: a `Ge` form under a
+    /// `Le` atom is the atom's NEGATION's row (the strict-shift routes), so
+    /// "true for the form" is "false for the atom" there.
+    pub form_pol: bool,
+    /// Whether the form is a `<=`-side form (`Le`/`Lt`).
+    pub form_le_side: bool,
+    /// The terms of every bound the derivation consumed — the antecedents
+    /// of the propagation's explanation clause (sorted, deduplicated).
+    pub antecedents: SmallVec<[TermId; 8]>,
+}
+
+/// Totals of one [`ArithSolver::debug_implied_atom_polarities`] pass.
+#[cfg(feature = "std")]
+#[derive(Debug, Default)]
+pub struct ApropCensus {
+    /// Atom rows recorded in `slack_forms` (one per resolved `(atom, row)`).
+    pub forms: usize,
+    /// … skipped: exact-interned or equality rows (not interval-derived here).
+    pub skipped_exact_or_eq: usize,
+    /// … whose slack is not basic right now (row consumed by a pivot).
+    pub not_basic: usize,
+    /// … whose slack is basic with a live row.
+    pub basic_live: usize,
+    /// Rows with a forced polarity (each counts once per forced polarity).
+    pub derivable: usize,
+    /// Atom polarities the intervals force: form-positive / form-negative.
+    pub implied_pos: usize,
+    pub implied_neg: usize,
+    /// `(reason term, form polarity, form is `<=`-side)` of every forced atom.
+    pub forced: Vec<(TermId, bool, bool)>,
+    /// Term-backed columns pinned to a singleton bound, and adjacent
+    /// same-value pairs among them (z3 `arith-fixed-eqs`' candidate set).
+    pub fixed_terms: usize,
+    pub fixed_same_value_pairs: usize,
+}
+
 /// One inequality atom's resolved row, as interned by the slow path of
 /// `assert_{le,ge,lt,gt}`: the slack, the exact request it answers, and the
 /// single-term propagation bound the slow path derived for it.
@@ -490,6 +550,428 @@ struct AtomSlack {
 }
 
 impl ArithSolver {
+    /// Read-only yield census for the z3-shaped LP bound propagation
+    /// (`NIXIE_APROP_CENSUS`; the SAT-side half — "is the forced atom
+    /// unassigned / already assigned this way?" — is
+    /// `TheoryManager::aprop_census`): one pass of
+    /// [`Self::implied_atom_polarities`] plus the bookkeeping that says how
+    /// much of the atom table it could see.
+    #[cfg(feature = "std")]
+    pub fn debug_implied_atom_polarities(&self) -> ApropCensus {
+        let mut census = ApropCensus {
+            forms: self.slack_forms.len(),
+            ..ApropCensus::default()
+        };
+        for (&slack, form) in self.slack_forms.iter() {
+            if form.exact || form.dir == SlackDir::Eq {
+                census.skipped_exact_or_eq += 1;
+            } else if self.simplex.row_defines_var(slack) {
+                census.basic_live += 1;
+            } else {
+                census.not_basic += 1;
+            }
+        }
+        let implied = self.implied_atom_polarities();
+        census.derivable = implied.len();
+        for imp in &implied {
+            census
+                .forced
+                .push((imp.reason, imp.form_pol, imp.form_le_side));
+            if imp.form_pol {
+                census.implied_pos += 1;
+            } else {
+                census.implied_neg += 1;
+            }
+        }
+        self.fixed_pair_counts(&mut census.fixed_terms, &mut census.fixed_same_value_pairs);
+        census
+    }
+
+    /// Row-driven atom propagation, theory half (z3
+    /// `lar_solver::propagate_bounds_for_touched_rows` +
+    /// `calculate_implied_bounds_for_row`'s bound on the row's basic): for
+    /// every inequality atom row whose slack is BASIC with a live narrow row,
+    /// derive the row's interval from the current bound store and report each
+    /// atom polarity the interval forces — the recorded form's own polarity
+    /// when its `slack ∘ 0` bound is entailed, its negation when the strict
+    /// opposite is — with the terms of every bound the derivation consumed.
+    /// Pure interval arithmetic over bounds the asserted atoms (and earlier
+    /// bound derivations, through `all_reasons`) already imply: sound
+    /// without an LP solve and valid at any assignment depth. Nothing is
+    /// stored; the LP state is untouched.
+    ///
+    /// The caller owns the remaining z3 halves: "is the atom still
+    /// unassigned" (`bound_is_interesting`), the polarity translation through
+    /// the atom's type, and the explanation clause.
+    pub fn implied_atom_polarities(&self) -> Vec<ImpliedAtom> {
+        let mut out: Vec<ImpliedAtom> = Vec::new();
+        out.clear();
+        for (&slack, form) in self.slack_forms.iter() {
+            self.implied_for_row(slack, form, &mut out);
+        }
+        out
+    }
+
+    /// Start the touched-row tracking behind
+    /// [`Self::drain_implied_atom_polarities`] (idempotent).
+    pub fn enable_row_propagation_tracking(&mut self) {
+        self.simplex.set_aprop_tracking(true);
+    }
+
+    /// [`Self::implied_atom_polarities`] restricted to the rows a bound
+    /// write has touched since the previous drain (z3
+    /// `propagate_bounds_for_touched_rows`): the cost-faithful form. A row
+    /// consumed by a pivot leaves the set with its bounds still stale-marked
+    /// until a write re-marks it — completeness only.
+    pub fn drain_implied_atom_polarities(&mut self, out: &mut Vec<ImpliedAtom>) {
+        out.clear();
+        while let Some(basic) = self.simplex.take_dirty_row() {
+            if let Some(form) = self.slack_forms.get(&basic) {
+                self.implied_for_row(basic, form, out);
+            }
+        }
+    }
+
+    /// Oracle for one forced polarity (`NIXIE_APROP_ROW_VERIFY`): re-prove it
+    /// with the LP itself — push a scratch scope, assert the form's OPPOSITE
+    /// `∘ 0` bound on its own slack, and require the simplex to report
+    /// infeasibility. `false` means the propagation had no LP justification.
+    /// The scratch scope is popped; pivots it caused persist (any basis
+    /// spanning the row space is valid), so an oracle run is a different
+    /// trajectory from an un-oracled one. The LP sees simplex bounds only —
+    /// a tracker-only antecedent makes this probe weaker than the clause.
+    pub fn verify_implied(&mut self, imp: &ImpliedAtom) -> bool {
+        self.simplex.push();
+        let zero = Rational64::zero();
+        let slack = imp.slack;
+        if imp.form_pol {
+            // The form holds: its strict negation must be infeasible.
+            if imp.form_le_side {
+                self.simplex.set_strict_lower(slack, zero, BRANCH_REASON);
+            } else {
+                self.simplex.set_strict_upper(slack, zero, BRANCH_REASON);
+            }
+        } else if imp.form_le_side {
+            self.simplex.set_upper(slack, zero, BRANCH_REASON);
+        } else {
+            self.simplex.set_lower(slack, zero, BRANCH_REASON);
+        }
+        let infeasible = self.simplex.check().is_err();
+        self.simplex.pop();
+        infeasible
+    }
+
+    /// One row's contribution to [`Self::implied_atom_polarities`]: the
+    /// interval of the row defining `slack` (when `slack` is basic with a
+    /// live narrow row) and the polarities of the recorded form it forces.
+    fn implied_for_row(&self, slack: VarId, form: &SlackForm, out: &mut Vec<ImpliedAtom>) {
+        if form.exact {
+            return;
+        }
+        if form.dir == SlackDir::Eq {
+            self.implied_from_eq_pin(slack, form, out);
+            return;
+        }
+        let Some(row) = self.simplex.defining_row(slack) else {
+            return;
+        };
+        let lo = self.derive_bound_with_reasons(&row, true);
+        let hi = self.derive_bound_with_reasons(&row, false);
+        // δ-ordering predicates on a derived bound `real + delta·δ`.
+        let le_zero = |v: &DeltaRational| {
+            v.real < Rational64::zero() || (v.real.is_zero() && v.delta <= Rational64::zero())
+        };
+        let lt_zero = |v: &DeltaRational| {
+            v.real < Rational64::zero() || (v.real.is_zero() && v.delta < Rational64::zero())
+        };
+        let ge_zero = |v: &DeltaRational| {
+            v.real > Rational64::zero() || (v.real.is_zero() && v.delta >= Rational64::zero())
+        };
+        let gt_zero = |v: &DeltaRational| {
+            v.real > Rational64::zero() || (v.real.is_zero() && v.delta > Rational64::zero())
+        };
+        let le_side = matches!(form.dir, SlackDir::Le | SlackDir::Lt);
+        // (form-true test over the forcing side, form-false test over the other).
+        let (pos, neg) = match form.dir {
+            // form `lhs <= rhs'`: true iff `slack <= 0`; false iff `slack > 0`.
+            SlackDir::Le => (
+                hi.as_ref().filter(|(v, _)| le_zero(v)),
+                lo.as_ref().filter(|(v, _)| gt_zero(v)),
+            ),
+            // form `lhs >= rhs'`: true iff `slack >= 0`; false iff `slack < 0`.
+            SlackDir::Ge => (
+                lo.as_ref().filter(|(v, _)| ge_zero(v)),
+                hi.as_ref().filter(|(v, _)| lt_zero(v)),
+            ),
+            // form `lhs < rhs'`: true iff `slack < 0`; false iff `slack >= 0`.
+            SlackDir::Lt => (
+                hi.as_ref().filter(|(v, _)| lt_zero(v)),
+                lo.as_ref().filter(|(v, _)| ge_zero(v)),
+            ),
+            // form `lhs > rhs'`: true iff `slack > 0`; false iff `slack <= 0`.
+            SlackDir::Gt => (
+                lo.as_ref().filter(|(v, _)| gt_zero(v)),
+                hi.as_ref().filter(|(v, _)| le_zero(v)),
+            ),
+            SlackDir::Eq => return,
+        };
+        let mut push = |form_pol: bool, (_, ant): &(DeltaRational, SmallVec<[Antecedent; 8]>)| {
+            let mut terms = SmallVec::<[TermId; 8]>::new();
+            for a in ant {
+                match *a {
+                    Antecedent::Term(t) => terms.push(t),
+                    // A dangling id is a scope bug elsewhere: the derivation
+                    // cannot name that antecedent, so it must not fire.
+                    Antecedent::Reason(id) => match self.reasons.get(id as usize) {
+                        Some(&t) => terms.push(t),
+                        None => return,
+                    },
+                }
+            }
+            terms.sort_unstable();
+            terms.dedup();
+            out.push(ImpliedAtom {
+                reason: form.reason,
+                slack,
+                form_pol,
+                form_le_side: le_side,
+                antecedents: terms,
+            });
+        };
+        if let Some(bound) = pos {
+            push(true, bound);
+        }
+        if let Some(bound) = neg {
+            push(false, bound);
+        }
+    }
+
+    /// Direction-2 derivation off a PINNED equality row (the fixed-table
+    /// half of z3's `cheap_eq_on_nbase`): `s = coef·x - rhs` with `s`
+    /// pinned to one δ-free value pins `x` to `(s + rhs)/coef`, and every
+    /// other SINGLE-term inequality atom row on `x` — `s2 = c2·x - rhs2` —
+    /// then has a derivable value, so its polarity is forced exactly as in
+    /// `implied_for_row`. Valid whether or not `s2` is still basic: a slack's
+    /// defining equation stays implied through every pivot. Multi-term rows
+    /// through `x` are not revisited (nothing is stored; the closure is the
+    /// next slice). The equality's own atom is never propagated here.
+    fn implied_from_eq_pin(&self, slack: VarId, form: &SlackForm, out: &mut Vec<ImpliedAtom>) {
+        let [(term, coef)] = form.lhs.as_slice() else {
+            return;
+        };
+        if coef.is_zero() {
+            return;
+        }
+        let (Some((lo, lo_ant)), Some((hi, hi_ant))) = (
+            self.effective_bound(slack, true),
+            self.effective_bound(slack, false),
+        ) else {
+            return;
+        };
+        if dr_cmp(&lo, &hi) != core::cmp::Ordering::Equal || !lo.delta.is_zero() {
+            return;
+        }
+        let Some(&x) = self.term_to_var.get(term) else {
+            return;
+        };
+        // `coef·x = s + rhs` with `s = lo`.
+        let Some(xval) = checked_add_r64(lo.real, form.rhs).and_then(|v| checked_div_r64(v, *coef))
+        else {
+            return;
+        };
+        let mut antecedents: SmallVec<[Antecedent; 8]> = SmallVec::new();
+        for a in lo_ant.iter().chain(hi_ant.iter()) {
+            if !antecedents.contains(a) {
+                antecedents.push(*a);
+            }
+        }
+        let le_zero = |v: &DeltaRational| v.real < Rational64::zero() || v.real.is_zero();
+        let ge_zero = |v: &DeltaRational| v.real > Rational64::zero() || v.real.is_zero();
+        for (&s2, f2) in self.slack_forms.iter() {
+            if s2 == slack || f2.exact || f2.dir == SlackDir::Eq || f2.reason == form.reason {
+                continue;
+            }
+            let [(t2, c2)] = f2.lhs.as_slice() else {
+                continue;
+            };
+            if self.term_to_var.get(t2) != Some(&x) {
+                continue;
+            }
+            let Some(v) = checked_mul_r64(xval, *c2).and_then(|v| checked_sub_r64(v, f2.rhs))
+            else {
+                continue;
+            };
+            let val = DeltaRational {
+                real: v,
+                delta: Rational64::zero(),
+            };
+            let le_side = matches!(f2.dir, SlackDir::Le | SlackDir::Lt);
+            // δ-free value: strict and non-strict tests coincide except at 0.
+            let (pos, neg) = match f2.dir {
+                SlackDir::Le => (le_zero(&val), !ge_zero(&val)),
+                SlackDir::Ge => (ge_zero(&val), !le_zero(&val)),
+                SlackDir::Lt => (!ge_zero(&val), le_zero(&val)),
+                SlackDir::Gt => (!le_zero(&val), ge_zero(&val)),
+                SlackDir::Eq => continue,
+            };
+            let mut terms = SmallVec::<[TermId; 8]>::new();
+            for a in &antecedents {
+                match *a {
+                    Antecedent::Term(t) => terms.push(t),
+                    Antecedent::Reason(id) => match self.reasons.get(id as usize) {
+                        Some(&t) => terms.push(t),
+                        None => return,
+                    },
+                }
+            }
+            terms.sort_unstable();
+            terms.dedup();
+            if pos {
+                out.push(ImpliedAtom {
+                    reason: f2.reason,
+                    slack: s2,
+                    form_pol: true,
+                    form_le_side: le_side,
+                    antecedents: terms.clone(),
+                });
+            }
+            if neg {
+                out.push(ImpliedAtom {
+                    reason: f2.reason,
+                    slack: s2,
+                    form_pol: false,
+                    form_le_side: le_side,
+                    antecedents: terms,
+                });
+            }
+        }
+    }
+
+    /// The tightest bound a derivation may rely on for `var` in direction
+    /// `lower`: the simplex bound, the single-term tracker bound
+    /// (`record_prop_bound`: a `coef·x ∘ rhs` atom bounds `x` directly,
+    /// which the slack-per-atom tableau never shows as a bound on `x`
+    /// itself — z3's internalization does), or the tighter of both. A
+    /// branch-local bound (a B&B case split, no atom) reads as absent.
+    fn effective_bound(
+        &self,
+        var: VarId,
+        lower: bool,
+    ) -> Option<(DeltaRational, SmallVec<[Antecedent; 8]>)> {
+        let simplex_bound = if lower {
+            self.simplex.get_lower(var)
+        } else {
+            self.simplex.get_upper(var)
+        };
+        let simplex_bound = simplex_bound
+            .filter(|b| b.reason != BRANCH_REASON && !b.aux_reasons.contains(&BRANCH_REASON))
+            .and_then(|b| Some((b.value.narrow()?, b)));
+        let tracker = if lower {
+            self.prop_lower.get(var as usize)
+        } else {
+            self.prop_upper.get(var as usize)
+        }
+        .copied()
+        .flatten();
+        let simplex = |b: &Bound| {
+            let mut ant: SmallVec<[Antecedent; 8]> = SmallVec::new();
+            for r in b.all_reasons() {
+                if r != BRANCH_REASON && !ant.contains(&Antecedent::Reason(r)) {
+                    ant.push(Antecedent::Reason(r));
+                }
+            }
+            ant
+        };
+        match (simplex_bound, tracker) {
+            (None, None) => None,
+            (Some((v, b)), None) => Some((v, simplex(b))),
+            (None, Some(t)) => Some((t.value, smallvec::smallvec![Antecedent::Term(t.reason)])),
+            (Some((v, b)), Some(t)) => {
+                // The tighter side wins (equal: the tracker's single atom).
+                let take_tracker = if lower {
+                    dr_cmp(&t.value, &v) != core::cmp::Ordering::Less
+                } else {
+                    dr_cmp(&t.value, &v) != core::cmp::Ordering::Greater
+                };
+                if take_tracker {
+                    Some((t.value, smallvec::smallvec![Antecedent::Term(t.reason)]))
+                } else {
+                    Some((v, simplex(b)))
+                }
+            }
+        }
+    }
+
+    /// The Dutertre–de Moura interval bound of `expr` (same arithmetic as
+    /// `Simplex::derive_bound_exact`: big-rational accumulation, narrow-width
+    /// decline) with every consumed bound's antecedents. Outer `None` when a
+    /// contributing bound is missing; declines a crossed window (a
+    /// contradictory bound set is the crossing channel's to report, not a
+    /// propagation source).
+    fn derive_bound_with_reasons(
+        &self,
+        expr: &LinExpr,
+        lower: bool,
+    ) -> Option<(DeltaRational, SmallVec<[Antecedent; 8]>)> {
+        let big = |r: &Rational64| -> num_rational::BigRational {
+            num_rational::BigRational::new(
+                num_bigint::BigInt::from(*r.numer()),
+                num_bigint::BigInt::from(*r.denom()),
+            )
+        };
+        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
+            Some(Rational64::new(
+                num_traits::ToPrimitive::to_i64(r.numer())?,
+                num_traits::ToPrimitive::to_i64(r.denom())?,
+            ))
+        };
+        let mut real = big(&expr.constant);
+        let mut delta = num_rational::BigRational::zero();
+        let mut ant: SmallVec<[Antecedent; 8]> = SmallVec::new();
+        for (v, c) in &expr.terms {
+            let lo = self.effective_bound(*v, true);
+            let hi = self.effective_bound(*v, false);
+            if let (Some((lv, _)), Some((hv, _))) = (&lo, &hi)
+                && dr_cmp(lv, hv) == core::cmp::Ordering::Greater
+            {
+                return None;
+            }
+            let positive = *c > Rational64::zero();
+            let want_lower = if lower { positive } else { !positive };
+            let (value, src) = (if want_lower { lo } else { hi })?;
+            real += big(&value.real) * &big(c);
+            delta += big(&value.delta) * &big(c);
+            for a in src {
+                if !ant.contains(&a) {
+                    ant.push(a);
+                }
+            }
+        }
+        Some((
+            DeltaRational {
+                real: narrow(&real)?,
+                delta: narrow(&delta)?,
+            },
+            ant,
+        ))
+    }
+
+    /// The z3 `cheap_eq_on_nbase` fixed-table candidate set: term-backed
+    /// columns pinned to a δ-free singleton bound (`fixed_terms`), and the
+    /// adjacent same-value pairs among them (`fixed_same_value_pairs`).
+    #[cfg(feature = "std")]
+    fn fixed_pair_counts(&self, fixed_terms: &mut usize, fixed_pairs: &mut usize) {
+        let mut fixed: Vec<(num_rational::BigRational, VarId)> = Vec::new();
+        for (&_term, &var) in self.term_to_var.iter() {
+            if let Some(v) = self.simplex.debug_fixed_value(var) {
+                fixed.push((v, var));
+            }
+        }
+        fixed.sort();
+        *fixed_terms = fixed.len();
+        *fixed_pairs = fixed.windows(2).filter(|w| w[0].0 == w[1].0).count();
+    }
+
     /// The memoized row for an inequality atom, if this search already
     /// resolved exactly this `(kind, lhs, rhs, reason)` and the row is still
     /// live. The validation mirrors `cached_row_slack`'s own liveness probe

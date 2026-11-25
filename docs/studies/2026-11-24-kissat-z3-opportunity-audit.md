@@ -294,3 +294,23 @@ The SAT kernel already snapshots such gates once per solver (`63bed214`,
 * `NIXIE_NO_RESTART_RESYNC=1` changes the trajectory (conflicts 4337 → 4025),
   so its A/B is not a pure cost comparison — the 5× wall with fewer
   conflicts/decisions is the signal, not the ratio.
+
+## Status (same day, end of session)
+
+* **A3 + C landed** (`c02e2f4d`, `3f6f83b9`, follow-up `fec10404`): counter-identical,
+  instructions 0.9375 geomean on the 17-cell SMT probe corpus (dlx-pc 0.43) —
+  [`2026-11-24-theory-assert-path-equivalent-work.md`](2026-11-24-theory-assert-path-equivalent-work.md).
+  The paired SMT probe harness is now `bench/perf_gate/smt_probe_ab.sh`.
+* **A1 census taken and the first three slices built as a default-off arm**
+  (`NIXIE_APROP_ROW=1`): at every refuted wisa leaf 36–40 % of the atoms were
+  already forced by the arithmetic bounds; on bofill / nec-smt / dlx-pc the
+  search never reaches a feasible LP check (≥ 6 000 leaf refutations, 0
+  feasible). The sound arm recovers 25–28 % of the wisa conflicts and one
+  ANIA `unknown → sat` at +70–80 % instructions; the remaining gap is
+  structural (atoms are slack rows, not bounds on columns; no LP in
+  propagation; no closure) —
+  [`2026-11-24-row-driven-arith-propagation-arm.md`](2026-11-24-row-driven-arith-propagation-arm.md).
+  One false `unsat` was found by z3-checking the learned clauses (explanation
+  polarity at the SAT interface) and fixed before any number was kept.
+* `perf stat -e cpu_core/instructions/u` works on this box again (scan #1's
+  "blocked" note is stale): deterministic to ~2·10⁻⁷.

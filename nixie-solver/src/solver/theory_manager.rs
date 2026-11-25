@@ -36,6 +36,115 @@ fn theory_trace_enabled() -> bool {
 /// (`TheoryManager::on_backtrack`'s root-level `resync_theory_state`; an A/B
 /// and emergency switch). Read once per process: the probe site is every
 /// backtrack to level 0, i.e. every restart.
+/// `NIXIE_APROP_CENSUS` — read-only yield census for the z3-shaped LP bound
+/// propagation (see `ArithSolver::debug_implied_atom_polarities`): at every
+/// FEASIBLE arithmetic final check, one stderr line with the atom polarities
+/// the current bound store forces and whether each is already assigned that
+/// way. Read once per process.
+#[cfg(feature = "std")]
+fn aprop_census_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_APROP_CENSUS").is_ok())
+}
+
+/// Census event counters (see `aprop_census_enabled`): where the
+/// arithmetic search's conflicts come from and how often a FEASIBLE final
+/// check is reached at all. `0` final-check entries, `1` feasible arithmetic
+/// checks, `2` arithmetic conflicts at final check, `3` crossed-bound
+/// conflicts at assertion time. One summary line per 2 000th event.
+#[cfg(feature = "std")]
+fn aprop_tick(event: usize) {
+    thread_local! {
+        static COUNTS: std::cell::RefCell<[u64; 4]> =
+            const { std::cell::RefCell::new([0; 4]) };
+    }
+    COUNTS.with(|c| {
+        let mut c = c.borrow_mut();
+        c[event] += 1;
+        if c[event].is_multiple_of(2000) {
+            eprintln!(
+                "[aprop-tick] final_checks={} arith_feasible={} arith_conflicts={} assert_bound_conflicts={}",
+                c[0], c[1], c[2], c[3]
+            );
+        }
+    });
+}
+
+/// `NIXIE_APROP_ROW=1` — study arm: the row-driven atom propagation
+/// (`TheoryManager::arith_row_propagations`; z3
+/// `propagate_bounds_with_lp_solver`'s bound half) after every arithmetic
+/// atom assertion. Default off: bit-identical to the unarmed search. Read
+/// once per process.
+#[cfg(feature = "std")]
+fn aprop_row_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_APROP_ROW").is_ok_and(|v| v == "1"))
+}
+
+/// `NIXIE_APROP_ROW_VERIFY=1` — re-prove every row-driven propagation with
+/// the LP (`ArithSolver::verify_implied`) before it is learned; an
+/// unjustified one is dropped and reported. A different trajectory from the
+/// un-oracled arm (the probe's pivots persist). Read once per process.
+/// `NIXIE_APROP_ROW_VERIFY` level: `0` off, `1` the LP oracle, `2` an
+/// SMT-LIB dump of the first propagation clauses for an external z3 check
+/// (antecedents asserted with their assigned polarity, the forced literal
+/// negated — `sat` from the checker is an invalid clause), `3` both. The dump
+/// covers `NIXIE_APROP_ROW_DUMP_N` clauses (default 500).
+#[cfg(feature = "std")]
+fn aprop_row_verify_level() -> u8 {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<u8> = OnceLock::new();
+    *FLAG.get_or_init(
+        || match std::env::var("NIXIE_APROP_ROW_VERIFY").as_deref() {
+            Ok("3") => 3,
+            Ok("2") => 2,
+            Ok("1") | Ok("on") | Ok("true") => 1,
+            _ => 0,
+        },
+    )
+}
+
+/// `NIXIE_THEORY_CONFLICT_DUMP` — set to a clause cap (e.g. `50000`) to dump
+/// every theory conflict's antecedents for an external z3 check (see
+/// `TheoryManager::dump_theory_conflict`). Read once per process.
+#[cfg(feature = "std")]
+fn theory_conflict_dump_limit() -> Option<u32> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<u32>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_THEORY_CONFLICT_DUMP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
+}
+
+#[cfg(feature = "std")]
+fn theory_conflict_dump_enabled() -> bool {
+    theory_conflict_dump_limit().is_some()
+}
+
+/// Diagnostic: a propagation was dropped because an antecedent bound
+/// outlived its asserting atom (`NIXIE_APROP_ROW` arm). Counted and reported
+/// on the first occurrence and every 1000th; a non-zero count is a scope
+/// bug elsewhere.
+#[cfg(feature = "std")]
+fn aprop_row_note_stale(stale: &TermId) {
+    thread_local! {
+        static N: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+    N.with(|n| {
+        n.set(n.get() + 1);
+        if n.get() == 1 || n.get().is_multiple_of(1000) {
+            eprintln!(
+                "[aprop-row] stale antecedent dropped (count {}), e.g. {stale:?}",
+                n.get()
+            );
+        }
+    });
+}
+
 fn restart_resync_disabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1055,6 +1164,15 @@ impl<'a> TheoryManager<'a> {
     /// that it does not know why anything is refuted.  Answering `Unknown`
     /// loses a verdict; emitting that clause invents one.
     fn conflict_from_terms(&mut self, terms: &[TermId]) -> TheoryCheckResult {
+        // `NIXIE_THEORY_CONFLICT_DUMP=1`: write every theory conflict's
+        // antecedent set as a self-contained z3 check (`/tmp/theory_conflicts/`):
+        // each antecedent asserted with its CURRENT polarity must be
+        // unsatisfiable. A `sat` is an invalid theory conflict — the
+        // false-`unsat` class. Diagnostic only (see `aprop_row_dump_clause`).
+        #[cfg(feature = "std")]
+        if theory_conflict_dump_enabled() {
+            self.dump_theory_conflict(terms);
+        }
         match self.terms_to_conflict_clause(terms) {
             Some(conflict) => TheoryCheckResult::Conflict(conflict),
             None => {
@@ -3152,6 +3270,318 @@ impl<'a> TheoryManager<'a> {
     /// Assert one parsed arithmetic atom into the simplex at the current
     /// polarity (the shared body of the `process_constraint` assert arms and
     /// the [`Self::break_dl_purity`] replay).
+    /// One census line per feasible arithmetic check (see
+    /// `aprop_census_enabled`). Purely diagnostic: reads the arithmetic
+    /// solver and the atom tables, stores nothing.
+    #[cfg(feature = "std")]
+    fn aprop_census(&mut self) {
+        thread_local! {
+            static N: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+            // `reason term -> atom var`, rebuilt when the parsed-atom table grows.
+            static REASON_TO_VAR: std::cell::RefCell<(usize, FxHashMap<TermId, Var>)> =
+                std::cell::RefCell::new((0, FxHashMap::default()));
+        }
+        let census = self.arith.debug_implied_atom_polarities();
+        N.with(|n| n.set(n.get() + 1));
+        REASON_TO_VAR.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.0 != self.var_to_parsed_arith.len() {
+                slot.1.clear();
+                for (&var, parsed) in self.var_to_parsed_arith.iter() {
+                    slot.1.insert(parsed.reason_term, var);
+                }
+                slot.0 = self.var_to_parsed_arith.len();
+            }
+            let mut same = 0usize;
+            let mut opposite = 0usize;
+            let mut unassigned = 0usize;
+            for &(reason, form_pol, form_le_side) in &census.forced {
+                let Some(&var) = slot.1.get(&reason) else { continue };
+                let Some(parsed) = self.var_to_parsed_arith.get(&var) else { continue };
+                let atom_le_side = matches!(
+                    parsed.constraint_type,
+                    ArithConstraintType::Le | ArithConstraintType::Lt
+                );
+                let pol = form_pol == (form_le_side == atom_le_side);
+                if !self.is_level_assigned(var) {
+                    unassigned += 1;
+                } else {
+                    match self.assigned_pol_of(var) {
+                        Some(cur) if cur == pol => same += 1,
+                        Some(_) => opposite += 1,
+                        None => unassigned += 1,
+                    }
+                }
+            }
+            let atoms = self.var_to_parsed_arith.len();
+            eprintln!(
+                "[aprop-census] check={} atoms={atoms} forms={} basic_live={} derivable={} forced={} same={same} opposite={opposite} unassigned={unassigned} fixed_terms={} fixed_pairs={}",
+                N.get(),
+                census.forms,
+                census.basic_live,
+                census.derivable,
+                census.forced.len(),
+                census.fixed_terms,
+                census.fixed_same_value_pairs
+            );
+        });
+    }
+
+    /// Row-driven atom propagation, SAT half: the atom polarities the current
+    /// bound store forces (`ArithSolver::implied_atom_polarities`), filtered
+    /// to atoms the core has not assigned yet (z3 `bound_is_interesting`),
+    /// translated through each atom's constraint type, and paired with an
+    /// explanation clause built by the conflict machinery
+    /// (`terms_to_conflict_clause`: the false literals of every antecedent
+    /// atom, derived-equality tags expanded, tautologies dropped).
+    ///
+    /// Soundness rests on three things, each structural: the derivation is
+    /// interval arithmetic over bounds the live atoms imply (no LP point, no
+    /// value read); every consumed bound's complete antecedent set rides
+    /// along (`all_reasons`); and an atom that appears among its own
+    /// antecedents, or whose antecedents are not all live, is skipped — a
+    /// skipped propagation costs completeness only. `just_assigned` never
+    /// propagates itself.
+    #[cfg(feature = "std")]
+    fn arith_row_propagations(
+        &mut self,
+        just_assigned: Var,
+    ) -> Option<Vec<(Lit, SmallVec<[Lit; 8]>)>> {
+        const MAX_PROPS: usize = 256;
+        // Touched rows only (z3 `touched_rows`): the full-table scan is the
+        // census; per assertion it costs more than the search it saves.
+        self.arith.enable_row_propagation_tracking();
+        let mut implied: Vec<nixie_theories::arithmetic::ImpliedAtom> = Vec::new();
+        self.arith.drain_implied_atom_polarities(&mut implied);
+        if implied.is_empty() {
+            return None;
+        }
+        let verify_level = aprop_row_verify_level();
+        let verify = verify_level == 1 || verify_level == 3;
+        thread_local! {
+            // `reason term -> atom var`, rebuilt when the parsed-atom table
+            // grows (the map is frozen for this manager's lifetime).
+            static REASON_TO_VAR: std::cell::RefCell<(usize, FxHashMap<TermId, Var>)> =
+                std::cell::RefCell::new((0, FxHashMap::default()));
+        }
+        let mut props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+        REASON_TO_VAR.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.0 != self.var_to_parsed_arith.len() {
+                slot.1.clear();
+                for (&var, parsed) in self.var_to_parsed_arith.iter() {
+                    slot.1.insert(parsed.reason_term, var);
+                }
+                slot.0 = self.var_to_parsed_arith.len();
+            }
+            for imp in &implied {
+                if props.len() >= MAX_PROPS {
+                    break;
+                }
+                let Some(&var) = slot.1.get(&imp.reason) else {
+                    continue;
+                };
+                if var == just_assigned || self.is_level_assigned(var) {
+                    continue;
+                }
+                let Some(parsed) = self.var_to_parsed_arith.get(&var) else {
+                    continue;
+                };
+                // Equality atoms ride the `Le` placeholder in this table
+                // (`encode.rs` `TermKind::Eq`): never a single comparison.
+                if parsed.eq_placeholder {
+                    continue;
+                }
+                let atom_le_side = matches!(
+                    parsed.constraint_type,
+                    ArithConstraintType::Le | ArithConstraintType::Lt
+                );
+                let pol = imp.form_pol == (imp.form_le_side == atom_le_side);
+                let terms: SmallVec<[TermId; 8]> = imp.antecedents.clone();
+                // Every antecedent must be live: a bound whose asserting
+                // atom left the trail must not feed a propagation (the
+                // conflict machinery would fall back to the whole-assignment
+                // clause there, which is valid for a conflict and NOT for a
+                // propagation whose derivation rests on a stale bound).
+                if let Some(stale) = terms.iter().find(|t| !self.reason_literal_is_live(**t)) {
+                    aprop_row_note_stale(stale);
+                    continue;
+                }
+                // An antecedent naming the atom itself would make the clause
+                // `lit ∨ ¬lit`: skip (completeness only).
+                if terms.iter().any(|t| self.term_to_var.get(t) == Some(&var)) {
+                    continue;
+                }
+                let Some(false_lits) = self.terms_to_conflict_clause(&terms) else {
+                    continue;
+                };
+                // The core's explanation contract is `(lit ∨ ¬r0 ∨ …)` over
+                // the antecedents' TRUE literals (`add_theory_reason_clause`
+                // negates them); the conflict machinery hands back each
+                // antecedent's FALSE literal, so negate here. (Passing the
+                // false literals built `lit ∨ r0 ∨ …` — a clause satisfied
+                // by its own antecedents, and a false `unsat` on bofill
+                // `ex24800_2600_100` once resolution resolved through it.)
+                let reason_lits: SmallVec<[Lit; 8]> =
+                    false_lits.iter().map(|l| l.negate()).collect();
+                let lit = if pol { Lit::pos(var) } else { Lit::neg(var) };
+                if props.iter().any(|(l, _)| l.var() == var) {
+                    continue; // one polarity per atom per round
+                }
+                #[cfg(feature = "std")]
+                if verify_level == 2 || verify_level == 3 {
+                    self.aprop_row_dump_clause(&imp.reason, &terms, pol);
+                }
+                // Oracle (see `ArithSolver::verify_implied`): an unjustified
+                // propagation is dropped and reported, never learned.
+                if verify && !self.arith.verify_implied(imp) {
+                    eprintln!(
+                        "[aprop-row-verify] UNJUSTIFIED propagation {lit:?} for reason {:?} \
+                         (form pol={} le_side={}, {} antecedents)",
+                        imp.reason,
+                        imp.form_pol,
+                        imp.form_le_side,
+                        imp.antecedents.len()
+                    );
+                    continue;
+                }
+                props.push((lit, reason_lits));
+            }
+        });
+        (!props.is_empty()).then_some(props)
+    }
+
+    /// `NIXIE_APROP_ROW_VERIFY=2`: write one propagation clause as a
+    /// self-contained QF_LIB check (`/tmp/aprop_row_clauses/NNN.smt2`), the
+    /// DL channel's `NIXIE_APROP_VERIFY=2` reconstruction applied to this
+    /// channel: antecedent atoms asserted with their assigned polarity, the
+    /// forced literal negated, the clause's variables declared. An
+    /// antecedent without a SAT variable (a derived-equality tag or a
+    /// tautology) is marked, not dropped silently.
+    #[cfg(feature = "std")]
+    fn aprop_row_dump_clause(&self, reason_term: &TermId, terms: &[TermId], pol: bool) {
+        static CLAUSE_N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        static LIMIT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+        let limit = *LIMIT.get_or_init(|| {
+            std::env::var("NIXIE_APROP_ROW_DUMP_N")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(500)
+        });
+        let n = CLAUSE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= limit {
+            return;
+        }
+        use std::fmt::Write as _;
+        let mut vars = std::collections::BTreeSet::new();
+        nixie_core::ast::pp::collect_var_names(self.manager, *reason_term, &mut vars);
+        let mut body = String::new();
+        for &r in terms {
+            nixie_core::ast::pp::collect_var_names(self.manager, r, &mut vars);
+            let rs = nixie_core::ast::pp::to_smt2(self.manager, r);
+            match self
+                .term_to_var
+                .get(&r)
+                .and_then(|rv| self.assigned_pol_of(*rv))
+            {
+                Some(true) => {
+                    let _ = writeln!(&mut body, "(assert {rs})");
+                }
+                Some(false) => {
+                    let _ = writeln!(&mut body, "(assert (not {rs}))");
+                }
+                None => {
+                    let _ = writeln!(&mut body, "; NO-SAT-VAR antecedent: {rs}");
+                }
+            }
+        }
+        let atom_s = nixie_core::ast::pp::to_smt2(self.manager, *reason_term);
+        let _ = writeln!(
+            &mut body,
+            "(assert {})",
+            if pol {
+                format!("(not {atom_s})")
+            } else {
+                atom_s.clone()
+            }
+        );
+        let _ = writeln!(&mut body, "(check-sat)");
+        let mut file = String::from("(set-logic QF_LIA)\n");
+        for v in &vars {
+            let _ = writeln!(&mut file, "(declare-fun {v} () Int)");
+        }
+        file.push_str(&body);
+        let _ = std::fs::create_dir_all("/tmp/aprop_row_clauses");
+        let _ = std::fs::write(format!("/tmp/aprop_row_clauses/clause{n:03}.smt2"), file);
+    }
+
+    /// `NIXIE_THEORY_CONFLICT_DUMP`: one file per theory conflict, the
+    /// antecedents asserted with their current polarity (derived-equality
+    /// tags expanded through `derived_reasons`, tautologies dropped), the
+    /// clause's variables declared over `QF_LIA`.
+    #[cfg(feature = "std")]
+    fn dump_theory_conflict(&self, terms: &[TermId]) {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let Some(limit) = theory_conflict_dump_limit() else {
+            return;
+        };
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n >= limit {
+            return;
+        }
+        use std::fmt::Write as _;
+        let mut vars = std::collections::BTreeSet::new();
+        let mut body = String::new();
+        let mut pending: Vec<TermId> = terms.to_vec();
+        let mut expanded: FxHashSet<TermId> = FxHashSet::default();
+        let mut emitted: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(term) = pending.pop() {
+            if !emitted.insert(term) {
+                continue;
+            }
+            nixie_core::ast::pp::collect_var_names(self.manager, term, &mut vars);
+            if let Some(var) = self.term_to_var.get(&term).copied() {
+                let ts = nixie_core::ast::pp::to_smt2(self.manager, term);
+                match self.assigned_pol_of(var) {
+                    Some(true) => {
+                        let _ = writeln!(&mut body, "(assert {ts})");
+                    }
+                    Some(false) => {
+                        let _ = writeln!(&mut body, "(assert (not {ts}))");
+                    }
+                    None => {
+                        let _ = writeln!(&mut body, "; UNASSIGNED antecedent {ts}");
+                    }
+                }
+                continue;
+            }
+            if self.derived_reasons.literals(term).is_some() {
+                if expanded.insert(term)
+                    && let Some(just) = self.derived_reasons.literals(term)
+                {
+                    pending.extend(just);
+                }
+                continue;
+            }
+            if self.tautological_reasons.contains(&term) {
+                continue;
+            }
+            let _ = writeln!(
+                &mut body,
+                "; UNRESOLVED antecedent {}",
+                nixie_core::ast::pp::to_smt2(self.manager, term)
+            );
+        }
+        let _ = writeln!(&mut body, "(check-sat)");
+        let mut file = String::from("(set-logic QF_LIA)\n");
+        for v in &vars {
+            let _ = writeln!(&mut file, "(declare-fun {v} () Int)");
+        }
+        file.push_str(&body);
+        let _ = std::fs::create_dir_all("/tmp/theory_conflicts");
+        let _ = std::fs::write(format!("/tmp/theory_conflicts/conflict{n:05}.smt2"), file);
+    }
+
     fn arith_assert_parsed(&mut self, var: Var, parsed: &ParsedArithConstraint, is_positive: bool) {
         // Borrow the parsed terms: the writers take slices, and the former
         // per-assertion `Vec` copy was pure churn on this hot path.
@@ -3847,6 +4277,10 @@ impl<'a> TheoryManager<'a> {
                         if let Ok(nixie_theories::TheoryCheckResult::Unsat(conflict_terms)) =
                             self.arith.check_bound_conflicts()
                         {
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(3);
+                            }
                             return self.conflict_from_terms(&conflict_terms);
                         }
                     }
@@ -4229,6 +4663,10 @@ impl<'a> TheoryManager<'a> {
                         if let Ok(nixie_theories::TheoryCheckResult::Unsat(conflict_terms)) =
                             self.arith.check_bound_conflicts()
                         {
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(3);
+                            }
                             return self.conflict_from_terms(&conflict_terms);
                         }
                     }
@@ -4303,6 +4741,10 @@ impl TheoryManager<'_> {
         if self.timed_out() || self.bv_embedded_budget_spent() {
             self.resource_exhausted = true;
             return TheoryCheckResult::Sat;
+        }
+        #[cfg(feature = "std")]
+        if aprop_census_enabled() {
+            aprop_tick(0);
         }
 
         // Lazy checking is a from-scratch check of the *current* complete SAT
@@ -4493,6 +4935,11 @@ impl TheoryManager<'_> {
                                 }
                                 return conflict;
                             }
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(1);
+                                self.aprop_census();
+                            }
                             // Re-home and, if anything moved, re-run this check:
                             // the check's own pivots can strand a bound AFTER the
                             // pre-check re-homing, and an accepted `Sat` over a
@@ -4569,6 +5016,10 @@ impl TheoryManager<'_> {
                         }
                         nixie_theories::TheoryCheckResult::Unsat(conflict_terms) => {
                             // Arithmetic conflict detected - convert to SAT conflict clause
+                            #[cfg(feature = "std")]
+                            if aprop_census_enabled() {
+                                aprop_tick(2);
+                            }
                             let conflict = self.conflict_from_terms(&conflict_terms);
                             self.statistics.theory_conflicts += 1;
                             self.statistics.conflicts += 1;
@@ -4942,6 +5393,22 @@ impl TheoryCallback for TheoryManager<'_> {
         if matches!(result, TheoryCheckResult::Sat)
             && self.eq_atom_watches
             && let Some(props) = self.drain_forced_eq_atoms()
+        {
+            self.statistics.theory_propagations += props.len() as u64;
+            return TheoryCheckResult::Propagated(props);
+        }
+
+        // Row-driven atom propagation (z3 `propagate_bounds_with_lp_solver`'s
+        // bound half; `NIXIE_APROP_ROW=1`, study arm — see
+        // `arith_row_propagations`). The propagation channel the wisa-class
+        // census measured: at every refuted leaf a third of the atoms were
+        // already forced by the arithmetic bounds of the others
+        // (`docs/studies/2026-11-24-kissat-z3-opportunity-audit.md`, A1).
+        #[cfg(feature = "std")]
+        if aprop_row_enabled()
+            && matches!(result, TheoryCheckResult::Sat)
+            && self.var_to_parsed_arith.contains_key(&var)
+            && let Some(props) = self.arith_row_propagations(var)
         {
             self.statistics.theory_propagations += props.len() as u64;
             return TheoryCheckResult::Propagated(props);
