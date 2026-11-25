@@ -1512,6 +1512,14 @@ struct SoiError {
     target: DeltaRational,
 }
 
+/// The slice-6 pass's two mutable destinations (see `propagate_bounds_in`):
+/// the store queue and the pending crossing.
+#[derive(Default)]
+struct Slice6Out {
+    propagated: Vec<PropagatedBound>,
+    pending: Option<Vec<u32>>,
+}
+
 /// Simplex tableau state
 #[derive(Debug)]
 pub struct Simplex {
@@ -1554,9 +1562,13 @@ pub struct Simplex {
     /// incremental skip must not suppress a crossing that would re-fire
     /// at unchanged inputs, so its consumption re-arms every row.
     cross_ver: u64,
-    /// Last derivation stamp per basic variable (narrow or wide store –
-    /// the key spaces are disjoint): see [`Self::row_stamp`].
-    derive_stamp: FxHashMap<(VarId, u8), (u64, u64, u64, usize)>,
+    /// Slice-6 candidate bookkeeping (see `propagate_bounds_in`): rows a
+    /// `bound_ver` bump marked (indexed by basic variable), the "every row
+    /// is a candidate" flag (`reset`), and the global derivation inputs as
+    /// last seen by a pass — a change in either makes the next pass visit all.
+    s6_mark: Vec<bool>,
+    s6_all: bool,
+    s6_last_globals: Option<(u64, u64, usize)>,
     /// Number of original variables
     num_vars: usize,
     /// Number of slack variables
@@ -1660,6 +1672,14 @@ pub struct Simplex {
     row_scope_marks: Vec<usize>,
     /// Basic variables
     basic: Vec<bool>,
+    /// The narrow tableau's basics as a compact list — exactly the key set
+    /// of `tableau` — with a dense position index for O(1) membership and
+    /// swap-removal. `find_violating` walked `tableau.keys()` once per
+    /// feasibility pivot (a hash-table scan over every bucket: 8 % of a
+    /// wisa run) for a selection — the smallest violating id — that needs
+    /// only the key set. Maintained at the four `tableau` membership sites.
+    basic_list: Vec<VarId>,
+    basic_pos: Vec<u32>,
     /// Infeasible basic variable (if any)
     infeasible: Option<VarId>,
     /// Pending propagated bounds
@@ -1727,7 +1747,9 @@ impl Simplex {
             aprop_row_marked: Vec::new(),
             rows_ver: 0,
             cross_ver: 0,
-            derive_stamp: FxHashMap::default(),
+            s6_mark: Vec::new(),
+            s6_all: true,
+            s6_last_globals: None,
             assignment: Vec::new(),
             lower: Vec::new(),
             upper: Vec::new(),
@@ -1742,6 +1764,8 @@ impl Simplex {
             row_scope_trail: Vec::new(),
             row_scope_marks: vec![0],
             basic: Vec::new(),
+            basic_list: Vec::new(),
+            basic_pos: Vec::new(),
             infeasible: None,
             propagated: Vec::new(),
             trail: Vec::new(),
@@ -2872,6 +2896,7 @@ impl Simplex {
         let terms: SmallVec<[(VarId, Rational64); 4]> = slack_expr.terms.iter().copied().collect();
         self.tableau
             .insert(slack, TableRow::Lin(Arc::new(slack_expr.clone())));
+        self.basic_list_insert(slack);
         if slack as usize >= self.basic.len() {
             self.basic.resize(slack as usize + 1, false);
         }
@@ -4042,7 +4067,53 @@ impl Simplex {
         }
         best_var
     }
-    fn find_violating(&self) -> Option<(VarId, Bound)> {
+    /// `var` joined the narrow tableau's basics (idempotent).
+    fn basic_list_insert(&mut self, var: VarId) {
+        let i = var as usize;
+        if i >= self.basic_pos.len() {
+            self.basic_pos.resize(i + 1, u32::MAX);
+        }
+        if self.basic_pos[i] == u32::MAX {
+            self.basic_pos[i] = self.basic_list.len() as u32;
+            self.basic_list.push(var);
+        }
+    }
+
+    /// `var` left the narrow tableau's basics (swap-removal; the list order
+    /// is arbitrary and never read).
+    fn basic_list_remove(&mut self, var: VarId) {
+        let i = var as usize;
+        if let Some(&p) = self.basic_pos.get(i)
+            && p != u32::MAX
+        {
+            self.basic_pos[i] = u32::MAX;
+            let last = self.basic_list.len() - 1;
+            if p as usize != last {
+                let moved = self.basic_list[last];
+                self.basic_list.swap(p as usize, last);
+                self.basic_pos[moved as usize] = p;
+            }
+            self.basic_list.pop();
+        }
+    }
+
+    /// Rebuild the compact basic list from the tableau's key set — the
+    /// self-healing path when a direct `tableau` write bypassed the
+    /// membership sites (the test scaffolding constructs rows that way);
+    /// correctness never rests on the incremental maintenance alone.
+    fn basic_list_rebuild(&mut self) {
+        self.basic_list.clear();
+        self.basic_pos.clear();
+        let keys: Vec<VarId> = self.tableau.keys().copied().collect();
+        for k in keys {
+            self.basic_list_insert(k);
+        }
+    }
+
+    fn find_violating(&mut self) -> Option<(VarId, Bound)> {
+        if self.basic_list.len() != self.tableau.len() {
+            self.basic_list_rebuild();
+        }
         // Deferred clone: track the winning (var, side) and materialize the
         // `Bound` exactly once, at return.  The winner is the smallest
         // violating var id, which depends only on the violator set – not on
@@ -4053,8 +4124,8 @@ impl Simplex {
         // was just read as `Some`), but is answered honestly rather than
         // fabricated.
         let mut winner: Option<(VarId, bool)> = None;
-        for var in self.tableau.keys() {
-            let idx = *var as usize;
+        for &var in &self.basic_list {
+            let idx = var as usize;
             let val = self.assignment[idx];
             let is_lower = if let Some(lo) = &self.lower[idx]
                 && lo.value.cmp_narrow(&val) == core::cmp::Ordering::Greater
@@ -4067,8 +4138,8 @@ impl Simplex {
             } else {
                 continue;
             };
-            if winner.as_ref().is_none_or(|(v, _)| *var < *v) {
-                winner = Some((*var, is_lower));
+            if winner.as_ref().is_none_or(|(v, _)| var < *v) {
+                winner = Some((var, is_lower));
             }
         }
         let (var, is_lower) = winner?;
@@ -4291,7 +4362,10 @@ impl Simplex {
             Option<LinExpr>,
             Option<BigLinExpr>,
             Option<IntRow>,
-        ) = if let Some(TableRow::Int(leaving_int)) = self.tableau.get(&basic_var).cloned() {
+        ) = if let Some(TableRow::Int(leaving_row)) = self.tableau.get(&basic_var) {
+            // Share the row: the historical `.cloned()` deep-copied every
+            // non-Int leaving row's `LinExpr` just to pattern-match here.
+            let leaving_int = Arc::clone(leaving_row);
             let Some(n_e) = leaving_int.numerator_of(nonbasic_var) else {
                 self.resource_limit = true;
                 return false;
@@ -4447,7 +4521,7 @@ impl Simplex {
                     }
                     continue;
                 }
-                let Some(entry) = self.tableau.get(&var).cloned() else {
+                let Some(entry) = self.tableau.get(&var) else {
                     continue;
                 };
                 // FRACTION-FREE FAST PATH (the Bareiss layer, integer-tableau
@@ -4759,6 +4833,7 @@ impl Simplex {
         }
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.tableau.remove(&basic_var);
+        self.basic_list_remove(basic_var);
         // The leaving row's fraction-free encoding dies with the row (the
         // VarId is never a row owner again – ids are not recycled).
         self.rows_ver = self.rows_ver.wrapping_add(1);
@@ -4777,6 +4852,7 @@ impl Simplex {
                 self.retire_wide_point(nonbasic_var);
                 self.tableau
                     .insert(nonbasic_var, TableRow::Int(Arc::new(born)));
+                self.basic_list_insert(nonbasic_var);
                 for v in entering_terms {
                     self.column_push_known(v, nonbasic_var);
                 }
@@ -4791,6 +4867,7 @@ impl Simplex {
                 let entering_arc = Arc::new(new_expr);
                 self.tableau
                     .insert(nonbasic_var, TableRow::Lin(entering_arc));
+                self.basic_list_insert(nonbasic_var);
                 for v in entering_terms {
                     // The entering variable had no row before, so no column
                     // listed it as a row owner; push without the membership
@@ -4875,6 +4952,7 @@ impl Simplex {
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.tableau.insert(var, new_form);
+            self.basic_list_insert(var);
             // A row that narrowed back from the wide store leaves it (the
             // tableau entry is now authoritative) – and its ASSIGNMENT
             // entry is recomputed from the new row: the wide store never
@@ -4941,6 +5019,7 @@ impl Simplex {
             }
             self.rows_ver = self.rows_ver.wrapping_add(1);
             self.tableau.remove(&var);
+            self.basic_list_remove(var);
             // The row left the narrow tableau: its fraction-free encoding
             // must not survive where the row no longer lives.
             self.rows_ver = self.rows_ver.wrapping_add(1);
@@ -5789,6 +5868,7 @@ impl Simplex {
         for var in wide_migrations {
             self.rows_ver = self.rows_ver.wrapping_add(1);
             if let Some(entry) = self.tableau.remove(&var) {
+                self.basic_list_remove(var);
                 // The narrow store's fraction-free encoding dies with the
                 // narrow row (wide rows never take the integer path).
                 let lin = entry.lin_owned();
@@ -5943,60 +6023,42 @@ impl Simplex {
         let _ = self.propagate_bounds_in(&FxHashSet::default());
     }
 
+    /// Propagate implied bounds through the tableau (see the module docs
+    /// and the `s6_*` candidate fields).  One slice-6 propagation pass
+    /// over the narrow and wide rows (see the `tighten_tableau_bounds`
+    /// caller for the fixpoint loop and the soundness gates).  Returns
+    /// the number of bounds STORED this pass – the fixpoint signal.
+    ///
     /// [`Self::propagate_bounds`] with the caller's INTEGER-variable set –
     /// slice 6: bounds derived through the WIDE store weaken to `ceil`/
     /// `floor` for STORAGE on integer basics only; real basics keep
     /// exact-or-decline. Crossings are tested on the EXACT value and
     /// planted through `pending_crossing` (never on a weakened form).
-    /// The derivation stamp of one row: `(rows_ver, cross_ver, max bound
-    /// version over the variables the derivation reads, int_vars.len())`.
-    /// A row re-derives only while its stamp CHANGED – every input of its
-    /// derivations (row contents via `rows_ver`, the referenced variables'
-    /// bounds via their versions, the basic's own bound – the basic is
-    /// always among `vars`' maximum when it is bounded, and an unbounded
-    /// basic never derives – the crossing-export contract via `cross_ver`,
-    /// and the integer-weakening regime via the set size) is covered by
-    /// exactly these components.  Value- and trajectory-identical to full
-    /// re-derivation: at an unchanged stamp the last derivation already
-    /// stored everything it could and set every crossing it would set.
-    fn row_stamp(
-        &self,
-        basic: VarId,
-        vars: impl Iterator<Item = VarId>,
-        int_vars: usize,
-    ) -> (u64, u64, u64, usize) {
-        let mut sum_ver = 0u64;
-        let bi = basic as usize;
-        if bi < self.bound_ver.len() {
-            sum_ver = sum_ver.wrapping_add(self.bound_ver[bi]);
-        }
-        for v in vars {
-            let vi = v as usize;
-            if vi < self.bound_ver.len() {
-                sum_ver = sum_ver.wrapping_add(self.bound_ver[vi]);
-            }
-        }
-        (self.rows_ver, self.cross_ver, sum_ver, int_vars)
-    }
-
-    /// Propagate implied bounds through the tableau (see the module docs
-    /// and the derivation-stamp fields).  One slice-6 propagation pass
-    /// over the narrow and wide rows (see the `tighten_tableau_bounds`
-    /// caller for the fixpoint loop and the soundness gates).  Returns
-    /// the number of bounds STORED this pass – the fixpoint signal.
     pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) -> usize {
         self.propagated.clear();
-        // NARROW direction-2 is env-gated while under evaluation: solve a
-        // narrow row for one of the variables it references (the
-        // atom-bound encoding hides pins behind `s = var` slack rows).
-        // NARROW direction-2, two gates: `NIXIE_S6_NDIR2=1` enables the
-        // general form (which deflects some pivot trajectories into the
-        // width wall – see the study); the PINNED-BASIC form runs by
-        // default: a row whose basic is fully pinned (lo == hi) is an
-        // equality over its variables, and solving it for each referenced
-        // variable is exactly the pin-hiding case (`s = var` rows) the
-        // atom-bound encoding needs unhidden. Restricted so the general
-        // deflection does not apply.
+        // Candidate set for this pass. The fixpoint caller re-runs a pass
+        // while it stores something (up to 16 passes per check), and each
+        // pass visited EVERY tableau row — paying, per visit, an
+        // `Arc<LinExpr>` clone/drop pair, a derivation-input sum and a
+        // stamp-map probe even when the input sum then said "unchanged".
+        // What a row's derivations read: its content (`rows_ver`), the
+        // crossing epoch (`cross_ver`), the bound versions of its basic and
+        // of every row variable, and the integer-variable set size. So a
+        // pass can derive something new for a row only if a GLOBAL input
+        // changed since the previous pass (every row is a candidate then)
+        // or one of those bound versions bumped — and every bump
+        // (`note_bound_change`, the pop restore) marks exactly the rows that
+        // read it (`s6_mark_rows_of`). Skipping a non-candidate is therefore
+        // identical to the historical stamp-unchanged `continue`, and the
+        // visit order (`tableau` order) — hence the store sequence — is the
+        // historical one.
+        let globals = (self.rows_ver, self.cross_ver, int_vars.len());
+        let all = self.s6_all || self.s6_last_globals != Some(globals);
+        self.s6_all = false;
+        self.s6_last_globals = Some(globals);
+        if all {
+            self.s6_mark.clear();
+        }
         let ndir2_all = slice6_ndir2_enabled();
         let pinned_basic = |v: &VarId| -> bool {
             let i = *v as usize;
@@ -6021,31 +6083,47 @@ impl Simplex {
         // wins (mixed-magnitude LRA unsat twin, chain-sat twin, f1) are
         // all wide-row states.  `NIXIE_S6_PINNED=0` disables.
         let pinned_dir2 = !self.wide_rows.is_empty() && slice6_pinned_enabled();
-        let narrow_keys: Vec<VarId> = self
-            .tableau
-            .iter()
-            .filter(|(v, e)| e.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v))))
-            .map(|(v, _)| *v)
-            .collect();
-        // Arc clone (refcount bump), NOT a deep LinExpr copy: the original
-        // deep clone existed only to release the `&self` borrow before the
-        // `&mut self` derivation calls below, and re-copying every narrow
-        // row's terms on every fixpoint pass was measurable on UFIDL
-        // (scan #2 item #2a).  The Arc keeps the row shared with the
-        // tableau, which is immutable for the duration of this pass.
-        let narrow_rows: Vec<(VarId, Arc<LinExpr>)> = narrow_keys
-            .into_iter()
-            .filter_map(|v| self.row_lin(v).map(|arc| (v, Arc::clone(&arc))))
-            .collect();
-        for (basic_var, expr) in &narrow_rows {
-            let stamp = self.row_stamp(
-                *basic_var,
-                expr.terms.iter().map(|(v, _)| *v),
-                int_vars.len(),
-            );
-            if self.derive_stamp.get(&(*basic_var, 0)) == Some(&stamp) {
+        // One scan picks both candidate lists (same predicates as the
+        // historical `narrow_keys` / `all_keys`), consuming the marks.
+        let mut dir2_cands: Vec<VarId> = Vec::new();
+        let mut dir1_cands: Vec<VarId> = Vec::new();
+        for (&var, entry) in self.tableau.iter() {
+            let marked = self.s6_mark.get(var as usize).is_some_and(|&m| m);
+            if !all && !marked {
                 continue;
             }
+            if let Some(m) = self.s6_mark.get_mut(var as usize) {
+                *m = false;
+            }
+            if entry.terms_len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(&var))) {
+                dir2_cands.push(var);
+            }
+            dir1_cands.push(var);
+        }
+        // Materialize the candidates' `Int` rows in place first (the
+        // historical `row_lin` did this for every visited row), so the
+        // derivations below read borrowed canonical views — no `Arc`
+        // traffic per visit.
+        for &var in &dir1_cands {
+            if matches!(self.tableau.get(&var), Some(TableRow::Int(_))) {
+                self.row_lin(var);
+            }
+        }
+        // The pass's mutable destinations, taken out so every derivation
+        // runs behind `&self` (the row views borrow `tableau`).
+        let mut out = Slice6Out {
+            propagated: core::mem::take(&mut self.propagated),
+            pending: core::mem::take(&mut self.pending_crossing),
+        };
+
+        // NARROW direction-2 over the short rows. A candidate IS a row whose
+        // derivation inputs changed (the candidate argument above), so the
+        // narrow loops derive unconditionally — the historical per-visit
+        // input sum and compare are redundant with the marks.
+        for &basic_var in &dir2_cands {
+            let Some(expr) = self.row_lin_view(basic_var) else {
+                continue;
+            };
             let big_expr = BigLinExpr {
                 terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
                 constant: big_r64(&expr.constant),
@@ -6057,14 +6135,14 @@ impl Simplex {
                 }
                 for lower in [true, false] {
                     let Some((real, delta, reasons)) =
-                        self.derive_var_bound_big_parts(*basic_var, &big_expr, target, lower)
+                        self.derive_var_bound_big_parts(basic_var, &big_expr, target, lower)
                     else {
                         continue;
                     };
                     #[cfg(all(debug_assertions, feature = "std"))]
                     if std::env::var("NIXIE_S6_AUDIT").is_ok() {
                         self.audit_by_corners(
-                            *basic_var,
+                            basic_var,
                             &big_expr,
                             Some(target),
                             lower,
@@ -6075,33 +6153,26 @@ impl Simplex {
                     self.slice6_consider(
                         target,
                         lower,
-                        real,
-                        delta,
+                        BigDeltaRational { real, delta },
                         reasons,
                         int_vars.contains(&target),
+                        &mut out,
                     );
                 }
             }
-            self.derive_stamp.insert((*basic_var, 0), stamp);
         }
-        let all_keys: Vec<VarId> = self.tableau.keys().copied().collect();
-        for basic_var in all_keys {
-            let Some(expr) = self.row_lin(basic_var) else {
+
+        // NARROW direction-1: every candidate row's basic bound (derived
+        // unconditionally — same candidate argument).
+        for &basic_var in &dir1_cands {
+            let Some(expr) = self.row_lin_view(basic_var) else {
                 continue;
             };
-            let stamp = self.row_stamp(
-                basic_var,
-                expr.terms.iter().map(|(v, _)| *v),
-                int_vars.len(),
-            );
-            if self.derive_stamp.get(&(basic_var, 1)) == Some(&stamp) {
-                continue;
-            }
             if let Some(bound) = self.derive_basic_bound(basic_var, &expr) {
-                self.propagated.push(bound);
+                out.propagated.push(bound);
             }
-            self.derive_stamp.insert((basic_var, 1), stamp);
         }
+
         let wide: Vec<(VarId, BigLinExpr)> = self
             .wide_rows
             .iter()
@@ -6112,16 +6183,9 @@ impl Simplex {
             if idx >= self.assignment.len() {
                 continue;
             }
-            let stamp = self.row_stamp(
-                *basic_var,
-                wexpr.terms.iter().map(|(v, _)| *v),
-                int_vars.len(),
-            );
-            // (A stamp-unchanged `continue` mirroring the narrow loop above
-            // was evidently intended here – the landed line was an empty
-            // `if` (dead code, clippy `-D warnings` blocker). Removed
-            // verbatim: the behavior – always re-deriving – is unchanged;
-            // the skip, if wanted, belongs to the stamps owner.)
+            // The historical wide loop computed a derivation stamp here
+            // but never compared it (an empty `if`, removed as dead code):
+            // wide rows always re-derive, so the stamp sum is gone too.
             for lower in [true, false] {
                 let Some((real, delta, reasons)) =
                     self.derive_bound_big_parts(&wexpr.constant, &wexpr.terms, lower)
@@ -6135,10 +6199,10 @@ impl Simplex {
                 self.slice6_consider(
                     *basic_var,
                     lower,
-                    real,
-                    delta,
+                    BigDeltaRational { real, delta },
                     reasons,
                     int_vars.contains(basic_var),
+                    &mut out,
                 );
             }
             let targets: Vec<VarId> = wexpr.terms.iter().map(|(v, _)| *v).collect();
@@ -6166,18 +6230,19 @@ impl Simplex {
                     self.slice6_consider(
                         target,
                         lower,
-                        real,
-                        delta,
+                        BigDeltaRational { real, delta },
                         reasons,
                         int_vars.contains(&target),
+                        &mut out,
                     );
                 }
             }
-            self.derive_stamp.insert((*basic_var, 2), stamp);
         }
-        let props = self.propagated.clone();
+        self.propagated = out.propagated;
+        self.pending_crossing = out.pending;
+
         let mut applied = 0usize;
-        for prop in &props {
+        for prop in self.propagated.clone() {
             let idx = prop.var as usize;
             if idx >= self.lower.len() {
                 continue;
@@ -6218,11 +6283,13 @@ impl Simplex {
         &mut self,
         var: VarId,
         lower: bool,
-        real: num_rational::BigRational,
-        delta: num_rational::BigRational,
+        value: BigDeltaRational,
         reasons: SmallVec<[u32; 4]>,
         is_int: bool,
+        out: &mut Slice6Out,
     ) {
+        let BigDeltaRational { real, delta } = value;
+        let (propagated, pending) = (&mut out.propagated, &mut out.pending);
         let idx = var as usize;
         if idx >= self.assignment.len() || reasons.is_empty() {
             return;
@@ -6255,7 +6322,7 @@ impl Simplex {
             // conflict choice to the caching and breaking trajectory
             // identity; measured: the rehome original's store sequence
             // diverged at 21 354 exactly here).
-            self.pending_crossing.get_or_insert(conflict);
+            pending.get_or_insert(conflict);
             return;
         }
         // STORAGE: the exact value, narrowed when it fits and WIDE when it
@@ -6289,7 +6356,7 @@ impl Simplex {
             }
         };
         if is_tighter {
-            self.propagated.push(PropagatedBound {
+            propagated.push(PropagatedBound {
                 var,
                 is_lower: lower,
                 value,
@@ -6921,6 +6988,8 @@ impl Simplex {
         self.lower.clear();
         self.upper.clear();
         self.tableau.clear();
+        self.basic_list.clear();
+        self.basic_pos.clear();
         self.wide_rows.clear();
         self.wide_points.clear();
         self.wide_pending = false;
@@ -6942,7 +7011,9 @@ impl Simplex {
         self.aprop_row_marked.clear();
         self.rows_ver = self.rows_ver.wrapping_add(1);
         self.cross_ver = self.cross_ver.wrapping_add(1);
-        self.derive_stamp.clear();
+        self.s6_mark.clear();
+        self.s6_all = true;
+        self.s6_last_globals = None;
     }
     /// Current decision-level depth of the bound trail (number of live push
     /// scopes); `0` at the assertion/base level.
@@ -7035,6 +7106,7 @@ impl Simplex {
                         self.bound_ver.resize(vi + 1, 0);
                     }
                     self.bound_ver[vi] = self.bound_ver[vi].wrapping_add(1);
+                    self.s6_mark_rows_of(var);
                     if restored.last() != Some(&var) {
                         restored.push(var);
                     }
@@ -7677,10 +7749,34 @@ impl Simplex {
             self.bound_ver.resize(idx + 1, 0);
         }
         self.bound_ver[idx] = self.bound_ver[idx].wrapping_add(1);
+        self.s6_mark_rows_of(idx as VarId);
         if self.aprop_track {
             self.aprop_mark_rows_of(idx as VarId);
         }
         self.on_nonbasic_bound_change(idx);
+    }
+
+    /// Mark every narrow row whose slice-6 derivation stamp reads `var`'s
+    /// bound version: its own row when `var` is basic, and the rows of the
+    /// basics in its column. A superset by construction of the rows whose
+    /// stamp the bump can change (the column index is the exact set of
+    /// narrow rows referencing `var`).
+    fn s6_mark_rows_of(&mut self, var: VarId) {
+        let mark = |basic: VarId, marked: &mut Vec<bool>| {
+            let bi = basic as usize;
+            if bi >= marked.len() {
+                marked.resize(bi + 1, false);
+            }
+            marked[bi] = true;
+        };
+        if self.tableau.contains_key(&var) {
+            mark(var, &mut self.s6_mark);
+        }
+        if let Some(rows) = self.columns.get(&var).cloned() {
+            for &basic in rows.iter() {
+                mark(basic, &mut self.s6_mark);
+            }
+        }
     }
 
     /// Start maintaining the touched-row set (idempotent). Rows go stale
