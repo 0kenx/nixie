@@ -336,3 +336,163 @@ Inv == \A n \in DOMAIN token : token[n] > 0
 "#;
     assert_eq!(claim(src, "Inv"), Outcome::NoViolationWithin(2));
 }
+
+// ---- issue #29: temporal properties as lassoes ----
+
+/// Lasso checks go through the same `claim`-shaped helper, but with the
+/// temporal entry point; the outcome is the ordinary one — a violating
+/// lasso is a `Violation`, a bound with none is `NoViolationWithin`.
+fn lasso(spec: &str, prop: &str, depth: u32) -> Outcome {
+    let parsed = nixie_tla_syntax::parse_file(spec).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("root");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare_temporal(
+        &spec,
+        module,
+        "Init",
+        "Next",
+        prop,
+        &nixie_tla_syntax::TlcConfig::default(),
+        &mut tm,
+    )
+    .expect("prepares");
+    bmc.check(depth, &mut tm).expect("checks")
+}
+
+/// A two-state cycle: `[](x = 1)` is false on it (x is 0 every other
+/// state), `[](x < 2)` is true, `<>(x = 5)` is false, `<>(x = 1)` is true.
+/// The lasso closes on the cycle; the verdicts are the textbook ones.
+#[test]
+fn a_box_and_a_diamond_on_a_two_cycle() {
+    let src = r#"
+---- MODULE Cyc ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = IF x = 0 THEN 1 ELSE 0
+====
+"#;
+    for (prop, want) in [
+        // A two-state cycle's lasso is **three** steps: `InLoop` turns true
+        // on the step into the repeated state, and the close needs the state
+        // after it (s2 = s1 here, so the loop is s1→s2→s1).
+        ("BoxFalse == [](x = 1)", Outcome::Violation { step: 3 }),
+        ("BoxTrue == [](x < 2)", Outcome::NoViolationWithin(4)),
+        // A diamond is refuted as soon as the loop is shown to never hit
+        // its operand — at the close s2 = s1, one state before a box needs.
+        ("DiaFalse == <>(x = 5)", Outcome::Violation { step: 2 }),
+        ("DiaTrue == <>(x = 1)", Outcome::NoViolationWithin(4)),
+    ] {
+        let _ = src;
+        let with_prop = format!(
+            "---- MODULE Cyc ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = IF x = 0 THEN 1 ELSE 0\n{prop}\n====\n"
+        );
+        let name = prop.split(" ==").next().unwrap_or("");
+        assert_eq!(lasso(&with_prop, name, 4), want, "{name}");
+    }
+}
+
+/// The bound is honest: on a counter that reaches 3 at step 3 and stays,
+/// the lasso closes at s4 = s3, so `<>(x = 5)` — never true — is refuted at
+/// depth 4 and **not at depth 3** (no lasso of 3 steps or fewer exists:
+/// s0..s3 are all distinct). "Nothing within k" is a bound, never a proof.
+/// And `<>(x = 3)` *holds* on that lasso — the lasso is a real behaviour.
+#[test]
+fn the_bound_is_where_the_lasso_closes() {
+    let src = r#"
+---- MODULE Cnt ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = IF x >= 3 THEN x ELSE x + 1
+Never == <>(x = 5)
+Holds == <>(x = 3)
+====
+"#;
+    assert_eq!(lasso(src, "Never", 3), Outcome::NoViolationWithin(3));
+    assert_eq!(lasso(src, "Never", 4), Outcome::Violation { step: 4 });
+    assert_eq!(lasso(src, "Holds", 6), Outcome::NoViolationWithin(6));
+}
+
+/// Apalache's `ManyBoxes`/`ManyDiamonds` shapes: redundant `[]`/`<>`
+/// nestings over a two-cycle. `[][][][]<>(x = 1)` holds (x is 1 every
+/// other state); `<><><><>(x = 2)` does not.
+#[test]
+fn nested_boxes_and_diamonds() {
+    let src = r#"
+---- MODULE Nest ----
+EXTENDS Naturals
+VARIABLES x, y
+Init == /\ x = 0 /\ y = 1
+Next == /\ x' = y /\ y' = x
+Boxes == [][][][][]<>(x = 1)
+BoxesBad == [][][][][][](x = 1)
+DiamondsBad == <><><><><>(x = 2)
+====
+"#;
+    assert_eq!(lasso(src, "Boxes", 6), Outcome::NoViolationWithin(6));
+    assert_eq!(lasso(src, "BoxesBad", 6), Outcome::Violation { step: 3 });
+    assert_eq!(lasso(src, "DiamondsBad", 6), Outcome::Violation { step: 2 });
+}
+
+/// `<>[]P` and `[]<>P` over a counter that settles: `<>[](x = 3)` holds
+/// (it settles at 3), `<>[](x < 3)` does not, `[]<>(x = 0)` does not.
+#[test]
+fn diamond_box_and_box_diamond() {
+    let src = r#"
+---- MODULE Settle ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = IF x >= 3 THEN x ELSE x + 1
+Good == <>[](x = 3)
+Bad == <>[](x < 3)
+Bad2 == []<>(x = 0)
+====
+"#;
+    assert_eq!(lasso(src, "Good", 6), Outcome::NoViolationWithin(6));
+    // Both are refuted at the first close s4 = s3 (a diamond is refuted as
+    // soon as the loop is shown never to satisfy its operand).
+    assert_eq!(lasso(src, "Bad", 6), Outcome::Violation { step: 4 });
+    assert_eq!(lasso(src, "Bad2", 6), Outcome::Violation { step: 4 });
+}
+
+/// A construct the tableau has no rule for is **declined by name**, never
+/// dropped: fairness, temporal quantifiers, a primed leaf, `-+->`.
+#[test]
+fn unsupported_temporal_constructs_decline_by_name() {
+    let base = r#"
+---- MODULE Dec ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x
+{prop}
+====
+"#;
+    for (prop, needle) in [
+        ("P == []<>(x' # x)", "prime"),
+        ("P == WF_x(x' # x)", "fairness"),
+        ("P == \\EE y : [](x = y)", "temporal quantifier"),
+    ] {
+        let src = base.replace("{prop}", prop);
+        let parsed = nixie_tla_syntax::parse_file(&src).expect("parses");
+        let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+        let module = spec.root_module().expect("root");
+        let mut tm = TermManager::new();
+        let err = Bmc::prepare_temporal(
+            &spec,
+            module,
+            "Init",
+            "Next",
+            "P",
+            &nixie_tla_syntax::TlcConfig::default(),
+            &mut tm,
+        )
+        .err()
+        .unwrap_or_else(|| panic!("`{prop}` must be declined"));
+        let msg = err.to_string();
+        assert!(msg.contains(needle), "`{prop}` names `{needle}`: {msg}");
+    }
+}

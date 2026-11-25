@@ -545,3 +545,94 @@ impl Kera {
         Some(n)
     }
 }
+
+/// The temporal **structure** of a temporal-level formula, with its
+/// state-level leaves already lowered to the kernel (issue #29).
+///
+/// The kernel deliberately has no temporal operators — they describe
+/// behaviours, not states — so a liveness property never *is* a kernel
+/// term. This tree is what the lowerer hands back instead: the propositional
+/// skeleton over `[]`/`<>`, with every leaf an ordinary state predicate that
+/// the ordinary lowering (inlining, instance substitution, typing) produced.
+/// The checker builds the lasso-and-tableau encoding from it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Temporal {
+    /// A state predicate (no primes, no temporal operators), lowered.
+    Node(KeraRef),
+    /// `[]P`.
+    Always(Box<Temporal>),
+    /// `<>P`.
+    Eventually(Box<Temporal>),
+    /// `~P`.
+    Not(Box<Temporal>),
+    /// `P /\ Q`.
+    And(Box<Temporal>, Box<Temporal>),
+    /// `P \/ Q`.
+    Or(Box<Temporal>, Box<Temporal>),
+    /// `P => Q`.
+    Implies(Box<Temporal>, Box<Temporal>),
+    /// `P <=> Q`.
+    Equiv(Box<Temporal>, Box<Temporal>),
+    /// `IF P THEN Q ELSE R`.
+    Ite(Box<Temporal>, Box<Temporal>, Box<Temporal>),
+}
+
+/// The ground range of a two-sided bounded-integer filter `{v \in Int : P}`
+/// (`nat` for a filter over `Nat`, whose lower bound is 0): `Some((lo, hi))` when `P` is a
+/// conjunction containing `v >= a` (or `v > a`, `a = v`) and `v <= b` (or
+/// `v < b`) with `a`, `b` ground integer literals, else `None`.
+///
+/// Only the **members** come from here; the filter's own predicate stays in
+/// force per candidate, which is what makes a syntactic read safe.
+pub fn bounded_int_range(var: &Name, pred: &KeraRef, nat: bool) -> Option<(i128, i128)> {
+    // Over `Nat` the lower bound is 0 even when the predicate gives none.
+    let infinite = nat.then(|| i128::from(0));
+    let is_var = |t: &KeraRef| matches!(t.as_ref(), Kera::Var(n) if n == var);
+    let ground = |t: &KeraRef| -> Option<i128> {
+        if let Kera::Int(d) = t.as_ref() {
+            return d.parse::<i128>().ok();
+        }
+        None
+    };
+    // Collect bounds over the conjunction, explicitly stacked.
+    let mut lo: Option<i128> = infinite;
+    let mut hi: Option<i128> = None;
+    let mut work = vec![pred];
+    while let Some(t) = work.pop() {
+        match t.as_ref() {
+            Kera::And(xs) => work.extend(xs.iter()),
+            Kera::Cmp(op, a, b) => {
+                use crate::kera::CmpOp;
+                // Normalise to `v OP c` or `c OP v`.
+                let (v_first, op, c) = match (is_var(a), is_var(b)) {
+                    (true, false) => (true, *op, ground(b)?),
+                    (false, true) => (false, *op, ground(a)?),
+                    _ => continue,
+                };
+                let (tighten_lo, bound) = match (v_first, op) {
+                    (true, CmpOp::Ge) => (true, c),
+                    (true, CmpOp::Gt) => (true, c.checked_add(1)?),
+                    (true, CmpOp::Le) => (false, c),
+                    (true, CmpOp::Lt) => (false, c.checked_sub(1)?),
+                    (false, CmpOp::Le) => (true, c),
+                    (false, CmpOp::Lt) => (true, c.checked_add(1)?),
+                    (false, CmpOp::Ge) => (false, c),
+                    (false, CmpOp::Gt) => (false, c.checked_sub(1)?),
+                };
+                if tighten_lo {
+                    lo = Some(lo.map_or(bound, |l| l.max(bound)));
+                } else {
+                    hi = Some(hi.map_or(bound, |h| h.min(bound)));
+                }
+            }
+            _ => {}
+        }
+    }
+    let hi = hi?;
+    if let Some(lo) = lo
+        && lo <= hi
+    {
+        return Some((lo, hi));
+    }
+    None
+}

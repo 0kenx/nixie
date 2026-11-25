@@ -1820,7 +1820,38 @@ impl Encoder {
             // the enumerable case was what blocked `MustardWatch.tla`'s
             // `{t \in Threads : …}` in `Init`, where the base is a literal.
             Kera::Filter { var, set, pred } if self.set_encoding == SetEncoding::Native => {
-                let base = self.set_as_arena(set, tm)?;
+                // A filter over an infinite **integer** set whose predicate
+                // bounds the binder from both sides by ground literals —
+                // `{v \in Int : v >= 0 /\ v <= 50}`, Apalache's `Range`
+                // idiom in its liveness cells — has exactly the ground range
+                // for members. The predicate is still evaluated per candidate
+                // below (`present`), so a bound read wrong could only ever
+                // *offer* a non-member, never drop one; and no two-sided
+                // ground bound means no candidates, the honest refusal.
+                // (only `Int`/`Nat` bases: an infinite set is the case the arena cannot enumerate)
+                let base = match nixie_tla::kera::bounded_int_range(
+                    var,
+                    pred,
+                    matches!(set.as_ref(), Kera::Var(n) if n.as_str() == "Nat"),
+                ) {
+                    Some((lo, hi)) => {
+                        if hi - lo > self.max_candidates as i128 {
+                            return Err(EncodeError::NotEnumerable(
+                                "an integer filter whose bounds exceed the candidate budget"
+                                    .to_string(),
+                            ));
+                        }
+                        let mut members = Vec::with_capacity((hi - lo + 1) as usize);
+                        for v in lo..=hi {
+                            members.push(Member {
+                                value: Rc::new(Value::Scalar(tm.mk_int(v))),
+                                present: tm.mk_bool(true),
+                            });
+                        }
+                        SetCell { members }
+                    }
+                    None => self.set_as_arena(set, tm)?,
+                };
                 let mut members = Vec::with_capacity(base.members.len());
                 for m in &base.members {
                     let keep = self.with_bound(var, Rc::clone(&m.value), pred, tm)?;

@@ -11,6 +11,7 @@ pub mod encode;
 pub mod frames;
 pub mod itf;
 pub mod sorts;
+pub mod temporal;
 pub mod trace;
 
 pub use arena::{Member, SetCell, Value};
